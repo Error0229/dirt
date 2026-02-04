@@ -147,17 +147,17 @@ dirt/
 
 #### Tasks
 
-- [ ] Create `Cargo.toml` workspace root
-- [ ] Create `crates/dirt-core/Cargo.toml` with dependencies
-- [ ] Create `crates/dirt-desktop/Cargo.toml` with Dioxus
-- [ ] Create `crates/dirt-cli/Cargo.toml` placeholder
-- [ ] Create `rustfmt.toml` with formatting rules
-- [ ] Create `clippy.toml` with lint configuration
-- [ ] Add `[lints]` section to all `Cargo.toml` files
-- [ ] Create `.pre-commit-config.yaml`
-- [ ] Create `.gitignore` for Rust
+- [x] Create `Cargo.toml` workspace root
+- [x] Create `crates/dirt-core/Cargo.toml` with dependencies
+- [x] Create `crates/dirt-desktop/Cargo.toml` with Dioxus
+- [x] Create `crates/dirt-cli/Cargo.toml` placeholder
+- [x] Create `rustfmt.toml` with formatting rules
+- [x] Create `clippy.toml` with lint configuration
+- [x] Add `[lints]` section to all `Cargo.toml` files
+- [x] Create `.pre-commit-config.yaml`
+- [x] Create `.gitignore` for Rust
 - [ ] Create `rust-toolchain.toml` (pin stable)
-- [ ] Create basic `CLAUDE.md` for the project
+- [x] Create basic `CLAUDE.md` for the project
 
 #### `Cargo.toml` (workspace root)
 
@@ -262,11 +262,11 @@ components = ["rustfmt", "clippy"]
 
 #### Acceptance Criteria
 
-- [ ] `cargo build --workspace` succeeds
-- [ ] `cargo fmt --check` passes
-- [ ] `cargo clippy --all-targets -- -D warnings` passes
+- [x] `cargo build --workspace` succeeds
+- [x] `cargo fmt --check` passes
+- [x] `cargo clippy --all-targets -- -D warnings` passes
 - [ ] `pre-commit run --all-files` passes
-- [ ] All crates have `[lints] workspace = true`
+- [x] All crates have `[lints] workspace = true`
 
 ---
 
@@ -468,25 +468,25 @@ pub trait NoteRepository: Send + Sync {
 
 #### Tasks
 
-- [ ] Create `dirt-core` crate structure
-- [ ] Implement `NoteId` type
-- [ ] Implement `Note` model with tag extraction
-- [ ] Implement `Tag` model
-- [ ] Implement `Settings` model
-- [ ] Create migration system
-- [ ] Implement SQLite connection pool
-- [ ] Implement `SqliteNoteRepository`
-- [ ] Implement FTS5 search
-- [ ] Add tag management (create, link, unlink)
-- [ ] Add comprehensive unit tests
+- [x] Create `dirt-core` crate structure
+- [x] Implement `NoteId` type
+- [x] Implement `Note` model with tag extraction
+- [x] Implement `Tag` model
+- [x] Implement `Settings` model
+- [x] Create migration system
+- [x] Implement SQLite connection pool
+- [x] Implement `SqliteNoteRepository`
+- [x] Implement FTS5 search
+- [x] Add tag management (create, link, unlink)
+- [x] Add comprehensive unit tests
 
 #### Acceptance Criteria
 
-- [ ] Can create, read, update, delete notes
-- [ ] Tags auto-extracted from content
-- [ ] Full-text search works
-- [ ] Filter by tag works
-- [ ] All operations are atomic
+- [x] Can create, read, update, delete notes
+- [x] Tags auto-extracted from content
+- [x] Full-text search works
+- [x] Filter by tag works
+- [x] All operations are atomic
 - [ ] 100% test coverage for repository
 
 ---
@@ -665,11 +665,11 @@ pub fn App() -> Element {
 
 #### Tasks
 
-- [ ] Create dirt-desktop crate with Dioxus dependencies
-- [ ] Create `Dioxus.toml` configuration
-- [ ] Create main.rs with app launch
-- [ ] Create app.rs with context providers
-- [ ] Create basic Home view layout
+- [x] Create dirt-desktop crate with Dioxus dependencies
+- [x] Create `Dioxus.toml` configuration
+- [x] Create main.rs with app launch
+- [x] Create app.rs with context providers
+- [x] Create basic Home view layout
 - [ ] Create placeholder icons
 - [ ] Verify `dx serve --platform desktop` works
 

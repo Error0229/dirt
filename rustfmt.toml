@@ -1,0 +1,14 @@
+# Rust formatting configuration for Dirt
+# Run with: cargo fmt
+
+edition = "2021"
+
+# Line width
+max_width = 100
+
+# Imports (stable features only)
+reorder_imports = true
+
+# General formatting
+use_small_heuristics = "Default"
+newline_style = "Unix"

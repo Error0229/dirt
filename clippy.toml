@@ -1,0 +1,8 @@
+# Clippy configuration for Dirt
+# Workspace lints are configured in Cargo.toml
+
+# Allow more complex types in certain contexts
+type-complexity-threshold = 400
+
+# MSRV for lint suggestions
+msrv = "1.75.0"

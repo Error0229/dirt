@@ -1,0 +1,21 @@
+[package]
+name = "dirt-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Command-line interface for Dirt"
+
+[[bin]]
+name = "dirt-cli"
+path = "src/main.rs"
+
+[dependencies]
+dirt-core = { path = "../dirt-core" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

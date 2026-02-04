@@ -1,0 +1,26 @@
+[application]
+name = "Dirt"
+default_platform = "desktop"
+out_dir = "dist"
+asset_dir = "assets"
+
+[web.app]
+title = "Dirt"
+
+[web.watcher]
+reload_html = true
+watch_path = ["src", "assets"]
+
+[bundle]
+identifier = "com.dirt.app"
+publisher = "Dirt"
+# icon = ["assets/icons/icon.ico", "assets/icons/icon.icns", "assets/icons/icon.png"]
+
+[bundle.windows]
+# Windows-specific bundle settings
+
+[bundle.macos]
+minimum_system_version = "10.13"
+
+[bundle.linux]
+# Linux-specific bundle settings

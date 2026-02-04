@@ -1,0 +1,23 @@
+[package]
+name = "dirt-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Desktop application for Dirt"
+
+[[bin]]
+name = "dirt"
+path = "src/main.rs"
+
+[dependencies]
+dirt-core = { path = "../dirt-core" }
+dioxus.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+
+[lints]
+workspace = true
