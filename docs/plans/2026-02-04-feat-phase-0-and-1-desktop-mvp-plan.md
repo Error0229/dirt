@@ -671,7 +671,7 @@ pub fn App() -> Element {
 - [x] Create app.rs with context providers
 - [x] Create basic Home view layout
 - [ ] Create placeholder icons
-- [ ] Verify `dx serve --platform desktop` works
+- [x] Verify `dx serve --platform desktop` works
 
 #### Acceptance Criteria
 
@@ -1059,13 +1059,13 @@ pub fn SettingsPanel(on_close: EventHandler<()>) -> Element {
 
 #### Tasks
 
-- [ ] Create SearchBar component with debounce
-- [ ] Wire search to FTS5 queries
+- [x] Create SearchBar component with debounce
+- [x] Wire search to FTS5 queries
 - [ ] Highlight search matches in results (optional)
-- [ ] Create TagBadge component
-- [ ] Display tags on note cards
-- [ ] Implement tag click to filter
-- [ ] Show active filter indicator
+- [x] Create TagBadge component
+- [x] Display tags on note cards
+- [x] Implement tag click to filter
+- [x] Show active filter indicator
 - [ ] Create SettingsPanel component
 - [ ] Implement theme switching (light/dark/system)
 - [ ] Implement font size adjustment
@@ -1074,11 +1074,11 @@ pub fn SettingsPanel(on_close: EventHandler<()>) -> Element {
 
 #### Acceptance Criteria
 
-- [ ] Search finds notes by content
-- [ ] Search is fast (<100ms)
-- [ ] Tags visible on notes
-- [ ] Can filter by clicking tag
-- [ ] Can clear filter
+- [x] Search finds notes by content
+- [x] Search is fast (<100ms)
+- [x] Tags visible on notes
+- [x] Can filter by clicking tag
+- [x] Can clear filter
 - [ ] Theme changes apply immediately
 - [ ] Font size changes apply immediately
 - [ ] Settings persist across restarts
