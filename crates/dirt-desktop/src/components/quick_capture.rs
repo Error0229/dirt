@@ -1,24 +1,32 @@
-//! Quick capture overlay component
+//! Quick capture floating window component
 
+use dioxus::desktop::{window, LogicalSize, WindowBuilder};
 use dioxus::prelude::*;
 
-use crate::state::AppState;
+use crate::services::DatabaseService;
 
-/// Quick capture overlay for rapid note entry
+/// Standalone quick capture window - opens as a floating dialog
+/// This component is designed to work independently without shared context
 #[component]
-pub fn QuickCapture(on_close: EventHandler<()>) -> Element {
-    let mut state = use_context::<AppState>();
+pub fn QuickCaptureWindow() -> Element {
     let mut content = use_signal(String::new);
+    let mut is_saving = use_signal(|| false);
 
-    let save_and_close = move |_: Event<MouseData>| {
+    // Initialize database directly (not shared with main window)
+    let db = use_signal(|| {
+        DatabaseService::new()
+            .map_err(|e| tracing::error!("Quick capture: Failed to init database: {}", e))
+            .ok()
+    });
+
+    let save_and_close = move |_| {
         let text = content.read().trim().to_string();
-        if !text.is_empty() {
-            if let Some(ref db) = *state.db_service.read() {
+        if !text.is_empty() && !*is_saving.read() {
+            is_saving.set(true);
+            if let Some(ref db) = *db.read() {
                 match db.create_note(&text) {
                     Ok(note) => {
                         tracing::info!("Quick captured note: {}", note.id);
-                        let mut notes = state.notes.write();
-                        notes.insert(0, note);
                     }
                     Err(e) => {
                         tracing::error!("Failed to create note: {}", e);
@@ -26,29 +34,28 @@ pub fn QuickCapture(on_close: EventHandler<()>) -> Element {
                 }
             }
         }
-        on_close.call(());
+        // Close this window
+        window().close();
     };
 
-    let cancel = move |_: Event<MouseData>| {
-        on_close.call(());
+    let cancel = move |_| {
+        window().close();
     };
 
     let handle_keydown = move |evt: Event<KeyboardData>| {
         // Escape to close without saving
         if evt.key() == Key::Escape {
-            on_close.call(());
+            window().close();
         }
         // Ctrl/Cmd+Enter to save
         if evt.key() == Key::Enter && (evt.modifiers().meta() || evt.modifiers().ctrl()) {
-            // Need to trigger save manually here
             let text = content.read().trim().to_string();
-            if !text.is_empty() {
-                if let Some(ref db) = *state.db_service.read() {
+            if !text.is_empty() && !*is_saving.read() {
+                is_saving.set(true);
+                if let Some(ref db) = *db.read() {
                     match db.create_note(&text) {
                         Ok(note) => {
                             tracing::info!("Quick captured note: {}", note.id);
-                            let mut notes = state.notes.write();
-                            notes.insert(0, note);
                         }
                         Err(e) => {
                             tracing::error!("Failed to create note: {}", e);
@@ -56,53 +63,79 @@ pub fn QuickCapture(on_close: EventHandler<()>) -> Element {
                     }
                 }
             }
-            on_close.call(());
+            window().close();
         }
     };
 
     rsx! {
         div {
-            class: "quick-capture-overlay",
-            style: "position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;",
-            onclick: cancel,
+            style: "
+                width: 100%;
+                height: 100%;
+                background: #ffffff;
+                padding: 16px;
+                box-sizing: border-box;
+                font-family: system-ui, -apple-system, sans-serif;
+                display: flex;
+                flex-direction: column;
+            ",
+
+            h3 {
+                style: "margin: 0 0 12px 0; font-size: 13px; color: #666; font-weight: 500;",
+                "⚡ Quick Capture"
+            }
+
+            textarea {
+                style: "
+                    flex: 1;
+                    width: 100%;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 8px;
+                    padding: 12px;
+                    font-size: 14px;
+                    resize: none;
+                    outline: none;
+                    font-family: inherit;
+                    box-sizing: border-box;
+                ",
+                value: "{content}",
+                placeholder: "Capture a thought... (Ctrl+Enter to save, Esc to cancel)",
+                autofocus: true,
+                oninput: move |evt| content.set(evt.value()),
+                onkeydown: handle_keydown,
+            }
 
             div {
-                class: "quick-capture-window",
-                style: "background: white; border-radius: 12px; padding: 20px; width: 500px; max-width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,0.3);",
-                onclick: move |evt| evt.stop_propagation(),
+                style: "display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px;",
 
-                h3 {
-                    style: "margin: 0 0 12px 0; font-size: 14px; color: #666; font-weight: 500;",
-                    "Quick Capture"
+                button {
+                    style: "padding: 6px 14px; border: 1px solid #e0e0e0; border-radius: 6px; background: white; cursor: pointer; font-size: 13px;",
+                    onclick: cancel,
+                    "Cancel"
                 }
 
-                textarea {
-                    class: "quick-capture-input",
-                    style: "width: 100%; height: 120px; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; font-size: 14px; resize: none; outline: none; font-family: inherit;",
-                    value: "{content}",
-                    placeholder: "Capture a thought... (Ctrl+Enter to save)",
-                    autofocus: true,
-                    oninput: move |evt| content.set(evt.value()),
-                    onkeydown: handle_keydown,
-                }
-
-                div {
-                    class: "quick-capture-actions",
-                    style: "display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px;",
-
-                    button {
-                        style: "padding: 8px 16px; border: 1px solid #e0e0e0; border-radius: 6px; background: white; cursor: pointer;",
-                        onclick: cancel,
-                        "Cancel"
-                    }
-
-                    button {
-                        style: "padding: 8px 16px; border: none; border-radius: 6px; background: #4f46e5; color: white; cursor: pointer;",
-                        onclick: save_and_close,
-                        "Save"
-                    }
+                button {
+                    style: "padding: 6px 14px; border: none; border-radius: 6px; background: #4f46e5; color: white; cursor: pointer; font-size: 13px;",
+                    onclick: save_and_close,
+                    "Save"
                 }
             }
         }
     }
+}
+
+/// Opens the quick capture floating window
+pub fn open_quick_capture_window() {
+    let cfg = dioxus::desktop::Config::new().with_window(
+        WindowBuilder::new()
+            .with_title("Quick Capture")
+            .with_inner_size(LogicalSize::new(420.0, 200.0))
+            .with_resizable(false)
+            .with_always_on_top(true)
+            .with_decorations(true)
+            .with_focused(true),
+    );
+
+    let dom = VirtualDom::new(QuickCaptureWindow);
+    window().new_window(dom, cfg);
 }

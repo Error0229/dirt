@@ -1,16 +1,16 @@
 //! Main application component
 
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use dioxus::prelude::*;
-use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 
-use crate::components::QuickCapture;
-use crate::hotkey::HotkeyManager;
+use crate::components::open_quick_capture_window;
 use crate::services::DatabaseService;
 use crate::state::AppState;
 use crate::theme::Theme;
 use crate::views::Home;
+use crate::HOTKEY_TRIGGERED;
 
 /// Root application component
 #[component]
@@ -28,30 +28,18 @@ pub fn App() -> Element {
     let search_query = use_signal(String::new);
     let active_tag_filter = use_signal(|| None::<String>);
     let theme = use_signal(Theme::default);
-    let mut show_quick_capture = use_signal(|| false);
 
-    // Initialize hotkey manager (kept alive for the app lifetime)
-    let _hotkey_manager = use_signal(|| {
-        HotkeyManager::new()
-            .map_err(|e| tracing::error!("Failed to register hotkey: {}", e))
-            .ok()
-    });
-
-    // Listen for hotkey events
-    use_effect(move || {
-        spawn(async move {
-            let receiver = GlobalHotKeyEvent::receiver();
-            loop {
-                if let Ok(event) = receiver.try_recv() {
-                    if event.state == HotKeyState::Pressed {
-                        tracing::debug!("Hotkey pressed, toggling quick capture");
-                        let current = *show_quick_capture.read();
-                        show_quick_capture.set(!current);
-                    }
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+    // Poll for hotkey events and open floating quick capture window
+    use_future(move || async move {
+        loop {
+            // Check if hotkey was triggered
+            if HOTKEY_TRIGGERED.swap(false, Ordering::SeqCst) {
+                tracing::info!("Opening quick capture window");
+                open_quick_capture_window();
             }
-        });
+            // Poll at ~60fps
+            tokio::time::sleep(Duration::from_millis(16)).await;
+        }
     });
 
     // Load notes from database on startup
@@ -76,7 +64,6 @@ pub fn App() -> Element {
         active_tag_filter,
         theme,
         db_service,
-        show_quick_capture,
     });
 
     let theme_class = if theme().is_dark() { "dark" } else { "light" };
@@ -86,12 +73,6 @@ pub fn App() -> Element {
             class: "app-container {theme_class}",
             style: "min-height: 100vh; font-family: system-ui, -apple-system, sans-serif;",
             Home {}
-
-            if show_quick_capture() {
-                QuickCapture {
-                    on_close: move |()| show_quick_capture.set(false)
-                }
-            }
         }
     }
 }

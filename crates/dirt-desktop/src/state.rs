@@ -25,9 +25,6 @@ pub struct AppState {
     pub theme: Signal<Theme>,
     /// Database service
     pub db_service: Signal<Option<DatabaseService>>,
-    /// Whether quick capture overlay is visible
-    #[allow(dead_code)] // Accessed via context, not directly
-    pub show_quick_capture: Signal<bool>,
 }
 
 impl AppState {

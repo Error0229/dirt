@@ -5,14 +5,15 @@ use global_hotkey::{
     GlobalHotKeyManager,
 };
 
-/// Default hotkey: Ctrl+Shift+D (Windows/Linux) or Cmd+Shift+D (macOS)
+/// Default hotkey: Ctrl+Alt+N (Windows/Linux) or Cmd+Option+N (macOS)
+/// N for "Note" - a quick way to capture a thought
 pub fn default_hotkey() -> HotKey {
     #[cfg(target_os = "macos")]
-    let modifiers = Modifiers::META | Modifiers::SHIFT;
+    let modifiers = Modifiers::META | Modifiers::ALT;
     #[cfg(not(target_os = "macos"))]
-    let modifiers = Modifiers::CONTROL | Modifiers::SHIFT;
+    let modifiers = Modifiers::CONTROL | Modifiers::ALT;
 
-    HotKey::new(Some(modifiers), Code::KeyD)
+    HotKey::new(Some(modifiers), Code::KeyN)
 }
 
 /// Manages global hotkey registration
@@ -29,7 +30,7 @@ impl HotkeyManager {
         let hotkey = default_hotkey();
 
         manager.register(hotkey)?;
-        tracing::info!("Registered global hotkey: Ctrl+Shift+D");
+        tracing::info!("Registered global hotkey: Ctrl+Alt+N");
 
         Ok(Self {
             _manager: manager,
