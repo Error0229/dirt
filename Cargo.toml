@@ -36,7 +36,7 @@ clap = { version = "4.0", features = ["derive"] }
 pretty_assertions = "1.4"
 
 # Dioxus
-dioxus = { version = "0.6", features = ["desktop"] }
+dioxus = { version = "0.7", features = ["desktop"] }
 
 [workspace.lints.rust]
 unsafe_code = "warn"
