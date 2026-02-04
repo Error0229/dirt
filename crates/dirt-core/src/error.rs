@@ -10,7 +10,15 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     /// Database error
     #[error("Database error: {0}")]
-    Database(#[from] rusqlite::Error),
+    Database(String),
+
+    /// `SQLite` error
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+
+    /// IO error
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
 
     /// Note not found
     #[error("Note not found: {0}")]

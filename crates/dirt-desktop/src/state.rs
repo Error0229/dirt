@@ -6,6 +6,7 @@ use dioxus::prelude::*;
 
 use dirt_core::models::{Note, NoteId};
 
+use crate::services::DatabaseService;
 use crate::theme::Theme;
 
 /// Global application state
@@ -22,6 +23,8 @@ pub struct AppState {
     /// Current theme
     #[allow(dead_code)] // Will be used when theme toggle UI is implemented
     pub theme: Signal<Theme>,
+    /// Database service
+    pub db_service: Signal<Option<DatabaseService>>,
 }
 
 impl AppState {

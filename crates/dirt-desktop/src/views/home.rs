@@ -2,14 +2,11 @@
 
 use dioxus::prelude::*;
 
-use crate::components::{NoteEditor, NoteList, SearchBar, Sidebar};
-use crate::state::AppState;
+use crate::components::{NoteEditor, NoteList, SearchBar, Sidebar, Toolbar};
 
 /// Home view component - the main application screen
 #[component]
 pub fn Home() -> Element {
-    let _state = use_context::<AppState>();
-
     rsx! {
         div {
             class: "home-container",
@@ -21,6 +18,7 @@ pub fn Home() -> Element {
                 class: "main-content",
                 style: "flex: 1; display: flex; flex-direction: column;",
 
+                Toolbar {}
                 SearchBar {}
 
                 div {

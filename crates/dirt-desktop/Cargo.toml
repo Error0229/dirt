@@ -18,6 +18,8 @@ serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 chrono.workspace = true
+dirs = "6"
+tokio = { version = "1", features = ["time"] }
 
 [lints]
 workspace = true

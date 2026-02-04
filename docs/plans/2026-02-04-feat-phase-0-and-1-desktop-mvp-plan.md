@@ -551,7 +551,7 @@ jobs:
 
 #### Tasks
 
-- [ ] Create `.github/workflows/ci.yml`
+- [x] Create `.github/workflows/ci.yml`
 - [ ] Test CI passes locally with `act` (optional)
 - [ ] Verify CI runs on push and PR
 
@@ -792,24 +792,24 @@ pub fn NoteEditor(
 
 #### Tasks
 
-- [ ] Create NoteList component
+- [x] Create NoteList component
 - [ ] Create NoteCard component
-- [ ] Create NoteEditor component
-- [ ] Create empty state design
-- [ ] Wire up CRUD to dirt-core
-- [ ] Implement auto-save with 500ms debounce
+- [x] Create NoteEditor component
+- [x] Create empty state design
+- [x] Wire up CRUD to dirt-core
+- [x] Implement auto-save with 500ms debounce
 - [ ] Add keyboard shortcuts (Ctrl+N new, Escape close)
-- [ ] Add delete with confirmation dialog
+- [x] Add delete with confirmation dialog
 - [ ] Display relative timestamps ("2 minutes ago")
 
 #### Acceptance Criteria
 
-- [ ] Notes display in reverse chronological order
-- [ ] Can create new notes
-- [ ] Can edit existing notes
-- [ ] Changes auto-save
-- [ ] Can delete notes (soft delete)
-- [ ] Empty state shown when no notes
+- [x] Notes display in reverse chronological order
+- [x] Can create new notes
+- [x] Can edit existing notes
+- [x] Changes auto-save
+- [x] Can delete notes (soft delete)
+- [x] Empty state shown when no notes
 - [ ] Relative timestamps update
 
 ---

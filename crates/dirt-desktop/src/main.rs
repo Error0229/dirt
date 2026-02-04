@@ -6,6 +6,7 @@
 
 mod app;
 mod components;
+mod services;
 mod state;
 mod theme;
 mod views;
