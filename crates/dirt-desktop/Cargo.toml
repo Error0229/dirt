@@ -21,6 +21,8 @@ chrono.workspace = true
 dirs = "6"
 tokio = { version = "1", features = ["time"] }
 global-hotkey = "0.6"
+tray-icon = "0.19"
+image = "0.25"
 
 [lints]
 workspace = true
