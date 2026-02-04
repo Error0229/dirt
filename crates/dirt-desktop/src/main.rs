@@ -10,15 +10,21 @@ mod hotkey;
 mod services;
 mod state;
 mod theme;
+mod tray;
 mod views;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use dioxus::desktop::{Config, WindowCloseBehaviour};
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 use hotkey::HotkeyManager;
+use tray::TrayManager;
 
 /// Atomic flag for hotkey events - shared between event handler and UI
 pub static HOTKEY_TRIGGERED: AtomicBool = AtomicBool::new(false);
+
+/// Atomic flag indicating tray is enabled
+pub static TRAY_ENABLED: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     // Initialize logging
@@ -30,6 +36,19 @@ fn main() {
         .init();
 
     tracing::info!("Starting Dirt...");
+
+    // Initialize system tray BEFORE Dioxus (must be on main thread)
+    let _tray_manager = match TrayManager::new() {
+        Ok(manager) => {
+            tracing::info!("System tray initialized");
+            TRAY_ENABLED.store(true, Ordering::SeqCst);
+            Some(manager)
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize system tray: {}", e);
+            None
+        }
+    };
 
     // Initialize global hotkey BEFORE launching Dioxus
     // The manager must be kept alive and stay on the main thread
@@ -51,5 +70,12 @@ fn main() {
         }
     };
 
-    dioxus::launch(app::App);
+    // Configure Dioxus to hide window on close instead of exiting
+    // Hide window instead of exiting when closed - keeps app running in tray
+    let config = Config::new().with_close_behaviour(WindowCloseBehaviour::WindowHides);
+
+    // Launch the app
+    dioxus::LaunchBuilder::new()
+        .with_cfg(config)
+        .launch(app::App);
 }
