@@ -5,4 +5,4 @@
 type-complexity-threshold = 400
 
 # MSRV for lint suggestions
-msrv = "1.75.0"
+msrv = "1.76.0"

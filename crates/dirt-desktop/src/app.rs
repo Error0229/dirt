@@ -1,11 +1,16 @@
 //! Main application component
 
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+
 use dioxus::prelude::*;
 
+use crate::components::open_quick_capture_window;
 use crate::services::DatabaseService;
 use crate::state::AppState;
 use crate::theme::Theme;
 use crate::views::Home;
+use crate::HOTKEY_TRIGGERED;
 
 /// Root application component
 #[component]
@@ -23,6 +28,19 @@ pub fn App() -> Element {
     let search_query = use_signal(String::new);
     let active_tag_filter = use_signal(|| None::<String>);
     let theme = use_signal(Theme::default);
+
+    // Poll for hotkey events and open floating quick capture window
+    use_future(move || async move {
+        loop {
+            // Check if hotkey was triggered
+            if HOTKEY_TRIGGERED.swap(false, Ordering::SeqCst) {
+                tracing::info!("Opening quick capture window");
+                open_quick_capture_window();
+            }
+            // Poll at ~60fps
+            tokio::time::sleep(Duration::from_millis(16)).await;
+        }
+    });
 
     // Load notes from database on startup
     use_effect(move || {
