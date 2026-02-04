@@ -6,6 +6,7 @@
 
 mod app;
 mod components;
+mod hotkey;
 mod services;
 mod state;
 mod theme;
