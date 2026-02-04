@@ -9,6 +9,7 @@ use crate::state::AppState;
 pub fn Toolbar() -> Element {
     let mut state = use_context::<AppState>();
     let has_selected_note = state.current_note().is_some();
+    let colors = (state.theme)().palette();
 
     let create_note = move |_| {
         if let Some(ref db) = *state.db_service.read() {
@@ -49,14 +50,37 @@ pub fn Toolbar() -> Element {
         }
     };
 
+    let open_settings = move |_| {
+        state.settings_open.set(true);
+    };
+
     rsx! {
         div {
             class: "toolbar",
-            style: "display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border-color, #e0e0e0); background: var(--toolbar-bg, #fafafa);",
+            style: "
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 8px 16px;
+                border-bottom: 1px solid {colors.border};
+                background: {colors.bg_secondary};
+            ",
 
             button {
                 class: "btn btn-primary",
-                style: "display: flex; align-items: center; gap: 4px; padding: 6px 12px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;",
+                style: "
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                    padding: 6px 12px;
+                    background: {colors.accent};
+                    color: {colors.accent_text};
+                    border: none;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    font-size: 13px;
+                    font-weight: 500;
+                ",
                 onclick: create_note,
                 "+ New Note"
             }
@@ -64,10 +88,44 @@ pub fn Toolbar() -> Element {
             if has_selected_note {
                 button {
                     class: "btn btn-danger",
-                    style: "display: flex; align-items: center; gap: 4px; padding: 6px 12px; background: #dc2626; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;",
+                    style: "
+                        display: flex;
+                        align-items: center;
+                        gap: 4px;
+                        padding: 6px 12px;
+                        background: {colors.error};
+                        color: white;
+                        border: none;
+                        border-radius: 6px;
+                        cursor: pointer;
+                        font-size: 13px;
+                        font-weight: 500;
+                    ",
                     onclick: delete_note,
                     "Delete"
                 }
+            }
+
+            // Spacer
+            div { style: "flex: 1;" }
+
+            // Settings button
+            button {
+                class: "btn btn-secondary",
+                style: "
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                    padding: 6px 12px;
+                    background: {colors.bg_tertiary};
+                    color: {colors.text_secondary};
+                    border: 1px solid {colors.border};
+                    border-radius: 6px;
+                    cursor: pointer;
+                    font-size: 13px;
+                ",
+                onclick: open_settings,
+                "Settings"
             }
         }
     }

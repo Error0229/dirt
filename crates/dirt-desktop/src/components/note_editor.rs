@@ -16,6 +16,7 @@ const SAVE_DEBOUNCE_MS: u64 = 500;
 pub fn NoteEditor() -> Element {
     let mut state = use_context::<AppState>();
     let current_note = state.current_note();
+    let colors = (state.theme)().palette();
 
     // Local state for the editor content
     let mut content = use_signal(String::new);
@@ -85,12 +86,29 @@ pub fn NoteEditor() -> Element {
     rsx! {
         div {
             class: "note-editor",
-            style: "flex: 1; display: flex; flex-direction: column; padding: 16px;",
+            style: "
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                padding: 16px;
+                background: {colors.bg_primary};
+            ",
 
             if current_note.is_some() {
                 textarea {
                     class: "editor-textarea",
-                    style: "flex: 1; width: 100%; border: none; outline: none; resize: none; font-family: inherit; font-size: 14px; line-height: 1.6; background: transparent;",
+                    style: "
+                        flex: 1;
+                        width: 100%;
+                        border: none;
+                        outline: none;
+                        resize: none;
+                        font-family: inherit;
+                        font-size: inherit;
+                        line-height: 1.6;
+                        background: transparent;
+                        color: {colors.text_primary};
+                    ",
                     value: "{content}",
                     placeholder: "Start typing...",
                     oninput: on_input,
@@ -98,7 +116,13 @@ pub fn NoteEditor() -> Element {
             } else {
                 div {
                     class: "editor-placeholder",
-                    style: "flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-secondary, #666);",
+                    style: "
+                        flex: 1;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        color: {colors.text_muted};
+                    ",
                     "Select a note or create a new one"
                 }
             }

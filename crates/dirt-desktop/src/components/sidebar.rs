@@ -10,6 +10,7 @@ use crate::state::AppState;
 #[component]
 pub fn Sidebar() -> Element {
     let mut state = use_context::<AppState>();
+    let colors = (state.theme)().palette();
 
     // Collect all unique tags with counts from notes
     let tag_counts: HashMap<String, usize> = {
@@ -30,31 +31,35 @@ pub fn Sidebar() -> Element {
     let active_tag = (state.active_tag_filter)();
     let total_notes = (state.notes)().iter().filter(|n| !n.is_deleted).count();
 
-    let active_style = "padding: 6px 10px; border-radius: 4px; cursor: pointer; margin-bottom: 4px; background: #e0e7ff; color: #3730a3;";
-    let inactive_style =
-        "padding: 6px 10px; border-radius: 4px; cursor: pointer; margin-bottom: 4px;";
-
     rsx! {
         aside {
             class: "sidebar",
-            style: "width: 200px; background: var(--sidebar-bg, #f5f5f5); border-right: 1px solid var(--border-color, #e0e0e0); padding: 16px; overflow-y: auto;",
+            style: "
+                width: 200px;
+                background: {colors.bg_secondary};
+                border-right: 1px solid {colors.border};
+                padding: 16px;
+                overflow-y: auto;
+            ",
 
             h2 {
-                style: "font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text-secondary, #666);",
+                style: "
+                    font-size: 14px;
+                    font-weight: 600;
+                    margin-bottom: 12px;
+                    color: {colors.text_secondary};
+                ",
                 "Tags"
             }
 
             // All notes filter
-            div {
-                style: if active_tag.is_none() { active_style } else { inactive_style },
+            TagItem {
+                label: "All Notes",
+                count: total_notes,
+                is_active: active_tag.is_none(),
                 onclick: move |_| {
                     state.active_tag_filter.set(None);
                 },
-                "All Notes "
-                span {
-                    style: "color: #666; font-size: 12px;",
-                    "({total_notes})"
-                }
             }
 
             // Tag list
@@ -63,19 +68,67 @@ pub fn Sidebar() -> Element {
                     let tag_clone = tag.clone();
                     let is_active = active_tag.as_ref() == Some(&tag);
                     rsx! {
-                        div {
-                            style: if is_active { active_style } else { inactive_style },
+                        TagItem {
+                            label: "#{tag}",
+                            count: count,
+                            is_active: is_active,
                             onclick: move |_| {
                                 state.active_tag_filter.set(Some(tag_clone.clone()));
                             },
-                            "#{tag} "
-                            span {
-                                style: "color: #666; font-size: 12px;",
-                                "({count})"
-                            }
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Tag item in the sidebar
+#[component]
+fn TagItem(
+    label: String,
+    count: usize,
+    is_active: bool,
+    onclick: EventHandler<MouseEvent>,
+) -> Element {
+    let state = use_context::<AppState>();
+    let colors = (state.theme)().palette();
+
+    let bg = if is_active {
+        colors.accent
+    } else {
+        "transparent"
+    };
+    let text_color = if is_active {
+        colors.accent_text
+    } else {
+        colors.text_primary
+    };
+    let count_color = if is_active {
+        colors.accent_text
+    } else {
+        colors.text_muted
+    };
+
+    rsx! {
+        div {
+            style: "
+                padding: 8px 10px;
+                border-radius: 6px;
+                cursor: pointer;
+                margin-bottom: 4px;
+                background: {bg};
+                color: {text_color};
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                transition: background 0.15s;
+            ",
+            onclick: onclick,
+            span { "{label}" }
+            span {
+                style: "color: {count_color}; font-size: 12px;",
+                "{count}"
             }
         }
     }
