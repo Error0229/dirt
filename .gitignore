@@ -1,5 +1,6 @@
 # Rust build artifacts
 /target/
+/target-*/
 **/target/
 
 # Cargo lock for libraries (keep for binaries)
@@ -18,7 +19,10 @@ Thumbs.db
 
 # Dioxus
 /dist/
+/web/
+/.dioxus/
 *.wasm
+dx.lock
 
 # Environment
 .env
