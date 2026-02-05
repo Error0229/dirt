@@ -6,10 +6,10 @@ use std::time::Duration;
 use dioxus::desktop::window;
 use dioxus::prelude::*;
 
-use crate::components::open_quick_capture_window;
+use crate::components::{open_quick_capture_window, SettingsPanel};
 use crate::services::DatabaseService;
 use crate::state::AppState;
-use crate::theme::Theme;
+use crate::theme::resolve_theme;
 use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
 use crate::views::Home;
 use crate::{HOTKEY_TRIGGERED, TRAY_ENABLED};
@@ -24,12 +24,24 @@ pub fn App() -> Element {
             .ok()
     });
 
+    // Load settings from database
+    let initial_settings = db_service
+        .read()
+        .as_ref()
+        .and_then(|db| db.load_settings().ok())
+        .unwrap_or_default();
+
+    // Initialize resolved theme based on settings
+    let initial_theme = resolve_theme(initial_settings.theme);
+
     // Initialize global state
     let mut notes = use_signal(Vec::new);
     let current_note_id = use_signal(|| None);
     let search_query = use_signal(String::new);
     let active_tag_filter = use_signal(|| None::<String>);
-    let theme = use_signal(Theme::default);
+    let settings = use_signal(|| initial_settings);
+    let theme = use_signal(|| initial_theme);
+    let settings_open = use_signal(|| false);
 
     // Poll for hotkey and tray events
     use_future(move || async move {
@@ -84,17 +96,31 @@ pub fn App() -> Element {
         current_note_id,
         search_query,
         active_tag_filter,
+        settings,
         theme,
         db_service,
+        settings_open,
     });
 
-    let theme_class = if theme().is_dark() { "dark" } else { "light" };
+    let colors = theme().palette();
+    let current_settings = settings();
 
     rsx! {
         div {
-            class: "app-container {theme_class}",
-            style: "min-height: 100vh; font-family: system-ui, -apple-system, sans-serif;",
+            class: "app-container",
+            style: "
+                min-height: 100vh;
+                font-family: {current_settings.font_family}, system-ui, -apple-system, sans-serif;
+                font-size: {current_settings.font_size}px;
+                background: {colors.bg_primary};
+                color: {colors.text_primary};
+            ",
             Home {}
+
+            // Settings panel overlay
+            if settings_open() {
+                SettingsPanel {}
+            }
         }
     }
 }

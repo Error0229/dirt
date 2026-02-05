@@ -5,9 +5,11 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use dirt_core::db::{Database, NoteRepository, SqliteNoteRepository};
+use dirt_core::db::{
+    Database, NoteRepository, SettingsRepository, SqliteNoteRepository, SqliteSettingsRepository,
+};
 use dirt_core::error::Result;
-use dirt_core::models::Note;
+use dirt_core::models::{Note, Settings};
 use dirt_core::NoteId;
 
 /// Service for database operations
@@ -121,5 +123,23 @@ impl DatabaseService {
         })?;
         let repo = SqliteNoteRepository::new(db.connection());
         repo.list_tags()
+    }
+
+    /// Load settings from database
+    pub fn load_settings(&self) -> Result<Settings> {
+        let db = self.db.lock().map_err(|_| {
+            dirt_core::error::Error::Database("Failed to acquire database lock".into())
+        })?;
+        let repo = SqliteSettingsRepository::new(db.connection());
+        repo.load()
+    }
+
+    /// Save settings to database
+    pub fn save_settings(&self, settings: &Settings) -> Result<()> {
+        let db = self.db.lock().map_err(|_| {
+            dirt_core::error::Error::Database("Failed to acquire database lock".into())
+        })?;
+        let repo = SqliteSettingsRepository::new(db.connection());
+        repo.save(settings)
     }
 }

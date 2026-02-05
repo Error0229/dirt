@@ -4,10 +4,10 @@
 
 use dioxus::prelude::*;
 
-use dirt_core::models::{Note, NoteId};
+use dirt_core::models::{Note, NoteId, Settings};
 
 use crate::services::DatabaseService;
-use crate::theme::Theme;
+use crate::theme::ResolvedTheme;
 
 /// Global application state
 #[derive(Clone, Copy)]
@@ -20,11 +20,14 @@ pub struct AppState {
     pub search_query: Signal<String>,
     /// Active tag filter
     pub active_tag_filter: Signal<Option<String>>,
-    /// Current theme
-    #[allow(dead_code)] // Will be used when theme toggle UI is implemented
-    pub theme: Signal<Theme>,
+    /// Application settings
+    pub settings: Signal<Settings>,
+    /// Resolved theme (light/dark based on settings and system preference)
+    pub theme: Signal<ResolvedTheme>,
     /// Database service
     pub db_service: Signal<Option<DatabaseService>>,
+    /// Whether settings panel is open
+    pub settings_open: Signal<bool>,
 }
 
 impl AppState {
