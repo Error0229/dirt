@@ -1,6 +1,11 @@
 //! Theme configuration for the desktop app
 
+use std::sync::OnceLock;
+
 pub use dirt_core::models::ThemeMode;
+
+/// Cached system dark mode preference (detected once at startup)
+static SYSTEM_DARK_MODE: OnceLock<bool> = OnceLock::new();
 
 /// Resolved theme (light or dark)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -35,59 +40,85 @@ pub fn resolve_theme(mode: ThemeMode) -> ResolvedTheme {
     }
 }
 
-/// Detect system dark mode preference
+/// Detect system dark mode preference (cached after first call)
 #[must_use]
 pub fn is_system_dark_mode() -> bool {
-    // On Windows, check registry for system theme
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-        // Check Windows AppsUseLightTheme registry value
-        // 0 = dark mode, 1 = light mode
-        let output = Command::new("reg")
-            .args([
-                "query",
-                r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-                "/v",
-                "AppsUseLightTheme",
-            ])
-            .output();
+    *SYSTEM_DARK_MODE.get_or_init(detect_system_dark_mode)
+}
 
-        if let Ok(output) = output {
+/// Perform the actual system dark mode detection
+/// This is expensive (spawns subprocess) so we only call it once
+fn detect_system_dark_mode() -> bool {
+    detect_system_dark_mode_impl()
+}
+
+#[cfg(target_os = "windows")]
+fn detect_system_dark_mode_impl() -> bool {
+    use std::process::Command;
+    // Check Windows AppsUseLightTheme registry value
+    // 0 = dark mode, 1 = light mode
+    let output = Command::new("reg")
+        .args([
+            "query",
+            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            "/v",
+            "AppsUseLightTheme",
+        ])
+        .output();
+
+    match output {
+        Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             // If AppsUseLightTheme is 0x0, system is in dark mode
-            return stdout.contains("0x0");
+            let is_dark = stdout.contains("0x0");
+            tracing::debug!("System theme detected: {}", if is_dark { "dark" } else { "light" });
+            is_dark
         }
-        false
+        Err(e) => {
+            tracing::warn!("Failed to detect system theme: {}. Defaulting to light mode.", e);
+            false
+        }
     }
+}
 
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-        let output = Command::new("defaults")
-            .args(["read", "-g", "AppleInterfaceStyle"])
-            .output();
+#[cfg(target_os = "macos")]
+fn detect_system_dark_mode_impl() -> bool {
+    use std::process::Command;
+    let output = Command::new("defaults")
+        .args(["read", "-g", "AppleInterfaceStyle"])
+        .output();
 
-        if let Ok(output) = output {
+    match output {
+        Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            return stdout.trim().eq_ignore_ascii_case("dark");
+            let is_dark = stdout.trim().eq_ignore_ascii_case("dark");
+            tracing::debug!("System theme detected: {}", if is_dark { "dark" } else { "light" });
+            is_dark
         }
-        false
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        // Check GTK theme or use environment variable
-        if let Ok(theme) = std::env::var("GTK_THEME") {
-            return theme.to_lowercase().contains("dark");
+        Err(e) => {
+            tracing::warn!("Failed to detect system theme: {}. Defaulting to light mode.", e);
+            false
         }
-        false
     }
+}
 
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
+#[cfg(target_os = "linux")]
+fn detect_system_dark_mode_impl() -> bool {
+    // Check GTK theme or use environment variable
+    if let Ok(theme) = std::env::var("GTK_THEME") {
+        let is_dark = theme.to_lowercase().contains("dark");
+        tracing::debug!("System theme detected from GTK_THEME: {}", if is_dark { "dark" } else { "light" });
+        is_dark
+    } else {
+        tracing::debug!("GTK_THEME not set, defaulting to light mode");
         false
     }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn detect_system_dark_mode_impl() -> bool {
+    tracing::debug!("Unsupported platform for system theme detection, defaulting to light mode");
+    false
 }
 
 /// Color palette for the application
