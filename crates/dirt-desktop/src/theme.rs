@@ -71,11 +71,17 @@ fn detect_system_dark_mode_impl() -> bool {
             let stdout = String::from_utf8_lossy(&output.stdout);
             // If AppsUseLightTheme is 0x0, system is in dark mode
             let is_dark = stdout.contains("0x0");
-            tracing::debug!("System theme detected: {}", if is_dark { "dark" } else { "light" });
+            tracing::debug!(
+                "System theme detected: {}",
+                if is_dark { "dark" } else { "light" }
+            );
             is_dark
         }
         Err(e) => {
-            tracing::warn!("Failed to detect system theme: {}. Defaulting to light mode.", e);
+            tracing::warn!(
+                "Failed to detect system theme: {}. Defaulting to light mode.",
+                e
+            );
             false
         }
     }
@@ -92,11 +98,17 @@ fn detect_system_dark_mode_impl() -> bool {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let is_dark = stdout.trim().eq_ignore_ascii_case("dark");
-            tracing::debug!("System theme detected: {}", if is_dark { "dark" } else { "light" });
+            tracing::debug!(
+                "System theme detected: {}",
+                if is_dark { "dark" } else { "light" }
+            );
             is_dark
         }
         Err(e) => {
-            tracing::warn!("Failed to detect system theme: {}. Defaulting to light mode.", e);
+            tracing::warn!(
+                "Failed to detect system theme: {}. Defaulting to light mode.",
+                e
+            );
             false
         }
     }
@@ -107,7 +119,10 @@ fn detect_system_dark_mode_impl() -> bool {
     // Check GTK theme or use environment variable
     if let Ok(theme) = std::env::var("GTK_THEME") {
         let is_dark = theme.to_lowercase().contains("dark");
-        tracing::debug!("System theme detected from GTK_THEME: {}", if is_dark { "dark" } else { "light" });
+        tracing::debug!(
+            "System theme detected from GTK_THEME: {}",
+            if is_dark { "dark" } else { "light" }
+        );
         is_dark
     } else {
         tracing::debug!("GTK_THEME not set, defaulting to light mode");
