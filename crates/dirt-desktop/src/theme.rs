@@ -117,17 +117,20 @@ fn detect_system_dark_mode_impl() -> bool {
 #[cfg(target_os = "linux")]
 fn detect_system_dark_mode_impl() -> bool {
     // Check GTK theme or use environment variable
-    if let Ok(theme) = std::env::var("GTK_THEME") {
-        let is_dark = theme.to_lowercase().contains("dark");
-        tracing::debug!(
-            "System theme detected from GTK_THEME: {}",
-            if is_dark { "dark" } else { "light" }
-        );
-        is_dark
-    } else {
-        tracing::debug!("GTK_THEME not set, defaulting to light mode");
-        false
-    }
+    std::env::var("GTK_THEME").map_or_else(
+        |_| {
+            tracing::debug!("GTK_THEME not set, defaulting to light mode");
+            false
+        },
+        |theme| {
+            let is_dark = theme.to_lowercase().contains("dark");
+            tracing::debug!(
+                "System theme detected from GTK_THEME: {}",
+                if is_dark { "dark" } else { "light" }
+            );
+            is_dark
+        },
+    )
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
