@@ -3,7 +3,9 @@
 use dioxus::desktop::{window, LogicalSize, WindowBuilder};
 use dioxus::prelude::*;
 
+use super::button::{Button, ButtonVariant};
 use crate::services::DatabaseService;
+use crate::theme::{is_system_dark_mode, ResolvedTheme};
 
 /// Standalone quick capture window - opens as a floating dialog
 /// This component is designed to work independently without shared context
@@ -11,6 +13,17 @@ use crate::services::DatabaseService;
 pub fn QuickCaptureWindow() -> Element {
     let mut content = use_signal(String::new);
     let mut is_saving = use_signal(|| false);
+
+    // Detect system theme for standalone window
+    let theme = if is_system_dark_mode() {
+        ResolvedTheme::Dark
+    } else {
+        ResolvedTheme::Light
+    };
+    let theme_attr = match theme {
+        ResolvedTheme::Light => "light",
+        ResolvedTheme::Dark => "dark",
+    };
 
     // Initialize database directly (not shared with main window)
     let db = use_signal(|| {
@@ -68,11 +81,18 @@ pub fn QuickCaptureWindow() -> Element {
     };
 
     rsx! {
+        // Load theme CSS
+        document::Link { rel: "stylesheet", href: asset!("/assets/dx-components-theme.css") }
+        document::Link { rel: "stylesheet", href: asset!("/assets/theme-overrides.css") }
+
         div {
+            "data-theme": "{theme_attr}",
+            class: "quick-capture-container",
             style: "
                 width: 100%;
                 height: 100%;
-                background: #ffffff;
+                background: var(--primary-color);
+                color: var(--secondary-color-4);
                 padding: 16px;
                 box-sizing: border-box;
                 font-family: system-ui, -apple-system, sans-serif;
@@ -81,15 +101,16 @@ pub fn QuickCaptureWindow() -> Element {
             ",
 
             h3 {
-                style: "margin: 0 0 12px 0; font-size: 13px; color: #666; font-weight: 500;",
-                "⚡ Quick Capture"
+                style: "margin: 0 0 12px 0; font-size: 13px; color: var(--secondary-color-5); font-weight: 500;",
+                "Quick Capture"
             }
 
             textarea {
+                class: "input",
                 style: "
                     flex: 1;
                     width: 100%;
-                    border: 1px solid #e0e0e0;
+                    border: 1px solid var(--primary-color-6);
                     border-radius: 8px;
                     padding: 12px;
                     font-size: 14px;
@@ -97,6 +118,8 @@ pub fn QuickCaptureWindow() -> Element {
                     outline: none;
                     font-family: inherit;
                     box-sizing: border-box;
+                    background: var(--primary-color-1);
+                    color: var(--secondary-color-4);
                 ",
                 value: "{content}",
                 placeholder: "Capture a thought... (Ctrl+Enter to save, Esc to cancel)",
@@ -108,15 +131,17 @@ pub fn QuickCaptureWindow() -> Element {
             div {
                 style: "display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px;",
 
-                button {
-                    style: "padding: 6px 14px; border: 1px solid #e0e0e0; border-radius: 6px; background: white; cursor: pointer; font-size: 13px;",
+                Button {
+                    variant: ButtonVariant::Secondary,
                     onclick: cancel,
+                    style: "padding: 5px 12px; font-size: 13px;",
                     "Cancel"
                 }
 
-                button {
-                    style: "padding: 6px 14px; border: none; border-radius: 6px; background: #4f46e5; color: white; cursor: pointer; font-size: 13px;",
+                Button {
+                    variant: ButtonVariant::Primary,
                     onclick: save_and_close,
+                    style: "padding: 5px 12px; font-size: 13px;",
                     "Save"
                 }
             }

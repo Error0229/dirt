@@ -9,7 +9,7 @@ use dioxus::prelude::*;
 use crate::components::{open_quick_capture_window, SettingsPanel};
 use crate::services::DatabaseService;
 use crate::state::AppState;
-use crate::theme::resolve_theme;
+use crate::theme::{resolve_theme, ResolvedTheme};
 use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
 use crate::views::Home;
 use crate::{HOTKEY_TRIGGERED, TRAY_ENABLED};
@@ -102,12 +102,22 @@ pub fn App() -> Element {
         settings_open,
     });
 
-    let colors = theme().palette();
+    let current_theme = theme();
+    let colors = current_theme.palette();
     let current_settings = settings();
+    let theme_attr = match current_theme {
+        ResolvedTheme::Light => "light",
+        ResolvedTheme::Dark => "dark",
+    };
 
     rsx! {
+        // Load theme CSS for Dioxus components
+        document::Link { rel: "stylesheet", href: asset!("/assets/dx-components-theme.css") }
+        document::Link { rel: "stylesheet", href: asset!("/assets/theme-overrides.css") }
+
         div {
             class: "app-container",
+            "data-theme": "{theme_attr}",
             style: "
                 min-height: 100vh;
                 font-family: {current_settings.font_family}, system-ui, -apple-system, sans-serif;

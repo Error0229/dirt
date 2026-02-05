@@ -1,9 +1,14 @@
 //! Settings panel component
 
 use dioxus::prelude::*;
+use dioxus_primitives::slider::SliderValue;
 
 use dirt_core::models::{Settings, ThemeMode};
 
+use super::button::{Button, ButtonVariant};
+use super::dialog::{DialogContent, DialogRoot, DialogTitle};
+use super::select::{Select, SelectItemIndicator, SelectList, SelectOption, SelectTrigger, SelectValue};
+use super::slider::{Slider, SliderRange, SliderThumb, SliderTrack};
 use crate::state::AppState;
 use crate::theme::resolve_theme;
 
@@ -29,7 +34,7 @@ pub fn SettingsPanel() -> Element {
     let colors = (state.theme)().palette();
 
     // Save settings to database
-    let mut save_settings = move |new_settings: Settings| {
+    let save_settings = move |new_settings: Settings| {
         // Update theme resolution when theme mode changes
         let resolved = resolve_theme(new_settings.theme);
         theme.set(resolved);
@@ -44,39 +49,8 @@ pub fn SettingsPanel() -> Element {
         settings.set(new_settings);
     };
 
-    let close_settings = move |_| {
+    let close_settings = move |_: MouseEvent| {
         settings_open.set(false);
-    };
-
-    // Handler for theme change
-    let on_theme_change = move |evt: Event<FormData>| {
-        let value = evt.value();
-        let new_theme = match value.as_str() {
-            "light" => ThemeMode::Light,
-            "dark" => ThemeMode::Dark,
-            _ => ThemeMode::System,
-        };
-        let mut new_settings = settings();
-        new_settings.theme = new_theme;
-        save_settings(new_settings);
-    };
-
-    // Handler for font family change
-    let on_font_change = move |evt: Event<FormData>| {
-        let value = evt.value();
-        let mut new_settings = settings();
-        new_settings.font_family = value;
-        save_settings(new_settings);
-    };
-
-    // Handler for font size change
-    let on_size_change = move |evt: Event<FormData>| {
-        let value = evt.value();
-        if let Ok(size) = value.parse::<u32>() {
-            let mut new_settings = settings();
-            new_settings.font_size = size.clamp(10, 24);
-            save_settings(new_settings);
-        }
     };
 
     let current_settings = settings();
@@ -87,54 +61,30 @@ pub fn SettingsPanel() -> Element {
     };
 
     rsx! {
-        div {
-            class: "settings-overlay",
-            style: "
-                position: fixed;
-                inset: 0;
-                background: rgba(0, 0, 0, 0.5);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                z-index: 1000;
-            ",
-            onclick: close_settings,
+        DialogRoot {
+            open: true,
+            on_open_change: move |open: bool| {
+                if !open {
+                    settings_open.set(false);
+                }
+            },
 
-            div {
-                class: "settings-panel",
-                style: "
-                    background: {colors.bg_primary};
-                    color: {colors.text_primary};
-                    border-radius: 12px;
-                    padding: 24px;
-                    width: 400px;
-                    max-width: 90vw;
-                    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-                ",
-                onclick: move |evt| evt.stop_propagation(),
+            DialogContent {
+                style: "width: 400px; max-width: 90vw; text-align: left;",
 
-                // Header
+                // Header with close button
                 div {
                     style: "
                         display: flex;
                         justify-content: space-between;
                         align-items: center;
-                        margin-bottom: 24px;
+                        margin-bottom: 8px;
                     ",
-                    h2 {
-                        style: "margin: 0; font-size: 18px; font-weight: 600;",
-                        "Settings"
-                    }
-                    button {
-                        style: "
-                            background: none;
-                            border: none;
-                            color: {colors.text_secondary};
-                            cursor: pointer;
-                            font-size: 20px;
-                            padding: 4px 8px;
-                        ",
+                    DialogTitle { "Settings" }
+                    Button {
+                        variant: ButtonVariant::Ghost,
                         onclick: close_settings,
+                        style: "padding: 4px 8px; font-size: 18px;",
                         "×"
                     }
                 }
@@ -143,22 +93,53 @@ pub fn SettingsPanel() -> Element {
                 SettingRow {
                     label: "Theme",
                     description: "Choose your preferred color scheme",
-                    select {
-                        style: "
-                            background: {colors.bg_secondary};
-                            color: {colors.text_primary};
-                            border: 1px solid {colors.border};
-                            border-radius: 6px;
-                            padding: 8px 12px;
-                            font-size: 14px;
-                            cursor: pointer;
-                            width: 150px;
-                        ",
-                        value: "{current_theme_value}",
-                        onchange: on_theme_change,
-                        option { value: "system", "System" }
-                        option { value: "light", "Light" }
-                        option { value: "dark", "Dark" }
+
+                    Select::<String> {
+                        default_value: current_theme_value.to_string(),
+                        on_value_change: {
+                            let mut save = save_settings;
+                            move |value: Option<String>| {
+                                if let Some(value) = value {
+                                    let new_theme = match value.as_str() {
+                                        "light" => ThemeMode::Light,
+                                        "dark" => ThemeMode::Dark,
+                                        _ => ThemeMode::System,
+                                    };
+                                    let mut new_settings = settings();
+                                    new_settings.theme = new_theme;
+                                    save(new_settings);
+                                }
+                            }
+                        },
+
+                        SelectTrigger {
+                            style: "width: 150px;",
+                            SelectValue {}
+                        }
+
+                        SelectList {
+                            SelectOption::<String> {
+                                index: 0usize,
+                                value: "system".to_string(),
+                                text_value: "System",
+                                "System"
+                                SelectItemIndicator {}
+                            }
+                            SelectOption::<String> {
+                                index: 1usize,
+                                value: "light".to_string(),
+                                text_value: "Light",
+                                "Light"
+                                SelectItemIndicator {}
+                            }
+                            SelectOption::<String> {
+                                index: 2usize,
+                                value: "dark".to_string(),
+                                text_value: "Dark",
+                                "Dark"
+                                SelectItemIndicator {}
+                            }
+                        }
                     }
                 }
 
@@ -166,24 +147,35 @@ pub fn SettingsPanel() -> Element {
                 SettingRow {
                     label: "Font Family",
                     description: "Font used for note content",
-                    select {
-                        style: "
-                            background: {colors.bg_secondary};
-                            color: {colors.text_primary};
-                            border: 1px solid {colors.border};
-                            border-radius: 6px;
-                            padding: 8px 12px;
-                            font-size: 14px;
-                            cursor: pointer;
-                            width: 150px;
-                        ",
-                        value: "{current_settings.font_family}",
-                        onchange: on_font_change,
-                        for (value, label) in FONT_FAMILIES {
-                            option {
-                                value: "{value}",
-                                selected: current_settings.font_family == *value,
-                                "{label}"
+
+                    Select::<String> {
+                        default_value: current_settings.font_family.clone(),
+                        on_value_change: {
+                            let mut save = save_settings;
+                            move |value: Option<String>| {
+                                if let Some(value) = value {
+                                    let mut new_settings = settings();
+                                    new_settings.font_family = value;
+                                    save(new_settings);
+                                }
+                            }
+                        },
+
+                        SelectTrigger {
+                            style: "width: 170px;",
+                            SelectValue {}
+                        }
+
+                        SelectList {
+                            for (i, (value, label)) in FONT_FAMILIES.iter().enumerate() {
+                                SelectOption::<String> {
+                                    key: "{value}",
+                                    index: i,
+                                    value: (*value).to_string(),
+                                    text_value: *label,
+                                    "{label}"
+                                    SelectItemIndicator {}
+                                }
                             }
                         }
                     }
@@ -193,22 +185,35 @@ pub fn SettingsPanel() -> Element {
                 SettingRow {
                     label: "Font Size",
                     description: "Size of text in notes (10-24px)",
+
                     div {
-                        style: "display: flex; align-items: center; gap: 12px;",
-                        input {
-                            r#type: "range",
-                            min: "10",
-                            max: "24",
-                            value: "{current_settings.font_size}",
-                            style: "width: 100px; cursor: pointer;",
-                            oninput: on_size_change,
+                        style: "display: flex; align-items: center; gap: 8px;",
+                        Slider {
+                            min: 10.0,
+                            max: 24.0,
+                            step: 1.0,
+                            default_value: SliderValue::Single(f64::from(current_settings.font_size)),
+                            on_value_change: {
+                                let mut save = save_settings;
+                                move |slider_value: SliderValue| {
+                                    let SliderValue::Single(size) = slider_value;
+                                    let mut new_settings = settings();
+                                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                                    {
+                                        new_settings.font_size = (size as u32).clamp(10, 24);
+                                    }
+                                    save(new_settings);
+                                }
+                            },
+                            style: "width: 100px;",
+
+                            SliderTrack {
+                                SliderRange {}
+                            }
+                            SliderThumb {}
                         }
                         span {
-                            style: "
-                                font-size: 14px;
-                                color: {colors.text_secondary};
-                                min-width: 40px;
-                            ",
+                            class: "slider-value",
                             "{current_settings.font_size}px"
                         }
                     }
@@ -218,15 +223,12 @@ pub fn SettingsPanel() -> Element {
                 SettingRow {
                     label: "Capture Hotkey",
                     description: "Global shortcut for quick capture",
+
                     div {
+                        class: "hotkey-display",
                         style: "
                             background: {colors.bg_tertiary};
                             border: 1px solid {colors.border};
-                            border-radius: 6px;
-                            padding: 8px 12px;
-                            font-size: 13px;
-                            font-family: monospace;
-                            color: {colors.text_secondary};
                         ",
                         "Ctrl + Alt + N"
                     }
@@ -239,31 +241,23 @@ pub fn SettingsPanel() -> Element {
 /// Individual setting row
 #[component]
 fn SettingRow(label: &'static str, description: &'static str, children: Element) -> Element {
-    let state = use_context::<AppState>();
-    let colors = (state.theme)().palette();
-
     rsx! {
         div {
-            style: "
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                padding: 16px 0;
-                border-bottom: 1px solid {colors.border_light};
-            ",
+            class: "settings-row",
+
             div {
-                style: "flex: 1;",
+                class: "settings-row-info",
                 div {
-                    style: "font-size: 14px; font-weight: 500; margin-bottom: 4px;",
+                    class: "settings-row-label",
                     "{label}"
                 }
                 div {
-                    style: "font-size: 12px; color: {colors.text_muted};",
+                    class: "settings-row-description",
                     "{description}"
                 }
             }
             div {
-                style: "flex-shrink: 0;",
+                class: "settings-row-control",
                 {children}
             }
         }

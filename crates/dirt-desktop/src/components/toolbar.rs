@@ -2,6 +2,7 @@
 
 use dioxus::prelude::*;
 
+use super::button::{Button, ButtonVariant};
 use crate::state::AppState;
 
 /// Toolbar with action buttons
@@ -9,7 +10,6 @@ use crate::state::AppState;
 pub fn Toolbar() -> Element {
     let mut state = use_context::<AppState>();
     let has_selected_note = state.current_note().is_some();
-    let colors = (state.theme)().palette();
 
     let create_note = move |_| {
         if let Some(ref db) = *state.db_service.read() {
@@ -57,50 +57,16 @@ pub fn Toolbar() -> Element {
     rsx! {
         div {
             class: "toolbar",
-            style: "
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                padding: 8px 16px;
-                border-bottom: 1px solid {colors.border};
-                background: {colors.bg_secondary};
-            ",
 
-            button {
-                class: "btn btn-primary",
-                style: "
-                    display: flex;
-                    align-items: center;
-                    gap: 4px;
-                    padding: 6px 12px;
-                    background: {colors.accent};
-                    color: {colors.accent_text};
-                    border: none;
-                    border-radius: 6px;
-                    cursor: pointer;
-                    font-size: 13px;
-                    font-weight: 500;
-                ",
+            Button {
+                variant: ButtonVariant::Primary,
                 onclick: create_note,
                 "+ New Note"
             }
 
             if has_selected_note {
-                button {
-                    class: "btn btn-danger",
-                    style: "
-                        display: flex;
-                        align-items: center;
-                        gap: 4px;
-                        padding: 6px 12px;
-                        background: {colors.error};
-                        color: white;
-                        border: none;
-                        border-radius: 6px;
-                        cursor: pointer;
-                        font-size: 13px;
-                        font-weight: 500;
-                    ",
+                Button {
+                    variant: ButtonVariant::Destructive,
                     onclick: delete_note,
                     "Delete"
                 }
@@ -110,20 +76,8 @@ pub fn Toolbar() -> Element {
             div { style: "flex: 1;" }
 
             // Settings button
-            button {
-                class: "btn btn-secondary",
-                style: "
-                    display: flex;
-                    align-items: center;
-                    gap: 4px;
-                    padding: 6px 12px;
-                    background: {colors.bg_tertiary};
-                    color: {colors.text_secondary};
-                    border: 1px solid {colors.border};
-                    border-radius: 6px;
-                    cursor: pointer;
-                    font-size: 13px;
-                ",
+            Button {
+                variant: ButtonVariant::Secondary,
                 onclick: open_settings,
                 "Settings"
             }
