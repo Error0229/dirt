@@ -12,41 +12,51 @@ pub fn Toolbar() -> Element {
     let has_selected_note = state.current_note().is_some();
 
     let create_note = move |_| {
-        if let Some(ref db) = *state.db_service.read() {
-            match db.create_note("") {
-                Ok(note) => {
-                    tracing::info!("Created new note: {}", note.id);
-                    // Add to notes list
-                    let mut notes = state.notes.write();
-                    notes.insert(0, note.clone());
-                    // Select the new note
-                    state.current_note_id.set(Some(note.id));
-                }
-                Err(e) => {
-                    tracing::error!("Failed to create note: {}", e);
+        let db = state.db_service.read().clone();
+        let mut notes = state.notes;
+        let mut current_note_id = state.current_note_id;
+
+        spawn(async move {
+            if let Some(db) = db {
+                match db.create_note("").await {
+                    Ok(note) => {
+                        tracing::info!("Created new note: {}", note.id);
+                        // Add to notes list and select the new note
+                        let note_id = note.id;
+                        notes.write().insert(0, note);
+                        current_note_id.set(Some(note_id));
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to create note: {}", e);
+                    }
                 }
             }
-        }
+        });
     };
 
     let delete_note = move |_| {
         let note_id = *state.current_note_id.read();
         if let Some(id) = note_id {
-            if let Some(ref db) = *state.db_service.read() {
-                match db.delete_note(&id) {
-                    Ok(()) => {
-                        tracing::info!("Deleted note: {}", id);
-                        // Remove from notes list
-                        let mut notes = state.notes.write();
-                        notes.retain(|n| n.id != id);
-                        // Clear selection
-                        state.current_note_id.set(None);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to delete note: {}", e);
+            let db = state.db_service.read().clone();
+            let mut notes = state.notes;
+            let mut current_note_id = state.current_note_id;
+
+            spawn(async move {
+                if let Some(db) = db {
+                    match db.delete_note(&id).await {
+                        Ok(()) => {
+                            tracing::info!("Deleted note: {}", id);
+                            // Remove from notes list
+                            notes.write().retain(|n| n.id != id);
+                            // Clear selection
+                            current_note_id.set(None);
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to delete note: {}", e);
+                        }
                     }
                 }
-            }
+            });
         }
     };
 

@@ -58,8 +58,9 @@ pub fn NoteEditor() -> Element {
             }
 
             if let Some(id) = note_id {
-                if let Some(ref db) = *state.db_service.read() {
-                    match db.update_note(&id, &content_to_save) {
+                let db = state.db_service.read().clone();
+                if let Some(db) = db {
+                    match db.update_note(&id, &content_to_save).await {
                         Ok(updated_note) => {
                             tracing::debug!("Auto-saved note: {}", id);
                             // Update the note in the global state

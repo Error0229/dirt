@@ -20,10 +20,10 @@ chrono = { version = "0.4", features = ["serde"] }
 regex = "1.0"
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled", "serde_json"] }
+libsql = "0.9"
 
 # Async
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "rt", "sync", "time"] }
 
 # Logging
 tracing = "0.1"

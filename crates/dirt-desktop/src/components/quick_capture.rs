@@ -13,6 +13,8 @@ use crate::theme::{is_system_dark_mode, ResolvedTheme};
 pub fn QuickCaptureWindow() -> Element {
     let mut content = use_signal(String::new);
     let mut is_saving = use_signal(|| false);
+    let mut db_service: Signal<Option<DatabaseService>> = use_signal(|| None);
+    let mut db_initialized = use_signal(|| false);
 
     // Detect system theme for standalone window
     let theme = if is_system_dark_mode() {
@@ -25,30 +27,47 @@ pub fn QuickCaptureWindow() -> Element {
         ResolvedTheme::Dark => "dark",
     };
 
-    // Initialize database directly (not shared with main window)
-    let db = use_signal(|| {
-        DatabaseService::new()
-            .map_err(|e| tracing::error!("Quick capture: Failed to init database: {}", e))
-            .ok()
+    // Initialize database asynchronously
+    use_future(move || async move {
+        if db_initialized() {
+            return;
+        }
+
+        match DatabaseService::new().await {
+            Ok(db) => {
+                db_service.set(Some(db));
+                db_initialized.set(true);
+                tracing::debug!("Quick capture database initialized");
+            }
+            Err(e) => {
+                tracing::error!("Quick capture: Failed to init database: {}", e);
+                db_initialized.set(true);
+            }
+        }
     });
 
     let save_and_close = move |_| {
         let text = content.read().trim().to_string();
         if !text.is_empty() && !*is_saving.read() {
             is_saving.set(true);
-            if let Some(ref db) = *db.read() {
-                match db.create_note(&text) {
-                    Ok(note) => {
-                        tracing::info!("Quick captured note: {}", note.id);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to create note: {}", e);
+            let db = db_service.read().clone();
+            spawn(async move {
+                if let Some(db) = db {
+                    match db.create_note(&text).await {
+                        Ok(note) => {
+                            tracing::info!("Quick captured note: {}", note.id);
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to create note: {}", e);
+                        }
                     }
                 }
-            }
+                // Close this window
+                window().close();
+            });
+        } else if text.is_empty() {
+            window().close();
         }
-        // Close this window
-        window().close();
     };
 
     let cancel = move |_| {
@@ -65,18 +84,23 @@ pub fn QuickCaptureWindow() -> Element {
             let text = content.read().trim().to_string();
             if !text.is_empty() && !*is_saving.read() {
                 is_saving.set(true);
-                if let Some(ref db) = *db.read() {
-                    match db.create_note(&text) {
-                        Ok(note) => {
-                            tracing::info!("Quick captured note: {}", note.id);
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to create note: {}", e);
+                let db = db_service.read().clone();
+                spawn(async move {
+                    if let Some(db) = db {
+                        match db.create_note(&text).await {
+                            Ok(note) => {
+                                tracing::info!("Quick captured note: {}", note.id);
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to create note: {}", e);
+                            }
                         }
                     }
-                }
+                    window().close();
+                });
+            } else if text.is_empty() {
+                window().close();
             }
-            window().close();
         }
     };
 

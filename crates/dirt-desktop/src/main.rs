@@ -27,6 +27,9 @@ pub static HOTKEY_TRIGGERED: AtomicBool = AtomicBool::new(false);
 pub static TRAY_ENABLED: AtomicBool = AtomicBool::new(false);
 
 fn main() {
+    // Load environment variables from .env file
+    dotenvy::dotenv().ok();
+
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(

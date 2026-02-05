@@ -17,31 +17,47 @@ use crate::{HOTKEY_TRIGGERED, TRAY_ENABLED};
 /// Root application component
 #[component]
 pub fn App() -> Element {
-    // Initialize database service
-    let db_service = use_signal(|| {
-        DatabaseService::new()
-            .map_err(|e| tracing::error!("Failed to initialize database: {}", e))
-            .ok()
-    });
-
-    // Load settings from database
-    let initial_settings = db_service
-        .read()
-        .as_ref()
-        .and_then(|db| db.load_settings().ok())
-        .unwrap_or_default();
-
-    // Initialize resolved theme based on settings
-    let initial_theme = resolve_theme(initial_settings.theme);
-
-    // Initialize global state
+    // State signals
     let mut notes = use_signal(Vec::new);
     let current_note_id = use_signal(|| None);
     let search_query = use_signal(String::new);
     let active_tag_filter = use_signal(|| None::<String>);
-    let settings = use_signal(|| initial_settings);
-    let theme = use_signal(|| initial_theme);
+    let mut settings = use_signal(dirt_core::models::Settings::default);
+    let mut theme = use_signal(|| resolve_theme(dirt_core::models::ThemeMode::System));
     let settings_open = use_signal(|| false);
+    let mut db_service: Signal<Option<DatabaseService>> = use_signal(|| None);
+    let mut db_initialized = use_signal(|| false);
+
+    // Initialize database asynchronously (only once)
+    use_effect(move || {
+        if db_initialized() {
+            return;
+        }
+        db_initialized.set(true); // Mark immediately to prevent double init
+
+        spawn(async move {
+            match DatabaseService::new().await {
+                Ok(db) => {
+                    // Load initial settings
+                    let loaded_settings = db.load_settings().await.unwrap_or_default();
+                    let resolved_theme = resolve_theme(loaded_settings.theme);
+
+                    // Load initial notes
+                    let loaded_notes = db.list_notes(100, 0).await.unwrap_or_default();
+                    tracing::info!("Loaded {} notes from database", loaded_notes.len());
+
+                    // Update state
+                    settings.set(loaded_settings);
+                    theme.set(resolved_theme);
+                    notes.set(loaded_notes);
+                    db_service.set(Some(db));
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize database: {}", e);
+                }
+            }
+        });
+    });
 
     // Poll for hotkey and tray events
     use_future(move || async move {
@@ -73,21 +89,6 @@ pub fn App() -> Element {
 
             // Poll at ~60fps
             tokio::time::sleep(Duration::from_millis(16)).await;
-        }
-    });
-
-    // Load notes from database on startup
-    use_effect(move || {
-        if let Some(ref db) = *db_service.read() {
-            match db.list_notes(100, 0) {
-                Ok(loaded_notes) => {
-                    tracing::info!("Loaded {} notes from database", loaded_notes.len());
-                    notes.set(loaded_notes);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to load notes: {}", e);
-                }
-            }
         }
     });
 
