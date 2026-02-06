@@ -1,12 +1,15 @@
 //! Main application component
 
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
-use dioxus::desktop::window;
+use dioxus::desktop::{window, LogicalPosition, LogicalSize};
 use dioxus::prelude::*;
+use dirt_core::models::Note;
 
-use crate::components::{open_quick_capture_window, SettingsPanel};
+use crate::components::{QuickCapture, SettingsPanel};
+use crate::queries::use_notes_query;
 use crate::services::DatabaseService;
 use crate::state::AppState;
 use crate::theme::{resolve_theme, ResolvedTheme};
@@ -25,7 +28,9 @@ pub fn App() -> Element {
     let mut settings = use_signal(dirt_core::models::Settings::default);
     let mut theme = use_signal(|| resolve_theme(dirt_core::models::ThemeMode::System));
     let settings_open = use_signal(|| false);
-    let mut db_service: Signal<Option<DatabaseService>> = use_signal(|| None);
+    let mut quick_capture_open = use_signal(|| false);
+    let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
+    let mut db_service: Signal<Option<Arc<DatabaseService>>> = use_signal(|| None);
     let mut db_initialized = use_signal(|| false);
 
     // Initialize database asynchronously (only once)
@@ -33,23 +38,20 @@ pub fn App() -> Element {
         if db_initialized() {
             return;
         }
-        db_initialized.set(true); // Mark immediately to prevent double init
+        db_initialized.set(true);
 
         spawn(async move {
             match DatabaseService::new().await {
                 Ok(db) => {
+                    let db = Arc::new(db);
+
                     // Load initial settings
                     let loaded_settings = db.load_settings().await.unwrap_or_default();
                     let resolved_theme = resolve_theme(loaded_settings.theme);
 
-                    // Load initial notes
-                    let loaded_notes = db.list_notes(100, 0).await.unwrap_or_default();
-                    tracing::info!("Loaded {} notes from database", loaded_notes.len());
-
                     // Update state
                     settings.set(loaded_settings);
                     theme.set(resolved_theme);
-                    notes.set(loaded_notes);
                     db_service.set(Some(db));
                 }
                 Err(e) => {
@@ -59,9 +61,15 @@ pub fn App() -> Element {
         });
     });
 
-    // Poll for hotkey and tray events
+    // Use dioxus-query for reactive notes fetching (called unconditionally - rules of hooks)
+    let notes_query = use_notes_query(db_service.read().clone());
+
+    // Poll for hotkey, tray events, and sync query results to notes signal
     use_future(move || async move {
         let tray_enabled = TRAY_ENABLED.load(Ordering::SeqCst);
+        // Track last query result to detect when the *query* produces new data,
+        // without clobbering optimistic updates in the notes signal.
+        let mut last_query_result: Option<Vec<Note>> = None;
         loop {
             // Process tray menu events
             if tray_enabled {
@@ -83,8 +91,62 @@ pub fn App() -> Element {
 
             // Check if hotkey was triggered
             if HOTKEY_TRIGGERED.swap(false, Ordering::SeqCst) {
-                tracing::info!("Opening quick capture window");
-                open_quick_capture_window();
+                tracing::info!("Opening quick capture");
+                let win = window();
+                let tao_win = &win.window;
+
+                // Save current geometry in logical pixels for restoration
+                let scale = tao_win
+                    .current_monitor()
+                    .map_or(1.0, |m| m.scale_factor());
+                let phys_size = tao_win.inner_size();
+                let phys_pos = tao_win.outer_position().unwrap_or_default();
+                saved_window_geometry.set(Some((
+                    f64::from(phys_size.width) / scale,
+                    f64::from(phys_size.height) / scale,
+                    f64::from(phys_pos.x) / scale,
+                    f64::from(phys_pos.y) / scale,
+                )));
+
+                // Resize to compact quick capture size
+                let capture_w = 420.0;
+                let capture_h = 200.0;
+                tao_win.set_inner_size(LogicalSize::new(capture_w, capture_h));
+
+                // Center on current monitor
+                if let Some(monitor) = tao_win.current_monitor() {
+                    let mon_size = monitor.size();
+                    let mon_pos = monitor.position();
+                    let mon_scale = monitor.scale_factor();
+                    let cx = f64::from(mon_pos.x) / mon_scale
+                        + (f64::from(mon_size.width) / mon_scale - capture_w) / 2.0;
+                    let cy = f64::from(mon_pos.y) / mon_scale
+                        + (f64::from(mon_size.height) / mon_scale - capture_h) / 2.0;
+                    tao_win.set_outer_position(LogicalPosition::new(cx, cy));
+                }
+
+                win.set_visible(true);
+                win.set_focus();
+                quick_capture_open.set(true);
+            }
+
+            // Sync query result to notes signal only when the query itself changes.
+            // Comparing against last_query_result (not notes signal) avoids clobbering
+            // optimistic updates that temporarily diverge from the query.
+            {
+                let query_reader = notes_query.read();
+                let fetched = query_reader.state().ok().cloned();
+                drop(query_reader);
+                if let Some(fetched_notes) = fetched {
+                    let changed = last_query_result
+                        .as_ref()
+                        .map_or(true, |prev| *prev != fetched_notes);
+                    if changed {
+                        tracing::debug!("Notes query returned {} notes", fetched_notes.len());
+                        last_query_result = Some(fetched_notes.clone());
+                        notes.set(fetched_notes);
+                    }
+                }
             }
 
             // Poll at ~60fps
@@ -101,6 +163,8 @@ pub fn App() -> Element {
         theme,
         db_service,
         settings_open,
+        quick_capture_open,
+        saved_window_geometry,
     });
 
     let current_theme = theme();
@@ -126,11 +190,14 @@ pub fn App() -> Element {
                 background: {colors.bg_primary};
                 color: {colors.text_primary};
             ",
-            Home {}
+            if quick_capture_open() {
+                QuickCapture {}
+            } else {
+                Home {}
 
-            // Settings panel overlay
-            if settings_open() {
-                SettingsPanel {}
+                if settings_open() {
+                    SettingsPanel {}
+                }
             }
         }
     }

@@ -10,7 +10,7 @@ use super::migrations;
 /// Configuration for database sync
 #[derive(Debug, Clone, Default)]
 pub struct SyncConfig {
-    /// Remote database URL (e.g., libsql://your-db.turso.io)
+    /// Remote database URL (e.g., `libsql://your-db.turso.io`)
     pub url: Option<String>,
     /// Authentication token for remote database
     pub auth_token: Option<String>,
@@ -29,19 +29,21 @@ impl SyncConfig {
     }
 
     /// Set the automatic sync interval
-    pub fn with_sync_interval(mut self, interval: Duration) -> Self {
+    #[must_use]
+    pub const fn with_sync_interval(mut self, interval: Duration) -> Self {
         self.sync_interval = Some(interval);
         self
     }
 
     /// Disable automatic sync (manual sync only)
-    pub fn without_auto_sync(mut self) -> Self {
+    #[must_use]
+    pub const fn without_auto_sync(mut self) -> Self {
         self.sync_interval = None;
         self
     }
 
     /// Check if sync is configured
-    pub fn is_configured(&self) -> bool {
+    pub const fn is_configured(&self) -> bool {
         self.url.is_some() && self.auth_token.is_some()
     }
 }
@@ -62,7 +64,7 @@ impl Database {
         let db = Builder::new_local(&path_str).build().await?;
         let conn = db.connect()?;
 
-        let mut database = Self {
+        let database = Self {
             db,
             conn,
             sync_config: None,
@@ -77,7 +79,7 @@ impl Database {
         let db = Builder::new_local(":memory:").build().await?;
         let conn = db.connect()?;
 
-        let mut database = Self {
+        let database = Self {
             db,
             conn,
             sync_config: None,
@@ -89,7 +91,7 @@ impl Database {
 
     /// Open a database with embedded replica (syncs with remote Turso database)
     ///
-    /// This creates a local SQLite file that syncs with a remote Turso database.
+    /// This creates a local `SQLite` file that syncs with a remote Turso database.
     /// Reads are served from the local file (fast), writes go to remote and sync back.
     pub async fn open_with_sync(
         local_path: impl AsRef<Path>,
@@ -117,7 +119,7 @@ impl Database {
         let db = builder.build().await?;
         let conn = db.connect()?;
 
-        let mut database = Self {
+        let database = Self {
             db,
             conn,
             sync_config: Some(sync_config),
@@ -134,7 +136,7 @@ impl Database {
         Ok(database)
     }
 
-    /// Configure SQLite for optimal performance
+    /// Configure `SQLite` for optimal performance
     async fn configure(&self) -> Result<()> {
         // Enable WAL mode for better concurrency (local databases only)
         // Note: Some pragmas may not work with remote replicas
@@ -155,7 +157,7 @@ impl Database {
     }
 
     /// Run database migrations
-    async fn migrate(&mut self) -> Result<()> {
+    async fn migrate(&self) -> Result<()> {
         migrations::run(&self.conn).await
     }
 
@@ -171,12 +173,12 @@ impl Database {
     }
 
     /// Check if sync is configured
-    pub fn is_sync_enabled(&self) -> bool {
+    pub const fn is_sync_enabled(&self) -> bool {
         self.sync_config.is_some()
     }
 
     /// Get a reference to the underlying connection
-    pub fn connection(&self) -> &Connection {
+    pub const fn connection(&self) -> &Connection {
         &self.conn
     }
 }
@@ -210,7 +212,7 @@ mod tests {
     /// Integration test for Turso sync - only runs if env vars are set
     /// Run with: TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... cargo test test_sync_with_turso -- --ignored
     #[tokio::test(flavor = "multi_thread")]
-    #[ignore] // Requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN
+    #[ignore = "Requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN"]
     async fn test_sync_with_turso() {
         let url = env::var("TURSO_DATABASE_URL").expect("TURSO_DATABASE_URL must be set");
         let token = env::var("TURSO_AUTH_TOKEN").expect("TURSO_AUTH_TOKEN must be set");

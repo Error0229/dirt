@@ -25,7 +25,7 @@ pub struct DatabaseService {
 impl DatabaseService {
     /// Create a new database service, auto-detecting sync config from environment
     ///
-    /// If TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are set, sync is enabled automatically.
+    /// If `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set, sync is enabled automatically.
     /// Otherwise, falls back to local-only mode.
     pub async fn new() -> Result<Self> {
         let db_path = Self::default_db_path();
@@ -144,6 +144,13 @@ impl DatabaseService {
         let db = self.db.lock().await;
         let repo = LibSqlNoteRepository::new(db.connection());
         repo.create(content).await
+    }
+
+    /// Create a note with a pre-generated ID (for optimistic UI updates)
+    pub async fn create_note_with_id(&self, note: &Note) -> Result<Note> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.create_with_note(note).await
     }
 
     /// Update a note

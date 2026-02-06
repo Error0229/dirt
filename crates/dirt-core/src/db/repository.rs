@@ -12,6 +12,9 @@ pub trait NoteRepository {
     /// Create a new note
     async fn create(&self, content: &str) -> Result<Note>;
 
+    /// Create a note with a pre-generated ID (for optimistic UI updates)
+    async fn create_with_note(&self, note: &Note) -> Result<Note>;
+
     /// Get a note by ID
     async fn get(&self, id: &NoteId) -> Result<Option<Note>>;
 
@@ -117,7 +120,10 @@ impl<'a> LibSqlNoteRepository<'a> {
 impl NoteRepository for LibSqlNoteRepository<'_> {
     async fn create(&self, content: &str) -> Result<Note> {
         let note = Note::new(content);
+        self.create_with_note(&note).await
+    }
 
+    async fn create_with_note(&self, note: &Note) -> Result<Note> {
         self.conn
             .execute(
                 "INSERT INTO notes (id, content, created_at, updated_at, is_deleted) VALUES (?, ?, ?, ?, ?)",
@@ -131,9 +137,9 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
             )
             .await?;
 
-        self.sync_tags(&note.id, content).await?;
+        self.sync_tags(&note.id, &note.content).await?;
 
-        Ok(note)
+        Ok(note.clone())
     }
 
     async fn get(&self, id: &NoteId) -> Result<Option<Note>> {
@@ -281,6 +287,7 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
         while let Some(row) = rows.next().await? {
             let name: String = row.get(0)?;
             let count: i64 = row.get(1)?;
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             tags.push((name, count as usize));
         }
 

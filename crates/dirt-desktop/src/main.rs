@@ -7,6 +7,7 @@
 mod app;
 mod components;
 mod hotkey;
+mod queries;
 mod services;
 mod state;
 mod theme;
@@ -26,6 +27,7 @@ pub static HOTKEY_TRIGGERED: AtomicBool = AtomicBool::new(false);
 /// Atomic flag indicating tray is enabled
 pub static TRAY_ENABLED: AtomicBool = AtomicBool::new(false);
 
+#[allow(clippy::cognitive_complexity)]
 fn main() {
     // Load environment variables from .env file
     dotenvy::dotenv().ok();

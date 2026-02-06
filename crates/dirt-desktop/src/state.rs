@@ -2,6 +2,8 @@
 //!
 //! Global state accessible via Dioxus context providers.
 
+use std::sync::Arc;
+
 use dioxus::prelude::*;
 
 use dirt_core::models::{Note, NoteId, Settings};
@@ -24,10 +26,14 @@ pub struct AppState {
     pub settings: Signal<Settings>,
     /// Resolved theme (light/dark based on settings and system preference)
     pub theme: Signal<ResolvedTheme>,
-    /// Database service
-    pub db_service: Signal<Option<DatabaseService>>,
+    /// Database service (wrapped in Arc for sharing)
+    pub db_service: Signal<Option<Arc<DatabaseService>>>,
     /// Whether settings panel is open
     pub settings_open: Signal<bool>,
+    /// Whether quick capture overlay is active
+    pub quick_capture_open: Signal<bool>,
+    /// Saved window geometry before quick capture resized it (width, height, x, y) in logical pixels
+    pub saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>>,
 }
 
 impl AppState {
