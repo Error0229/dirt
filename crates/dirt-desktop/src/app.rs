@@ -96,9 +96,7 @@ pub fn App() -> Element {
                 let tao_win = &win.window;
 
                 // Save current geometry in logical pixels for restoration
-                let scale = tao_win
-                    .current_monitor()
-                    .map_or(1.0, |m| m.scale_factor());
+                let scale = tao_win.current_monitor().map_or(1.0, |m| m.scale_factor());
                 let phys_size = tao_win.inner_size();
                 let phys_pos = tao_win.outer_position().unwrap_or_default();
                 saved_window_geometry.set(Some((
@@ -177,7 +175,10 @@ pub fn App() -> Element {
 
     rsx! {
         // Load theme CSS for Dioxus components
-        document::Link { rel: "stylesheet", href: asset!("/assets/dx-components-theme.css") }
+        document::Link {
+            rel: "stylesheet",
+            href: asset!("/assets/dx-components-theme.css"),
+        }
         document::Link { rel: "stylesheet", href: asset!("/assets/theme-overrides.css") }
 
         div {
