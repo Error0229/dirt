@@ -11,16 +11,17 @@ use super::button::{Button, ButtonVariant};
 use crate::queries::invalidate_notes_query;
 use crate::state::AppState;
 
-/// Restore the original window geometry and hide to tray
-fn restore_and_hide(state: &mut AppState) {
+/// Hide window first, then restore original geometry while invisible
+fn hide_and_restore(state: &mut AppState) {
     let win = window();
+    // Hide immediately so the user never sees the resize
+    win.set_visible(false);
     if let Some((w, h, x, y)) = (state.saved_window_geometry)() {
         let tao_win = &win.window;
         tao_win.set_inner_size(LogicalSize::new(w, h));
         tao_win.set_outer_position(LogicalPosition::new(x, y));
     }
     state.saved_window_geometry.set(None);
-    win.set_visible(false);
 }
 
 /// Quick capture — fills the entire (resized) window
@@ -35,7 +36,7 @@ pub fn QuickCapture() -> Element {
     let mut close = move || {
         content.set(String::new());
         state.quick_capture_open.set(false);
-        restore_and_hide(&mut state);
+        hide_and_restore(&mut state);
     };
 
     let save_and_close = move |_| {
@@ -64,7 +65,7 @@ pub fn QuickCapture() -> Element {
             is_saving.set(false);
             content.set(String::new());
             state.quick_capture_open.set(false);
-            restore_and_hide(&mut state);
+            hide_and_restore(&mut state);
         });
     };
 
@@ -103,7 +104,7 @@ pub fn QuickCapture() -> Element {
                 is_saving.set(false);
                 content.set(String::new());
                 state.quick_capture_open.set(false);
-                restore_and_hide(&mut state);
+                hide_and_restore(&mut state);
             });
         }
     };
@@ -146,6 +147,9 @@ pub fn QuickCapture() -> Element {
                 value: "{content}",
                 placeholder: "Capture a thought... (Ctrl+Enter to save, Esc to cancel)",
                 autofocus: true,
+                onmounted: move |evt: MountedEvent| async move {
+                    _ = evt.set_focus(true).await;
+                },
                 oninput: move |evt| content.set(evt.value()),
                 onkeydown: handle_keydown,
             }
