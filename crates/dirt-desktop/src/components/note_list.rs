@@ -1,5 +1,7 @@
 //! Note list component
 
+use std::time::Duration;
+
 use dioxus::prelude::*;
 
 use super::NoteCard;
@@ -9,6 +11,18 @@ use crate::state::AppState;
 #[component]
 pub fn NoteList() -> Element {
     let mut state = use_context::<AppState>();
+    let mut timestamp_tick = use_signal(|| 0_u64);
+
+    use_future(move || async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            timestamp_tick.set(timestamp_tick().wrapping_add(1));
+        }
+    });
+
+    // Force periodic rerender so relative timestamps stay fresh.
+    _ = timestamp_tick();
+
     let filtered_notes = state.filtered_notes();
     let current_id = (state.current_note_id)();
     let colors = (state.theme)().palette();
