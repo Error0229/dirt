@@ -16,14 +16,14 @@ regex.workspace = true
 libsql.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+aws-credential-types = "1"
+aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
+aws-types = "1"
 
 [dev-dependencies]
 pretty_assertions.workspace = true
 tempfile = "3"
 dotenvy = "0.15"
-aws-credential-types = "1"
-aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
-aws-types = "1"
 
 [lints]
 workspace = true

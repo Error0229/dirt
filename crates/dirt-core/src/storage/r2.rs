@@ -2,6 +2,9 @@
 
 use std::env;
 
+use aws_credential_types::Credentials;
+use aws_sdk_s3::{primitives::ByteStream, Client};
+use aws_types::region::Region;
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -68,6 +71,100 @@ impl R2Storage {
     #[must_use]
     pub const fn config(&self) -> &R2Config {
         &self.config
+    }
+
+    /// Check that the configured bucket is reachable with current credentials.
+    pub async fn bucket_is_reachable(&self) -> Result<()> {
+        let client = self.s3_client();
+        client
+            .head_bucket()
+            .bucket(&self.config.bucket)
+            .send()
+            .await
+            .map_err(|error| storage_error("head_bucket", &self.config.bucket, None, error))?;
+        Ok(())
+    }
+
+    /// Upload object bytes to the configured bucket.
+    pub async fn upload_bytes(
+        &self,
+        object_key: &str,
+        bytes: &[u8],
+        content_type: Option<&str>,
+    ) -> Result<()> {
+        let object_key = normalize_object_key(object_key)?;
+        let client = self.s3_client();
+
+        let mut request = client
+            .put_object()
+            .bucket(&self.config.bucket)
+            .key(&object_key)
+            .body(ByteStream::from(bytes.to_vec()));
+
+        if let Some(content_type) = normalize_content_type(content_type) {
+            request = request.content_type(content_type);
+        }
+
+        request.send().await.map_err(|error| {
+            storage_error("put_object", &self.config.bucket, Some(&object_key), error)
+        })?;
+
+        Ok(())
+    }
+
+    /// Delete an object from the configured bucket.
+    pub async fn delete_object(&self, object_key: &str) -> Result<()> {
+        let object_key = normalize_object_key(object_key)?;
+        let client = self.s3_client();
+
+        client
+            .delete_object()
+            .bucket(&self.config.bucket)
+            .key(&object_key)
+            .send()
+            .await
+            .map_err(|error| {
+                storage_error(
+                    "delete_object",
+                    &self.config.bucket,
+                    Some(&object_key),
+                    error,
+                )
+            })?;
+
+        Ok(())
+    }
+
+    /// Check whether an object exists in the configured bucket.
+    pub async fn object_exists(&self, object_key: &str) -> Result<bool> {
+        let object_key = normalize_object_key(object_key)?;
+        let client = self.s3_client();
+
+        let response = client
+            .list_objects_v2()
+            .bucket(&self.config.bucket)
+            .prefix(&object_key)
+            .max_keys(1)
+            .send()
+            .await
+            .map_err(|error| {
+                storage_error(
+                    "list_objects_v2",
+                    &self.config.bucket,
+                    Some(&object_key),
+                    error,
+                )
+            })?;
+
+        Ok(response
+            .contents()
+            .iter()
+            .filter_map(|object| object.key())
+            .any(|candidate| candidate == object_key))
+    }
+
+    fn s3_client(&self) -> Client {
+        build_s3_client(&self.config)
     }
 }
 
@@ -149,6 +246,52 @@ fn parse_config(lookup: impl Fn(&str) -> Option<String>) -> Result<Option<R2Conf
     }))
 }
 
+fn build_s3_client(config: &R2Config) -> Client {
+    let credentials = Credentials::new(
+        config.access_key_id.clone(),
+        config.secret_access_key.clone(),
+        None,
+        None,
+        "dirt-core-r2-storage",
+    );
+
+    let sdk_config = aws_sdk_s3::config::Builder::new()
+        .region(Region::new("auto"))
+        .credentials_provider(credentials)
+        .endpoint_url(config.endpoint_url())
+        .force_path_style(true)
+        .build();
+
+    Client::from_conf(sdk_config)
+}
+
+fn storage_error(
+    operation: &str,
+    bucket: &str,
+    object_key: Option<&str>,
+    error: impl std::fmt::Display,
+) -> Error {
+    let target = object_key.map_or_else(|| bucket.to_string(), |key| format!("{bucket}/{key}"));
+    Error::Storage(format!("R2 {operation} failed for {target}: {error}"))
+}
+
+fn normalize_object_key(object_key: &str) -> Result<String> {
+    let object_key = object_key.trim().trim_matches('/').to_string();
+    if object_key.is_empty() {
+        return Err(Error::InvalidInput(
+            "Attachment object_key cannot be empty".to_string(),
+        ));
+    }
+    Ok(object_key)
+}
+
+fn normalize_content_type(content_type: Option<&str>) -> Option<String> {
+    content_type
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn normalize_public_base_url(public_base_url: Option<String>) -> Result<Option<String>> {
     let Some(value) = public_base_url else {
         return Ok(None);
@@ -211,10 +354,7 @@ fn sanitize_token(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-
-    use aws_credential_types::Credentials;
-    use aws_sdk_s3::Client;
-    use aws_types::region::Region;
+    use std::time::Duration;
 
     use super::*;
 
@@ -314,6 +454,25 @@ mod tests {
     }
 
     #[test]
+    fn normalize_object_key_rejects_empty() {
+        let err = normalize_object_key("   ").unwrap_err();
+        match err {
+            Error::InvalidInput(message) => assert!(message.contains("object_key")),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalize_content_type_ignores_empty_values() {
+        assert_eq!(normalize_content_type(None), None);
+        assert_eq!(normalize_content_type(Some("   ")), None);
+        assert_eq!(
+            normalize_content_type(Some(" image/png ")),
+            Some("image/png".to_string())
+        );
+    }
+
+    #[test]
     #[ignore = "Requires local R2 env vars in process environment or .env"]
     fn from_env_loads_real_r2_config() {
         let _ = dotenvy::dotenv();
@@ -338,25 +497,6 @@ mod tests {
         }
     }
 
-    fn test_s3_client(config: &R2Config) -> Client {
-        let credentials = Credentials::new(
-            config.access_key_id.clone(),
-            config.secret_access_key.clone(),
-            None,
-            None,
-            "dirt-core-r2-test",
-        );
-
-        let sdk_config = aws_sdk_s3::config::Builder::new()
-            .region(Region::new("auto"))
-            .credentials_provider(credentials)
-            .endpoint_url(config.endpoint_url())
-            .force_path_style(true)
-            .build();
-
-        Client::from_conf(sdk_config)
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "Requires local R2 env vars plus network access"]
     async fn r2_bucket_exists_and_is_reachable() {
@@ -365,19 +505,73 @@ mod tests {
         let config = R2Config::from_env()
             .expect("R2 env parsing should not error")
             .expect("R2 config should be present");
+        let storage = R2Storage::new(config.clone());
 
-        let client = test_s3_client(&config);
+        storage.bucket_is_reachable().await.unwrap_or_else(|error| {
+            panic!(
+                "R2 bucket health check failed for bucket '{}': {error}",
+                config.bucket
+            )
+        });
+    }
 
-        client
-            .head_bucket()
-            .bucket(&config.bucket)
-            .send()
+    async fn wait_for_object_state(storage: &R2Storage, object_key: &str, expected: bool) -> bool {
+        for _attempt in 0..10 {
+            let exists = storage
+                .object_exists(object_key)
+                .await
+                .unwrap_or_else(|error| panic!("object existence check failed: {error}"));
+            if exists == expected {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+
+        false
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "Requires local R2 env vars plus network access"]
+    async fn r2_object_roundtrip_upload_exists_delete() {
+        let _ = dotenvy::dotenv();
+
+        let config = R2Config::from_env()
+            .expect("R2 env parsing should not error")
+            .expect("R2 config should be present");
+        let storage = R2Storage::new(config.clone());
+
+        let object_key = storage
+            .build_media_key("integration-note", "roundtrip.txt")
+            .expect("media key generation should succeed");
+        let bytes = b"r2-roundtrip-test";
+
+        storage
+            .upload_bytes(&object_key, bytes, Some("text/plain"))
+            .await
+            .unwrap_or_else(|error| panic!("R2 upload failed: {error}"));
+
+        assert!(
+            wait_for_object_state(&storage, &object_key, true).await,
+            "Uploaded object was not observed in bucket '{}': {}",
+            config.bucket,
+            object_key
+        );
+
+        storage
+            .delete_object(&object_key)
             .await
             .unwrap_or_else(|error| {
                 panic!(
-                    "R2 bucket health check failed for bucket '{}': {error}",
-                    config.bucket
+                    "R2 delete failed for bucket '{}' key '{}': {error}",
+                    config.bucket, object_key
                 )
             });
+
+        assert!(
+            wait_for_object_state(&storage, &object_key, false).await,
+            "Deleted object still appears in bucket '{}': {}",
+            config.bucket,
+            object_key
+        );
     }
 }
