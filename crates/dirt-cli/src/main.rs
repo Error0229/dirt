@@ -774,6 +774,7 @@ async fn open_database(path: &Path) -> Result<Database, CliError> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository};
@@ -1098,10 +1099,13 @@ mod tests {
     }
 
     fn unique_test_db_path() -> PathBuf {
+        static NEXT_TEST_DB_ID: AtomicU64 = AtomicU64::new(0);
+
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
-        std::env::temp_dir().join(format!("dirt-cli-list-test-{timestamp}.db"))
+        let sequence = NEXT_TEST_DB_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("dirt-cli-list-test-{timestamp}-{sequence}.db"))
     }
 
     fn cleanup_db_files(path: &PathBuf) {
