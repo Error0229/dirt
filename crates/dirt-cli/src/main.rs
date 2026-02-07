@@ -4,13 +4,15 @@
 
 use std::env;
 use std::fmt::Write as _;
-use std::io::{self, IsTerminal, Read};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::aot::Generator;
+use clap_complete::{generate, shells};
 use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository, SyncConfig};
 use dirt_core::{Note, NoteId};
 use serde::Serialize;
@@ -83,6 +85,15 @@ enum Commands {
         #[arg(short, long, value_name = "PATH")]
         output: Option<PathBuf>,
     },
+    /// Generate shell completion scripts
+    Completions {
+        /// Target shell
+        #[arg(value_enum)]
+        shell: CompletionShell,
+        /// Optional output path (stdout when omitted)
+        #[arg(short, long, value_name = "PATH")]
+        output: Option<PathBuf>,
+    },
     /// Sync local replica with remote Turso database
     Sync,
     /// Open TUI interface
@@ -127,6 +138,13 @@ enum ExportFormat {
     Markdown,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -160,6 +178,9 @@ async fn run() -> Result<(), CliError> {
         Some(Commands::Delete { id }) => run_delete(&id, &db_path).await?,
         Some(Commands::Export { format, output }) => {
             run_export(format, output.as_deref(), &db_path).await?;
+        }
+        Some(Commands::Completions { shell, output }) => {
+            run_completions(shell, output.as_deref())?;
         }
         Some(Commands::Sync) => run_sync(&db_path).await?,
         Some(Commands::Tui) => {
@@ -298,6 +319,34 @@ async fn run_sync(db_path: &Path) -> Result<(), CliError> {
     db.sync().await?;
     println!("Sync completed");
     Ok(())
+}
+
+fn run_completions(shell: CompletionShell, output_path: Option<&Path>) -> Result<(), CliError> {
+    let mut command = Cli::command();
+    let mut buffer = Vec::new();
+
+    match shell {
+        CompletionShell::Bash => generate_for_shell(shells::Bash, &mut command, &mut buffer),
+        CompletionShell::Zsh => generate_for_shell(shells::Zsh, &mut command, &mut buffer),
+        CompletionShell::Fish => generate_for_shell(shells::Fish, &mut command, &mut buffer),
+    }
+
+    if let Some(path) = output_path {
+        std::fs::write(path, &buffer)?;
+        println!("{}", path.display());
+    } else {
+        io::stdout().write_all(&buffer)?;
+    }
+
+    Ok(())
+}
+
+fn generate_for_shell<G: Generator>(
+    generator: G,
+    command: &mut clap::Command,
+    buffer: &mut Vec<u8>,
+) {
+    generate(generator, command, "dirt", buffer);
 }
 
 async fn run_export(
@@ -734,8 +783,8 @@ mod tests {
     use super::{
         default_editor, format_relative_time, list_notes, normalize_content,
         normalize_note_identifier, normalize_search_query, note_preview, note_to_export_item,
-        render_markdown_export, resolve_note_for_edit, run_delete, run_export, run_sync,
-        search_notes, CliError, ExportFormat,
+        render_markdown_export, resolve_note_for_edit, run_completions, run_delete, run_export,
+        run_sync, search_notes, CliError, CompletionShell, ExportFormat,
     };
 
     #[test]
@@ -1027,6 +1076,25 @@ mod tests {
 
         let _ = std::fs::remove_file(output_path);
         cleanup_db_files(&db_path);
+    }
+
+    #[test]
+    fn run_completions_writes_bash_script_file() {
+        let output_path = std::env::temp_dir().join(format!(
+            "dirt-completions-test-{}.bash",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_nanos())
+        ));
+
+        run_completions(CompletionShell::Bash, Some(&output_path)).unwrap();
+
+        let script = std::fs::read_to_string(&output_path).unwrap();
+        assert!(script.contains("_dirt()"));
+        assert!(script.contains("complete -F _dirt"));
+        assert!(script.contains(" default dirt"));
+
+        let _ = std::fs::remove_file(output_path);
     }
 
     fn unique_test_db_path() -> PathBuf {
