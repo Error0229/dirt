@@ -68,6 +68,11 @@ enum Commands {
         /// Note ID or unique ID prefix
         id: String,
     },
+    /// Delete an existing note
+    Delete {
+        /// Note ID or unique ID prefix
+        id: String,
+    },
     /// Open TUI interface
     Tui,
 }
@@ -130,6 +135,7 @@ async fn run() -> Result<(), CliError> {
             run_search(&query, limit, json, &db_path).await?;
         }
         Some(Commands::Edit { id }) => run_edit(&id, &db_path).await?,
+        Some(Commands::Delete { id }) => run_delete(&id, &db_path).await?,
         Some(Commands::Tui) => {
             println!("Opening TUI...");
             // TODO: Implement TUI with ratatui
@@ -234,6 +240,17 @@ async fn run_edit(id: &str, db_path: &Path) -> Result<(), CliError> {
     let repo = LibSqlNoteRepository::new(db.connection());
     let updated = repo.update(&note.id, &edited_content).await?;
     println!("{}", updated.id);
+    Ok(())
+}
+
+async fn run_delete(id: &str, db_path: &Path) -> Result<(), CliError> {
+    let normalized_id = normalize_note_identifier(id)?;
+    let db = open_database(db_path).await?;
+    let note = resolve_note_for_edit(&normalized_id, &db).await?;
+
+    let repo = LibSqlNoteRepository::new(db.connection());
+    repo.delete(&note.id).await?;
+    println!("{}", note.id);
     Ok(())
 }
 
@@ -583,7 +600,7 @@ mod tests {
     use super::{
         default_editor, format_relative_time, list_notes, normalize_content,
         normalize_note_identifier, normalize_search_query, note_preview, resolve_note_for_edit,
-        search_notes, CliError,
+        run_delete, search_notes, CliError,
     };
 
     #[test]
@@ -751,6 +768,64 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, CliError::AmbiguousNoteId(_)));
+
+        cleanup_db_files(&db_path);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn resolve_note_for_edit_rejects_missing_note() {
+        let db_path = unique_test_db_path();
+        let db = Database::open(&db_path).await.unwrap();
+
+        let error = resolve_note_for_edit("does-not-exist", &db)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CliError::NoteNotFound(_)));
+
+        cleanup_db_files(&db_path);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn run_delete_soft_deletes_note_by_exact_and_prefix_id() {
+        let db_path = unique_test_db_path();
+        let db = Database::open(&db_path).await.unwrap();
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let note_a = Note {
+            id: "bbbbbbbb-bbbb-7bbb-8bbb-111111111111".parse().unwrap(),
+            content: "Keep me".to_string(),
+            created_at: 1000,
+            updated_at: 1000,
+            is_deleted: false,
+        };
+        let note_b = Note {
+            id: "bbbbbbbb-bbbb-7bbb-8bbb-222222222222".parse().unwrap(),
+            content: "Delete me".to_string(),
+            created_at: 1001,
+            updated_at: 1001,
+            is_deleted: false,
+        };
+        repo.create_with_note(&note_a).await.unwrap();
+        repo.create_with_note(&note_b).await.unwrap();
+        drop(db);
+
+        run_delete("bbbbbbbb-bbbb-7bbb-8bbb-2", &db_path)
+            .await
+            .unwrap();
+
+        let db = Database::open(&db_path).await.unwrap();
+        let repo = LibSqlNoteRepository::new(db.connection());
+        assert!(repo.get(&note_b.id).await.unwrap().is_none());
+        assert!(repo.get(&note_a.id).await.unwrap().is_some());
+        drop(db);
+
+        run_delete("bbbbbbbb-bbbb-7bbb-8bbb-111111111111", &db_path)
+            .await
+            .unwrap();
+
+        let db = Database::open(&db_path).await.unwrap();
+        let repo = LibSqlNoteRepository::new(db.connection());
+        assert!(repo.get(&note_a.id).await.unwrap().is_none());
 
         cleanup_db_files(&db_path);
     }
