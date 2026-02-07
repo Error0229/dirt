@@ -54,6 +54,9 @@ pub fn NoteEditor() -> Element {
 
         let note_id = *last_note_id.read();
         let content_to_save = content.read().clone();
+        if let Some(id) = note_id {
+            state.enqueue_pending_change(id);
+        }
 
         spawn(async move {
             // Wait for idle period
@@ -85,7 +88,7 @@ pub fn NoteEditor() -> Element {
     });
 
     // Helper to perform immediate save
-    let perform_save_now = move || {
+    let mut perform_save_now = move || {
         let current_version = save_version();
         if current_version == 0 || current_version == last_saved_version() {
             return; // Nothing to save
@@ -93,6 +96,9 @@ pub fn NoteEditor() -> Element {
 
         let note_id = *last_note_id.read();
         let content_to_save = content.read().clone();
+        if let Some(id) = note_id {
+            state.enqueue_pending_change(id);
+        }
 
         spawn(async move {
             if let Some(id) = note_id {

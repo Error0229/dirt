@@ -15,9 +15,12 @@ pub fn Toolbar() -> Element {
     let has_selected_note = state.current_note().is_some();
     let sync_status = (state.sync_status)();
     let last_sync_at = (state.last_sync_at)();
+    let pending_sync_count = (state.pending_sync_count)();
+    let pending_sync_note_ids = (state.pending_sync_note_ids)();
 
     let sync_status_text = format_sync_status_text(sync_status, last_sync_at);
     let sync_status_class = sync_status_class(sync_status);
+    let pending_title = format_pending_title(&pending_sync_note_ids);
 
     let create_note = move |_| {
         create_note_optimistic(&mut state);
@@ -29,6 +32,7 @@ pub fn Toolbar() -> Element {
             // Update UI immediately (optimistic)
             state.notes.write().retain(|n| n.id != id);
             state.current_note_id.set(None);
+            state.enqueue_pending_change(id);
 
             tracing::info!("Deleted note (optimistic): {}", id);
 
@@ -79,6 +83,14 @@ pub fn Toolbar() -> Element {
                 span { class: "sync-label", "{sync_status_text}" }
             }
 
+            if pending_sync_count > 0 {
+                div {
+                    class: "queue-indicator",
+                    title: "{pending_title}",
+                    "{pending_sync_count} pending"
+                }
+            }
+
             // Settings button
             Button {
                 variant: ButtonVariant::Secondary,
@@ -125,5 +137,24 @@ fn format_relative_time(timestamp_ms: i64) -> String {
         format!("{}h ago", diff / hour)
     } else {
         format!("{}d ago", diff / day)
+    }
+}
+
+fn format_pending_title(note_ids: &[dirt_core::NoteId]) -> String {
+    if note_ids.is_empty() {
+        return "No pending changes".to_string();
+    }
+
+    let preview = note_ids
+        .iter()
+        .take(5)
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    if note_ids.len() > 5 {
+        format!("Pending note IDs: {preview}, +{}", note_ids.len() - 5)
+    } else {
+        format!("Pending note IDs: {preview}")
     }
 }
