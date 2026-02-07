@@ -6,7 +6,7 @@ use dioxus_primitives::separator::Separator;
 use dirt_core::{Note, NoteId};
 
 use crate::data::MobileNoteStore;
-use crate::launch::QuickCaptureLaunch;
+use crate::launch::{LaunchIntent, QuickCaptureLaunch};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MobileView {
@@ -27,7 +27,7 @@ pub fn App() -> Element {
     let mut loading = use_signal(|| true);
     let mut saving = use_signal(|| false);
     let mut deleting = use_signal(|| false);
-    let launch = use_signal(crate::launch::detect_quick_capture_launch_from_runtime);
+    let launch: Signal<LaunchIntent> = use_signal(crate::launch::detect_launch_intent_from_runtime);
 
     use_future(move || async move {
         let launch = launch();
@@ -51,8 +51,20 @@ pub fn App() -> Element {
             }
         }
 
-        if launch.enabled {
-            apply_quick_capture_launch(launch, &mut quick_capture_content, &mut status_message);
+        if let Some(shared_text) = launch.share_text {
+            apply_share_intent(
+                shared_text,
+                &mut selected_note_id,
+                &mut draft_content,
+                &mut status_message,
+            );
+            view.set(MobileView::Editor);
+        } else if launch.quick_capture.enabled {
+            apply_quick_capture_launch(
+                launch.quick_capture,
+                &mut quick_capture_content,
+                &mut status_message,
+            );
             view.set(MobileView::QuickCapture);
         }
 
@@ -240,7 +252,7 @@ pub fn App() -> Element {
                 }
                 p {
                     style: "margin: 0; color: #6b7280; font-size: 12px;",
-                    "F4.3 quick capture flow"
+                    "F4.4 share intent flow"
                 }
             }
 
@@ -535,6 +547,17 @@ fn apply_quick_capture_launch(
         quick_capture_content.set(String::new());
     }
     status_message.set(Some("Quick capture mode ready".to_string()));
+}
+
+fn apply_share_intent(
+    shared_text: String,
+    selected_note_id: &mut Signal<Option<NoteId>>,
+    draft_content: &mut Signal<String>,
+    status_message: &mut Signal<Option<String>>,
+) {
+    selected_note_id.set(None);
+    draft_content.set(shared_text);
+    status_message.set(Some("Shared text ready to save".to_string()));
 }
 
 fn note_title(note: &Note) -> String {
