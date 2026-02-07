@@ -12,7 +12,7 @@ use super::select::{
     Select, SelectItemIndicator, SelectList, SelectOption, SelectTrigger, SelectValue,
 };
 use super::slider::{Slider, SliderRange, SliderThumb, SliderTrack};
-use crate::services::SignUpOutcome;
+use crate::services::{AuthConfigStatus, SignUpOutcome};
 use crate::state::AppState;
 use crate::theme::resolve_theme;
 
@@ -113,8 +113,9 @@ pub fn SettingsPanel() -> Element {
                 }
                 Err(error) => {
                     tracing::error!("Sign-in failed: {}", error);
-                    auth_error_signal.set(Some(error.to_string()));
-                    auth_message_signal.set(Some(error.to_string()));
+                    let message = format_auth_error_message(&error.to_string());
+                    auth_error_signal.set(Some(message.clone()));
+                    auth_message_signal.set(Some(message));
                 }
             }
             auth_busy_signal.set(false);
@@ -158,8 +159,9 @@ pub fn SettingsPanel() -> Element {
                 }
                 Err(error) => {
                     tracing::error!("Sign-up failed: {}", error);
-                    auth_error_signal.set(Some(error.to_string()));
-                    auth_message_signal.set(Some(error.to_string()));
+                    let message = format_auth_error_message(&error.to_string());
+                    auth_error_signal.set(Some(message.clone()));
+                    auth_message_signal.set(Some(message));
                 }
             }
             auth_busy_signal.set(false);
@@ -195,8 +197,41 @@ pub fn SettingsPanel() -> Element {
                 }
                 Err(error) => {
                     tracing::error!("Sign-out failed: {}", error);
-                    auth_error_signal.set(Some(error.to_string()));
-                    auth_message_signal.set(Some(error.to_string()));
+                    let message = format_auth_error_message(&error.to_string());
+                    auth_error_signal.set(Some(message.clone()));
+                    auth_message_signal.set(Some(message));
+                }
+            }
+            auth_busy_signal.set(false);
+        });
+    };
+
+    let verify_config = move |_: MouseEvent| {
+        let Some(service) = state.auth_service.read().clone() else {
+            auth_message.set(Some(
+                "Supabase auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY."
+                    .to_string(),
+            ));
+            return;
+        };
+
+        auth_busy.set(true);
+        auth_message.set(None);
+
+        let mut auth_error_signal = state.auth_error;
+        let mut auth_message_signal = auth_message;
+        let mut auth_busy_signal = auth_busy;
+        spawn(async move {
+            match service.verify_configuration().await {
+                Ok(status) => {
+                    auth_error_signal.set(None);
+                    auth_message_signal.set(Some(format_auth_config_status(status)));
+                }
+                Err(error) => {
+                    tracing::error!("Auth config verify failed: {}", error);
+                    let message = format_auth_error_message(&error.to_string());
+                    auth_error_signal.set(Some(message.clone()));
+                    auth_message_signal.set(Some(message));
                 }
             }
             auth_busy_signal.set(false);
@@ -439,6 +474,15 @@ pub fn SettingsPanel() -> Element {
                             }
                         }
 
+                        if auth_service.is_some() {
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                disabled: auth_busy(),
+                                onclick: verify_config,
+                                "Verify Config"
+                            }
+                        }
+
                         if auth_busy() {
                             div {
                                 class: "auth-message",
@@ -489,5 +533,75 @@ fn SettingRow(label: &'static str, description: &'static str, children: Element)
                 {children}
             }
         }
+    }
+}
+
+fn format_auth_error_message(raw: &str) -> String {
+    let normalized = raw.to_lowercase();
+    if normalized.contains("over_email_send_rate_limit")
+        || normalized.contains("email rate limit exceeded")
+        || normalized.contains("(429)")
+    {
+        return "Sign-up email rate limit reached. For dev, enable mailer autoconfirm in Supabase Auth. For production, configure custom SMTP.".to_string();
+    }
+    if normalized.contains("email address") && normalized.contains("invalid")
+        || normalized.contains("invalid email")
+    {
+        return "Email address was rejected by Supabase. Use a valid address format and avoid disposable/test-only domains.".to_string();
+    }
+    if normalized.contains("http request failed")
+        || normalized.contains("connection")
+        || normalized.contains("timed out")
+    {
+        return "Network error while contacting Supabase Auth. Check SUPABASE_URL and your internet connection.".to_string();
+    }
+
+    raw.to_string()
+}
+
+fn format_auth_config_status(status: AuthConfigStatus) -> String {
+    if !status.email_enabled {
+        return "Auth config check: email provider is disabled in Supabase Auth.".to_string();
+    }
+    if !status.signup_enabled {
+        return "Auth config check: sign-up is disabled in Supabase Auth.".to_string();
+    }
+    if !status.mailer_autoconfirm && !status.smtp_configured {
+        return status.rate_limit_email_sent.map_or_else(
+            || "Auth config check: signup works, but email confirmation requires SMTP. Configure custom SMTP or enable autoconfirm for dev.".to_string(),
+            |limit| {
+                format!(
+                    "Auth config check: signup works, but email confirmation requires SMTP. Current email send rate limit is {limit}/hour."
+                )
+            },
+        );
+    }
+
+    "Auth config check passed.".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_error_message_maps_rate_limit() {
+        let message = format_auth_error_message("Auth API error: email rate limit exceeded (429)");
+        assert!(message.contains("rate limit"));
+        assert!(message.contains("SMTP"));
+    }
+
+    #[test]
+    fn auth_config_message_highlights_missing_smtp() {
+        let status = AuthConfigStatus {
+            email_enabled: true,
+            signup_enabled: true,
+            mailer_autoconfirm: false,
+            smtp_configured: false,
+            rate_limit_email_sent: Some(2),
+        };
+        let message = format_auth_config_status(status);
+        assert!(message.contains("SMTP"));
+        assert!(message.contains("2/hour"));
     }
 }

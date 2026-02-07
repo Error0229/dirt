@@ -67,6 +67,22 @@ pub enum SignUpOutcome {
     ConfirmationRequired,
 }
 
+/// Auth configuration status returned from Supabase settings endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct AuthConfigStatus {
+    /// Whether email auth provider is enabled.
+    pub email_enabled: bool,
+    /// Whether sign-ups are allowed.
+    pub signup_enabled: bool,
+    /// Whether sign-ups are auto-confirmed without email delivery.
+    pub mailer_autoconfirm: bool,
+    /// Whether custom SMTP credentials are configured.
+    pub smtp_configured: bool,
+    /// Current Supabase email send rate limit (requests/hour).
+    pub rate_limit_email_sent: Option<i64>,
+}
+
 /// Errors from authentication and secure storage flows.
 #[derive(Debug, Error)]
 pub enum AuthError {
@@ -301,6 +317,26 @@ impl SupabaseAuthService {
 
         Ok(())
     }
+
+    /// Verify Supabase auth configuration and return a summary for UI diagnostics.
+    pub async fn verify_configuration(&self) -> AuthResult<AuthConfigStatus> {
+        let request = self.public_request(self.client.get(format!("{}/settings", self.auth_url)));
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AuthError::Api(parse_api_error(status, &body)));
+        }
+
+        let payload = response.json::<SupabaseAuthSettings>().await?;
+        Ok(AuthConfigStatus {
+            email_enabled: payload.external.email,
+            signup_enabled: !payload.disable_signup,
+            mailer_autoconfirm: payload.mailer_autoconfirm,
+            smtp_configured: payload.smtp_host.is_some(),
+            rate_limit_email_sent: payload.rate_limit_email_sent,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -382,6 +418,20 @@ struct SupabaseErrorResponse {
     error_description: Option<String>,
     message: Option<String>,
     msg: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SupabaseAuthSettings {
+    external: SupabaseExternalSettings,
+    disable_signup: bool,
+    mailer_autoconfirm: bool,
+    smtp_host: Option<String>,
+    rate_limit_email_sent: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SupabaseExternalSettings {
+    email: bool,
 }
 
 fn parse_api_error(status: StatusCode, body: &str) -> String {
