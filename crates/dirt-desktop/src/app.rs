@@ -34,6 +34,8 @@ pub fn App() -> Element {
     let mut db_initialized = use_signal(|| false);
     let mut sync_status = use_signal(|| SyncStatus::Offline);
     let mut last_sync_at = use_signal(|| None::<i64>);
+    let mut pending_sync_count = use_signal(|| 0usize);
+    let mut pending_sync_note_ids = use_signal(Vec::new);
 
     // Initialize database asynchronously (only once)
     use_effect(move || {
@@ -61,6 +63,8 @@ pub fn App() -> Element {
                             Ok(()) => {
                                 sync_status.set(SyncStatus::Synced);
                                 last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
+                                pending_sync_count.set(0);
+                                pending_sync_note_ids.write().clear();
                             }
                             Err(error) => {
                                 tracing::error!("Initial sync failed: {}", error);
@@ -101,6 +105,8 @@ pub fn App() -> Element {
                 Ok(()) => {
                     sync_status.set(SyncStatus::Synced);
                     last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
+                    pending_sync_count.set(0);
+                    pending_sync_note_ids.write().clear();
                 }
                 Err(error) => {
                     tracing::error!("Periodic sync failed: {}", error);
@@ -225,6 +231,8 @@ pub fn App() -> Element {
         db_service,
         sync_status,
         last_sync_at,
+        pending_sync_count,
+        pending_sync_note_ids,
         settings_open,
         quick_capture_open,
     });

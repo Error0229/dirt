@@ -15,6 +15,7 @@ pub fn create_note_optimistic(state: &mut AppState) {
     // Update UI immediately (optimistic)
     state.notes.write().insert(0, optimistic_note.clone());
     state.current_note_id.set(Some(note_id));
+    state.enqueue_pending_change(note_id);
 
     tracing::info!("Created new note (optimistic): {}", note_id);
 

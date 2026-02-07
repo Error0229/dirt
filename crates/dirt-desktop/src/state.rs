@@ -41,6 +41,10 @@ pub struct AppState {
     pub sync_status: Signal<SyncStatus>,
     /// Timestamp (unix ms) of the most recent successful sync
     pub last_sync_at: Signal<Option<i64>>,
+    /// Count of local changes pending cloud sync
+    pub pending_sync_count: Signal<usize>,
+    /// Unique note IDs currently represented in pending changes
+    pub pending_sync_note_ids: Signal<Vec<NoteId>>,
     /// Whether settings panel is open
     pub settings_open: Signal<bool>,
     /// Whether quick capture overlay is active
@@ -78,5 +82,14 @@ impl AppState {
                     .map_or(true, |tag| note.tags().iter().any(|t| t == tag))
             })
             .collect()
+    }
+
+    /// Track a pending change for a note until the next successful sync.
+    pub fn enqueue_pending_change(&mut self, note_id: NoteId) {
+        let mut pending_notes = self.pending_sync_note_ids.write();
+        if !pending_notes.contains(&note_id) {
+            pending_notes.push(note_id);
+            self.pending_sync_count.set(pending_notes.len());
+        }
     }
 }
