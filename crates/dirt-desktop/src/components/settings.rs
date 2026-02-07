@@ -79,6 +79,45 @@ pub fn SettingsPanel() -> Element {
     let mut auth_password = use_signal(String::new);
     let mut auth_message = use_signal(|| None::<String>);
     let mut auth_busy = use_signal(|| false);
+    let mut auth_verifying = use_signal(|| false);
+    let auth_config_status = use_signal(|| None::<AuthConfigStatus>);
+    let mut auth_config_checked = use_signal(|| false);
+    let auth_service_for_preflight = auth_service.clone();
+
+    use_effect(move || {
+        if auth_config_checked() || auth_service_for_preflight.is_none() {
+            return;
+        }
+
+        auth_config_checked.set(true);
+        auth_verifying.set(true);
+
+        let mut auth_error_signal = state.auth_error;
+        let mut auth_verifying_signal = auth_verifying;
+        let mut auth_config_status_signal = auth_config_status;
+        let service = auth_service_for_preflight.clone();
+
+        spawn(async move {
+            let Some(service) = service else {
+                auth_verifying_signal.set(false);
+                return;
+            };
+
+            match service.verify_configuration().await {
+                Ok(status) => {
+                    auth_error_signal.set(None);
+                    auth_config_status_signal.set(Some(status));
+                }
+                Err(error) => {
+                    tracing::error!("Auth preflight verify failed: {}", error);
+                    auth_error_signal.set(Some(format_auth_error_message(&error.to_string())));
+                    auth_config_status_signal.set(None);
+                }
+            }
+
+            auth_verifying_signal.set(false);
+        });
+    });
 
     let sign_in = move |_: MouseEvent| {
         let Some(service) = state.auth_service.read().clone() else {
@@ -130,6 +169,19 @@ pub fn SettingsPanel() -> Element {
             ));
             return;
         };
+
+        if auth_verifying() {
+            auth_message.set(Some(
+                "Auth configuration check is still running.".to_string(),
+            ));
+            return;
+        }
+
+        if let Some(reason) = sign_up_block_reason(auth_config_status()) {
+            auth_message.set(Some(reason));
+            return;
+        }
+
         let email = auth_email().trim().to_string();
         let password = auth_password();
         if email.is_empty() || password.trim().is_empty() {
@@ -215,16 +267,18 @@ pub fn SettingsPanel() -> Element {
             return;
         };
 
-        auth_busy.set(true);
+        auth_verifying.set(true);
         auth_message.set(None);
 
         let mut auth_error_signal = state.auth_error;
         let mut auth_message_signal = auth_message;
-        let mut auth_busy_signal = auth_busy;
+        let mut auth_verifying_signal = auth_verifying;
+        let mut auth_config_status_signal = auth_config_status;
         spawn(async move {
             match service.verify_configuration().await {
                 Ok(status) => {
                     auth_error_signal.set(None);
+                    auth_config_status_signal.set(Some(status));
                     auth_message_signal.set(Some(format_auth_config_status(status)));
                 }
                 Err(error) => {
@@ -232,11 +286,16 @@ pub fn SettingsPanel() -> Element {
                     let message = format_auth_error_message(&error.to_string());
                     auth_error_signal.set(Some(message.clone()));
                     auth_message_signal.set(Some(message));
+                    auth_config_status_signal.set(None);
                 }
             }
-            auth_busy_signal.set(false);
+            auth_verifying_signal.set(false);
         });
     };
+
+    let auth_working = auth_busy() || auth_verifying();
+    let sign_up_blocked_reason = sign_up_block_reason(auth_config_status());
+    let sign_up_blocked = sign_up_blocked_reason.is_some();
 
     rsx! {
         DialogRoot {
@@ -427,7 +486,7 @@ pub fn SettingsPanel() -> Element {
                             }
                             Button {
                                 variant: ButtonVariant::Secondary,
-                                disabled: auth_busy(),
+                                disabled: auth_working,
                                 onclick: sign_out,
                                 "Sign Out"
                             }
@@ -437,7 +496,7 @@ pub fn SettingsPanel() -> Element {
                                 r#type: "email",
                                 placeholder: "Email",
                                 value: "{auth_email}",
-                                disabled: auth_busy(),
+                                disabled: auth_working,
                                 oninput: move |event: FormEvent| {
                                     auth_email.set(event.value());
                                 },
@@ -447,7 +506,7 @@ pub fn SettingsPanel() -> Element {
                                 r#type: "password",
                                 placeholder: "Password",
                                 value: "{auth_password}",
-                                disabled: auth_busy(),
+                                disabled: auth_working,
                                 oninput: move |event: FormEvent| {
                                     auth_password.set(event.value());
                                 },
@@ -456,13 +515,13 @@ pub fn SettingsPanel() -> Element {
                                 class: "auth-actions",
                                 Button {
                                     variant: ButtonVariant::Primary,
-                                    disabled: auth_busy(),
+                                    disabled: auth_working,
                                     onclick: sign_in,
                                     "Sign In"
                                 }
                                 Button {
                                     variant: ButtonVariant::Secondary,
-                                    disabled: auth_busy(),
+                                    disabled: auth_working || sign_up_blocked,
                                     onclick: sign_up,
                                     "Sign Up"
                                 }
@@ -477,16 +536,30 @@ pub fn SettingsPanel() -> Element {
                         if auth_service.is_some() {
                             Button {
                                 variant: ButtonVariant::Ghost,
-                                disabled: auth_busy(),
+                                disabled: auth_working,
                                 onclick: verify_config,
                                 "Verify Config"
                             }
                         }
 
-                        if auth_busy() {
+                        if auth_working {
                             div {
                                 class: "auth-message",
                                 "Working..."
+                            }
+                        }
+
+                        if let Some(reason) = &sign_up_blocked_reason {
+                            div {
+                                class: "auth-hint",
+                                "{reason}"
+                            }
+                        }
+
+                        if let Some(status) = auth_config_status() {
+                            div {
+                                class: "auth-hint",
+                                "{format_auth_config_status(status)}"
                             }
                         }
 
@@ -534,6 +607,29 @@ fn SettingRow(label: &'static str, description: &'static str, children: Element)
             }
         }
     }
+}
+
+fn sign_up_block_reason(status: Option<AuthConfigStatus>) -> Option<String> {
+    let status = status?;
+
+    if !status.email_enabled {
+        return Some(
+            "Sign-up unavailable: email provider is disabled in Supabase Auth.".to_string(),
+        );
+    }
+    if !status.signup_enabled {
+        return Some(
+            "Sign-up unavailable: disable_signup is enabled in Supabase Auth.".to_string(),
+        );
+    }
+    if !status.mailer_autoconfirm && !status.smtp_configured {
+        return Some(
+            "Sign-up is blocked until SMTP is configured or mailer autoconfirm is enabled."
+                .to_string(),
+        );
+    }
+
+    None
 }
 
 fn format_auth_error_message(raw: &str) -> String {
@@ -603,5 +699,48 @@ mod tests {
         let message = format_auth_config_status(status);
         assert!(message.contains("SMTP"));
         assert!(message.contains("2/hour"));
+    }
+
+    #[test]
+    fn sign_up_block_reason_when_signup_disabled() {
+        let status = AuthConfigStatus {
+            email_enabled: true,
+            signup_enabled: false,
+            mailer_autoconfirm: true,
+            smtp_configured: false,
+            rate_limit_email_sent: None,
+        };
+
+        let reason = sign_up_block_reason(Some(status)).unwrap();
+        assert!(reason.contains("Sign-up unavailable"));
+        assert!(reason.contains("disable_signup"));
+    }
+
+    #[test]
+    fn sign_up_block_reason_when_missing_smtp_and_autoconfirm() {
+        let status = AuthConfigStatus {
+            email_enabled: true,
+            signup_enabled: true,
+            mailer_autoconfirm: false,
+            smtp_configured: false,
+            rate_limit_email_sent: Some(2),
+        };
+
+        let reason = sign_up_block_reason(Some(status)).unwrap();
+        assert!(reason.contains("blocked"));
+        assert!(reason.contains("SMTP"));
+    }
+
+    #[test]
+    fn sign_up_block_reason_allows_safe_signup_config() {
+        let status = AuthConfigStatus {
+            email_enabled: true,
+            signup_enabled: true,
+            mailer_autoconfirm: true,
+            smtp_configured: false,
+            rate_limit_email_sent: None,
+        };
+
+        assert!(sign_up_block_reason(Some(status)).is_none());
     }
 }
