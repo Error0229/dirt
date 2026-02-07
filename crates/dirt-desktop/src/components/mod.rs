@@ -2,6 +2,7 @@
 //!
 //! Reusable UI components for the desktop application.
 
+mod note_actions;
 mod note_card;
 mod note_editor;
 mod note_list;
@@ -11,6 +12,7 @@ mod settings;
 mod sidebar;
 mod toolbar;
 
+pub use note_actions::create_note_optimistic;
 pub use note_card::NoteCard;
 pub use note_editor::NoteEditor;
 pub use note_list::NoteList;
