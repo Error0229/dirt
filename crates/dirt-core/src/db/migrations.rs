@@ -4,7 +4,7 @@ use crate::error::Result;
 use libsql::Connection;
 
 /// Current schema version
-const CURRENT_VERSION: i32 = 1;
+const CURRENT_VERSION: i32 = 2;
 
 /// Run all pending migrations
 pub async fn run(conn: &Connection) -> Result<()> {
@@ -12,6 +12,9 @@ pub async fn run(conn: &Connection) -> Result<()> {
 
     if version < 1 {
         migrate_v1(conn).await?;
+    }
+    if version < 2 {
+        migrate_v2(conn).await?;
     }
 
     Ok(())
@@ -110,6 +113,59 @@ async fn migrate_v1(conn: &Connection) -> Result<()> {
         )",
         // Record migration version
         "INSERT INTO schema_version (version) VALUES (1)",
+    ];
+
+    for stmt in statements {
+        if let Err(e) = conn.execute(stmt, ()).await {
+            conn.execute("ROLLBACK", ()).await.ok();
+            return Err(e.into());
+        }
+    }
+
+    if let Err(e) = conn.execute("COMMIT", ()).await {
+        conn.execute("ROLLBACK", ()).await.ok();
+        return Err(e.into());
+    }
+
+    tracing::info!("Migrated database to version 1");
+    Ok(())
+}
+
+/// Migration to version 2: LWW conflict logging support
+async fn migrate_v2(conn: &Connection) -> Result<()> {
+    conn.execute("BEGIN TRANSACTION", ()).await?;
+
+    let statements = [
+        "CREATE TABLE IF NOT EXISTS sync_conflicts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id TEXT NOT NULL,
+            local_updated_at INTEGER NOT NULL,
+            incoming_updated_at INTEGER NOT NULL,
+            resolved_at INTEGER NOT NULL,
+            strategy TEXT NOT NULL
+        )",
+        "CREATE INDEX IF NOT EXISTS idx_sync_conflicts_note_id ON sync_conflicts(note_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sync_conflicts_resolved_at ON sync_conflicts(resolved_at DESC)",
+        "CREATE TRIGGER IF NOT EXISTS notes_lww_conflict_guard BEFORE UPDATE ON notes
+         FOR EACH ROW
+         WHEN NEW.updated_at < OLD.updated_at
+         BEGIN
+             INSERT INTO sync_conflicts (
+                 note_id,
+                 local_updated_at,
+                 incoming_updated_at,
+                 resolved_at,
+                 strategy
+             ) VALUES (
+                 OLD.id,
+                 OLD.updated_at,
+                 NEW.updated_at,
+                 CAST(strftime('%s','now') AS INTEGER) * 1000,
+                 'lww'
+             );
+             SELECT RAISE(IGNORE);
+         END",
+        "INSERT INTO schema_version (version) VALUES (2)",
     ];
 
     for stmt in statements {

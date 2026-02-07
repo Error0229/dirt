@@ -3,7 +3,7 @@
 #![allow(clippy::cast_possible_wrap)] // SQLite uses i64 for LIMIT/OFFSET
 
 use crate::error::{Error, Result};
-use crate::models::{extract_tags, Note, NoteId, Tag, TagId};
+use crate::models::{extract_tags, Note, NoteId, SyncConflict, Tag, TagId};
 use libsql::Connection;
 
 /// Trait for note storage operations (async)
@@ -35,6 +35,9 @@ pub trait NoteRepository {
 
     /// Get all tags with note counts
     async fn list_tags(&self) -> Result<Vec<(String, usize)>>;
+
+    /// List recently resolved sync conflicts
+    async fn list_conflicts(&self, limit: usize) -> Result<Vec<SyncConflict>>;
 }
 
 /// libSQL implementation of `NoteRepository`
@@ -113,6 +116,18 @@ impl<'a> LibSqlNoteRepository<'a> {
             created_at: row.get(2)?,
             updated_at: row.get(3)?,
             is_deleted: row.get::<i32>(4)? != 0,
+        })
+    }
+
+    /// Parse a sync conflict from a database row
+    fn parse_conflict(row: &libsql::Row) -> Result<SyncConflict> {
+        Ok(SyncConflict {
+            id: row.get(0)?,
+            note_id: row.get(1)?,
+            local_updated_at: row.get(2)?,
+            incoming_updated_at: row.get(3)?,
+            resolved_at: row.get(4)?,
+            strategy: row.get(5)?,
         })
     }
 }
@@ -293,6 +308,26 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
 
         Ok(tags)
     }
+
+    async fn list_conflicts(&self, limit: usize) -> Result<Vec<SyncConflict>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id, note_id, local_updated_at, incoming_updated_at, resolved_at, strategy
+                 FROM sync_conflicts
+                 ORDER BY resolved_at DESC, id DESC
+                 LIMIT ?",
+                libsql::params![limit as i64],
+            )
+            .await?;
+
+        let mut conflicts = Vec::new();
+        while let Some(row) = rows.next().await? {
+            conflicts.push(Self::parse_conflict(&row)?);
+        }
+
+        Ok(conflicts)
+    }
 }
 
 #[cfg(test)]
@@ -405,5 +440,57 @@ mod tests {
 
         let notes = repo.list_by_tag("rust", 10, 0).await.unwrap();
         assert_eq!(notes.len(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_lww_stale_update_is_ignored_and_logged() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let note = repo.create("Current value").await.unwrap();
+        let stale_ts = note.updated_at - 10_000;
+
+        repo.conn
+            .execute(
+                "UPDATE notes SET content = ?, updated_at = ? WHERE id = ?",
+                libsql::params!["Stale value", stale_ts, note.id.as_str()],
+            )
+            .await
+            .unwrap();
+
+        let fetched = repo.get(&note.id).await.unwrap().unwrap();
+        assert_eq!(fetched.content, "Current value");
+        assert_eq!(fetched.updated_at, note.updated_at);
+
+        let conflicts = repo.list_conflicts(10).await.unwrap();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].note_id, note.id.to_string());
+        assert_eq!(conflicts[0].local_updated_at, note.updated_at);
+        assert_eq!(conflicts[0].incoming_updated_at, stale_ts);
+        assert_eq!(conflicts[0].strategy, "lww");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_lww_newer_update_wins() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let note = repo.create("Original").await.unwrap();
+        let newer_ts = note.updated_at + 10_000;
+
+        repo.conn
+            .execute(
+                "UPDATE notes SET content = ?, updated_at = ? WHERE id = ?",
+                libsql::params!["Newer value", newer_ts, note.id.as_str()],
+            )
+            .await
+            .unwrap();
+
+        let fetched = repo.get(&note.id).await.unwrap().unwrap();
+        assert_eq!(fetched.content, "Newer value");
+        assert_eq!(fetched.updated_at, newer_ts);
+
+        let conflicts = repo.list_conflicts(10).await.unwrap();
+        assert!(conflicts.is_empty());
     }
 }

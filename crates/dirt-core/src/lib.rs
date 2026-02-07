@@ -9,4 +9,4 @@ pub mod models;
 pub mod search;
 
 pub use error::{Error, Result};
-pub use models::{Note, NoteId};
+pub use models::{Note, NoteId, SyncConflict};
