@@ -1,5 +1,6 @@
 //! Supabase authentication service with secure session storage.
 
+use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use keyring::Entry;
@@ -21,7 +22,7 @@ pub struct AuthUser {
 }
 
 /// Persisted session used for API authorization.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthSession {
     /// Short-lived access token.
     pub access_token: String,
@@ -42,6 +43,18 @@ impl AuthSession {
     #[must_use]
     const fn is_expired_at(&self, now_secs: i64) -> bool {
         self.expires_at <= now_secs + EXPIRY_SKEW_SECONDS
+    }
+}
+
+impl fmt::Debug for AuthSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthSession")
+            .field("access_token", &"[REDACTED]")
+            .field("refresh_token", &"[REDACTED]")
+            .field("expires_at", &self.expires_at)
+            .field("user", &self.user)
+            .finish()
     }
 }
 
@@ -259,19 +272,34 @@ impl SupabaseAuthService {
 
     /// Sign out and clear local session storage.
     pub async fn sign_out(&self, access_token: &str) -> AuthResult<()> {
-        let request = self
-            .client
-            .post(format!("{}/logout", self.auth_url))
-            .header("apikey", &self.anon_key)
-            .bearer_auth(access_token);
-        let response = request.send().await?;
-        if !(response.status().is_success() || response.status() == StatusCode::UNAUTHORIZED) {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(AuthError::Api(parse_api_error(status, &body)));
+        let server_logout = async {
+            let request = self
+                .client
+                .post(format!("{}/logout", self.auth_url))
+                .header("apikey", &self.anon_key)
+                .bearer_auth(access_token);
+            let response = request.send().await?;
+            if response.status().is_success() || response.status() == StatusCode::UNAUTHORIZED {
+                Ok(())
+            } else {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                Err(AuthError::Api(parse_api_error(status, &body)))
+            }
+        }
+        .await;
+
+        // Always clear local credentials when user requests sign-out.
+        self.session_store.clear_session()?;
+
+        if let Err(error) = server_logout {
+            tracing::warn!(
+                "Server logout failed after clearing local session: {}",
+                error
+            );
         }
 
-        self.session_store.clear_session()
+        Ok(())
     }
 }
 
