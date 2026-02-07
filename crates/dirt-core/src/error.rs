@@ -31,4 +31,8 @@ pub enum Error {
     /// Serialization error
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+
+    /// Media/object storage error
+    #[error("Storage error: {0}")]
+    Storage(String),
 }
