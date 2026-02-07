@@ -215,7 +215,7 @@ fn preferred_editor() -> String {
         .unwrap_or_else(|_| default_editor().to_string())
 }
 
-fn default_editor() -> &'static str {
+const fn default_editor() -> &'static str {
     if cfg!(windows) {
         "notepad"
     } else {
