@@ -11,7 +11,7 @@ use dirt_core::models::Note;
 use crate::components::{QuickCapture, SettingsPanel};
 use crate::queries::use_notes_query;
 use crate::services::DatabaseService;
-use crate::state::AppState;
+use crate::state::{AppState, SyncStatus};
 use crate::theme::{resolve_theme, ResolvedTheme};
 use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
 use crate::views::Home;
@@ -32,6 +32,8 @@ pub fn App() -> Element {
     let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
     let mut db_service: Signal<Option<Arc<DatabaseService>>> = use_signal(|| None);
     let mut db_initialized = use_signal(|| false);
+    let mut sync_status = use_signal(|| SyncStatus::Offline);
+    let mut last_sync_at = use_signal(|| None::<i64>);
 
     // Initialize database asynchronously (only once)
     use_effect(move || {
@@ -52,6 +54,23 @@ pub fn App() -> Element {
                     // Update state
                     settings.set(loaded_settings);
                     theme.set(resolved_theme);
+
+                    if db.is_sync_enabled().await {
+                        sync_status.set(SyncStatus::Syncing);
+                        match db.sync().await {
+                            Ok(()) => {
+                                sync_status.set(SyncStatus::Synced);
+                                last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
+                            }
+                            Err(error) => {
+                                tracing::error!("Initial sync failed: {}", error);
+                                sync_status.set(SyncStatus::Error);
+                            }
+                        }
+                    } else {
+                        sync_status.set(SyncStatus::Offline);
+                    }
+
                     db_service.set(Some(db));
                 }
                 Err(e) => {
@@ -59,6 +78,36 @@ pub fn App() -> Element {
                 }
             }
         });
+    });
+
+    // Periodically sync and update sync status metadata.
+    use_future(move || async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+
+            let db = db_service.read().clone();
+            let Some(db) = db else {
+                sync_status.set(SyncStatus::Offline);
+                continue;
+            };
+
+            if !db.is_sync_enabled().await {
+                sync_status.set(SyncStatus::Offline);
+                continue;
+            }
+
+            sync_status.set(SyncStatus::Syncing);
+            match db.sync().await {
+                Ok(()) => {
+                    sync_status.set(SyncStatus::Synced);
+                    last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
+                }
+                Err(error) => {
+                    tracing::error!("Periodic sync failed: {}", error);
+                    sync_status.set(SyncStatus::Error);
+                }
+            }
+        }
     });
 
     // Use dioxus-query for reactive notes fetching (called unconditionally - rules of hooks)
@@ -174,6 +223,8 @@ pub fn App() -> Element {
         settings,
         theme,
         db_service,
+        sync_status,
+        last_sync_at,
         settings_open,
         quick_capture_open,
     });
