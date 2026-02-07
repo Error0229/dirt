@@ -32,8 +32,6 @@ pub struct AppState {
     pub settings_open: Signal<bool>,
     /// Whether quick capture overlay is active
     pub quick_capture_open: Signal<bool>,
-    /// Saved window geometry before quick capture resized it (width, height, x, y) in logical pixels
-    pub saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>>,
 }
 
 impl AppState {

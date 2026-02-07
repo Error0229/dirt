@@ -78,8 +78,19 @@ pub fn App() -> Element {
                 // Check for show window request
                 if SHOW_MAIN_WINDOW.swap(false, Ordering::SeqCst) {
                     tracing::info!("Showing main window from tray");
-                    window().set_visible(true);
-                    window().set_focus();
+                    let win = window();
+                    let tao_win = &win.window;
+
+                    // Restore pre-capture geometry before showing.
+                    if let Some((w, h, x, y)) = saved_window_geometry() {
+                        tao_win.set_outer_position(LogicalPosition::new(x, y));
+                        tao_win.set_inner_size(LogicalSize::new(w, h));
+                        saved_window_geometry.set(None);
+                    }
+
+                    quick_capture_open.set(false);
+                    win.set_visible(true);
+                    win.set_focus();
                 }
 
                 // Check for quit request
@@ -95,16 +106,19 @@ pub fn App() -> Element {
                 let win = window();
                 let tao_win = &win.window;
 
-                // Save current geometry in logical pixels for restoration
-                let scale = tao_win.current_monitor().map_or(1.0, |m| m.scale_factor());
-                let phys_size = tao_win.inner_size();
-                let phys_pos = tao_win.outer_position().unwrap_or_default();
-                saved_window_geometry.set(Some((
-                    f64::from(phys_size.width) / scale,
-                    f64::from(phys_size.height) / scale,
-                    f64::from(phys_pos.x) / scale,
-                    f64::from(phys_pos.y) / scale,
-                )));
+                // Save main-window geometry once; keep it across repeated captures
+                // until the main window is explicitly reopened.
+                if saved_window_geometry().is_none() {
+                    let scale = tao_win.current_monitor().map_or(1.0, |m| m.scale_factor());
+                    let phys_size = tao_win.inner_size();
+                    let phys_pos = tao_win.outer_position().unwrap_or_default();
+                    saved_window_geometry.set(Some((
+                        f64::from(phys_size.width) / scale,
+                        f64::from(phys_size.height) / scale,
+                        f64::from(phys_pos.x) / scale,
+                        f64::from(phys_pos.y) / scale,
+                    )));
+                }
 
                 // Resize to compact quick capture size
                 let capture_w = 420.0;
@@ -162,7 +176,6 @@ pub fn App() -> Element {
         db_service,
         settings_open,
         quick_capture_open,
-        saved_window_geometry,
     });
 
     let current_theme = theme();

@@ -2,26 +2,20 @@
 //!
 //! When triggered via global hotkey, the main window resizes to a compact
 //! capture box (420x200). This component fills that window entirely.
-//! On save/cancel it restores the original window size and hides to tray.
+//! On save/cancel it hides immediately; main-window geometry is restored when
+//! the user explicitly reopens the full app from tray.
 
-use dioxus::desktop::{window, LogicalPosition, LogicalSize};
+use dioxus::desktop::window;
 use dioxus::prelude::*;
 
 use super::button::{Button, ButtonVariant};
 use crate::queries::invalidate_notes_query;
 use crate::state::AppState;
 
-/// Hide window first, then restore original geometry while invisible
-fn hide_and_restore(state: &mut AppState) {
+/// Hide quick-capture window immediately.
+fn hide_window() {
     let win = window();
-    // Hide immediately so the user never sees the resize
     win.set_visible(false);
-    if let Some((w, h, x, y)) = (state.saved_window_geometry)() {
-        let tao_win = &win.window;
-        tao_win.set_inner_size(LogicalSize::new(w, h));
-        tao_win.set_outer_position(LogicalPosition::new(x, y));
-    }
-    state.saved_window_geometry.set(None);
 }
 
 /// Quick capture — fills the entire (resized) window
@@ -34,12 +28,12 @@ pub fn QuickCapture() -> Element {
     let colors = (state.theme)().palette();
 
     let mut close = move || {
-        content.set(String::new());
+        hide_window();
         state.quick_capture_open.set(false);
-        hide_and_restore(&mut state);
+        content.set(String::new());
     };
 
-    let save_and_close = move |_| {
+    let mut submit = move || {
         let text = content.read().trim().to_string();
         if text.is_empty() {
             close();
@@ -49,6 +43,8 @@ pub fn QuickCapture() -> Element {
             return;
         }
         is_saving.set(true);
+        // Hide immediately; persist in the background.
+        close();
         let db = state.db_service.read().clone();
         spawn(async move {
             if let Some(db) = db {
@@ -63,10 +59,11 @@ pub fn QuickCapture() -> Element {
                 }
             }
             is_saving.set(false);
-            content.set(String::new());
-            state.quick_capture_open.set(false);
-            hide_and_restore(&mut state);
         });
+    };
+
+    let save_and_close = move |_| {
+        submit();
     };
 
     let cancel = move |_: MouseEvent| {
@@ -79,33 +76,7 @@ pub fn QuickCapture() -> Element {
             return;
         }
         if evt.key() == Key::Enter && (evt.modifiers().meta() || evt.modifiers().ctrl()) {
-            let text = content.read().trim().to_string();
-            if text.is_empty() {
-                close();
-                return;
-            }
-            if *is_saving.read() {
-                return;
-            }
-            is_saving.set(true);
-            let db = state.db_service.read().clone();
-            spawn(async move {
-                if let Some(db) = db {
-                    match db.create_note(&text).await {
-                        Ok(note) => {
-                            tracing::info!("Quick captured note: {}", note.id);
-                            invalidate_notes_query().await;
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to create note: {}", e);
-                        }
-                    }
-                }
-                is_saving.set(false);
-                content.set(String::new());
-                state.quick_capture_open.set(false);
-                hide_and_restore(&mut state);
-            });
+            submit();
         }
     };
 
