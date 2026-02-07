@@ -162,7 +162,7 @@ dirt/
 |----|---------|----------|--------|--------|
 | F2.1 | Migrate rusqlite to libsql | P0 | In Progress | F1.4 |
 | F2.2 | Turso backend setup | P0 | In Progress | - |
-| F2.3 | User authentication | P0 | Todo | F2.2 |
+| F2.3 | User authentication | P0 | In Progress | F2.2 |
 | F2.4 | Embedded replicas + sync | P0 | Todo | F2.1 |
 | F2.5 | Conflict resolution (LWW) | P0 | Todo | F2.4 |
 | F2.6 | Sync status indicator | P1 | Todo | F2.4 |
@@ -191,14 +191,14 @@ dirt/
 | F4.2 | Note list + editor (mobile UI) | P0 | Done | F4.1 |
 | F4.3 | Quick capture widget | P1 | In Progress | F4.2 |
 | F4.4 | Share intent receiver | P1 | Done | F4.2 |
-| F4.5 | Push notifications for sync | P2 | In Progress | F2.4, F4.1 |
+| F4.5 | Push notifications for sync | P2 | Done | F2.4, F4.1 |
 
 ### Phase 5: Media Support
 **Goal**: Attach images, audio, files to notes
 
 | ID | Feature | Priority | Status | Blocks |
 |----|---------|----------|--------|--------|
-| F5.1 | Cloudflare R2 integration | P0 | Todo | F2.3 |
+| F5.1 | Cloudflare R2 integration | P0 | In Progress | F2.3 |
 | F5.2 | Image paste/drop (desktop) | P0 | Todo | F5.1, F1.4 |
 | F5.3 | Image picker (mobile) | P0 | Todo | F5.1, F4.2 |
 | F5.4 | Image thumbnail generation | P1 | Todo | F5.2 |

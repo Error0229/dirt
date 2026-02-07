@@ -7,6 +7,7 @@ pub mod db;
 pub mod error;
 pub mod models;
 pub mod search;
+pub mod storage;
 
 pub use error::{Error, Result};
 pub use models::{Note, NoteId, SyncConflict};
