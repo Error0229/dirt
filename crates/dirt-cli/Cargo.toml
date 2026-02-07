@@ -7,7 +7,7 @@ repository.workspace = true
 description = "Command-line interface for Dirt"
 
 [[bin]]
-name = "dirt-cli"
+name = "dirt"
 path = "src/main.rs"
 
 [dependencies]
@@ -16,6 +16,9 @@ clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+dirs = "6"
+dotenvy = "0.15"
+thiserror.workspace = true
 
 [lints]
 workspace = true
