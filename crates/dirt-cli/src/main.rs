@@ -56,6 +56,12 @@ enum Commands {
     Search {
         /// Search query
         query: String,
+        /// Number of notes to show
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Open TUI interface
     Tui,
@@ -71,6 +77,8 @@ enum CliError {
     Serialization(#[from] serde_json::Error),
     #[error("No note content provided")]
     EmptyContent,
+    #[error("Search query cannot be empty")]
+    EmptySearchQuery,
     #[error("Editor command failed: {0}")]
     EditorFailed(String),
     #[error("Database initialization failed: {0}")]
@@ -103,9 +111,8 @@ async fn run() -> Result<(), CliError> {
         Some(Commands::List { limit, tag, json }) => {
             run_list(limit, tag.as_deref(), json, &db_path).await?;
         }
-        Some(Commands::Search { query }) => {
-            println!("Searching for: {query}");
-            // TODO: Implement search
+        Some(Commands::Search { query, limit, json }) => {
+            run_search(&query, limit, json, &db_path).await?;
         }
         Some(Commands::Tui) => {
             println!("Opening TUI...");
@@ -170,6 +177,30 @@ async fn run_list(
     Ok(())
 }
 
+async fn run_search(
+    query: &str,
+    limit: usize,
+    as_json: bool,
+    db_path: &Path,
+) -> Result<(), CliError> {
+    let normalized_query = normalize_search_query(query)?;
+    let notes = search_notes(&normalized_query, limit, db_path).await?;
+
+    if as_json {
+        let json_items = notes
+            .iter()
+            .map(note_to_list_item)
+            .collect::<Vec<NoteListItem>>();
+        println!("{}", serde_json::to_string_pretty(&json_items)?);
+    } else {
+        for line in format_note_lines(&notes) {
+            println!("{line}");
+        }
+    }
+
+    Ok(())
+}
+
 async fn list_notes(
     limit: usize,
     tag: Option<&str>,
@@ -183,6 +214,12 @@ async fn list_notes(
     } else {
         Ok(repo.list(limit, 0).await?)
     }
+}
+
+async fn search_notes(query: &str, limit: usize, db_path: &Path) -> Result<Vec<Note>, CliError> {
+    let db = open_database(db_path).await?;
+    let repo = LibSqlNoteRepository::new(db.connection());
+    Ok(repo.search(query, limit).await?)
 }
 
 fn format_note_lines(notes: &[Note]) -> Vec<String> {
@@ -292,6 +329,15 @@ fn normalize_content(content: &str) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
+    }
+}
+
+fn normalize_search_query(query: &str) -> Result<String, CliError> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        Err(CliError::EmptySearchQuery)
+    } else {
+        Ok(trimmed.to_string())
     }
 }
 
@@ -434,7 +480,8 @@ mod tests {
     use tokio::time::sleep;
 
     use super::{
-        default_editor, format_relative_time, list_notes, normalize_content, note_preview,
+        default_editor, format_relative_time, list_notes, normalize_content,
+        normalize_search_query, note_preview, search_notes,
     };
 
     #[test]
@@ -495,6 +542,36 @@ mod tests {
         assert!(work_only.iter().all(|note| note.content.contains("#work")));
 
         cleanup_db_files(&db_path);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn search_notes_finds_matches_with_limit() {
+        let db_path = unique_test_db_path();
+        {
+            let db = Database::open(&db_path).await.unwrap();
+            let repo = LibSqlNoteRepository::new(db.connection());
+
+            repo.create("Milk and eggs").await.unwrap();
+            sleep(Duration::from_millis(2)).await;
+            repo.create("Milkshake recipe").await.unwrap();
+            sleep(Duration::from_millis(2)).await;
+            repo.create("Unrelated note").await.unwrap();
+        }
+
+        let matches = search_notes("milk", 1, &db_path).await.unwrap();
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].content.to_lowercase().contains("milk"));
+
+        cleanup_db_files(&db_path);
+    }
+
+    #[test]
+    fn normalize_search_query_rejects_empty() {
+        assert!(normalize_search_query(" \n\t ").is_err());
+        assert_eq!(
+            normalize_search_query("  exact phrase  ").unwrap(),
+            "exact phrase"
+        );
     }
 
     fn unique_test_db_path() -> PathBuf {
