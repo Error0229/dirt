@@ -6,10 +6,11 @@ use dioxus::prelude::*;
 
 use dirt_core::NoteId;
 
+use crate::queries::invalidate_notes_query;
 use crate::state::AppState;
 
-/// Debounce delay for auto-save (in milliseconds)
-const SAVE_DEBOUNCE_MS: u64 = 500;
+/// Idle save delay - save after 2 seconds of no typing
+const IDLE_SAVE_MS: u64 = 2000;
 
 /// Plain text note editor with auto-save
 #[component]
@@ -21,7 +22,10 @@ pub fn NoteEditor() -> Element {
     // Local state for the editor content
     let mut content = use_signal(String::new);
     let mut last_note_id = use_signal(|| None::<NoteId>);
-    let mut is_dirty = use_signal(|| false);
+
+    // Version-based save tracking
+    let mut save_version = use_signal(|| 0u64);
+    let mut last_saved_version = use_signal(|| 0u64);
 
     // Sync content when selected note changes
     use_effect(move || {
@@ -35,39 +39,41 @@ pub fn NoteEditor() -> Element {
                 content.set(String::new());
             }
             last_note_id.set(current_id);
-            is_dirty.set(false);
+            // Reset save tracking for new note
+            save_version.set(0);
+            last_saved_version.set(0);
         }
     });
 
-    // Auto-save with debounce
+    // Auto-save with proper debounce using version tracking
     use_effect(move || {
-        if !*is_dirty.read() {
-            return;
+        let current_version = save_version();
+        if current_version == 0 || current_version == last_saved_version() {
+            return; // Nothing to save
         }
 
         let note_id = *last_note_id.read();
         let content_to_save = content.read().clone();
 
         spawn(async move {
-            // Wait for debounce period
-            tokio::time::sleep(Duration::from_millis(SAVE_DEBOUNCE_MS)).await;
+            // Wait for idle period
+            tokio::time::sleep(Duration::from_millis(IDLE_SAVE_MS)).await;
 
-            // Check if still dirty (user might have typed more)
-            if !*is_dirty.read() {
-                return;
+            // Check if version changed during sleep (user typed more)
+            if save_version() != current_version {
+                return; // Stale, a newer version is pending
             }
 
+            // Perform save to DB
             if let Some(id) = note_id {
-                if let Some(ref db) = *state.db_service.read() {
-                    match db.update_note(&id, &content_to_save) {
-                        Ok(updated_note) => {
+                let db = state.db_service.read().clone();
+                if let Some(db) = db {
+                    match db.update_note(&id, &content_to_save).await {
+                        Ok(_) => {
                             tracing::debug!("Auto-saved note: {}", id);
-                            // Update the note in the global state
-                            let mut notes = state.notes.write();
-                            if let Some(note) = notes.iter_mut().find(|n| n.id == id) {
-                                *note = updated_note;
-                            }
-                            is_dirty.set(false);
+                            last_saved_version.set(current_version);
+                            // Invalidate query to keep other views in sync
+                            invalidate_notes_query().await;
                         }
                         Err(e) => {
                             tracing::error!("Failed to save note: {}", e);
@@ -78,9 +84,60 @@ pub fn NoteEditor() -> Element {
         });
     });
 
+    // Helper to perform immediate save
+    let perform_save_now = move || {
+        let current_version = save_version();
+        if current_version == 0 || current_version == last_saved_version() {
+            return; // Nothing to save
+        }
+
+        let note_id = *last_note_id.read();
+        let content_to_save = content.read().clone();
+
+        spawn(async move {
+            if let Some(id) = note_id {
+                let db = state.db_service.read().clone();
+                if let Some(db) = db {
+                    match db.update_note(&id, &content_to_save).await {
+                        Ok(_) => {
+                            tracing::debug!("Saved note on blur/shortcut: {}", id);
+                            last_saved_version.set(current_version);
+                            invalidate_notes_query().await;
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to save note: {}", e);
+                        }
+                    }
+                }
+            }
+        });
+    };
+
     let on_input = move |evt: Event<FormData>| {
-        content.set(evt.value());
-        is_dirty.set(true);
+        let new_content = evt.value();
+        content.set(new_content.clone());
+        save_version.set(save_version() + 1);
+
+        // Optimistic update: update local state immediately
+        if let Some(id) = *last_note_id.read() {
+            let mut notes = state.notes.write();
+            if let Some(note) = notes.iter_mut().find(|n| n.id == id) {
+                note.content = new_content;
+                note.updated_at = chrono::Utc::now().timestamp_millis();
+            }
+        }
+    };
+
+    let on_blur = move |_| {
+        perform_save_now();
+    };
+
+    let on_keydown = move |evt: Event<KeyboardData>| {
+        // Ctrl+S to save immediately
+        if evt.modifiers().ctrl() && evt.key() == Key::Character("s".to_string()) {
+            evt.prevent_default();
+            perform_save_now();
+        }
     };
 
     rsx! {
@@ -112,6 +169,8 @@ pub fn NoteEditor() -> Element {
                     value: "{content}",
                     placeholder: "Start typing...",
                     oninput: on_input,
+                    onblur: on_blur,
+                    onkeydown: on_keydown,
                 }
             } else {
                 div {

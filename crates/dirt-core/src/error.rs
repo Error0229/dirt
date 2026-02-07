@@ -12,9 +12,9 @@ pub enum Error {
     #[error("Database error: {0}")]
     Database(String),
 
-    /// `SQLite` error
-    #[error("SQLite error: {0}")]
-    Sqlite(#[from] rusqlite::Error),
+    /// libSQL error
+    #[error("libSQL error: {0}")]
+    LibSql(#[from] libsql::Error),
 
     /// IO error
     #[error("IO error: {0}")]

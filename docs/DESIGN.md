@@ -54,7 +54,7 @@ Ideas flash in the mind and disappear. The friction of opening an app, finding t
 | **Desktop/Mobile UI** | Dioxus | 0.6.x | Native Rust, <5MB bundles, code sharing with CLI |
 | **CLI** | Ratatui + clap | latest | Pure Rust, shares data layer with GUI |
 | **Local Storage** | SQLite (rusqlite) | 3.x | Proven, portable, offline foundation |
-| **Sync Layer** | PowerSync | latest | Production-ready offline-first, free tier |
+| **Sync Layer** | Turso Embedded Replicas | latest | Native libSQL sync, Rust-first |
 | **Backend DB** | Turso (libSQL) | latest | Edge SQLite, embedded replicas |
 | **Media Storage** | Cloudflare R2 | - | Zero egress fees, S3-compatible |
 | **Auth** | TBD | - | Evaluate: Clerk, Auth0, or custom |
@@ -62,7 +62,7 @@ Ideas flash in the mind and disappear. The friction of opening an app, finding t
 ### Why This Stack?
 
 - **Dioxus over Tauri**: Full Rust enables sharing models, sync logic, and utilities between GUI and CLI. Single language, single build system.
-- **PowerSync over Triplit**: Triplit folded as company (Sept 2025). PowerSync is enterprise-backed with MongoDB partnership.
+- **Turso Embedded Replicas over PowerSync**: PowerSync has no Rust SDK and doesn't support Turso as a backend. Turso's native embedded replicas provide local SQLite reads with microsecond latency, automatic background sync to cloud, and offline capability—all with first-class Rust support via the `libsql` crate.
 - **Turso over raw Postgres**: SQLite everywhere means same queries work locally and in cloud. Embedded replicas for edge performance.
 
 ---
@@ -92,15 +92,17 @@ Ideas flash in the mind and disappear. The friction of opening an app, finding t
                             │
               ┌─────────────┼─────────────┐
               │             │             │
-       ┌──────▼──────┐ ┌────▼────┐ ┌──────▼──────┐
-       │   SQLite    │ │PowerSync│ │ Cloudflare  │
-       │   (local)   │ │ (sync)  │ │     R2      │
-       └─────────────┘ └────┬────┘ │  (media)    │
-                            │      └─────────────┘
-                       ┌────▼────┐
-                       │  Turso  │
-                       │ (cloud) │
-                       └─────────┘
+       ┌──────▼──────┐            ┌──────▼──────┐
+       │   libSQL    │            │ Cloudflare  │
+       │  (local +   │◄──sync───► │     R2      │
+       │  embedded   │            │  (media)    │
+       │  replica)   │            └─────────────┘
+       └──────┬──────┘
+              │
+         ┌────▼────┐
+         │  Turso  │
+         │ (cloud) │
+         └─────────┘
 ```
 
 ### Crate Structure
@@ -158,12 +160,13 @@ dirt/
 
 | ID | Feature | Priority | Status | Blocks |
 |----|---------|----------|--------|--------|
-| F2.1 | PowerSync integration | P0 | Todo | F1.4 |
-| F2.2 | Turso backend setup | P0 | Todo | - |
+| F2.1 | Migrate rusqlite to libsql | P0 | In Progress | F1.4 |
+| F2.2 | Turso backend setup | P0 | In Progress | - |
 | F2.3 | User authentication | P0 | Todo | F2.2 |
-| F2.4 | Conflict resolution (LWW) | P0 | Todo | F2.1 |
-| F2.5 | Sync status indicator | P1 | Todo | F2.1 |
-| F2.6 | Offline queue visualization | P2 | Todo | F2.5 |
+| F2.4 | Embedded replicas + sync | P0 | Todo | F2.1 |
+| F2.5 | Conflict resolution (LWW) | P0 | Todo | F2.4 |
+| F2.6 | Sync status indicator | P1 | Todo | F2.4 |
+| F2.7 | Offline queue visualization | P2 | Todo | F2.6 |
 
 ### Phase 3: CLI
 **Goal**: Terminal interface for power users
@@ -175,7 +178,7 @@ dirt/
 | F3.3 | `dirt search <query>` command | P1 | Todo | F3.2 |
 | F3.4 | `dirt edit <id>` command | P1 | Todo | F3.2 |
 | F3.5 | `dirt delete <id>` command | P1 | Todo | F3.2 |
-| F3.6 | `dirt sync` command | P1 | Todo | F2.1, F3.1 |
+| F3.6 | `dirt sync` command | P1 | Todo | F2.4, F3.1 |
 | F3.7 | `dirt export` command | P2 | Todo | F3.2 |
 | F3.8 | Shell completions (bash, zsh, fish) | P2 | Todo | F3.1 |
 
@@ -188,7 +191,7 @@ dirt/
 | F4.2 | Note list + editor (mobile UI) | P0 | Todo | F4.1 |
 | F4.3 | Quick capture widget | P1 | Todo | F4.2 |
 | F4.4 | Share intent receiver | P1 | Todo | F4.2 |
-| F4.5 | Push notifications for sync | P2 | Todo | F2.1, F4.1 |
+| F4.5 | Push notifications for sync | P2 | Todo | F2.4, F4.1 |
 
 ### Phase 5: Media Support
 **Goal**: Attach images, audio, files to notes
@@ -354,8 +357,7 @@ Desktop apps will use GitHub Releases as the update source with Tauri-style upda
 
 | Service | Tier | Cost | Limits |
 |---------|------|------|--------|
-| Turso | Free | $0 | 3 DBs, 1GB storage, 1B reads |
-| PowerSync | Free | $0 | 2GB sync/mo, 500MB storage |
+| Turso | Free | $0 | Unlimited DBs, 5GB storage, 500M reads, 10M writes |
 | Cloudflare R2 | Free | $0 | 10GB storage, 1M writes, 10M reads |
 
 **Total infrastructure cost**: $0/month for hobby use
@@ -383,21 +385,24 @@ Desktop apps will use GitHub Releases as the update source with Tauri-style upda
 
 ---
 
-### DD-002: PowerSync over Triplit
+### DD-002: Turso Embedded Replicas over PowerSync
 
-**Decision**: Use PowerSync for offline-first sync.
+**Decision**: Use Turso's native embedded replicas for offline-first sync instead of PowerSync.
 
 **Rationale**:
-- Triplit folded as a company (September 2025)
-- PowerSync has enterprise backing (MongoDB partnership)
-- Production-proven with SOC 2 compliance
-- SQL-centric approach matches our SQLite foundation
+- PowerSync has no official Rust SDK (only JS, Flutter, Kotlin, Swift, .NET)
+- PowerSync does not support Turso as a backend database (only PostgreSQL, MongoDB, MySQL)
+- Turso's `libsql` crate provides first-class Rust support with API similar to rusqlite
+- Embedded replicas provide local SQLite reads (microsecond latency) with automatic cloud sync
+- Simpler architecture: no separate sync middleware layer needed
+- Same SQLite dialect everywhere (local and cloud)
 
 **Trade-offs**:
-- Requires Postgres/Turso backend (not standalone)
-- More setup than Triplit's all-in-one approach
+- Turso's offline sync is still in public beta (as of Feb 2026)
+- Must implement our own conflict resolution (LWW or custom)
+- Less battle-tested than PowerSync for complex sync scenarios
 
-**Alternatives considered**: Triplit (folded), Electric SQL, Zero (alpha), DIY
+**Alternatives considered**: PowerSync (no Rust SDK), Triplit (folded Sept 2025), Electric SQL, custom sync
 
 ---
 

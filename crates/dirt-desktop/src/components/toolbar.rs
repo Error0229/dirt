@@ -1,8 +1,10 @@
 //! Toolbar component with actions
 
 use dioxus::prelude::*;
+use dirt_core::models::Note;
 
 use super::button::{Button, ButtonVariant};
+use crate::queries::invalidate_notes_query;
 use crate::state::AppState;
 
 /// Toolbar with action buttons
@@ -12,41 +14,52 @@ pub fn Toolbar() -> Element {
     let has_selected_note = state.current_note().is_some();
 
     let create_note = move |_| {
-        if let Some(ref db) = *state.db_service.read() {
-            match db.create_note("") {
-                Ok(note) => {
-                    tracing::info!("Created new note: {}", note.id);
-                    // Add to notes list
-                    let mut notes = state.notes.write();
-                    notes.insert(0, note.clone());
-                    // Select the new note
-                    state.current_note_id.set(Some(note.id));
-                }
-                Err(e) => {
-                    tracing::error!("Failed to create note: {}", e);
+        // Create optimistic note with client-generated ID (UUID v7)
+        let optimistic_note = Note::new("");
+        let note_id = optimistic_note.id;
+
+        // Update UI immediately (optimistic)
+        state.notes.write().insert(0, optimistic_note.clone());
+        state.current_note_id.set(Some(note_id));
+
+        tracing::info!("Created new note (optimistic): {}", note_id);
+
+        // Persist in background
+        let db = state.db_service.read().clone();
+        spawn(async move {
+            if let Some(db) = db {
+                if let Err(e) = db.create_note_with_id(&optimistic_note).await {
+                    tracing::error!("Failed to persist note: {}", e);
+                    // Note: Don't rollback - user can continue editing
+                } else {
+                    // Invalidate query to sync state
+                    invalidate_notes_query().await;
                 }
             }
-        }
+        });
     };
 
     let delete_note = move |_| {
         let note_id = *state.current_note_id.read();
         if let Some(id) = note_id {
-            if let Some(ref db) = *state.db_service.read() {
-                match db.delete_note(&id) {
-                    Ok(()) => {
-                        tracing::info!("Deleted note: {}", id);
-                        // Remove from notes list
-                        let mut notes = state.notes.write();
-                        notes.retain(|n| n.id != id);
-                        // Clear selection
-                        state.current_note_id.set(None);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to delete note: {}", e);
+            // Update UI immediately (optimistic)
+            state.notes.write().retain(|n| n.id != id);
+            state.current_note_id.set(None);
+
+            tracing::info!("Deleted note (optimistic): {}", id);
+
+            // Persist in background
+            let db = state.db_service.read().clone();
+            spawn(async move {
+                if let Some(db) = db {
+                    if let Err(e) = db.delete_note(&id).await {
+                        tracing::error!("Failed to persist delete: {}", e);
+                    } else {
+                        // Invalidate query to sync state
+                        invalidate_notes_query().await;
                     }
                 }
-            }
+            });
         }
     };
 

@@ -67,6 +67,7 @@ impl TrayManager {
 }
 
 /// Process pending tray events (menu clicks and icon interactions)
+#[allow(clippy::cognitive_complexity)]
 pub fn process_tray_events() {
     // Process menu events
     let menu_receiver = MenuEvent::receiver();

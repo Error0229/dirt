@@ -1,12 +1,15 @@
 //! Main application component
 
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
-use dioxus::desktop::window;
+use dioxus::desktop::{window, LogicalPosition, LogicalSize};
 use dioxus::prelude::*;
+use dirt_core::models::Note;
 
-use crate::components::{open_quick_capture_window, SettingsPanel};
+use crate::components::{QuickCapture, SettingsPanel};
+use crate::queries::use_notes_query;
 use crate::services::DatabaseService;
 use crate::state::AppState;
 use crate::theme::{resolve_theme, ResolvedTheme};
@@ -17,35 +20,56 @@ use crate::{HOTKEY_TRIGGERED, TRAY_ENABLED};
 /// Root application component
 #[component]
 pub fn App() -> Element {
-    // Initialize database service
-    let db_service = use_signal(|| {
-        DatabaseService::new()
-            .map_err(|e| tracing::error!("Failed to initialize database: {}", e))
-            .ok()
-    });
-
-    // Load settings from database
-    let initial_settings = db_service
-        .read()
-        .as_ref()
-        .and_then(|db| db.load_settings().ok())
-        .unwrap_or_default();
-
-    // Initialize resolved theme based on settings
-    let initial_theme = resolve_theme(initial_settings.theme);
-
-    // Initialize global state
+    // State signals
     let mut notes = use_signal(Vec::new);
     let current_note_id = use_signal(|| None);
     let search_query = use_signal(String::new);
     let active_tag_filter = use_signal(|| None::<String>);
-    let settings = use_signal(|| initial_settings);
-    let theme = use_signal(|| initial_theme);
+    let mut settings = use_signal(dirt_core::models::Settings::default);
+    let mut theme = use_signal(|| resolve_theme(dirt_core::models::ThemeMode::System));
     let settings_open = use_signal(|| false);
+    let mut quick_capture_open = use_signal(|| false);
+    let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
+    let mut db_service: Signal<Option<Arc<DatabaseService>>> = use_signal(|| None);
+    let mut db_initialized = use_signal(|| false);
 
-    // Poll for hotkey and tray events
+    // Initialize database asynchronously (only once)
+    use_effect(move || {
+        if db_initialized() {
+            return;
+        }
+        db_initialized.set(true);
+
+        spawn(async move {
+            match DatabaseService::new().await {
+                Ok(db) => {
+                    let db = Arc::new(db);
+
+                    // Load initial settings
+                    let loaded_settings = db.load_settings().await.unwrap_or_default();
+                    let resolved_theme = resolve_theme(loaded_settings.theme);
+
+                    // Update state
+                    settings.set(loaded_settings);
+                    theme.set(resolved_theme);
+                    db_service.set(Some(db));
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize database: {}", e);
+                }
+            }
+        });
+    });
+
+    // Use dioxus-query for reactive notes fetching (called unconditionally - rules of hooks)
+    let notes_query = use_notes_query(db_service.read().clone());
+
+    // Poll for hotkey, tray events, and sync query results to notes signal
     use_future(move || async move {
         let tray_enabled = TRAY_ENABLED.load(Ordering::SeqCst);
+        // Track last query result to detect when the *query* produces new data,
+        // without clobbering optimistic updates in the notes signal.
+        let mut last_query_result: Option<Vec<Note>> = None;
         loop {
             // Process tray menu events
             if tray_enabled {
@@ -54,8 +78,19 @@ pub fn App() -> Element {
                 // Check for show window request
                 if SHOW_MAIN_WINDOW.swap(false, Ordering::SeqCst) {
                     tracing::info!("Showing main window from tray");
-                    window().set_visible(true);
-                    window().set_focus();
+                    let win = window();
+                    let tao_win = &win.window;
+
+                    // Restore pre-capture geometry before showing.
+                    if let Some((w, h, x, y)) = saved_window_geometry() {
+                        tao_win.set_outer_position(LogicalPosition::new(x, y));
+                        tao_win.set_inner_size(LogicalSize::new(w, h));
+                        saved_window_geometry.set(None);
+                    }
+
+                    quick_capture_open.set(false);
+                    win.set_visible(true);
+                    win.set_focus();
                 }
 
                 // Check for quit request
@@ -67,27 +102,67 @@ pub fn App() -> Element {
 
             // Check if hotkey was triggered
             if HOTKEY_TRIGGERED.swap(false, Ordering::SeqCst) {
-                tracing::info!("Opening quick capture window");
-                open_quick_capture_window();
+                tracing::info!("Opening quick capture");
+                let win = window();
+                let tao_win = &win.window;
+
+                // Save main-window geometry once; keep it across repeated captures
+                // until the main window is explicitly reopened.
+                if saved_window_geometry().is_none() {
+                    let scale = tao_win.current_monitor().map_or(1.0, |m| m.scale_factor());
+                    let phys_size = tao_win.inner_size();
+                    let phys_pos = tao_win.outer_position().unwrap_or_default();
+                    saved_window_geometry.set(Some((
+                        f64::from(phys_size.width) / scale,
+                        f64::from(phys_size.height) / scale,
+                        f64::from(phys_pos.x) / scale,
+                        f64::from(phys_pos.y) / scale,
+                    )));
+                }
+
+                // Resize to compact quick capture size
+                let capture_w = 420.0;
+                let capture_h = 200.0;
+                tao_win.set_inner_size(LogicalSize::new(capture_w, capture_h));
+
+                // Center on current monitor
+                if let Some(monitor) = tao_win.current_monitor() {
+                    let mon_size = monitor.size();
+                    let mon_pos = monitor.position();
+                    let mon_scale = monitor.scale_factor();
+                    let cx = f64::from(mon_pos.x) / mon_scale
+                        + (f64::from(mon_size.width) / mon_scale - capture_w) / 2.0;
+                    let cy = f64::from(mon_pos.y) / mon_scale
+                        + (f64::from(mon_size.height) / mon_scale - capture_h) / 2.0;
+                    tao_win.set_outer_position(LogicalPosition::new(cx, cy));
+                }
+
+                win.set_visible(true);
+                win.set_focus();
+                quick_capture_open.set(true);
+            }
+
+            // Sync query result to notes signal only when the query itself changes.
+            // Comparing against last_query_result (not notes signal) avoids clobbering
+            // optimistic updates that temporarily diverge from the query.
+            {
+                let query_reader = notes_query.read();
+                let fetched = query_reader.state().ok().cloned();
+                drop(query_reader);
+                if let Some(fetched_notes) = fetched {
+                    let changed = last_query_result
+                        .as_ref()
+                        .map_or(true, |prev| *prev != fetched_notes);
+                    if changed {
+                        tracing::debug!("Notes query returned {} notes", fetched_notes.len());
+                        last_query_result = Some(fetched_notes.clone());
+                        notes.set(fetched_notes);
+                    }
+                }
             }
 
             // Poll at ~60fps
             tokio::time::sleep(Duration::from_millis(16)).await;
-        }
-    });
-
-    // Load notes from database on startup
-    use_effect(move || {
-        if let Some(ref db) = *db_service.read() {
-            match db.list_notes(100, 0) {
-                Ok(loaded_notes) => {
-                    tracing::info!("Loaded {} notes from database", loaded_notes.len());
-                    notes.set(loaded_notes);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to load notes: {}", e);
-                }
-            }
         }
     });
 
@@ -100,6 +175,7 @@ pub fn App() -> Element {
         theme,
         db_service,
         settings_open,
+        quick_capture_open,
     });
 
     let current_theme = theme();
@@ -112,7 +188,10 @@ pub fn App() -> Element {
 
     rsx! {
         // Load theme CSS for Dioxus components
-        document::Link { rel: "stylesheet", href: asset!("/assets/dx-components-theme.css") }
+        document::Link {
+            rel: "stylesheet",
+            href: asset!("/assets/dx-components-theme.css"),
+        }
         document::Link { rel: "stylesheet", href: asset!("/assets/theme-overrides.css") }
 
         div {
@@ -125,11 +204,14 @@ pub fn App() -> Element {
                 background: {colors.bg_primary};
                 color: {colors.text_primary};
             ",
-            Home {}
+            if quick_capture_open() {
+                QuickCapture {}
+            } else {
+                Home {}
 
-            // Settings panel overlay
-            if settings_open() {
-                SettingsPanel {}
+                if settings_open() {
+                    SettingsPanel {}
+                }
             }
         }
     }

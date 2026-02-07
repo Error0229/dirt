@@ -5,6 +5,6 @@ mod migrations;
 mod repository;
 mod settings_repository;
 
-pub use connection::Database;
-pub use repository::{NoteRepository, SqliteNoteRepository};
-pub use settings_repository::{SettingsRepository, SqliteSettingsRepository};
+pub use connection::{Database, SyncConfig};
+pub use repository::{LibSqlNoteRepository, NoteRepository};
+pub use settings_repository::{LibSqlSettingsRepository, SettingsRepository};

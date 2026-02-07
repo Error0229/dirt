@@ -3,10 +3,14 @@
 //! A cross-platform desktop app for capturing fleeting thoughts.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Dioxus `asset!` macro expansion triggers false positives for
+// `clippy::volatile_composites` on newer toolchains.
+#![allow(unknown_lints, clippy::volatile_composites)]
 
 mod app;
 mod components;
 mod hotkey;
+mod queries;
 mod services;
 mod state;
 mod theme;
@@ -26,7 +30,11 @@ pub static HOTKEY_TRIGGERED: AtomicBool = AtomicBool::new(false);
 /// Atomic flag indicating tray is enabled
 pub static TRAY_ENABLED: AtomicBool = AtomicBool::new(false);
 
+#[allow(clippy::cognitive_complexity)]
 fn main() {
+    // Load environment variables from .env file
+    dotenvy::dotenv().ok();
+
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(

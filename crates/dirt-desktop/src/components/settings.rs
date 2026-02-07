@@ -7,7 +7,9 @@ use dirt_core::models::{Settings, ThemeMode};
 
 use super::button::{Button, ButtonVariant};
 use super::dialog::{DialogContent, DialogRoot, DialogTitle};
-use super::select::{Select, SelectItemIndicator, SelectList, SelectOption, SelectTrigger, SelectValue};
+use super::select::{
+    Select, SelectItemIndicator, SelectList, SelectOption, SelectTrigger, SelectValue,
+};
 use super::slider::{Slider, SliderRange, SliderThumb, SliderTrack};
 use crate::state::AppState;
 use crate::theme::resolve_theme;
@@ -38,15 +40,17 @@ pub fn SettingsPanel() -> Element {
         // Update theme resolution when theme mode changes
         let resolved = resolve_theme(new_settings.theme);
         theme.set(resolved);
+        settings.set(new_settings.clone());
 
-        // Save to database
-        if let Some(ref db) = *db_service.read() {
-            if let Err(e) = db.save_settings(&new_settings) {
-                tracing::error!("Failed to save settings: {}", e);
+        // Save to database asynchronously
+        let db = db_service.read().clone();
+        spawn(async move {
+            if let Some(db) = db {
+                if let Err(e) = db.save_settings(&new_settings).await {
+                    tracing::error!("Failed to save settings: {}", e);
+                }
             }
-        }
-
-        settings.set(new_settings);
+        });
     };
 
     let close_settings = move |_: MouseEvent| {
