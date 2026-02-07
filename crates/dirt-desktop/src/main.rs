@@ -3,6 +3,9 @@
 //! A cross-platform desktop app for capturing fleeting thoughts.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Dioxus `asset!` macro expansion triggers false positives for
+// `clippy::volatile_composites` on newer toolchains.
+#![allow(unknown_lints, clippy::volatile_composites)]
 
 mod app;
 mod components;
