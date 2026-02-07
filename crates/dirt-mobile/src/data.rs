@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository, SyncConfig};
-use dirt_core::models::{Note, NoteId};
+use dirt_core::models::{Attachment, Note, NoteId};
 use dirt_core::{Error, Result};
 use tokio::sync::Mutex;
 
@@ -73,6 +73,28 @@ impl MobileNoteStore {
         let db = self.db.lock().await;
         let repo = LibSqlNoteRepository::new(db.connection());
         repo.delete(id).await
+    }
+
+    /// Create attachment metadata for a note.
+    pub async fn create_attachment(
+        &self,
+        note_id: &NoteId,
+        filename: &str,
+        mime_type: &str,
+        size_bytes: i64,
+        r2_key: &str,
+    ) -> Result<Attachment> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.create_attachment(note_id, filename, mime_type, size_bytes, r2_key)
+            .await
+    }
+
+    /// List attachment metadata for a note.
+    pub async fn list_attachments(&self, note_id: &NoteId) -> Result<Vec<Attachment>> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.list_attachments(note_id).await
     }
 
     /// Sync with remote database (if configured).
@@ -200,5 +222,49 @@ mod tests {
     async fn in_memory_store_sync_is_noop() {
         let store = MobileNoteStore::open_in_memory().await.unwrap();
         store.sync().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn attachment_metadata_roundtrip() {
+        let store = MobileNoteStore::open_in_memory().await.unwrap();
+        let note = store.create_note("Attachment host note").await.unwrap();
+
+        let created = store
+            .create_attachment(
+                &note.id,
+                "mobile-photo.jpg",
+                "image/jpeg",
+                4242,
+                "notes/mobile/mobile-photo.jpg",
+            )
+            .await
+            .unwrap();
+
+        let attachments = store.list_attachments(&note.id).await.unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].id, created.id);
+        assert_eq!(attachments[0].r2_key, "notes/mobile/mobile-photo.jpg");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_attachment_requires_existing_note() {
+        let store = MobileNoteStore::open_in_memory().await.unwrap();
+
+        let missing_note = NoteId::new();
+        let err = store
+            .create_attachment(
+                &missing_note,
+                "missing.png",
+                "image/png",
+                1,
+                "notes/missing.png",
+            )
+            .await
+            .unwrap_err();
+
+        match err {
+            Error::NotFound(value) => assert_eq!(value, missing_note.to_string()),
+            other => panic!("expected not found, got {other:?}"),
+        }
     }
 }
