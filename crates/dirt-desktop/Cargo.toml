@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 dirt-core = { path = "../dirt-core" }
-dioxus.workspace = true
+dioxus = { workspace = true, features = ["desktop"] }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "dirt-mobile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Android shell application for Dirt"
+
+[[bin]]
+name = "dirt-mobile"
+path = "src/main.rs"
+
+[dependencies]
+dirt-core = { path = "../dirt-core" }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+dotenvy = "0.15"
+
+[target.'cfg(target_os = "android")'.dependencies]
+dioxus = { workspace = true, features = ["mobile"] }
+dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
+
+[lints]
+workspace = true
