@@ -73,6 +73,8 @@ enum Commands {
         /// Note ID or unique ID prefix
         id: String,
     },
+    /// Sync local replica with remote Turso database
+    Sync,
     /// Open TUI interface
     Tui,
 }
@@ -103,6 +105,10 @@ enum CliError {
     EditorFailed(String),
     #[error("Database initialization failed: {0}")]
     DatabaseInit(String),
+    #[error(
+        "Sync is not configured. Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN to enable `dirt sync`."
+    )]
+    SyncNotConfigured,
 }
 
 #[tokio::main]
@@ -136,6 +142,7 @@ async fn run() -> Result<(), CliError> {
         }
         Some(Commands::Edit { id }) => run_edit(&id, &db_path).await?,
         Some(Commands::Delete { id }) => run_delete(&id, &db_path).await?,
+        Some(Commands::Sync) => run_sync(&db_path).await?,
         Some(Commands::Tui) => {
             println!("Opening TUI...");
             // TODO: Implement TUI with ratatui
@@ -251,6 +258,17 @@ async fn run_delete(id: &str, db_path: &Path) -> Result<(), CliError> {
     let repo = LibSqlNoteRepository::new(db.connection());
     repo.delete(&note.id).await?;
     println!("{}", note.id);
+    Ok(())
+}
+
+async fn run_sync(db_path: &Path) -> Result<(), CliError> {
+    let db = open_database(db_path).await?;
+    if !db.is_sync_enabled() {
+        return Err(CliError::SyncNotConfigured);
+    }
+
+    db.sync().await?;
+    println!("Sync completed");
     Ok(())
 }
 
@@ -600,7 +618,7 @@ mod tests {
     use super::{
         default_editor, format_relative_time, list_notes, normalize_content,
         normalize_note_identifier, normalize_search_query, note_preview, resolve_note_for_edit,
-        run_delete, search_notes, CliError,
+        run_delete, run_sync, search_notes, CliError,
     };
 
     #[test]
@@ -826,6 +844,16 @@ mod tests {
         let db = Database::open(&db_path).await.unwrap();
         let repo = LibSqlNoteRepository::new(db.connection());
         assert!(repo.get(&note_a.id).await.unwrap().is_none());
+
+        cleanup_db_files(&db_path);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn run_sync_requires_sync_configuration() {
+        let db_path = unique_test_db_path();
+
+        let error = run_sync(&db_path).await.unwrap_err();
+        assert!(matches!(error, CliError::SyncNotConfigured));
 
         cleanup_db_files(&db_path);
     }
