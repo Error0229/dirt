@@ -117,6 +117,49 @@
   font-weight: 500;
 }
 
+.sync-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.sync-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.sync-synced {
+  color: var(--secondary-success-color);
+  background: color-mix(in srgb, var(--secondary-success-color) 15%, transparent);
+  border-color: color-mix(in srgb, var(--secondary-success-color) 40%, transparent);
+}
+
+.sync-syncing {
+  color: var(--secondary-info-color);
+  background: color-mix(in srgb, var(--secondary-info-color) 16%, transparent);
+  border-color: color-mix(in srgb, var(--secondary-info-color) 40%, transparent);
+}
+
+.sync-offline {
+  color: var(--secondary-warning-color);
+  background: color-mix(in srgb, var(--secondary-warning-color) 15%, transparent);
+  border-color: color-mix(in srgb, var(--secondary-warning-color) 35%, transparent);
+}
+
+.sync-error {
+  color: var(--secondary-error-color);
+  background: color-mix(in srgb, var(--secondary-error-color) 15%, transparent);
+  border-color: color-mix(in srgb, var(--secondary-error-color) 40%, transparent);
+}
+
 /* Search bar styling */
 .search-bar {
   padding: 12px 16px;

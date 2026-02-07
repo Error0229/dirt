@@ -11,6 +11,15 @@ use dirt_core::models::{Note, NoteId, Settings};
 use crate::services::DatabaseService;
 use crate::theme::ResolvedTheme;
 
+/// Current sync status for the app
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncStatus {
+    Synced,
+    Syncing,
+    Offline,
+    Error,
+}
+
 /// Global application state
 #[derive(Clone, Copy)]
 pub struct AppState {
@@ -28,6 +37,10 @@ pub struct AppState {
     pub theme: Signal<ResolvedTheme>,
     /// Database service (wrapped in Arc for sharing)
     pub db_service: Signal<Option<Arc<DatabaseService>>>,
+    /// Current sync status
+    pub sync_status: Signal<SyncStatus>,
+    /// Timestamp (unix ms) of the most recent successful sync
+    pub last_sync_at: Signal<Option<i64>>,
     /// Whether settings panel is open
     pub settings_open: Signal<bool>,
     /// Whether quick capture overlay is active
