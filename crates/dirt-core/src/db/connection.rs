@@ -210,7 +210,7 @@ mod tests {
     }
 
     /// Integration test for Turso sync - only runs if env vars are set
-    /// Run with: TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... cargo test test_sync_with_turso -- --ignored
+    /// Run with: `TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... cargo test test_sync_with_turso -- --ignored`
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "Requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN"]
     async fn test_sync_with_turso() {
