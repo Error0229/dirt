@@ -6,7 +6,7 @@ use dioxus_primitives::separator::Separator;
 use dirt_core::{Note, NoteId};
 
 use crate::data::MobileNoteStore;
-use crate::launch::QuickCaptureLaunch;
+use crate::launch::{LaunchIntent, QuickCaptureLaunch};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MobileView {
@@ -27,7 +27,7 @@ pub fn App() -> Element {
     let mut loading = use_signal(|| true);
     let mut saving = use_signal(|| false);
     let mut deleting = use_signal(|| false);
-    let launch = use_signal(crate::launch::detect_launch_intent_from_runtime);
+    let launch: Signal<LaunchIntent> = use_signal(crate::launch::detect_launch_intent_from_runtime);
 
     use_future(move || async move {
         let launch = launch();
