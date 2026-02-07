@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 
 use dirt_core::models::{Note, NoteId, Settings};
 
-use crate::services::DatabaseService;
+use crate::services::{AuthSession, DatabaseService, SupabaseAuthService};
 use crate::theme::ResolvedTheme;
 
 /// Current sync status for the app
@@ -37,6 +37,12 @@ pub struct AppState {
     pub theme: Signal<ResolvedTheme>,
     /// Database service (wrapped in Arc for sharing)
     pub db_service: Signal<Option<Arc<DatabaseService>>>,
+    /// Auth service if cloud auth is configured
+    pub auth_service: Signal<Option<Arc<SupabaseAuthService>>>,
+    /// Active auth session, if signed in
+    pub auth_session: Signal<Option<AuthSession>>,
+    /// Last auth initialization/sign-in error for UI display
+    pub auth_error: Signal<Option<String>>,
     /// Current sync status
     pub sync_status: Signal<SyncStatus>,
     /// Timestamp (unix ms) of the most recent successful sync

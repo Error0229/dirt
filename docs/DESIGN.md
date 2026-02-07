@@ -57,7 +57,7 @@ Ideas flash in the mind and disappear. The friction of opening an app, finding t
 | **Sync Layer** | Turso Embedded Replicas | latest | Native libSQL sync, Rust-first |
 | **Backend DB** | Turso (libSQL) | latest | Edge SQLite, embedded replicas |
 | **Media Storage** | Cloudflare R2 | - | Zero egress fees, S3-compatible |
-| **Auth** | TBD | - | Evaluate: Clerk, Auth0, or custom |
+| **Auth** | Supabase Auth | latest | Email/password auth with JWT sessions |
 
 ### Why This Stack?
 
@@ -505,10 +505,10 @@ Desktop apps will use GitHub Releases as the update source with Tauri-style upda
 
 ## Open Questions
 
-### OQ-001: Authentication Provider
+### OQ-001: Authentication Provider (Resolved)
 **Question**: Which auth service to use?
-**Options**: Clerk, Auth0, Supabase Auth, custom
-**Decision needed by**: Phase 2 (Sync)
+**Decision**: Supabase Auth
+**Resolved on**: 2026-02-07
 
 ### OQ-002: Hotkey Conflicts
 **Question**: How to handle when user's chosen hotkey conflicts with another app?

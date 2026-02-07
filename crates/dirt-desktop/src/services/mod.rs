@@ -2,6 +2,8 @@
 //!
 //! Services for database access and other shared functionality.
 
+mod auth;
 mod database;
 
+pub use auth::{AuthSession, SignUpOutcome, SupabaseAuthService};
 pub use database::DatabaseService;

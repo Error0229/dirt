@@ -273,3 +273,46 @@
   font-family: monospace;
   color: var(--secondary-color-5);
 }
+
+.auth-panel {
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auth-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.auth-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-actions .button {
+  flex: 1;
+}
+
+.auth-status {
+  font-size: 12px;
+  color: var(--secondary-color-5);
+  word-break: break-all;
+}
+
+.auth-hint {
+  font-size: 12px;
+  color: var(--secondary-color-5);
+  line-height: 1.35;
+}
+
+.auth-message {
+  font-size: 12px;
+  color: var(--secondary-info-color);
+}
+
+.auth-error {
+  font-size: 12px;
+  color: var(--secondary-error-color);
+}
