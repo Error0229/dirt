@@ -3,13 +3,14 @@
 //! Quick capture from the terminal with minimal friction.
 
 use std::env;
+use std::fmt::Write as _;
 use std::io::{self, IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository, SyncConfig};
 use dirt_core::{Note, NoteId};
 use serde::Serialize;
@@ -73,6 +74,15 @@ enum Commands {
         /// Note ID or unique ID prefix
         id: String,
     },
+    /// Export notes
+    Export {
+        /// Export format
+        #[arg(long, value_enum, default_value_t = ExportFormat::Json)]
+        format: ExportFormat,
+        /// Optional output path (stdout when omitted)
+        #[arg(short, long, value_name = "PATH")]
+        output: Option<PathBuf>,
+    },
     /// Sync local replica with remote Turso database
     Sync,
     /// Open TUI interface
@@ -111,6 +121,12 @@ enum CliError {
     SyncNotConfigured,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum ExportFormat {
+    Json,
+    Markdown,
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -142,6 +158,9 @@ async fn run() -> Result<(), CliError> {
         }
         Some(Commands::Edit { id }) => run_edit(&id, &db_path).await?,
         Some(Commands::Delete { id }) => run_delete(&id, &db_path).await?,
+        Some(Commands::Export { format, output }) => {
+            run_export(format, output.as_deref(), &db_path).await?;
+        }
         Some(Commands::Sync) => run_sync(&db_path).await?,
         Some(Commands::Tui) => {
             println!("Opening TUI...");
@@ -180,6 +199,15 @@ struct NoteListItem {
     created_at: i64,
     updated_at: i64,
     relative_time: String,
+    tags: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ExportNote {
+    id: String,
+    content: String,
+    created_at: i64,
+    updated_at: i64,
     tags: Vec<String>,
 }
 
@@ -272,6 +300,32 @@ async fn run_sync(db_path: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
+async fn run_export(
+    format: ExportFormat,
+    output_path: Option<&Path>,
+    db_path: &Path,
+) -> Result<(), CliError> {
+    let notes = list_all_notes(db_path).await?;
+    let rendered = match format {
+        ExportFormat::Json => serde_json::to_string_pretty(
+            &notes
+                .iter()
+                .map(note_to_export_item)
+                .collect::<Vec<ExportNote>>(),
+        )?,
+        ExportFormat::Markdown => render_markdown_export(&notes),
+    };
+
+    if let Some(path) = output_path {
+        std::fs::write(path, rendered)?;
+        println!("{}", path.display());
+    } else {
+        println!("{rendered}");
+    }
+
+    Ok(())
+}
+
 async fn list_notes(
     limit: usize,
     tag: Option<&str>,
@@ -285,6 +339,29 @@ async fn list_notes(
     } else {
         Ok(repo.list(limit, 0).await?)
     }
+}
+
+async fn list_all_notes(db_path: &Path) -> Result<Vec<Note>, CliError> {
+    const PAGE_SIZE: usize = 500;
+
+    let db = open_database(db_path).await?;
+    let repo = LibSqlNoteRepository::new(db.connection());
+
+    let mut notes = Vec::new();
+    let mut offset = 0usize;
+
+    loop {
+        let batch = repo.list(PAGE_SIZE, offset).await?;
+        let count = batch.len();
+        notes.extend(batch);
+
+        if count < PAGE_SIZE {
+            break;
+        }
+        offset += count;
+    }
+
+    Ok(notes)
 }
 
 async fn search_notes(query: &str, limit: usize, db_path: &Path) -> Result<Vec<Note>, CliError> {
@@ -378,6 +455,45 @@ fn note_to_list_item(note: &Note) -> NoteListItem {
         relative_time: format_relative_time(note.updated_at, now_ms),
         tags,
     }
+}
+
+fn note_to_export_item(note: &Note) -> ExportNote {
+    let mut tags = note.tags();
+    tags.sort();
+
+    ExportNote {
+        id: note.id.to_string(),
+        content: note.content.clone(),
+        created_at: note.created_at,
+        updated_at: note.updated_at,
+        tags,
+    }
+}
+
+fn render_markdown_export(notes: &[Note]) -> String {
+    let mut output = String::new();
+
+    for (index, note) in notes.iter().enumerate() {
+        if index > 0 {
+            output.push('\n');
+        }
+
+        let export_note = note_to_export_item(note);
+        let _ = writeln!(output, "---");
+        let _ = writeln!(output, "id: {}", export_note.id);
+        let _ = writeln!(output, "created_at: {}", export_note.created_at);
+        let _ = writeln!(output, "updated_at: {}", export_note.updated_at);
+        let _ = writeln!(output, "tags:");
+        for tag in export_note.tags {
+            let _ = writeln!(output, "  - {tag}");
+        }
+        let _ = writeln!(output, "---");
+        let _ = writeln!(output);
+        output.push_str(&export_note.content);
+        output.push('\n');
+    }
+
+    output
 }
 
 fn note_preview(note: &Note, max_chars: usize) -> String {
@@ -617,8 +733,9 @@ mod tests {
 
     use super::{
         default_editor, format_relative_time, list_notes, normalize_content,
-        normalize_note_identifier, normalize_search_query, note_preview, resolve_note_for_edit,
-        run_delete, run_sync, search_notes, CliError,
+        normalize_note_identifier, normalize_search_query, note_preview, note_to_export_item,
+        render_markdown_export, resolve_note_for_edit, run_delete, run_export, run_sync,
+        search_notes, CliError, ExportFormat,
     };
 
     #[test]
@@ -855,6 +972,60 @@ mod tests {
         let error = run_sync(&db_path).await.unwrap_err();
         assert!(matches!(error, CliError::SyncNotConfigured));
 
+        cleanup_db_files(&db_path);
+    }
+
+    #[test]
+    fn note_to_export_item_sorts_tags() {
+        let note = Note::new("#zeta test #alpha #beta");
+        let export = note_to_export_item(&note);
+
+        assert_eq!(export.tags, vec!["alpha", "beta", "zeta"]);
+    }
+
+    #[test]
+    fn render_markdown_export_includes_frontmatter_and_content() {
+        let note = Note {
+            id: "cccccccc-cccc-7ccc-8ccc-111111111111".parse().unwrap(),
+            content: "Hello export #tag".to_string(),
+            created_at: 123,
+            updated_at: 456,
+            is_deleted: false,
+        };
+
+        let rendered = render_markdown_export(&[note]);
+        assert!(rendered.contains("id: cccccccc-cccc-7ccc-8ccc-111111111111"));
+        assert!(rendered.contains("created_at: 123"));
+        assert!(rendered.contains("updated_at: 456"));
+        assert!(rendered.contains("tags:\n  - tag"));
+        assert!(rendered.contains("Hello export #tag"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn run_export_writes_json_file() {
+        let db_path = unique_test_db_path();
+        {
+            let db = Database::open(&db_path).await.unwrap();
+            let repo = LibSqlNoteRepository::new(db.connection());
+            repo.create("Export me #one").await.unwrap();
+        }
+
+        let output_path = std::env::temp_dir().join(format!(
+            "dirt-export-test-{}.json",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_nanos())
+        ));
+
+        run_export(ExportFormat::Json, Some(&output_path), &db_path)
+            .await
+            .unwrap();
+
+        let exported = std::fs::read_to_string(&output_path).unwrap();
+        assert!(exported.contains("\"content\": \"Export me #one\""));
+        assert!(exported.contains("\"tags\": [\n      \"one\"\n    ]"));
+
+        let _ = std::fs::remove_file(output_path);
         cleanup_db_files(&db_path);
     }
 
