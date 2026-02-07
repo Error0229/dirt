@@ -1,8 +1,10 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use dioxus::prelude::*;
 use dioxus_primitives::scroll_area::{ScrollArea, ScrollDirection, ScrollType};
 use dioxus_primitives::separator::Separator;
+use dioxus_primitives::toast::{use_toast, ToastOptions, ToastProvider};
 use dirt_core::{Note, NoteId};
 
 use crate::data::MobileNoteStore;
@@ -15,8 +17,25 @@ enum MobileView {
     QuickCapture,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MobileSyncState {
+    Offline,
+    Syncing,
+    Synced,
+    Error,
+}
+
 #[component]
 pub fn App() -> Element {
+    rsx! {
+        ToastProvider {
+            AppShell {}
+        }
+    }
+}
+
+#[component]
+fn AppShell() -> Element {
     let mut store = use_signal(|| None::<Arc<MobileNoteStore>>);
     let mut notes = use_signal(Vec::<Note>::new);
     let mut selected_note_id = use_signal(|| None::<NoteId>);
@@ -27,7 +46,10 @@ pub fn App() -> Element {
     let mut loading = use_signal(|| true);
     let mut saving = use_signal(|| false);
     let mut deleting = use_signal(|| false);
+    let mut sync_state = use_signal(|| MobileSyncState::Offline);
+    let mut last_sync_at = use_signal(|| None::<i64>);
     let launch: Signal<LaunchIntent> = use_signal(crate::launch::detect_launch_intent_from_runtime);
+    let toasts = use_toast();
 
     use_future(move || async move {
         let launch = launch();
@@ -35,11 +57,41 @@ pub fn App() -> Element {
         match MobileNoteStore::open_default().await {
             Ok(note_store) => {
                 let note_store = Arc::new(note_store);
+
+                store.set(Some(note_store.clone()));
+
+                if note_store.is_sync_enabled().await {
+                    sync_state.set(MobileSyncState::Syncing);
+                    match note_store.sync().await {
+                        Ok(()) => {
+                            sync_state.set(MobileSyncState::Synced);
+                            last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
+                            toasts.info(
+                                "Sync connected".to_string(),
+                                ToastOptions::new()
+                                    .description("Remote sync is active for this mobile database"),
+                            );
+                        }
+                        Err(error) => {
+                            tracing::error!("Initial mobile sync failed: {}", error);
+                            sync_state.set(MobileSyncState::Error);
+                            status_message.set(Some(format!(
+                                "Initial sync failed; retrying in background: {error}"
+                            )));
+                            toasts.error(
+                                "Initial sync failed".to_string(),
+                                ToastOptions::new()
+                                    .description("Changes will keep retrying in the background"),
+                            );
+                        }
+                    }
+                } else {
+                    sync_state.set(MobileSyncState::Offline);
+                }
+
                 match note_store.list_notes().await {
                     Ok(loaded_notes) => {
                         notes.set(loaded_notes);
-                        store.set(Some(note_store));
-                        status_message.set(None);
                     }
                     Err(error) => {
                         status_message.set(Some(format!("Failed to load notes: {error}")));
@@ -69,6 +121,54 @@ pub fn App() -> Element {
         }
 
         loading.set(false);
+    });
+
+    use_future(move || async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+
+            let Some(note_store) = store.read().clone() else {
+                continue;
+            };
+
+            if !note_store.is_sync_enabled().await {
+                sync_state.set(MobileSyncState::Offline);
+                continue;
+            }
+
+            let previous_sync_state = sync_state();
+            sync_state.set(MobileSyncState::Syncing);
+
+            match note_store.sync().await {
+                Ok(()) => {
+                    sync_state.set(MobileSyncState::Synced);
+                    last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
+
+                    if previous_sync_state == MobileSyncState::Error {
+                        toasts.success(
+                            "Sync restored".to_string(),
+                            ToastOptions::new()
+                                .description("Remote sync recovered after a failure"),
+                        );
+                    }
+
+                    if let Ok(fresh_notes) = note_store.list_notes().await {
+                        notes.set(fresh_notes);
+                    }
+                }
+                Err(error) => {
+                    tracing::error!("Periodic mobile sync failed: {}", error);
+                    sync_state.set(MobileSyncState::Error);
+
+                    if previous_sync_state != MobileSyncState::Error {
+                        toasts.error(
+                            "Sync failed".to_string(),
+                            ToastOptions::new().description("Will continue retrying automatically"),
+                        );
+                    }
+                }
+            }
+        }
     });
 
     let on_new_note = move |_| {
@@ -228,6 +328,52 @@ pub fn App() -> Element {
     };
 
     rsx! {
+        style {
+            r#"
+            .toast-container {
+                position: fixed;
+                inset: auto 12px 12px 12px;
+                z-index: 9999;
+                pointer-events: none;
+            }
+            .toast-list {
+                margin: 0;
+                padding: 0;
+                list-style: none;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            .toast {
+                pointer-events: auto;
+                border-radius: 10px;
+                border: 1px solid #d1d5db;
+                background: #ffffff;
+                box-shadow: 0 10px 30px rgba(17, 24, 39, 0.12);
+                padding: 10px 12px;
+                color: #111827;
+                display: flex;
+                gap: 10px;
+                align-items: flex-start;
+            }
+            .toast[data-type='success'] { border-color: #10b981; }
+            .toast[data-type='error'] { border-color: #ef4444; }
+            .toast[data-type='warning'] { border-color: #f59e0b; }
+            .toast[data-type='info'] { border-color: #3b82f6; }
+            .toast-content { flex: 1; }
+            .toast-title { font-size: 13px; font-weight: 700; }
+            .toast-description { font-size: 12px; color: #4b5563; margin-top: 2px; }
+            .toast-close {
+                border: 0;
+                background: transparent;
+                color: #6b7280;
+                font-size: 16px;
+                line-height: 1;
+                padding: 0;
+            }
+            "#
+        }
+
         div {
             style: "
                 height: 100vh;
@@ -250,9 +396,16 @@ pub fn App() -> Element {
                     style: "margin: 0; font-size: 22px;",
                     "Dirt"
                 }
-                p {
-                    style: "margin: 0; color: #6b7280; font-size: 12px;",
-                    "F4.4 share intent flow"
+                div {
+                    style: "display: flex; flex-direction: column; align-items: flex-end; gap: 2px;",
+                    p {
+                        style: "margin: 0; color: #6b7280; font-size: 12px;",
+                        "F4.5 sync notifications"
+                    }
+                    p {
+                        style: "margin: 0; color: #4b5563; font-size: 11px;",
+                        "{sync_state_label(sync_state(), last_sync_at())}"
+                    }
                 }
             }
 
@@ -558,6 +711,17 @@ fn apply_share_intent(
     selected_note_id.set(None);
     draft_content.set(shared_text);
     status_message.set(Some("Shared text ready to save".to_string()));
+}
+
+fn sync_state_label(state: MobileSyncState, last_sync_at: Option<i64>) -> String {
+    match state {
+        MobileSyncState::Offline => "Sync: local-only mode".to_string(),
+        MobileSyncState::Syncing => "Sync: syncing...".to_string(),
+        MobileSyncState::Synced => last_sync_at
+            .map(|timestamp| format!("Sync: updated {}", relative_time(timestamp)))
+            .unwrap_or_else(|| "Sync: connected".to_string()),
+        MobileSyncState::Error => "Sync: retrying after error".to_string(),
+    }
 }
 
 fn note_title(note: &Note) -> String {

@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository};
+use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository, SyncConfig};
 use dirt_core::models::{Note, NoteId};
 use dirt_core::{Error, Result};
 use tokio::sync::Mutex;
@@ -26,7 +26,11 @@ impl MobileNoteStore {
             std::fs::create_dir_all(parent)?;
         }
 
-        let db = Database::open(db_path).await?;
+        let db = if let Some(sync_config) = sync_config_from_env() {
+            Database::open_with_sync(db_path, sync_config).await?
+        } else {
+            Database::open(db_path).await?
+        };
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
         })
@@ -70,6 +74,18 @@ impl MobileNoteStore {
         let repo = LibSqlNoteRepository::new(db.connection());
         repo.delete(id).await
     }
+
+    /// Sync with remote database (if configured).
+    pub async fn sync(&self) -> Result<()> {
+        let db = self.db.lock().await;
+        db.sync().await
+    }
+
+    /// Check whether remote sync is enabled.
+    pub async fn is_sync_enabled(&self) -> bool {
+        let db = self.db.lock().await;
+        db.is_sync_enabled()
+    }
 }
 
 fn normalize_content(content: &str) -> Result<String> {
@@ -80,6 +96,25 @@ fn normalize_content(content: &str) -> Result<String> {
         ));
     }
     Ok(normalized.to_string())
+}
+
+#[cfg(target_os = "android")]
+fn sync_config_from_env() -> Option<SyncConfig> {
+    parse_sync_config(
+        std::env::var("TURSO_DATABASE_URL").ok(),
+        std::env::var("TURSO_AUTH_TOKEN").ok(),
+    )
+}
+
+fn parse_sync_config(url: Option<String>, auth_token: Option<String>) -> Option<SyncConfig> {
+    let url = url?.trim().to_string();
+    let auth_token = auth_token?.trim().to_string();
+
+    if url.is_empty() || auth_token.is_empty() {
+        return None;
+    }
+
+    Some(SyncConfig::new(url, auth_token))
 }
 
 /// Build a mobile-friendly local DB path.
@@ -124,5 +159,46 @@ mod tests {
             Error::InvalidInput(msg) => assert!(msg.contains("cannot be empty")),
             other => panic!("expected invalid input error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_sync_config_requires_both_values() {
+        assert!(parse_sync_config(None, Some("token".to_string())).is_none());
+        assert!(parse_sync_config(Some("libsql://db.turso.io".to_string()), None).is_none());
+    }
+
+    #[test]
+    fn parse_sync_config_rejects_empty_values() {
+        assert!(parse_sync_config(Some("   ".to_string()), Some("token".to_string())).is_none());
+        assert!(parse_sync_config(
+            Some("libsql://db.turso.io".to_string()),
+            Some("   ".to_string())
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn parse_sync_config_accepts_valid_values() {
+        let config = parse_sync_config(
+            Some(" libsql://db.turso.io ".to_string()),
+            Some(" token ".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(config.url.as_deref(), Some("libsql://db.turso.io"));
+        assert_eq!(config.auth_token.as_deref(), Some("token"));
+        assert!(config.is_configured());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn in_memory_store_sync_is_disabled() {
+        let store = MobileNoteStore::open_in_memory().await.unwrap();
+        assert!(!store.is_sync_enabled().await);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn in_memory_store_sync_is_noop() {
+        let store = MobileNoteStore::open_in_memory().await.unwrap();
+        store.sync().await.unwrap();
     }
 }
