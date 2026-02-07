@@ -1940,6 +1940,7 @@ dependencies = [
  "aws-types",
  "chrono",
  "dotenvy",
+ "image",
  "libsql",
  "pretty_assertions",
  "regex",

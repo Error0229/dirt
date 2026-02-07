@@ -19,6 +19,7 @@ tracing.workspace = true
 aws-credential-types = "1"
 aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
 aws-types = "1"
+image = "0.25"
 
 [dev-dependencies]
 pretty_assertions.workspace = true
