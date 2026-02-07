@@ -474,14 +474,16 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn list_notes_respects_limit_and_tag_filter() {
         let db_path = unique_test_db_path();
-        let db = Database::open(&db_path).await.unwrap();
-        let repo = LibSqlNoteRepository::new(db.connection());
+        {
+            let db = Database::open(&db_path).await.unwrap();
+            let repo = LibSqlNoteRepository::new(db.connection());
 
-        repo.create("First #work").await.unwrap();
-        sleep(Duration::from_millis(2)).await;
-        repo.create("Second #personal").await.unwrap();
-        sleep(Duration::from_millis(2)).await;
-        repo.create("Third #work").await.unwrap();
+            repo.create("First #work").await.unwrap();
+            sleep(Duration::from_millis(2)).await;
+            repo.create("Second #personal").await.unwrap();
+            sleep(Duration::from_millis(2)).await;
+            repo.create("Third #work").await.unwrap();
+        }
 
         let recent = list_notes(2, None, &db_path).await.unwrap();
         assert_eq!(recent.len(), 2);
