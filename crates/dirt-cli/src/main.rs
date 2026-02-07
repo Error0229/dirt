@@ -8,8 +8,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::Utc;
 use clap::{CommandFactory, Parser, Subcommand};
 use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository, SyncConfig};
+use dirt_core::Note;
+use serde::Serialize;
 use thiserror::Error;
 
 #[derive(Parser)]
@@ -42,6 +45,12 @@ enum Commands {
         /// Number of notes to show
         #[arg(short, long, default_value = "10")]
         limit: usize,
+        /// Filter notes by tag name
+        #[arg(long)]
+        tag: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Search notes
     Search {
@@ -58,6 +67,8 @@ enum CliError {
     Core(#[from] dirt_core::Error),
     #[error(transparent)]
     Io(#[from] io::Error),
+    #[error(transparent)]
+    Serialization(#[from] serde_json::Error),
     #[error("No note content provided")]
     EmptyContent,
     #[error("Editor command failed: {0}")]
@@ -89,9 +100,8 @@ async fn run() -> Result<(), CliError> {
 
     match cli.command {
         Some(Commands::Add { content }) => run_add(&content, &db_path).await?,
-        Some(Commands::List { limit }) => {
-            println!("Listing {limit} recent notes...");
-            // TODO: Implement note listing
+        Some(Commands::List { limit, tag, json }) => {
+            run_list(limit, tag.as_deref(), json, &db_path).await?;
         }
         Some(Commands::Search { query }) => {
             println!("Searching for: {query}");
@@ -124,6 +134,140 @@ async fn run_add(content_parts: &[String], db_path: &Path) -> Result<(), CliErro
 
     println!("{}", note.id);
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct NoteListItem {
+    id: String,
+    preview: String,
+    content: String,
+    created_at: i64,
+    updated_at: i64,
+    relative_time: String,
+    tags: Vec<String>,
+}
+
+async fn run_list(
+    limit: usize,
+    tag: Option<&str>,
+    as_json: bool,
+    db_path: &Path,
+) -> Result<(), CliError> {
+    let notes = list_notes(limit, tag, db_path).await?;
+
+    if as_json {
+        let json_items = notes
+            .iter()
+            .map(note_to_list_item)
+            .collect::<Vec<NoteListItem>>();
+        println!("{}", serde_json::to_string_pretty(&json_items)?);
+    } else {
+        for line in format_note_lines(&notes) {
+            println!("{line}");
+        }
+    }
+
+    Ok(())
+}
+
+async fn list_notes(
+    limit: usize,
+    tag: Option<&str>,
+    db_path: &Path,
+) -> Result<Vec<Note>, CliError> {
+    let db = open_database(db_path).await?;
+    let repo = LibSqlNoteRepository::new(db.connection());
+
+    if let Some(tag_name) = tag {
+        Ok(repo.list_by_tag(tag_name, limit, 0).await?)
+    } else {
+        Ok(repo.list(limit, 0).await?)
+    }
+}
+
+fn format_note_lines(notes: &[Note]) -> Vec<String> {
+    let now_ms = Utc::now().timestamp_millis();
+    notes
+        .iter()
+        .map(|note| {
+            let id = note.id.to_string();
+            let short_id = id.chars().take(13).collect::<String>();
+            let preview = note_preview(note, 40);
+            let relative_time = format_relative_time(note.updated_at, now_ms);
+            let tags = render_tags(note);
+
+            if tags.is_empty() {
+                format!("{short_id:<13}  {preview:<40}  {relative_time}")
+            } else {
+                format!("{short_id:<13}  {preview:<40}  {relative_time:<10}  {tags}")
+            }
+        })
+        .collect()
+}
+
+fn note_to_list_item(note: &Note) -> NoteListItem {
+    let now_ms = Utc::now().timestamp_millis();
+    let mut tags = note.tags();
+    tags.sort();
+
+    NoteListItem {
+        id: note.id.to_string(),
+        preview: note_preview(note, 80),
+        content: note.content.clone(),
+        created_at: note.created_at,
+        updated_at: note.updated_at,
+        relative_time: format_relative_time(note.updated_at, now_ms),
+        tags,
+    }
+}
+
+fn note_preview(note: &Note, max_chars: usize) -> String {
+    let first_line = note.content.lines().next().unwrap_or("").trim();
+    let collapsed = first_line.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    if collapsed.chars().count() <= max_chars {
+        collapsed
+    } else {
+        let take_len = max_chars.saturating_sub(3);
+        let mut truncated = collapsed.chars().take(take_len).collect::<String>();
+        truncated.push_str("...");
+        truncated
+    }
+}
+
+fn render_tags(note: &Note) -> String {
+    let mut tags = note.tags();
+    tags.sort();
+    tags.into_iter()
+        .map(|tag| format!("#{tag}"))
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+fn format_relative_time(timestamp_ms: i64, now_ms: i64) -> String {
+    let diff = now_ms.saturating_sub(timestamp_ms);
+    let minute = 60_000;
+    let hour = 60 * minute;
+    let day = 24 * hour;
+    let week = 7 * day;
+    let month = 30 * day;
+    let year = 365 * day;
+
+    if diff < minute {
+        "just now".to_string()
+    } else if diff < hour {
+        format!("{}m ago", diff / minute)
+    } else if diff < day {
+        format!("{}h ago", diff / hour)
+    } else if diff < week {
+        format!("{}d ago", diff / day)
+    } else if diff < month {
+        format!("{}w ago", diff / week)
+    } else if diff < year {
+        format!("{}mo ago", diff / month)
+    } else {
+        format!("{}y ago", diff / year)
+    }
 }
 
 fn resolve_note_content(content_parts: &[String]) -> Result<String, CliError> {
@@ -283,7 +427,15 @@ async fn open_database(path: &Path) -> Result<Database, CliError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_editor, normalize_content};
+    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository};
+    use tokio::time::sleep;
+
+    use super::{
+        default_editor, format_relative_time, list_notes, normalize_content, note_preview,
+    };
 
     #[test]
     fn normalize_content_trims_and_rejects_empty() {
@@ -302,5 +454,59 @@ mod tests {
     #[test]
     fn default_editor_is_defined() {
         assert!(!default_editor().is_empty());
+    }
+
+    #[test]
+    fn format_relative_time_units() {
+        let now = 10_000_000;
+        assert_eq!(format_relative_time(now - 30_000, now), "just now");
+        assert_eq!(format_relative_time(now - 120_000, now), "2m ago");
+        assert_eq!(format_relative_time(now - 2 * 60 * 60_000, now), "2h ago");
+    }
+
+    #[test]
+    fn note_preview_truncates_with_ellipsis() {
+        let note = dirt_core::Note::new("This is a very long sentence that should be shortened");
+        let preview = note_preview(&note, 20);
+        assert_eq!(preview, "This is a very lo...");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_notes_respects_limit_and_tag_filter() {
+        let db_path = unique_test_db_path();
+        {
+            let db = Database::open(&db_path).await.unwrap();
+            let repo = LibSqlNoteRepository::new(db.connection());
+
+            repo.create("First #work").await.unwrap();
+            sleep(Duration::from_millis(2)).await;
+            repo.create("Second #personal").await.unwrap();
+            sleep(Duration::from_millis(2)).await;
+            repo.create("Third #work").await.unwrap();
+        }
+
+        let recent = list_notes(2, None, &db_path).await.unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].content, "Third #work");
+        assert_eq!(recent[1].content, "Second #personal");
+
+        let work_only = list_notes(10, Some("work"), &db_path).await.unwrap();
+        assert_eq!(work_only.len(), 2);
+        assert!(work_only.iter().all(|note| note.content.contains("#work")));
+
+        cleanup_db_files(&db_path);
+    }
+
+    fn unique_test_db_path() -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        std::env::temp_dir().join(format!("dirt-cli-list-test-{timestamp}.db"))
+    }
+
+    fn cleanup_db_files(path: &PathBuf) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
     }
 }

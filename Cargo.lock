@@ -1469,10 +1469,13 @@ dependencies = [
 name = "dirt-cli"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
  "dirs",
  "dirt-core",
  "dotenvy",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
