@@ -77,6 +77,8 @@ enum CliError {
     #[error(transparent)]
     Core(#[from] dirt_core::Error),
     #[error(transparent)]
+    LibSql(#[from] libsql::Error),
+    #[error(transparent)]
     Io(#[from] io::Error),
     #[error(transparent)]
     Serialization(#[from] serde_json::Error),
@@ -265,21 +267,39 @@ async fn resolve_note_for_edit(note_query: &str, db: &Database) -> Result<Note, 
         }
     }
 
-    let matching_notes = repo
-        .list(1_000, 0)
-        .await?
-        .into_iter()
-        .filter(|note| note.id.to_string().starts_with(note_query))
-        .collect::<Vec<_>>();
+    let mut rows = db
+        .connection()
+        .query(
+            "SELECT id
+             FROM notes
+             WHERE is_deleted = 0 AND id LIKE ?
+             ORDER BY updated_at DESC
+             LIMIT ?",
+            libsql::params![format!("{note_query}%"), 3i64],
+        )
+        .await?;
 
-    match matching_notes.len() {
+    let mut matching_ids = Vec::new();
+    while let Some(row) = rows.next().await? {
+        let id: String = row.get(0)?;
+        matching_ids.push(id);
+    }
+
+    match matching_ids.len() {
         0 => Err(CliError::NoteNotFound(note_query.to_string())),
-        1 => Ok(matching_notes[0].clone()),
+        1 => {
+            let resolved_id = matching_ids[0]
+                .parse::<NoteId>()
+                .map_err(|_| CliError::NoteNotFound(note_query.to_string()))?;
+            repo.get(&resolved_id)
+                .await?
+                .ok_or_else(|| CliError::NoteNotFound(note_query.to_string()))
+        }
         _ => {
-            let options = matching_notes
+            let options = matching_ids
                 .iter()
                 .take(3)
-                .map(|note| note.id.to_string().chars().take(13).collect::<String>())
+                .map(|id| id.chars().take(13).collect::<String>())
                 .collect::<Vec<_>>()
                 .join(", ");
             Err(CliError::AmbiguousNoteId(format!(

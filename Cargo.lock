@@ -1486,6 +1486,7 @@ dependencies = [
  "dirs",
  "dirt-core",
  "dotenvy",
+ "libsql",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
