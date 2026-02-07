@@ -10,7 +10,7 @@ use dirt_core::db::{
     SyncConfig,
 };
 use dirt_core::error::Result;
-use dirt_core::models::{Note, Settings};
+use dirt_core::models::{Attachment, Note, Settings};
 use dirt_core::NoteId;
 use tokio::sync::Mutex;
 
@@ -191,6 +191,21 @@ impl DatabaseService {
         let db = self.db.lock().await;
         let repo = LibSqlNoteRepository::new(db.connection());
         repo.list_tags().await
+    }
+
+    /// Create attachment metadata for a note
+    pub async fn create_attachment(
+        &self,
+        note_id: &NoteId,
+        filename: &str,
+        mime_type: &str,
+        size_bytes: i64,
+        r2_key: &str,
+    ) -> Result<Attachment> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.create_attachment(note_id, filename, mime_type, size_bytes, r2_key)
+            .await
     }
 
     /// Load settings from database
