@@ -1547,6 +1547,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dirt-mobile"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+ "dioxus-primitives",
+ "dirt-core",
+ "dotenvy",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "dispatch"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
