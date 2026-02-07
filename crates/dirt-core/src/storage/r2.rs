@@ -212,6 +212,10 @@ fn sanitize_token(input: &str) -> String {
 mod tests {
     use std::collections::HashMap;
 
+    use aws_credential_types::Credentials;
+    use aws_sdk_s3::Client;
+    use aws_types::region::Region;
+
     use super::*;
 
     fn parse_from_map(map: &HashMap<&str, &str>) -> Result<Option<R2Config>> {
@@ -307,5 +311,73 @@ mod tests {
 
         let url = storage.public_object_url("/notes/note/file.png").unwrap();
         assert_eq!(url, "https://cdn.example.com/media/notes/note/file.png");
+    }
+
+    #[test]
+    #[ignore = "Requires local R2 env vars in process environment or .env"]
+    fn from_env_loads_real_r2_config() {
+        let _ = dotenvy::dotenv();
+
+        let config = R2Config::from_env()
+            .expect("R2 env parsing should not error")
+            .expect("R2 config should be present");
+
+        assert!(!config.account_id.trim().is_empty());
+        assert!(!config.bucket.trim().is_empty());
+        assert!(!config.access_key_id.trim().is_empty());
+        assert!(!config.secret_access_key.trim().is_empty());
+        assert_eq!(
+            config.endpoint_url(),
+            format!("https://{}.r2.cloudflarestorage.com", config.account_id)
+        );
+
+        if let Some(public_base_url) = config.public_base_url {
+            assert!(
+                public_base_url.starts_with("https://") || public_base_url.starts_with("http://")
+            );
+        }
+    }
+
+    fn test_s3_client(config: &R2Config) -> Client {
+        let credentials = Credentials::new(
+            config.access_key_id.clone(),
+            config.secret_access_key.clone(),
+            None,
+            None,
+            "dirt-core-r2-test",
+        );
+
+        let sdk_config = aws_sdk_s3::config::Builder::new()
+            .region(Region::new("auto"))
+            .credentials_provider(credentials)
+            .endpoint_url(config.endpoint_url())
+            .force_path_style(true)
+            .build();
+
+        Client::from_conf(sdk_config)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "Requires local R2 env vars plus network access"]
+    async fn r2_bucket_exists_and_is_reachable() {
+        let _ = dotenvy::dotenv();
+
+        let config = R2Config::from_env()
+            .expect("R2 env parsing should not error")
+            .expect("R2 config should be present");
+
+        let client = test_s3_client(&config);
+
+        client
+            .head_bucket()
+            .bucket(&config.bucket)
+            .send()
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "R2 bucket health check failed for bucket '{}': {error}",
+                    config.bucket
+                )
+            });
     }
 }
