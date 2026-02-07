@@ -3,7 +3,9 @@
 #![allow(clippy::cast_possible_wrap)] // SQLite uses i64 for LIMIT/OFFSET
 
 use crate::error::{Error, Result};
-use crate::models::{extract_tags, Note, NoteId, SyncConflict, Tag, TagId};
+use crate::models::{
+    extract_tags, Attachment, AttachmentId, Note, NoteId, SyncConflict, Tag, TagId,
+};
 use libsql::Connection;
 
 /// Trait for note storage operations (async)
@@ -38,6 +40,22 @@ pub trait NoteRepository {
 
     /// List recently resolved sync conflicts
     async fn list_conflicts(&self, limit: usize) -> Result<Vec<SyncConflict>>;
+
+    /// Create attachment metadata for a note
+    async fn create_attachment(
+        &self,
+        note_id: &NoteId,
+        filename: &str,
+        mime_type: &str,
+        size_bytes: i64,
+        r2_key: &str,
+    ) -> Result<Attachment>;
+
+    /// List non-deleted attachments for a note
+    async fn list_attachments(&self, note_id: &NoteId) -> Result<Vec<Attachment>>;
+
+    /// Soft delete attachment metadata by id
+    async fn delete_attachment(&self, attachment_id: &AttachmentId) -> Result<()>;
 }
 
 /// libSQL implementation of `NoteRepository`
@@ -128,6 +146,26 @@ impl<'a> LibSqlNoteRepository<'a> {
             incoming_updated_at: row.get(3)?,
             resolved_at: row.get(4)?,
             strategy: row.get(5)?,
+        })
+    }
+
+    /// Parse attachment metadata from a database row
+    fn parse_attachment(row: &libsql::Row) -> Result<Attachment> {
+        let id: String = row.get(0)?;
+        let note_id: String = row.get(1)?;
+        Ok(Attachment {
+            id: id
+                .parse()
+                .map_err(|_| Error::InvalidInput("Invalid attachment ID".into()))?,
+            note_id: note_id
+                .parse()
+                .map_err(|_| Error::InvalidInput("Invalid note ID".into()))?,
+            filename: row.get(2)?,
+            mime_type: row.get(3)?,
+            size_bytes: row.get(4)?,
+            r2_key: row.get(5)?,
+            created_at: row.get(6)?,
+            is_deleted: row.get::<i32>(7)? != 0,
         })
     }
 }
@@ -328,6 +366,86 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
 
         Ok(conflicts)
     }
+
+    async fn create_attachment(
+        &self,
+        note_id: &NoteId,
+        filename: &str,
+        mime_type: &str,
+        size_bytes: i64,
+        r2_key: &str,
+    ) -> Result<Attachment> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id FROM notes WHERE id = ? AND is_deleted = 0",
+                [note_id.as_str()],
+            )
+            .await?;
+        if rows.next().await?.is_none() {
+            return Err(Error::NotFound(note_id.to_string()));
+        }
+
+        let attachment = Attachment::new(*note_id, filename, mime_type, size_bytes, r2_key)?;
+
+        self.conn
+            .execute(
+                "INSERT INTO attachments (
+                    id, note_id, filename, mime_type, size_bytes, r2_key, created_at, is_deleted
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                libsql::params![
+                    attachment.id.as_str(),
+                    attachment.note_id.as_str(),
+                    attachment.filename.as_str(),
+                    attachment.mime_type.as_str(),
+                    attachment.size_bytes,
+                    attachment.r2_key.as_str(),
+                    attachment.created_at,
+                    i32::from(attachment.is_deleted),
+                ],
+            )
+            .await?;
+
+        Ok(attachment)
+    }
+
+    async fn list_attachments(&self, note_id: &NoteId) -> Result<Vec<Attachment>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id, note_id, filename, mime_type, size_bytes, r2_key, created_at, is_deleted
+                 FROM attachments
+                 WHERE note_id = ? AND is_deleted = 0
+                 ORDER BY created_at DESC, id DESC",
+                [note_id.as_str()],
+            )
+            .await?;
+
+        let mut attachments = Vec::new();
+        while let Some(row) = rows.next().await? {
+            attachments.push(Self::parse_attachment(&row)?);
+        }
+
+        Ok(attachments)
+    }
+
+    async fn delete_attachment(&self, attachment_id: &AttachmentId) -> Result<()> {
+        let rows_affected = self
+            .conn
+            .execute(
+                "UPDATE attachments
+                 SET is_deleted = 1
+                 WHERE id = ? AND is_deleted = 0",
+                [attachment_id.as_str()],
+            )
+            .await?;
+
+        if rows_affected == 0 {
+            return Err(Error::NotFound(attachment_id.to_string()));
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -492,5 +610,63 @@ mod tests {
 
         let conflicts = repo.list_conflicts(10).await.unwrap();
         assert!(conflicts.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_attachment_metadata_crud() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let note = repo.create("Attachment note").await.unwrap();
+
+        let first = repo
+            .create_attachment(
+                &note.id,
+                "image-1.png",
+                "image/png",
+                1234,
+                "notes/a/image-1.png",
+            )
+            .await
+            .unwrap();
+        let second = repo
+            .create_attachment(
+                &note.id,
+                "image-2.jpg",
+                "image/jpeg",
+                4567,
+                "notes/a/image-2.jpg",
+            )
+            .await
+            .unwrap();
+
+        let attachments = repo.list_attachments(&note.id).await.unwrap();
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(attachments[0].id, second.id);
+        assert_eq!(attachments[1].id, first.id);
+
+        repo.delete_attachment(&second.id).await.unwrap();
+
+        let attachments = repo.list_attachments(&note.id).await.unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].id, first.id);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_attachment_requires_existing_note() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let missing_note = NoteId::new();
+        let result = repo
+            .create_attachment(
+                &missing_note,
+                "missing.png",
+                "image/png",
+                1,
+                "notes/missing.png",
+            )
+            .await;
+        assert!(matches!(result, Err(Error::NotFound(_))));
     }
 }
