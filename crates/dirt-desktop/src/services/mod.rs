@@ -5,5 +5,5 @@
 mod auth;
 mod database;
 
-pub use auth::{AuthSession, SignUpOutcome, SupabaseAuthService};
+pub use auth::{AuthConfigStatus, AuthSession, SignUpOutcome, SupabaseAuthService};
 pub use database::DatabaseService;
