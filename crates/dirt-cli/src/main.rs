@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::Utc;
 use clap::{CommandFactory, Parser, Subcommand};
 use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository, SyncConfig};
-use dirt_core::Note;
+use dirt_core::{Note, NoteId};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -63,6 +63,11 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Edit an existing note
+    Edit {
+        /// Note ID or unique ID prefix
+        id: String,
+    },
     /// Open TUI interface
     Tui,
 }
@@ -72,13 +77,23 @@ enum CliError {
     #[error(transparent)]
     Core(#[from] dirt_core::Error),
     #[error(transparent)]
+    LibSql(#[from] libsql::Error),
+    #[error(transparent)]
     Io(#[from] io::Error),
     #[error(transparent)]
     Serialization(#[from] serde_json::Error),
     #[error("No note content provided")]
     EmptyContent,
+    #[error("Edited note content cannot be empty")]
+    EmptyEditedContent,
+    #[error("Note ID cannot be empty")]
+    EmptyNoteId,
     #[error("Search query cannot be empty")]
     EmptySearchQuery,
+    #[error("Note not found for id/prefix: {0}")]
+    NoteNotFound(String),
+    #[error("{0}")]
+    AmbiguousNoteId(String),
     #[error("Editor command failed: {0}")]
     EditorFailed(String),
     #[error("Database initialization failed: {0}")]
@@ -114,6 +129,7 @@ async fn run() -> Result<(), CliError> {
         Some(Commands::Search { query, limit, json }) => {
             run_search(&query, limit, json, &db_path).await?;
         }
+        Some(Commands::Edit { id }) => run_edit(&id, &db_path).await?,
         Some(Commands::Tui) => {
             println!("Opening TUI...");
             // TODO: Implement TUI with ratatui
@@ -201,6 +217,26 @@ async fn run_search(
     Ok(())
 }
 
+async fn run_edit(id: &str, db_path: &Path) -> Result<(), CliError> {
+    let normalized_id = normalize_note_identifier(id)?;
+    let db = open_database(db_path).await?;
+    let note = resolve_note_for_edit(&normalized_id, &db).await?;
+
+    let Some(edited_content) = capture_editor_input_with_initial(&note.content)? else {
+        return Err(CliError::EmptyEditedContent);
+    };
+
+    if edited_content == note.content {
+        println!("{}", note.id);
+        return Ok(());
+    }
+
+    let repo = LibSqlNoteRepository::new(db.connection());
+    let updated = repo.update(&note.id, &edited_content).await?;
+    println!("{}", updated.id);
+    Ok(())
+}
+
 async fn list_notes(
     limit: usize,
     tag: Option<&str>,
@@ -220,6 +256,57 @@ async fn search_notes(query: &str, limit: usize, db_path: &Path) -> Result<Vec<N
     let db = open_database(db_path).await?;
     let repo = LibSqlNoteRepository::new(db.connection());
     Ok(repo.search(query, limit).await?)
+}
+
+async fn resolve_note_for_edit(note_query: &str, db: &Database) -> Result<Note, CliError> {
+    let repo = LibSqlNoteRepository::new(db.connection());
+
+    if let Ok(note_id) = note_query.parse::<NoteId>() {
+        if let Some(note) = repo.get(&note_id).await? {
+            return Ok(note);
+        }
+    }
+
+    let mut rows = db
+        .connection()
+        .query(
+            "SELECT id
+             FROM notes
+             WHERE is_deleted = 0 AND id LIKE ?
+             ORDER BY updated_at DESC
+             LIMIT ?",
+            libsql::params![format!("{note_query}%"), 3i64],
+        )
+        .await?;
+
+    let mut matching_ids = Vec::new();
+    while let Some(row) = rows.next().await? {
+        let id: String = row.get(0)?;
+        matching_ids.push(id);
+    }
+
+    match matching_ids.len() {
+        0 => Err(CliError::NoteNotFound(note_query.to_string())),
+        1 => {
+            let resolved_id = matching_ids[0]
+                .parse::<NoteId>()
+                .map_err(|_| CliError::NoteNotFound(note_query.to_string()))?;
+            repo.get(&resolved_id)
+                .await?
+                .ok_or_else(|| CliError::NoteNotFound(note_query.to_string()))
+        }
+        _ => {
+            let options = matching_ids
+                .iter()
+                .take(3)
+                .map(|id| id.chars().take(13).collect::<String>())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(CliError::AmbiguousNoteId(format!(
+                "ID prefix '{note_query}' is ambiguous; matches: {options}"
+            )))
+        }
+    }
 }
 
 fn format_note_lines(notes: &[Note]) -> Vec<String> {
@@ -341,6 +428,15 @@ fn normalize_search_query(query: &str) -> Result<String, CliError> {
     }
 }
 
+fn normalize_note_identifier(id: &str) -> Result<String, CliError> {
+    let trimmed = id.trim();
+    if trimmed.is_empty() {
+        Err(CliError::EmptyNoteId)
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
 fn read_piped_stdin() -> Result<Option<String>, CliError> {
     let stdin = io::stdin();
     if stdin.is_terminal() {
@@ -353,9 +449,13 @@ fn read_piped_stdin() -> Result<Option<String>, CliError> {
 }
 
 fn capture_editor_input() -> Result<Option<String>, CliError> {
+    capture_editor_input_with_initial("")
+}
+
+fn capture_editor_input_with_initial(initial_content: &str) -> Result<Option<String>, CliError> {
     let editor = preferred_editor();
     let temp_file = create_temp_note_file_path();
-    std::fs::write(&temp_file, "")?;
+    std::fs::write(&temp_file, initial_content)?;
 
     let launch_result = launch_editor(&editor, &temp_file);
     let note_content = std::fs::read_to_string(&temp_file)?;
@@ -477,11 +577,13 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository};
+    use dirt_core::Note;
     use tokio::time::sleep;
 
     use super::{
         default_editor, format_relative_time, list_notes, normalize_content,
-        normalize_search_query, note_preview, search_notes,
+        normalize_note_identifier, normalize_search_query, note_preview, resolve_note_for_edit,
+        search_notes, CliError,
     };
 
     #[test]
@@ -572,6 +674,85 @@ mod tests {
             normalize_search_query("  exact phrase  ").unwrap(),
             "exact phrase"
         );
+    }
+
+    #[test]
+    fn normalize_note_identifier_rejects_empty() {
+        assert!(matches!(
+            normalize_note_identifier(" \n "),
+            Err(CliError::EmptyNoteId)
+        ));
+        assert_eq!(
+            normalize_note_identifier("  abc123  ").unwrap(),
+            "abc123".to_string()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn resolve_note_for_edit_supports_exact_and_prefix_id() {
+        let db_path = unique_test_db_path();
+        let db = Database::open(&db_path).await.unwrap();
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let note_a = Note {
+            id: "11111111-1111-7111-8111-111111111111".parse().unwrap(),
+            content: "Note A".to_string(),
+            created_at: 1000,
+            updated_at: 1000,
+            is_deleted: false,
+        };
+        let note_b = Note {
+            id: "11111111-1111-7111-8111-222222222222".parse().unwrap(),
+            content: "Note B".to_string(),
+            created_at: 1001,
+            updated_at: 1001,
+            is_deleted: false,
+        };
+        repo.create_with_note(&note_a).await.unwrap();
+        repo.create_with_note(&note_b).await.unwrap();
+
+        let by_exact = resolve_note_for_edit("11111111-1111-7111-8111-111111111111", &db)
+            .await
+            .unwrap();
+        assert_eq!(by_exact.content, "Note A");
+
+        let by_prefix = resolve_note_for_edit("11111111-1111-7111-8111-2", &db)
+            .await
+            .unwrap();
+        assert_eq!(by_prefix.content, "Note B");
+
+        cleanup_db_files(&db_path);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn resolve_note_for_edit_rejects_ambiguous_prefix() {
+        let db_path = unique_test_db_path();
+        let db = Database::open(&db_path).await.unwrap();
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let note_a = Note {
+            id: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa".parse().unwrap(),
+            content: "Left".to_string(),
+            created_at: 1000,
+            updated_at: 1000,
+            is_deleted: false,
+        };
+        let note_b = Note {
+            id: "aaaaaaaa-aaaa-7aaa-8aaa-bbbbbbbbbbbb".parse().unwrap(),
+            content: "Right".to_string(),
+            created_at: 1001,
+            updated_at: 1001,
+            is_deleted: false,
+        };
+        repo.create_with_note(&note_a).await.unwrap();
+        repo.create_with_note(&note_b).await.unwrap();
+
+        let error = resolve_note_for_edit("aaaaaaaa-aaaa-7aaa-8aaa", &db)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CliError::AmbiguousNoteId(_)));
+
+        cleanup_db_files(&db_path);
     }
 
     fn unique_test_db_path() -> PathBuf {
