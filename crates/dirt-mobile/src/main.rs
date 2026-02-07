@@ -6,6 +6,8 @@
 mod app;
 #[cfg(any(target_os = "android", test))]
 mod data;
+#[cfg(any(target_os = "android", test))]
+mod launch;
 
 #[cfg(target_os = "android")]
 fn main() {

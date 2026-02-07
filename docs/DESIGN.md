@@ -189,7 +189,7 @@ dirt/
 |----|---------|----------|--------|--------|
 | F4.1 | Dioxus Android app shell | P0 | Done | F1.4 |
 | F4.2 | Note list + editor (mobile UI) | P0 | Done | F4.1 |
-| F4.3 | Quick capture widget | P1 | Todo | F4.2 |
+| F4.3 | Quick capture widget | P1 | In Progress | F4.2 |
 | F4.4 | Share intent receiver | P1 | Todo | F4.2 |
 | F4.5 | Push notifications for sync | P2 | Todo | F2.4, F4.1 |
 

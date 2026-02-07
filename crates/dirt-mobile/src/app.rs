@@ -6,11 +6,13 @@ use dioxus_primitives::separator::Separator;
 use dirt_core::{Note, NoteId};
 
 use crate::data::MobileNoteStore;
+use crate::launch::QuickCaptureLaunch;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MobileView {
     List,
     Editor,
+    QuickCapture,
 }
 
 #[component]
@@ -19,13 +21,17 @@ pub fn App() -> Element {
     let mut notes = use_signal(Vec::<Note>::new);
     let mut selected_note_id = use_signal(|| None::<NoteId>);
     let mut draft_content = use_signal(String::new);
+    let mut quick_capture_content = use_signal(String::new);
     let mut view = use_signal(|| MobileView::List);
     let mut status_message = use_signal(|| None::<String>);
     let mut loading = use_signal(|| true);
     let mut saving = use_signal(|| false);
     let mut deleting = use_signal(|| false);
+    let launch = use_signal(crate::launch::detect_quick_capture_launch_from_runtime);
 
     use_future(move || async move {
+        let launch = launch();
+
         match MobileNoteStore::open_default().await {
             Ok(note_store) => {
                 let note_store = Arc::new(note_store);
@@ -44,6 +50,12 @@ pub fn App() -> Element {
                 status_message.set(Some(format!("Failed to open database: {error}")));
             }
         }
+
+        if launch.enabled {
+            apply_quick_capture_launch(launch, &mut quick_capture_content, &mut status_message);
+            view.set(MobileView::QuickCapture);
+        }
+
         loading.set(false);
     });
 
@@ -52,6 +64,12 @@ pub fn App() -> Element {
         draft_content.set(String::new());
         status_message.set(None);
         view.set(MobileView::Editor);
+    };
+
+    let on_open_quick_capture = move |_| {
+        quick_capture_content.set(String::new());
+        status_message.set(None);
+        view.set(MobileView::QuickCapture);
     };
 
     let on_back_to_list = move |_| {
@@ -103,6 +121,48 @@ pub fn App() -> Element {
                 }
                 Err(error) => {
                     status_message.set(Some(format!("Failed to save note: {error}")));
+                }
+            }
+
+            saving.set(false);
+        });
+    };
+
+    let on_save_quick_capture = move |_| {
+        if saving() {
+            return;
+        }
+
+        let Some(note_store) = store.read().clone() else {
+            status_message.set(Some("Database is not ready yet".to_string()));
+            return;
+        };
+
+        let content = quick_capture_content().trim().to_string();
+        if content.is_empty() {
+            status_message.set(Some("Quick capture cannot be empty".to_string()));
+            return;
+        }
+
+        saving.set(true);
+        status_message.set(Some("Saving quick capture...".to_string()));
+
+        spawn(async move {
+            match note_store.create_note(&content).await {
+                Ok(_) => match note_store.list_notes().await {
+                    Ok(fresh_notes) => {
+                        notes.set(fresh_notes);
+                        quick_capture_content.set(String::new());
+                        view.set(MobileView::List);
+                        status_message.set(Some("Quick capture saved".to_string()));
+                    }
+                    Err(error) => {
+                        status_message
+                            .set(Some(format!("Saved, but failed to refresh list: {error}")));
+                    }
+                },
+                Err(error) => {
+                    status_message.set(Some(format!("Failed to save quick capture: {error}")));
                 }
             }
 
@@ -180,7 +240,7 @@ pub fn App() -> Element {
                 }
                 p {
                     style: "margin: 0; color: #6b7280; font-size: 12px;",
-                    "F4.2 mobile list + editor"
+                    "F4.3 quick capture flow"
                 }
             }
 
@@ -213,11 +273,11 @@ pub fn App() -> Element {
                 }
             } else if view() == MobileView::List {
                 div {
-                    style: "padding: 12px 16px;",
+                    style: "padding: 12px 16px; display: flex; gap: 8px;",
                     button {
                         type: "button",
                         style: "
-                            width: 100%;
+                            flex: 1;
                             border: 0;
                             border-radius: 10px;
                             padding: 12px;
@@ -228,6 +288,21 @@ pub fn App() -> Element {
                         ",
                         onclick: on_new_note,
                         "New note"
+                    }
+                    button {
+                        type: "button",
+                        style: "
+                            flex: 1;
+                            border: 1px solid #2563eb;
+                            border-radius: 10px;
+                            padding: 12px;
+                            background: #eff6ff;
+                            color: #1d4ed8;
+                            font-weight: 600;
+                            font-size: 14px;
+                        ",
+                        onclick: on_open_quick_capture,
+                        "Quick capture"
                     }
                 }
 
@@ -309,6 +384,65 @@ pub fn App() -> Element {
                         }
                     }
                 }
+            } else if view() == MobileView::QuickCapture {
+                div {
+                    style: "
+                        padding: 10px 12px;
+                        display: flex;
+                        gap: 8px;
+                        background: #ffffff;
+                    ",
+                    button {
+                        type: "button",
+                        style: "
+                            border: 1px solid #d1d5db;
+                            border-radius: 8px;
+                            padding: 10px 12px;
+                            background: #ffffff;
+                            font-weight: 600;
+                        ",
+                        onclick: on_back_to_list,
+                        "Cancel"
+                    }
+                    button {
+                        type: "button",
+                        style: "
+                            border: 0;
+                            border-radius: 8px;
+                            padding: 10px 12px;
+                            background: #2563eb;
+                            color: #ffffff;
+                            font-weight: 600;
+                        ",
+                        disabled: saving(),
+                        onclick: on_save_quick_capture,
+                        if saving() { "Saving..." } else { "Save capture" }
+                    }
+                }
+
+                Separator {
+                    decorative: true,
+                    style: "height: 1px; background: #e5e7eb;",
+                }
+
+                textarea {
+                    style: "
+                        flex: 1;
+                        margin: 12px;
+                        border: 1px solid #93c5fd;
+                        border-radius: 12px;
+                        padding: 14px;
+                        line-height: 1.5;
+                        font-size: 15px;
+                        resize: none;
+                        background: #eff6ff;
+                    ",
+                    value: "{quick_capture_content}",
+                    placeholder: "Quick capture: write and save...",
+                    oninput: move |event: Event<FormData>| {
+                        quick_capture_content.set(event.value());
+                    },
+                }
             } else {
                 div {
                     style: "
@@ -388,6 +522,19 @@ pub fn App() -> Element {
             }
         }
     }
+}
+
+fn apply_quick_capture_launch(
+    launch: QuickCaptureLaunch,
+    quick_capture_content: &mut Signal<String>,
+    status_message: &mut Signal<Option<String>>,
+) {
+    if let Some(seed) = launch.seed_text {
+        quick_capture_content.set(seed);
+    } else {
+        quick_capture_content.set(String::new());
+    }
+    status_message.set(Some("Quick capture mode ready".to_string()));
 }
 
 fn note_title(note: &Note) -> String {
