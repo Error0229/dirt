@@ -86,11 +86,10 @@ impl AppState {
 
     /// Track a pending change for a note until the next successful sync.
     pub fn enqueue_pending_change(&mut self, note_id: NoteId) {
-        let current = (self.pending_sync_count)();
-        self.pending_sync_count.set(current + 1);
         let mut pending_notes = self.pending_sync_note_ids.write();
         if !pending_notes.contains(&note_id) {
             pending_notes.push(note_id);
+            self.pending_sync_count.set(pending_notes.len());
         }
     }
 }
