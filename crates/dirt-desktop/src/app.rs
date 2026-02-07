@@ -10,7 +10,7 @@ use dirt_core::models::Note;
 
 use crate::components::{QuickCapture, SettingsPanel};
 use crate::queries::use_notes_query;
-use crate::services::DatabaseService;
+use crate::services::{AuthSession, DatabaseService, SupabaseAuthService};
 use crate::state::{AppState, SyncStatus};
 use crate::theme::{resolve_theme, ResolvedTheme};
 use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
@@ -31,11 +31,50 @@ pub fn App() -> Element {
     let mut quick_capture_open = use_signal(|| false);
     let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
     let mut db_service: Signal<Option<Arc<DatabaseService>>> = use_signal(|| None);
+    let mut auth_service: Signal<Option<Arc<SupabaseAuthService>>> = use_signal(|| None);
+    let mut auth_session: Signal<Option<AuthSession>> = use_signal(|| None);
+    let mut auth_error: Signal<Option<String>> = use_signal(|| None);
     let mut db_initialized = use_signal(|| false);
+    let mut auth_initialized = use_signal(|| false);
     let mut sync_status = use_signal(|| SyncStatus::Offline);
     let mut last_sync_at = use_signal(|| None::<i64>);
     let mut pending_sync_count = use_signal(|| 0usize);
     let mut pending_sync_note_ids = use_signal(Vec::new);
+
+    // Initialize authentication service and restore persisted session.
+    use_effect(move || {
+        if auth_initialized() {
+            return;
+        }
+        auth_initialized.set(true);
+
+        spawn(async move {
+            match SupabaseAuthService::new_from_env() {
+                Ok(Some(service)) => {
+                    let service = Arc::new(service);
+                    match service.restore_session().await {
+                        Ok(session) => {
+                            auth_session.set(session);
+                            auth_error.set(None);
+                        }
+                        Err(error) => {
+                            tracing::error!("Failed to restore auth session: {}", error);
+                            auth_error.set(Some(error.to_string()));
+                        }
+                    }
+                    auth_service.set(Some(service));
+                }
+                Ok(None) => {
+                    auth_service.set(None);
+                }
+                Err(error) => {
+                    tracing::error!("Failed to initialize auth service: {}", error);
+                    auth_service.set(None);
+                    auth_error.set(Some(error.to_string()));
+                }
+            }
+        });
+    });
 
     // Initialize database asynchronously (only once)
     use_effect(move || {
@@ -229,6 +268,9 @@ pub fn App() -> Element {
         settings,
         theme,
         db_service,
+        auth_service,
+        auth_session,
+        auth_error,
         sync_status,
         last_sync_at,
         pending_sync_count,
