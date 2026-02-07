@@ -12,6 +12,7 @@ mod settings;
 mod sidebar;
 mod toolbar;
 
+pub use note_actions::create_note_optimistic;
 pub use note_card::NoteCard;
 pub use note_editor::NoteEditor;
 pub use note_list::NoteList;
@@ -20,7 +21,6 @@ pub use search_bar::SearchBar;
 pub use settings::SettingsPanel;
 pub use sidebar::Sidebar;
 pub use toolbar::Toolbar;
-pub use note_actions::create_note_optimistic;
 pub mod button;
 pub mod card;
 pub mod dialog;

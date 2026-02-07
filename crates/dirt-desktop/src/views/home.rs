@@ -2,7 +2,9 @@
 
 use dioxus::prelude::*;
 
-use crate::components::{create_note_optimistic, NoteEditor, NoteList, SearchBar, Sidebar, Toolbar};
+use crate::components::{
+    create_note_optimistic, NoteEditor, NoteList, SearchBar, Sidebar, Toolbar,
+};
 use crate::state::AppState;
 
 /// Home view component - the main application screen
