@@ -39,12 +39,14 @@ pub fn NoteList() -> Element {
                         let is_selected = current_id == Some(note_id);
                         let title = note.title_preview(40);
                         let preview = note.title_preview(60);
+                        let updated_at_ms = note.updated_at;
 
                         rsx! {
                             NoteCard {
                                 key: "{note_id}",
                                 title,
                                 preview,
+                                updated_at_ms,
                                 is_selected,
                                 onclick: move |_| {
                                     state.current_note_id.set(Some(note_id));
