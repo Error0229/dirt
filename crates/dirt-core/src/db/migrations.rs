@@ -4,7 +4,7 @@ use crate::error::Result;
 use libsql::Connection;
 
 /// Current schema version
-const CURRENT_VERSION: i32 = 2;
+const CURRENT_VERSION: i32 = 3;
 
 /// Run all pending migrations
 pub async fn run(conn: &Connection) -> Result<()> {
@@ -15,6 +15,9 @@ pub async fn run(conn: &Connection) -> Result<()> {
     }
     if version < 2 {
         migrate_v2(conn).await?;
+    }
+    if version < 3 {
+        migrate_v3(conn).await?;
     }
 
     Ok(())
@@ -184,6 +187,43 @@ async fn migrate_v2(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migration to version 3: Attachment metadata support
+async fn migrate_v3(conn: &Connection) -> Result<()> {
+    conn.execute("BEGIN TRANSACTION", ()).await?;
+
+    let statements = [
+        "CREATE TABLE IF NOT EXISTS attachments (
+            id TEXT PRIMARY KEY,
+            note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            filename TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            r2_key TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            is_deleted INTEGER NOT NULL DEFAULT 0
+        )",
+        "CREATE INDEX IF NOT EXISTS idx_attachments_note_id ON attachments(note_id)",
+        "CREATE INDEX IF NOT EXISTS idx_attachments_created_at ON attachments(created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_attachments_deleted ON attachments(is_deleted)",
+        "INSERT INTO schema_version (version) VALUES (3)",
+    ];
+
+    for stmt in statements {
+        if let Err(e) = conn.execute(stmt, ()).await {
+            conn.execute("ROLLBACK", ()).await.ok();
+            return Err(e.into());
+        }
+    }
+
+    if let Err(e) = conn.execute("COMMIT", ()).await {
+        conn.execute("ROLLBACK", ()).await.ok();
+        return Err(e.into());
+    }
+
+    tracing::info!("Migrated database to version {CURRENT_VERSION}");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,5 +251,30 @@ mod tests {
 
         let version = get_version(&conn).await.unwrap();
         assert_eq!(version, CURRENT_VERSION);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_migration_v3_creates_attachments_table() {
+        let conn = setup().await;
+        run(&conn).await.unwrap();
+
+        let mut rows = conn
+            .query(
+                "SELECT EXISTS(
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table' AND name = 'attachments'
+                )",
+                (),
+            )
+            .await
+            .unwrap();
+
+        let exists = rows
+            .next()
+            .await
+            .unwrap()
+            .is_some_and(|row| row.get::<i32>(0).unwrap() != 0);
+
+        assert!(exists);
     }
 }
