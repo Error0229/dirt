@@ -1552,8 +1552,10 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "dioxus-primitives",
+ "dirs",
  "dirt-core",
  "dotenvy",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
