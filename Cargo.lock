@@ -1470,7 +1470,10 @@ name = "dirt-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "dirs",
  "dirt-core",
+ "dotenvy",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber",
