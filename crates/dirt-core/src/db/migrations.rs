@@ -119,7 +119,10 @@ async fn migrate_v1(conn: &Connection) -> Result<()> {
         }
     }
 
-    conn.execute("COMMIT", ()).await?;
+    if let Err(e) = conn.execute("COMMIT", ()).await {
+        conn.execute("ROLLBACK", ()).await.ok();
+        return Err(e.into());
+    }
 
     tracing::info!("Migrated database to version {CURRENT_VERSION}");
     Ok(())
