@@ -2,6 +2,7 @@
 
 use dioxus::prelude::*;
 
+use super::button::{Button, ButtonVariant};
 use super::card::{Card, CardContent};
 use crate::state::AppState;
 
@@ -75,14 +76,18 @@ pub fn NoteCard(
     };
 
     rsx! {
-        div {
+        Button {
+            variant: ButtonVariant::Ghost,
             class: if is_selected { "note-item selected" } else { "note-item" },
             style: "
+                width: 100%;
+                padding: 0;
                 border-bottom: 1px solid {colors.border_light};
                 border-left: {border_left};
-                cursor: pointer;
                 background: {bg};
                 transition: background 0.15s;
+                border-radius: 0;
+                text-align: left;
             ",
             onclick: move |evt| onclick.call(evt),
 

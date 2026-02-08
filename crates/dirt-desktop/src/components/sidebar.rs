@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use dioxus::prelude::*;
 
+use super::button::{Button, ButtonVariant};
 use crate::state::AppState;
 
 /// Sidebar showing tags and filters
@@ -111,11 +112,12 @@ fn TagItem(
     };
 
     rsx! {
-        div {
+        Button {
+            variant: ButtonVariant::Ghost,
             style: "
+                width: 100%;
                 padding: 8px 10px;
                 border-radius: 6px;
-                cursor: pointer;
                 margin-bottom: 4px;
                 background: {bg};
                 color: {text_color};
