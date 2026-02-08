@@ -495,7 +495,7 @@ pub fn NoteEditor() -> Element {
                             "No attachments yet"
                         }
                     } else {
-                        for attachment in attachment_items.clone() {
+                        for attachment in attachment_items {
                             div {
                                 key: "{attachment.id}",
                                 style: "
