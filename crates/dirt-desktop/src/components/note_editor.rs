@@ -554,6 +554,7 @@ pub fn NoteEditor() -> Element {
                                         let mut refresh_signal = attachment_refresh_version;
                                         let db = state.db_service.read().clone();
                                         let attachment_id = attachment.id;
+                                        let object_key = attachment.r2_key.clone();
 
                                         spawn(async move {
                                             attachment_error_signal.set(None);
@@ -570,6 +571,30 @@ pub fn NoteEditor() -> Element {
                                             match db.delete_attachment(&attachment_id).await {
                                                 Ok(()) => {
                                                     refresh_signal.set(refresh_signal() + 1);
+
+                                                    let remote_delete_warning = match R2Config::from_env()
+                                                    {
+                                                        Ok(Some(config)) => {
+                                                            let storage = R2Storage::new(config);
+                                                            storage
+                                                                .delete_object(&object_key)
+                                                                .await
+                                                                .err()
+                                                                .map(|error| {
+                                                                    format!(
+                                                                        "Attachment removed locally, but failed to delete remote object: {error}"
+                                                                    )
+                                                                })
+                                                        }
+                                                        Ok(None) => None,
+                                                        Err(error) => Some(format!(
+                                                            "Attachment removed locally, but R2 config is invalid: {error}"
+                                                        )),
+                                                    };
+
+                                                    if let Some(warning) = remote_delete_warning {
+                                                        attachment_error_signal.set(Some(warning));
+                                                    }
                                                 }
                                                 Err(error) => {
                                                     attachment_error_signal.set(Some(format!(
