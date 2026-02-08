@@ -5,7 +5,7 @@ use dioxus::prelude::*;
 use dioxus_primitives::scroll_area::{ScrollArea, ScrollDirection, ScrollType};
 use dioxus_primitives::separator::Separator;
 use dioxus_primitives::toast::{use_toast, ToastOptions, ToastProvider};
-use dirt_core::{Note, NoteId};
+use dirt_core::{Attachment, Note, NoteId};
 
 use crate::data::MobileNoteStore;
 use crate::launch::{LaunchIntent, QuickCaptureLaunch};
@@ -24,6 +24,10 @@ enum MobileSyncState {
     Synced,
     Error,
 }
+
+const KIB_BYTES: u64 = 1024;
+const MIB_BYTES: u64 = KIB_BYTES * 1024;
+const GIB_BYTES: u64 = MIB_BYTES * 1024;
 
 #[component]
 pub fn App() -> Element {
@@ -48,6 +52,10 @@ fn AppShell() -> Element {
     let mut deleting = use_signal(|| false);
     let mut sync_state = use_signal(|| MobileSyncState::Offline);
     let mut last_sync_at = use_signal(|| None::<i64>);
+    let mut note_attachments = use_signal(Vec::<Attachment>::new);
+    let mut attachments_loading = use_signal(|| false);
+    let mut attachments_error = use_signal(|| None::<String>);
+    let attachment_refresh_version = use_signal(|| 0u64);
     let launch: Signal<LaunchIntent> = use_signal(crate::launch::detect_launch_intent_from_runtime);
     let toasts = use_toast();
 
@@ -169,6 +177,40 @@ fn AppShell() -> Element {
                 }
             }
         }
+    });
+
+    use_future(move || async move {
+        let selected_note_id = selected_note_id();
+        let _attachment_refresh_version = attachment_refresh_version();
+
+        let Some(note_store) = store.read().clone() else {
+            note_attachments.set(Vec::new());
+            attachments_error.set(None);
+            attachments_loading.set(false);
+            return;
+        };
+
+        let Some(note_id) = selected_note_id else {
+            note_attachments.set(Vec::new());
+            attachments_error.set(None);
+            attachments_loading.set(false);
+            return;
+        };
+
+        attachments_loading.set(true);
+        attachments_error.set(None);
+
+        match note_store.list_attachments(&note_id).await {
+            Ok(attachments) => {
+                note_attachments.set(attachments);
+            }
+            Err(error) => {
+                note_attachments.set(Vec::new());
+                attachments_error.set(Some(format!("Failed to load attachments: {error}")));
+            }
+        }
+
+        attachments_loading.set(false);
     });
 
     let on_new_note = move |_| {
@@ -684,6 +726,85 @@ fn AppShell() -> Element {
                         draft_content.set(event.value());
                     },
                 }
+
+                div {
+                    style: "
+                        margin: 0 12px 12px 12px;
+                        padding: 10px;
+                        border: 1px solid #e5e7eb;
+                        border-radius: 10px;
+                        background: #ffffff;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 6px;
+                    ",
+                    p {
+                        style: "
+                            margin: 0;
+                            font-size: 12px;
+                            font-weight: 700;
+                            color: #6b7280;
+                            text-transform: uppercase;
+                            letter-spacing: 0.04em;
+                        ",
+                        "Attachments"
+                    }
+
+                    if selected_note_id().is_none() {
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Save this note to view attachments."
+                        }
+                    } else if attachments_loading() {
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Loading attachments..."
+                        }
+                    } else if let Some(error) = attachments_error() {
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #b91c1c;",
+                            "{error}"
+                        }
+                    } else if note_attachments().is_empty() {
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "No attachments yet."
+                        }
+                    } else {
+                        for attachment in note_attachments() {
+                            div {
+                                key: "{attachment.id}",
+                                style: "
+                                    display: flex;
+                                    justify-content: space-between;
+                                    align-items: center;
+                                    gap: 8px;
+                                    font-size: 12px;
+                                ",
+                                p {
+                                    style: "
+                                        margin: 0;
+                                        color: #111827;
+                                        min-width: 0;
+                                        flex: 1;
+                                        overflow: hidden;
+                                        text-overflow: ellipsis;
+                                        white-space: nowrap;
+                                    ",
+                                    "{attachment.filename}"
+                                }
+                                p {
+                                    style: "margin: 0; color: #6b7280; white-space: nowrap;",
+                                    "{attachment_kind_label(&attachment.mime_type)}"
+                                }
+                                p {
+                                    style: "margin: 0; color: #6b7280; white-space: nowrap;",
+                                    "{format_attachment_size(attachment.size_bytes)}"
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -752,6 +873,46 @@ fn note_preview(note: &Note) -> String {
     }
 }
 
+fn attachment_kind_label(mime_type: &str) -> &'static str {
+    if mime_type.starts_with("image/") {
+        "image"
+    } else if mime_type.starts_with("audio/") {
+        "audio"
+    } else if mime_type.starts_with("video/") {
+        "video"
+    } else if mime_type.starts_with("text/") {
+        "text"
+    } else {
+        "file"
+    }
+}
+
+fn format_attachment_size(size_bytes: i64) -> String {
+    let bytes = u64::try_from(size_bytes).unwrap_or(0);
+
+    if bytes < KIB_BYTES {
+        format!("{bytes} B")
+    } else if bytes < MIB_BYTES {
+        format_scaled_one_decimal(bytes, KIB_BYTES, "KB")
+    } else if bytes < GIB_BYTES {
+        format_scaled_one_decimal(bytes, MIB_BYTES, "MB")
+    } else {
+        format_scaled_one_decimal(bytes, GIB_BYTES, "GB")
+    }
+}
+
+fn format_scaled_one_decimal(bytes: u64, unit: u64, suffix: &str) -> String {
+    let mut whole = bytes / unit;
+    let mut tenth = ((bytes % unit) * 10 + (unit / 2)) / unit;
+
+    if tenth == 10 {
+        whole += 1;
+        tenth = 0;
+    }
+
+    format!("{whole}.{tenth} {suffix}")
+}
+
 fn relative_time(updated_at_ms: i64) -> String {
     let now = chrono::Utc::now().timestamp_millis();
     let delta = (now - updated_at_ms).max(0);
@@ -764,5 +925,27 @@ fn relative_time(updated_at_ms: i64) -> String {
         format!("{}h ago", delta / 3_600_000)
     } else {
         format!("{}d ago", delta / 86_400_000)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_attachment_sizes_for_mobile_ui() {
+        assert_eq!(format_attachment_size(800), "800 B");
+        assert_eq!(format_attachment_size(1_536), "1.5 KB");
+        assert_eq!(format_attachment_size(3_145_728), "3.0 MB");
+        assert_eq!(format_attachment_size(-1), "0 B");
+    }
+
+    #[test]
+    fn maps_attachment_kind_labels() {
+        assert_eq!(attachment_kind_label("image/png"), "image");
+        assert_eq!(attachment_kind_label("audio/wav"), "audio");
+        assert_eq!(attachment_kind_label("video/mp4"), "video");
+        assert_eq!(attachment_kind_label("text/plain"), "text");
+        assert_eq!(attachment_kind_label("application/pdf"), "file");
     }
 }
