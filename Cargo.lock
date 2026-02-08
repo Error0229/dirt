@@ -1977,6 +1977,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tray-icon 0.19.3",
+ "webbrowser",
 ]
 
 [[package]]

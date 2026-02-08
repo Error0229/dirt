@@ -537,79 +537,129 @@ pub fn NoteEditor() -> Element {
                                     ",
                                     "{format_attachment_size(attachment.size_bytes)}"
                                 }
-                                button {
+                                div {
                                     style: "
-                                        border: 1px solid {colors.border};
-                                        border-radius: 6px;
-                                        background: transparent;
-                                        color: {colors.text_muted};
-                                        font-size: 11px;
-                                        padding: 2px 8px;
-                                        cursor: pointer;
+                                        display: flex;
+                                        align-items: center;
+                                        gap: 6px;
                                     ",
-                                    disabled: active_deleting_attachment == Some(attachment.id),
-                                    onclick: move |_| {
-                                        let mut deleting_signal = deleting_attachment_id;
-                                        let mut attachment_error_signal = attachments_error;
-                                        let mut refresh_signal = attachment_refresh_version;
-                                        let db = state.db_service.read().clone();
-                                        let attachment_id = attachment.id;
-                                        let object_key = attachment.r2_key.clone();
-
-                                        spawn(async move {
+                                    button {
+                                        style: "
+                                            border: 1px solid {colors.border};
+                                            border-radius: 6px;
+                                            background: transparent;
+                                            color: {colors.text_muted};
+                                            font-size: 11px;
+                                            padding: 2px 8px;
+                                            cursor: pointer;
+                                        ",
+                                        onclick: move |_| {
+                                            let mut attachment_error_signal = attachments_error;
                                             attachment_error_signal.set(None);
-                                            deleting_signal.set(Some(attachment_id));
 
-                                            let Some(db) = db else {
+                                            let attachment_id = attachment.id;
+                                            let object_key = attachments()
+                                                .into_iter()
+                                                .find(|candidate| candidate.id == attachment_id)
+                                                .map(|candidate| candidate.r2_key);
+
+                                            let Some(object_key) = object_key else {
                                                 attachment_error_signal.set(Some(
-                                                    "Database service is not available.".to_string(),
+                                                    "Attachment metadata is unavailable.".to_string(),
                                                 ));
-                                                deleting_signal.set(None);
                                                 return;
                                             };
 
-                                            match db.delete_attachment(&attachment_id).await {
-                                                Ok(()) => {
-                                                    refresh_signal.set(refresh_signal() + 1);
+                                            let open_url = match resolve_attachment_open_url(&object_key) {
+                                                Ok(url) => url,
+                                                Err(error) => {
+                                                    attachment_error_signal.set(Some(error));
+                                                    return;
+                                                }
+                                            };
 
-                                                    let remote_delete_warning = match R2Config::from_env()
-                                                    {
-                                                        Ok(Some(config)) => {
-                                                            let storage = R2Storage::new(config);
-                                                            storage
-                                                                .delete_object(&object_key)
-                                                                .await
-                                                                .err()
-                                                                .map(|error| {
-                                                                    format!(
-                                                                        "Attachment removed locally, but failed to delete remote object: {error}"
-                                                                    )
-                                                                })
+                                            if let Err(error) = webbrowser::open(&open_url) {
+                                                attachment_error_signal.set(Some(format!(
+                                                    "Failed to open attachment URL: {error}"
+                                                )));
+                                            }
+                                        },
+                                        "Open"
+                                    }
+                                    button {
+                                        style: "
+                                            border: 1px solid {colors.border};
+                                            border-radius: 6px;
+                                            background: transparent;
+                                            color: {colors.text_muted};
+                                            font-size: 11px;
+                                            padding: 2px 8px;
+                                            cursor: pointer;
+                                        ",
+                                        disabled: active_deleting_attachment == Some(attachment.id),
+                                        onclick: move |_| {
+                                            let mut deleting_signal = deleting_attachment_id;
+                                            let mut attachment_error_signal = attachments_error;
+                                            let mut refresh_signal = attachment_refresh_version;
+                                            let db = state.db_service.read().clone();
+                                            let attachment_id = attachment.id;
+                                            let object_key = attachment.r2_key.clone();
+
+                                            spawn(async move {
+                                                attachment_error_signal.set(None);
+                                                deleting_signal.set(Some(attachment_id));
+
+                                                let Some(db) = db else {
+                                                    attachment_error_signal.set(Some(
+                                                        "Database service is not available.".to_string(),
+                                                    ));
+                                                    deleting_signal.set(None);
+                                                    return;
+                                                };
+
+                                                match db.delete_attachment(&attachment_id).await {
+                                                    Ok(()) => {
+                                                        refresh_signal.set(refresh_signal() + 1);
+
+                                                        let remote_delete_warning = match R2Config::from_env()
+                                                        {
+                                                            Ok(Some(config)) => {
+                                                                let storage = R2Storage::new(config);
+                                                                storage
+                                                                    .delete_object(&object_key)
+                                                                    .await
+                                                                    .err()
+                                                                    .map(|error| {
+                                                                        format!(
+                                                                            "Attachment removed locally, but failed to delete remote object: {error}"
+                                                                        )
+                                                                    })
+                                                            }
+                                                            Ok(None) => None,
+                                                            Err(error) => Some(format!(
+                                                                "Attachment removed locally, but R2 config is invalid: {error}"
+                                                            )),
+                                                        };
+
+                                                        if let Some(warning) = remote_delete_warning {
+                                                            attachment_error_signal.set(Some(warning));
                                                         }
-                                                        Ok(None) => None,
-                                                        Err(error) => Some(format!(
-                                                            "Attachment removed locally, but R2 config is invalid: {error}"
-                                                        )),
-                                                    };
-
-                                                    if let Some(warning) = remote_delete_warning {
-                                                        attachment_error_signal.set(Some(warning));
+                                                    }
+                                                    Err(error) => {
+                                                        attachment_error_signal.set(Some(format!(
+                                                            "Failed to delete attachment: {error}"
+                                                        )));
                                                     }
                                                 }
-                                                Err(error) => {
-                                                    attachment_error_signal.set(Some(format!(
-                                                        "Failed to delete attachment: {error}"
-                                                    )));
-                                                }
-                                            }
 
-                                            deleting_signal.set(None);
-                                        });
-                                    },
-                                    if active_deleting_attachment == Some(attachment.id) {
-                                        "Deleting..."
-                                    } else {
-                                        "Delete"
+                                                deleting_signal.set(None);
+                                            });
+                                        },
+                                        if active_deleting_attachment == Some(attachment.id) {
+                                            "Deleting..."
+                                        } else {
+                                            "Delete"
+                                        }
                                     }
                                 }
                             }
@@ -645,6 +695,39 @@ fn infer_attachment_mime_type(content_type: Option<&str>, file_name: &str) -> St
         .first_or_octet_stream()
         .essence_str()
         .to_string()
+}
+
+fn resolve_attachment_open_url(object_key: &str) -> Result<String, String> {
+    let config = match R2Config::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            return Err(format!("Invalid R2 configuration: {error}"));
+        }
+    };
+
+    resolve_attachment_open_url_with_config(object_key, config.as_ref())
+}
+
+fn resolve_attachment_open_url_with_config(
+    object_key: &str,
+    config: Option<&R2Config>,
+) -> Result<String, String> {
+    let object_key = object_key.trim();
+    if object_key.is_empty() {
+        return Err("Attachment object key is empty.".to_string());
+    }
+
+    let url = config.map_or_else(
+        || format!("r2://{object_key}"),
+        |config| {
+            let storage = R2Storage::new(config.clone());
+            storage
+                .public_object_url(object_key)
+                .unwrap_or_else(|| format!("r2://{object_key}"))
+        },
+    );
+
+    Ok(url)
 }
 
 fn build_attachment_markdown(file_name: &str, url: &str, mime_type: &str) -> String {
@@ -825,5 +908,27 @@ mod tests {
             Some("**Transcript**\n> first line\n> second line".to_string())
         );
         assert_eq!(build_transcript_markdown("   "), None);
+    }
+
+    #[test]
+    fn resolves_attachment_open_url_from_config_or_fallback() {
+        let with_public_base = R2Config {
+            account_id: "account".to_string(),
+            bucket: "bucket".to_string(),
+            access_key_id: "key".to_string(),
+            secret_access_key: "secret".to_string(),
+            public_base_url: Some("https://cdn.example.test".to_string()),
+        };
+        assert_eq!(
+            resolve_attachment_open_url_with_config("notes/a/file.pdf", Some(&with_public_base))
+                .unwrap(),
+            "https://cdn.example.test/notes/a/file.pdf"
+        );
+
+        assert_eq!(
+            resolve_attachment_open_url_with_config("notes/a/file.pdf", None).unwrap(),
+            "r2://notes/a/file.pdf"
+        );
+        assert!(resolve_attachment_open_url_with_config("   ", Some(&with_public_base)).is_err());
     }
 }
