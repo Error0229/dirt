@@ -208,6 +208,13 @@ impl DatabaseService {
             .await
     }
 
+    /// List non-deleted attachment metadata for a note
+    pub async fn list_attachments(&self, note_id: &NoteId) -> Result<Vec<Attachment>> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.list_attachments(note_id).await
+    }
+
     /// Load settings from database
     pub async fn load_settings(&self) -> Result<Settings> {
         let db = self.db.lock().await;

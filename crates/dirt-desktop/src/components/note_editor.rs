@@ -6,6 +6,7 @@ use std::time::Duration;
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 
+use dirt_core::models::Attachment;
 use dirt_core::storage::{MediaStorage, R2Config, R2Storage};
 use dirt_core::NoteId;
 
@@ -14,6 +15,9 @@ use crate::state::AppState;
 
 /// Idle save delay - save after 2 seconds of no typing
 const IDLE_SAVE_MS: u64 = 2000;
+const KIB_BYTES: u64 = 1024;
+const MIB_BYTES: u64 = KIB_BYTES * 1024;
+const GIB_BYTES: u64 = MIB_BYTES * 1024;
 
 /// Plain text note editor with auto-save
 #[component]
@@ -31,6 +35,10 @@ pub fn NoteEditor() -> Element {
     let mut last_saved_version = use_signal(|| 0u64);
     let mut attachment_upload_error = use_signal(|| None::<String>);
     let attachment_uploading = use_signal(|| false);
+    let attachments = use_signal(Vec::<Attachment>::new);
+    let attachments_error = use_signal(|| None::<String>);
+    let attachments_loading = use_signal(|| false);
+    let attachment_refresh_version = use_signal(|| 0u64);
     let mut drag_over = use_signal(|| false);
 
     // Sync content when selected note changes
@@ -49,6 +57,43 @@ pub fn NoteEditor() -> Element {
             save_version.set(0);
             last_saved_version.set(0);
         }
+    });
+
+    use_effect(move || {
+        let note_id = *last_note_id.read();
+        let _attachment_refresh_version = attachment_refresh_version();
+        let db = state.db_service.read().clone();
+        let mut attachment_signal = attachments;
+        let mut attachment_error_signal = attachments_error;
+        let mut attachment_loading_signal = attachments_loading;
+
+        spawn(async move {
+            attachment_error_signal.set(None);
+
+            let Some(note_id) = note_id else {
+                attachment_signal.set(Vec::new());
+                attachment_loading_signal.set(false);
+                return;
+            };
+
+            let Some(db) = db else {
+                attachment_signal.set(Vec::new());
+                attachment_error_signal.set(Some("Database service is not available.".to_string()));
+                attachment_loading_signal.set(false);
+                return;
+            };
+
+            attachment_loading_signal.set(true);
+            match db.list_attachments(&note_id).await {
+                Ok(list) => attachment_signal.set(list),
+                Err(error) => {
+                    attachment_signal.set(Vec::new());
+                    attachment_error_signal
+                        .set(Some(format!("Failed to load attachments: {error}")));
+                }
+            }
+            attachment_loading_signal.set(false);
+        });
     });
 
     // Auto-save with proper debounce using version tracking
@@ -197,6 +242,7 @@ pub fn NoteEditor() -> Element {
         let mut content_signal = content;
         let mut version_signal = save_version;
         let mut saved_version_signal = last_saved_version;
+        let mut attachment_refresh_signal = attachment_refresh_version;
         let db = state.db_service.read().clone();
 
         spawn(async move {
@@ -269,6 +315,7 @@ pub fn NoteEditor() -> Element {
                 uploading.set(false);
                 return;
             }
+            attachment_refresh_signal.set(attachment_refresh_signal() + 1);
 
             let image_url = storage
                 .public_object_url(&object_key)
@@ -341,6 +388,17 @@ pub fn NoteEditor() -> Element {
                     }
                 }
 
+                if let Some(error) = attachments_error() {
+                    div {
+                        style: "
+                            margin-bottom: 8px;
+                            color: {colors.accent};
+                            font-size: 12px;
+                        ",
+                        "{error}"
+                    }
+                }
+
                 textarea {
                     class: "editor-textarea",
                     style: "
@@ -364,6 +422,89 @@ pub fn NoteEditor() -> Element {
                     ondragover: on_drag_over,
                     ondragleave: on_drag_leave,
                     ondrop: on_drop_attachment,
+                }
+
+                div {
+                    style: "
+                        margin-top: 8px;
+                        border-top: 1px solid {colors.border};
+                        padding-top: 8px;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 6px;
+                    ",
+                    div {
+                        style: "
+                            font-size: 12px;
+                            color: {colors.text_muted};
+                            text-transform: uppercase;
+                            letter-spacing: 0.04em;
+                        ",
+                        "Attachments"
+                    }
+
+                    if attachments_loading() {
+                        div {
+                            style: "
+                                font-size: 12px;
+                                color: {colors.text_muted};
+                            ",
+                            "Loading attachments..."
+                        }
+                    } else if attachments().is_empty() {
+                        div {
+                            style: "
+                                font-size: 12px;
+                                color: {colors.text_muted};
+                            ",
+                            "No attachments yet"
+                        }
+                    } else {
+                        for attachment in attachments().iter() {
+                            div {
+                                key: "{attachment.id}",
+                                style: "
+                                    display: flex;
+                                    align-items: baseline;
+                                    justify-content: space-between;
+                                    gap: 12px;
+                                    font-size: 12px;
+                                ",
+                                div {
+                                    style: "
+                                        min-width: 0;
+                                        display: flex;
+                                        align-items: baseline;
+                                        gap: 8px;
+                                        color: {colors.text_primary};
+                                    ",
+                                    span {
+                                        style: "
+                                            flex: 1;
+                                            min-width: 0;
+                                            overflow: hidden;
+                                            text-overflow: ellipsis;
+                                            white-space: nowrap;
+                                        ",
+                                        "{attachment.filename}"
+                                    }
+                                    span {
+                                        style: "
+                                            color: {colors.text_muted};
+                                        ",
+                                        "{attachment_kind_label(&attachment.mime_type)}"
+                                    }
+                                }
+                                span {
+                                    style: "
+                                        color: {colors.text_muted};
+                                        white-space: nowrap;
+                                    ",
+                                    "{format_attachment_size(attachment.size_bytes)}"
+                                }
+                            }
+                        }
+                    }
                 }
             } else {
                 div {
@@ -402,6 +543,46 @@ fn build_attachment_markdown(file_name: &str, url: &str, mime_type: &str) -> Str
     } else {
         format!("[{file_name}]({url})")
     }
+}
+
+fn attachment_kind_label(mime_type: &str) -> &'static str {
+    if mime_type.starts_with("image/") {
+        "image"
+    } else if mime_type.starts_with("audio/") {
+        "audio"
+    } else if mime_type.starts_with("video/") {
+        "video"
+    } else if mime_type.starts_with("text/") {
+        "text"
+    } else {
+        "file"
+    }
+}
+
+fn format_attachment_size(size_bytes: i64) -> String {
+    let bytes = u64::try_from(size_bytes).unwrap_or(0);
+
+    if bytes < KIB_BYTES {
+        format!("{bytes} B")
+    } else if bytes < MIB_BYTES {
+        format_scaled_one_decimal(bytes, KIB_BYTES, "KB")
+    } else if bytes < GIB_BYTES {
+        format_scaled_one_decimal(bytes, MIB_BYTES, "MB")
+    } else {
+        format_scaled_one_decimal(bytes, GIB_BYTES, "GB")
+    }
+}
+
+fn format_scaled_one_decimal(bytes: u64, unit: u64, suffix: &str) -> String {
+    let mut whole = bytes / unit;
+    let mut tenth = ((bytes % unit) * 10 + (unit / 2)) / unit;
+
+    if tenth == 10 {
+        whole += 1;
+        tenth = 0;
+    }
+
+    format!("{whole}.{tenth} {suffix}")
 }
 
 fn file_size_i64(len: usize) -> i64 {
@@ -447,5 +628,22 @@ mod tests {
             ),
             "[notes.pdf](https://example.test/notes.pdf)"
         );
+    }
+
+    #[test]
+    fn formats_attachment_sizes_for_ui() {
+        assert_eq!(format_attachment_size(512), "512 B");
+        assert_eq!(format_attachment_size(1_536), "1.5 KB");
+        assert_eq!(format_attachment_size(2_097_152), "2.0 MB");
+        assert_eq!(format_attachment_size(-64), "0 B");
+    }
+
+    #[test]
+    fn maps_attachment_kind_labels_by_mime() {
+        assert_eq!(attachment_kind_label("image/png"), "image");
+        assert_eq!(attachment_kind_label("audio/wav"), "audio");
+        assert_eq!(attachment_kind_label("video/mp4"), "video");
+        assert_eq!(attachment_kind_label("text/plain"), "text");
+        assert_eq!(attachment_kind_label("application/pdf"), "file");
     }
 }
