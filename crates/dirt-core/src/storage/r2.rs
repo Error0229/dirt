@@ -163,6 +163,39 @@ impl R2Storage {
             .any(|candidate| candidate == object_key))
     }
 
+    /// Download object bytes from the configured bucket.
+    pub async fn download_bytes(&self, object_key: &str) -> Result<(Vec<u8>, Option<String>)> {
+        let object_key = normalize_object_key(object_key)?;
+        let client = self.s3_client();
+
+        let response = client
+            .get_object()
+            .bucket(&self.config.bucket)
+            .key(&object_key)
+            .send()
+            .await
+            .map_err(|error| {
+                storage_error("get_object", &self.config.bucket, Some(&object_key), error)
+            })?;
+
+        let content_type = response
+            .content_type()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+
+        let payload = response.body.collect().await.map_err(|error| {
+            storage_error(
+                "get_object_body",
+                &self.config.bucket,
+                Some(&object_key),
+                error,
+            )
+        })?;
+
+        Ok((payload.into_bytes().to_vec(), content_type))
+    }
+
     fn s3_client(&self) -> Client {
         build_s3_client(&self.config)
     }
