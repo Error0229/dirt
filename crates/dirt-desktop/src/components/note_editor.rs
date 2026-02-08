@@ -11,6 +11,7 @@ use dirt_core::storage::{MediaStorage, R2Config, R2Storage};
 use dirt_core::NoteId;
 
 use crate::queries::invalidate_notes_query;
+use crate::services::TranscriptionService;
 use crate::state::AppState;
 
 /// Idle save delay - save after 2 seconds of no typing
@@ -320,6 +321,33 @@ pub fn NoteEditor() -> Element {
             let image_url = storage
                 .public_object_url(&object_key)
                 .unwrap_or_else(|| format!("r2://{object_key}"));
+            let transcript_markdown = if is_wav_attachment(&mime_type, &file_name) {
+                match TranscriptionService::new_from_env() {
+                    Ok(service) if service.config_status().enabled => {
+                        match service
+                            .transcribe_wav_bytes(&file_name, file_bytes.to_vec())
+                            .await
+                        {
+                            Ok(transcript) => build_transcript_markdown(&transcript),
+                            Err(error) => {
+                                upload_error.set(Some(format!(
+                                    "Attachment uploaded, but transcription failed: {error}"
+                                )));
+                                None
+                            }
+                        }
+                    }
+                    Ok(_) => None,
+                    Err(error) => {
+                        upload_error.set(Some(format!(
+                            "Attachment uploaded, but transcription config is invalid: {error}"
+                        )));
+                        None
+                    }
+                }
+            } else {
+                None
+            };
 
             let mut updated_content = content_signal.read().clone();
             if !updated_content.is_empty() && !updated_content.ends_with('\n') {
@@ -327,6 +355,9 @@ pub fn NoteEditor() -> Element {
             }
             let attachment_markdown = build_attachment_markdown(&file_name, &image_url, &mime_type);
             let _ = write!(updated_content, "{attachment_markdown}");
+            if let Some(transcript_markdown) = transcript_markdown {
+                let _ = write!(updated_content, "\n\n{transcript_markdown}");
+            }
 
             content_signal.set(updated_content.clone());
             version_signal.set(version_signal() + 1);
@@ -545,6 +576,35 @@ fn build_attachment_markdown(file_name: &str, url: &str, mime_type: &str) -> Str
     }
 }
 
+fn is_wav_attachment(mime_type: &str, file_name: &str) -> bool {
+    mime_type.eq_ignore_ascii_case("audio/wav")
+        || mime_type.eq_ignore_ascii_case("audio/x-wav")
+        || file_name
+            .rsplit('.')
+            .next()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("wav"))
+}
+
+fn build_transcript_markdown(transcript: &str) -> Option<String> {
+    let trimmed = transcript.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut markdown = String::from("**Transcript**\n");
+    for line in trimmed.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            markdown.push_str(">\n");
+        } else {
+            markdown.push_str("> ");
+            markdown.push_str(line);
+            markdown.push('\n');
+        }
+    }
+    Some(markdown.trim_end().to_string())
+}
+
 fn attachment_kind_label(mime_type: &str) -> &'static str {
     if mime_type.starts_with("image/") {
         "image"
@@ -645,5 +705,22 @@ mod tests {
         assert_eq!(attachment_kind_label("video/mp4"), "video");
         assert_eq!(attachment_kind_label("text/plain"), "text");
         assert_eq!(attachment_kind_label("application/pdf"), "file");
+    }
+
+    #[test]
+    fn detects_wav_attachments_by_mime_or_extension() {
+        assert!(is_wav_attachment("audio/wav", "memo.bin"));
+        assert!(is_wav_attachment("audio/x-wav", "memo.bin"));
+        assert!(is_wav_attachment("application/octet-stream", "memo.wav"));
+        assert!(!is_wav_attachment("audio/mpeg", "memo.mp3"));
+    }
+
+    #[test]
+    fn builds_transcript_markdown_when_text_exists() {
+        assert_eq!(
+            build_transcript_markdown("first line\nsecond line"),
+            Some("**Transcript**\n> first line\n> second line".to_string())
+        );
+        assert_eq!(build_transcript_markdown("   "), None);
     }
 }
