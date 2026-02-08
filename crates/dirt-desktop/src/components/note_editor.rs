@@ -625,9 +625,25 @@ fn infer_attachment_mime_type(content_type: Option<&str>, file_name: &str) -> St
 fn build_attachment_markdown(file_name: &str, url: &str, mime_type: &str) -> String {
     if mime_type.starts_with("image/") {
         format!("![{file_name}]({url})")
+    } else if mime_type.starts_with("audio/") {
+        build_audio_attachment_markup(file_name, url)
     } else {
         format!("[{file_name}]({url})")
     }
+}
+
+fn build_audio_attachment_markup(file_name: &str, url: &str) -> String {
+    let safe_url = escape_html(url);
+    let safe_name = escape_html(file_name);
+    format!("<audio controls src=\"{safe_url}\">{safe_name}</audio>\n\n[{file_name}]({url})")
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\"', "&quot;")
 }
 
 fn is_wav_attachment(mime_type: &str, file_name: &str) -> bool {
@@ -741,6 +757,14 @@ mod tests {
                 "application/pdf"
             ),
             "[notes.pdf](https://example.test/notes.pdf)"
+        );
+    }
+
+    #[test]
+    fn builds_audio_embed_markdown_for_audio_mime_types() {
+        assert_eq!(
+            build_attachment_markdown("memo.wav", "https://example.test/memo.wav", "audio/wav"),
+            "<audio controls src=\"https://example.test/memo.wav\">memo.wav</audio>\n\n[memo.wav](https://example.test/memo.wav)"
         );
     }
 
