@@ -3,7 +3,6 @@
 //! Quick capture from the terminal with minimal friction.
 
 use std::env;
-use std::fmt::Write as _;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,6 +13,7 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::aot::Generator;
 use clap_complete::{generate, shells};
 use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository, SyncConfig};
+use dirt_core::export::{render_json_export, render_markdown_export};
 use dirt_core::{Note, NoteId};
 use serde::Serialize;
 use thiserror::Error;
@@ -223,15 +223,6 @@ struct NoteListItem {
     tags: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct ExportNote {
-    id: String,
-    content: String,
-    created_at: i64,
-    updated_at: i64,
-    tags: Vec<String>,
-}
-
 async fn run_list(
     limit: usize,
     tag: Option<&str>,
@@ -356,12 +347,7 @@ async fn run_export(
 ) -> Result<(), CliError> {
     let notes = list_all_notes(db_path).await?;
     let rendered = match format {
-        ExportFormat::Json => serde_json::to_string_pretty(
-            &notes
-                .iter()
-                .map(note_to_export_item)
-                .collect::<Vec<ExportNote>>(),
-        )?,
+        ExportFormat::Json => render_json_export(&notes)?,
         ExportFormat::Markdown => render_markdown_export(&notes),
     };
 
@@ -504,45 +490,6 @@ fn note_to_list_item(note: &Note) -> NoteListItem {
         relative_time: format_relative_time(note.updated_at, now_ms),
         tags,
     }
-}
-
-fn note_to_export_item(note: &Note) -> ExportNote {
-    let mut tags = note.tags();
-    tags.sort();
-
-    ExportNote {
-        id: note.id.to_string(),
-        content: note.content.clone(),
-        created_at: note.created_at,
-        updated_at: note.updated_at,
-        tags,
-    }
-}
-
-fn render_markdown_export(notes: &[Note]) -> String {
-    let mut output = String::new();
-
-    for (index, note) in notes.iter().enumerate() {
-        if index > 0 {
-            output.push('\n');
-        }
-
-        let export_note = note_to_export_item(note);
-        let _ = writeln!(output, "---");
-        let _ = writeln!(output, "id: {}", export_note.id);
-        let _ = writeln!(output, "created_at: {}", export_note.created_at);
-        let _ = writeln!(output, "updated_at: {}", export_note.updated_at);
-        let _ = writeln!(output, "tags:");
-        for tag in export_note.tags {
-            let _ = writeln!(output, "  - {tag}");
-        }
-        let _ = writeln!(output, "---");
-        let _ = writeln!(output);
-        output.push_str(&export_note.content);
-        output.push('\n');
-    }
-
-    output
 }
 
 fn note_preview(note: &Note, max_chars: usize) -> String {
@@ -783,9 +730,9 @@ mod tests {
 
     use super::{
         default_editor, format_relative_time, list_notes, normalize_content,
-        normalize_note_identifier, normalize_search_query, note_preview, note_to_export_item,
-        render_markdown_export, resolve_note_for_edit, run_completions, run_delete, run_export,
-        run_sync, search_notes, CliError, CompletionShell, ExportFormat,
+        normalize_note_identifier, normalize_search_query, note_preview, render_markdown_export,
+        resolve_note_for_edit, run_completions, run_delete, run_export, run_sync, search_notes,
+        CliError, CompletionShell, ExportFormat,
     };
 
     #[test]
@@ -1028,7 +975,7 @@ mod tests {
     #[test]
     fn note_to_export_item_sorts_tags() {
         let note = Note::new("#zeta test #alpha #beta");
-        let export = note_to_export_item(&note);
+        let export = dirt_core::export::note_to_export_item(&note);
 
         assert_eq!(export.tags, vec!["alpha", "beta", "zeta"]);
     }
