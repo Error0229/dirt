@@ -1,17 +1,22 @@
 //! Note editor component
 
-use std::fmt::Write as _;
+use std::sync::Arc;
 use std::time::Duration;
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
+use rfd::AsyncFileDialog;
 
 use dirt_core::models::{Attachment, AttachmentId};
 use dirt_core::storage::{MediaStorage, R2Config, R2Storage};
 use dirt_core::NoteId;
 
+use super::button::{Button, ButtonVariant};
+use super::dialog::{DialogContent, DialogDescription, DialogRoot, DialogTitle};
 use crate::queries::invalidate_notes_query;
-use crate::services::TranscriptionService;
+use crate::services::DatabaseService;
 use crate::state::AppState;
 
 /// Idle save delay - save after 2 seconds of no typing
@@ -19,6 +24,42 @@ const IDLE_SAVE_MS: u64 = 2000;
 const KIB_BYTES: u64 = 1024;
 const MIB_BYTES: u64 = KIB_BYTES * 1024;
 const GIB_BYTES: u64 = MIB_BYTES * 1024;
+const MAX_TEXT_PREVIEW_BYTES: usize = 256 * 1024;
+const MAX_MEDIA_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AttachmentKind {
+    Image,
+    Video,
+    Audio,
+    Text,
+    File,
+}
+
+#[derive(Clone, PartialEq, Eq, Default)]
+enum AttachmentPreview {
+    #[default]
+    None,
+    Text {
+        content: String,
+        truncated: bool,
+    },
+    MediaDataUri {
+        mime_type: String,
+        data_uri: String,
+    },
+    Unsupported {
+        mime_type: String,
+        reason: String,
+    },
+}
+
+#[derive(Clone, Copy)]
+struct UploadSignals {
+    uploading: Signal<bool>,
+    upload_error: Signal<Option<String>>,
+    attachment_refresh_signal: Signal<u64>,
+}
 
 /// Plain text note editor with auto-save
 #[component]
@@ -37,11 +78,16 @@ pub fn NoteEditor() -> Element {
     let mut attachment_upload_error = use_signal(|| None::<String>);
     let attachment_uploading = use_signal(|| false);
     let attachments = use_signal(Vec::<Attachment>::new);
-    let attachments_error = use_signal(|| None::<String>);
+    let mut attachments_error = use_signal(|| None::<String>);
     let attachments_loading = use_signal(|| false);
     let attachment_refresh_version = use_signal(|| 0u64);
     let mut deleting_attachment_id = use_signal(|| None::<AttachmentId>);
     let mut drag_over = use_signal(|| false);
+    let mut preview_open = use_signal(|| false);
+    let mut preview_loading = use_signal(|| false);
+    let mut preview_title = use_signal(String::new);
+    let mut preview_error = use_signal(|| None::<String>);
+    let mut preview_content = use_signal(AttachmentPreview::default);
 
     // Sync content when selected note changes
     use_effect(move || {
@@ -241,143 +287,81 @@ pub fn NoteEditor() -> Element {
         }
 
         let mut upload_error = attachment_upload_error;
-        let mut uploading = attachment_uploading;
-        let mut content_signal = content;
-        let mut version_signal = save_version;
-        let mut saved_version_signal = last_saved_version;
-        let mut attachment_refresh_signal = attachment_refresh_version;
+        let signals = UploadSignals {
+            uploading: attachment_uploading,
+            upload_error,
+            attachment_refresh_signal: attachment_refresh_version,
+        };
         let db = state.db_service.read().clone();
 
         spawn(async move {
-            uploading.set(true);
-
-            let Some(db) = db else {
-                upload_error.set(Some("Database service is not available.".to_string()));
-                uploading.set(false);
-                return;
-            };
-
             let file_bytes = match file.read_bytes().await {
-                Ok(bytes) => bytes,
+                Ok(bytes) => bytes.to_vec(),
                 Err(error) => {
                     upload_error.set(Some(format!("Failed to read dropped file: {error}")));
-                    uploading.set(false);
                     return;
                 }
             };
 
-            let config = match R2Config::from_env() {
-                Ok(Some(config)) => config,
-                Ok(None) => {
-                    upload_error.set(Some(
-                        "R2 is not configured. Set R2 env vars before uploading attachments."
-                            .to_string(),
-                    ));
-                    uploading.set(false);
-                    return;
-                }
-                Err(error) => {
-                    upload_error.set(Some(format!("Invalid R2 configuration: {error}")));
-                    uploading.set(false);
-                    return;
-                }
+            upload_attachment(
+                note_id,
+                file_name,
+                file_content_type,
+                file_bytes,
+                db,
+                signals,
+            )
+            .await;
+        });
+    };
+
+    let on_pick_attachment = move |_: MouseEvent| {
+        attachment_upload_error.set(None);
+
+        if attachment_uploading() {
+            return;
+        }
+
+        let Some(note_id) = *last_note_id.read() else {
+            attachment_upload_error.set(Some(
+                "Select a note before uploading attachments.".to_string(),
+            ));
+            return;
+        };
+
+        let db = state.db_service.read().clone();
+        let mut upload_error = attachment_upload_error;
+        let signals = UploadSignals {
+            uploading: attachment_uploading,
+            upload_error,
+            attachment_refresh_signal: attachment_refresh_version,
+        };
+
+        spawn(async move {
+            let Some(file) = AsyncFileDialog::new().pick_file().await else {
+                return;
             };
 
-            let storage = R2Storage::new(config);
-            let object_key = match storage.build_media_key(&note_id.to_string(), &file_name) {
-                Ok(key) => key,
-                Err(error) => {
-                    upload_error.set(Some(format!("Failed to build media key: {error}")));
-                    uploading.set(false);
-                    return;
-                }
-            };
-
-            let mime_type = infer_attachment_mime_type(file_content_type.as_deref(), &file_name);
-
-            if let Err(error) = storage
-                .upload_bytes(&object_key, file_bytes.as_ref(), Some(&mime_type))
-                .await
-            {
-                upload_error.set(Some(format!("Failed to upload attachment to R2: {error}")));
-                uploading.set(false);
+            let file_name = file.file_name();
+            if file_name.trim().is_empty() {
+                upload_error.set(Some("Selected file has an empty filename.".to_string()));
                 return;
             }
 
-            if let Err(error) = db
-                .create_attachment(
-                    &note_id,
-                    &file_name,
-                    &mime_type,
-                    file_size_i64(file_bytes.len()),
-                    &object_key,
-                )
-                .await
-            {
-                upload_error.set(Some(format!("Failed to save attachment metadata: {error}")));
-                uploading.set(false);
-                return;
-            }
-            attachment_refresh_signal.set(attachment_refresh_signal() + 1);
+            let file_bytes = file.read().await;
+            let file_content_type = mime_guess::from_path(&file_name)
+                .first_raw()
+                .map(str::to_string);
 
-            let image_url = storage
-                .public_object_url(&object_key)
-                .unwrap_or_else(|| format!("r2://{object_key}"));
-            let transcript_markdown = if is_wav_attachment(&mime_type, &file_name) {
-                match TranscriptionService::new_from_env() {
-                    Ok(service) if service.config_status().enabled => {
-                        match service
-                            .transcribe_wav_bytes(&file_name, file_bytes.to_vec())
-                            .await
-                        {
-                            Ok(transcript) => build_transcript_markdown(&transcript),
-                            Err(error) => {
-                                upload_error.set(Some(format!(
-                                    "Attachment uploaded, but transcription failed: {error}"
-                                )));
-                                None
-                            }
-                        }
-                    }
-                    Ok(_) => None,
-                    Err(error) => {
-                        upload_error.set(Some(format!(
-                            "Attachment uploaded, but transcription config is invalid: {error}"
-                        )));
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-            let mut updated_content = content_signal.read().clone();
-            if !updated_content.is_empty() && !updated_content.ends_with('\n') {
-                updated_content.push('\n');
-            }
-            let attachment_markdown = build_attachment_markdown(&file_name, &image_url, &mime_type);
-            let _ = write!(updated_content, "{attachment_markdown}");
-            if let Some(transcript_markdown) = transcript_markdown {
-                let _ = write!(updated_content, "\n\n{transcript_markdown}");
-            }
-
-            content_signal.set(updated_content.clone());
-            version_signal.set(version_signal() + 1);
-
-            let current_version = version_signal();
-            match db.update_note(&note_id, &updated_content).await {
-                Ok(_) => {
-                    saved_version_signal.set(current_version);
-                    invalidate_notes_query().await;
-                }
-                Err(error) => {
-                    upload_error.set(Some(format!(
-                        "Attachment uploaded but note update failed: {error}"
-                    )));
-                }
-            }
-
-            uploading.set(false);
+            upload_attachment(
+                note_id,
+                file_name,
+                file_content_type,
+                file_bytes,
+                db,
+                signals,
+            )
+            .await;
         });
     };
 
@@ -416,7 +400,7 @@ pub fn NoteEditor() -> Element {
                     div {
                         style: "
                             margin-bottom: 8px;
-                            color: {colors.accent};
+                            color: {colors.error};
                             font-size: 12px;
                         ",
                         "{error}"
@@ -427,7 +411,7 @@ pub fn NoteEditor() -> Element {
                     div {
                         style: "
                             margin-bottom: 8px;
-                            color: {colors.accent};
+                            color: {colors.error};
                             font-size: 12px;
                         ",
                         "{error}"
@@ -470,12 +454,28 @@ pub fn NoteEditor() -> Element {
                     ",
                     div {
                         style: "
-                            font-size: 12px;
-                            color: {colors.text_muted};
-                            text-transform: uppercase;
-                            letter-spacing: 0.04em;
+                            display: flex;
+                            align-items: center;
+                            justify-content: space-between;
+                            gap: 12px;
                         ",
-                        "Attachments"
+                        div {
+                            style: "
+                                font-size: 12px;
+                                color: {colors.text_muted};
+                                text-transform: uppercase;
+                                letter-spacing: 0.04em;
+                            ",
+                            "Attachments"
+                        }
+
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            onclick: on_pick_attachment,
+                            disabled: attachment_uploading(),
+                            style: "padding: 3px 10px; font-size: 12px;",
+                            "+ Upload"
+                        }
                     }
 
                     if attachments_loading() {
@@ -527,7 +527,7 @@ pub fn NoteEditor() -> Element {
                                         style: "
                                             color: {colors.text_muted};
                                         ",
-                                        "{attachment_kind_label(&attachment.mime_type)}"
+                                        "{attachment_kind_label(&attachment.filename, &attachment.mime_type)}"
                                     }
                                 }
                                 span {
@@ -543,59 +543,79 @@ pub fn NoteEditor() -> Element {
                                         align-items: center;
                                         gap: 6px;
                                     ",
-                                    button {
-                                        style: "
-                                            border: 1px solid {colors.border};
-                                            border-radius: 6px;
-                                            background: transparent;
-                                            color: {colors.text_muted};
-                                            font-size: 11px;
-                                            padding: 2px 8px;
-                                            cursor: pointer;
-                                        ",
-                                        onclick: move |_| {
-                                            let mut attachment_error_signal = attachments_error;
-                                            attachment_error_signal.set(None);
+                                    Button {
+                                        variant: ButtonVariant::Ghost,
+                                        style: "padding: 2px 8px; font-size: 11px;",
+                                        onclick: {
+                                            let attachment = attachment.clone();
+                                            move |_| {
+                                                attachments_error.set(None);
+                                                preview_open.set(true);
+                                                preview_loading.set(true);
+                                                preview_error.set(None);
+                                                preview_title.set(attachment.filename.clone());
+                                                preview_content.set(AttachmentPreview::None);
 
-                                            let attachment_id = attachment.id;
-                                            let object_key = attachments()
-                                                .into_iter()
-                                                .find(|candidate| candidate.id == attachment_id)
-                                                .map(|candidate| candidate.r2_key);
+                                                let mut preview_loading_signal = preview_loading;
+                                                let mut preview_error_signal = preview_error;
+                                                let mut preview_content_signal = preview_content;
+                                                let attachment = attachment.clone();
 
-                                            let Some(object_key) = object_key else {
-                                                attachment_error_signal.set(Some(
-                                                    "Attachment metadata is unavailable.".to_string(),
-                                                ));
-                                                return;
-                                            };
+                                                spawn(async move {
+                                                    let config = match R2Config::from_env() {
+                                                        Ok(Some(config)) => config,
+                                                        Ok(None) => {
+                                                            preview_error_signal.set(Some(
+                                                                "R2 is not configured. Set R2 env vars before opening attachments.".to_string(),
+                                                            ));
+                                                            preview_loading_signal.set(false);
+                                                            return;
+                                                        }
+                                                        Err(error) => {
+                                                            preview_error_signal.set(Some(format!(
+                                                                "Invalid R2 configuration: {error}"
+                                                            )));
+                                                            preview_loading_signal.set(false);
+                                                            return;
+                                                        }
+                                                    };
 
-                                            let open_url = match resolve_attachment_open_url(&object_key) {
-                                                Ok(url) => url,
-                                                Err(error) => {
-                                                    attachment_error_signal.set(Some(error));
-                                                    return;
-                                                }
-                                            };
+                                                    let storage = R2Storage::new(config);
+                                                    let (bytes, downloaded_content_type) =
+                                                        match storage.download_bytes(&attachment.r2_key).await
+                                                        {
+                                                            Ok(payload) => payload,
+                                                            Err(error) => {
+                                                                preview_error_signal.set(Some(format!(
+                                                                    "Failed to download attachment: {error}"
+                                                                )));
+                                                                preview_loading_signal.set(false);
+                                                                return;
+                                                            }
+                                                        };
 
-                                            if let Err(error) = webbrowser::open(&open_url) {
-                                                attachment_error_signal.set(Some(format!(
-                                                    "Failed to open attachment URL: {error}"
-                                                )));
+                                                    let content_type_hint = downloaded_content_type
+                                                        .as_deref()
+                                                        .or(Some(attachment.mime_type.as_str()));
+                                                    let mime_type = infer_attachment_mime_type(
+                                                        content_type_hint,
+                                                        &attachment.filename,
+                                                    );
+
+                                                    preview_content_signal.set(build_attachment_preview(
+                                                        &attachment.filename,
+                                                        &mime_type,
+                                                        &bytes,
+                                                    ));
+                                                    preview_loading_signal.set(false);
+                                                });
                                             }
                                         },
                                         "Open"
                                     }
-                                    button {
-                                        style: "
-                                            border: 1px solid {colors.border};
-                                            border-radius: 6px;
-                                            background: transparent;
-                                            color: {colors.text_muted};
-                                            font-size: 11px;
-                                            padding: 2px 8px;
-                                            cursor: pointer;
-                                        ",
+                                    Button {
+                                        variant: ButtonVariant::Ghost,
+                                        style: "padding: 2px 8px; font-size: 11px;",
                                         disabled: active_deleting_attachment == Some(attachment.id),
                                         onclick: move |_| {
                                             let mut deleting_signal = deleting_attachment_id;
@@ -666,6 +686,63 @@ pub fn NoteEditor() -> Element {
                         }
                     }
                 }
+
+                DialogRoot {
+                    open: preview_open(),
+                    on_open_change: move |open: bool| {
+                        preview_open.set(open);
+                        if !open {
+                            preview_loading.set(false);
+                            preview_error.set(None);
+                            preview_content.set(AttachmentPreview::None);
+                            preview_title.set(String::new());
+                        }
+                    },
+
+                    DialogContent {
+                        style: "width: min(920px, 94vw); max-height: 88vh; overflow: hidden; text-align: left;",
+
+                        div {
+                            style: "display: flex; align-items: center; justify-content: space-between; gap: 12px;",
+                            DialogTitle { "{preview_title}" }
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                onclick: move |_| preview_open.set(false),
+                                style: "padding: 4px 8px; font-size: 16px;",
+                                "x"
+                            }
+                        }
+
+                        DialogDescription {
+                            style: "margin-top: -8px;",
+                            "Attachment preview"
+                        }
+
+                        div {
+                            style: "
+                                border: 1px solid {colors.border};
+                                border-radius: 8px;
+                                padding: 12px;
+                                min-height: 180px;
+                                max-height: 60vh;
+                                overflow: auto;
+                                background: {colors.bg_secondary};
+                                color: {colors.text_primary};
+                            ",
+
+                            if preview_loading() {
+                                div { "Loading preview..." }
+                            } else if let Some(error) = preview_error() {
+                                div {
+                                    style: "color: {colors.error};",
+                                    "{error}"
+                                }
+                            } else {
+                                {render_preview_content(preview_content(), &preview_title(), colors)}
+                            }
+                        }
+                    }
+                }
             } else {
                 div {
                     class: "editor-placeholder",
@@ -683,117 +760,236 @@ pub fn NoteEditor() -> Element {
     }
 }
 
-fn infer_attachment_mime_type(content_type: Option<&str>, file_name: &str) -> String {
-    if let Some(content_type) = content_type {
-        let trimmed = content_type.trim();
-        if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("application/octet-stream") {
-            return trimmed.to_string();
-        }
-    }
+async fn upload_attachment(
+    note_id: NoteId,
+    file_name: String,
+    file_content_type: Option<String>,
+    file_bytes: Vec<u8>,
+    db: Option<Arc<DatabaseService>>,
+    signals: UploadSignals,
+) {
+    let mut uploading = signals.uploading;
+    let mut upload_error = signals.upload_error;
+    let mut attachment_refresh_signal = signals.attachment_refresh_signal;
 
-    mime_guess::from_path(file_name)
-        .first_or_octet_stream()
-        .essence_str()
-        .to_string()
-}
+    uploading.set(true);
 
-fn resolve_attachment_open_url(object_key: &str) -> Result<String, String> {
+    let Some(db) = db else {
+        upload_error.set(Some("Database service is not available.".to_string()));
+        uploading.set(false);
+        return;
+    };
+
     let config = match R2Config::from_env() {
-        Ok(config) => config,
+        Ok(Some(config)) => config,
+        Ok(None) => {
+            upload_error.set(Some(
+                "R2 is not configured. Set R2 env vars before uploading attachments.".to_string(),
+            ));
+            uploading.set(false);
+            return;
+        }
         Err(error) => {
-            return Err(format!("Invalid R2 configuration: {error}"));
+            upload_error.set(Some(format!("Invalid R2 configuration: {error}")));
+            uploading.set(false);
+            return;
         }
     };
 
-    resolve_attachment_open_url_with_config(object_key, config.as_ref())
-}
+    let storage = R2Storage::new(config);
+    let object_key = match storage.build_media_key(&note_id.to_string(), &file_name) {
+        Ok(key) => key,
+        Err(error) => {
+            upload_error.set(Some(format!("Failed to build media key: {error}")));
+            uploading.set(false);
+            return;
+        }
+    };
 
-fn resolve_attachment_open_url_with_config(
-    object_key: &str,
-    config: Option<&R2Config>,
-) -> Result<String, String> {
-    let object_key = object_key.trim();
-    if object_key.is_empty() {
-        return Err("Attachment object key is empty.".to_string());
+    let mime_type = infer_attachment_mime_type(file_content_type.as_deref(), &file_name);
+
+    if let Err(error) = storage
+        .upload_bytes(&object_key, file_bytes.as_ref(), Some(&mime_type))
+        .await
+    {
+        upload_error.set(Some(format!("Failed to upload attachment to R2: {error}")));
+        uploading.set(false);
+        return;
     }
 
-    let url = config.map_or_else(
-        || format!("r2://{object_key}"),
-        |config| {
-            let storage = R2Storage::new(config.clone());
-            storage
-                .public_object_url(object_key)
-                .unwrap_or_else(|| format!("r2://{object_key}"))
-        },
-    );
-
-    Ok(url)
-}
-
-fn build_attachment_markdown(file_name: &str, url: &str, mime_type: &str) -> String {
-    if mime_type.starts_with("image/") {
-        format!("![{file_name}]({url})")
-    } else if mime_type.starts_with("audio/") {
-        build_audio_attachment_markup(file_name, url)
-    } else {
-        format!("[{file_name}]({url})")
-    }
-}
-
-fn build_audio_attachment_markup(file_name: &str, url: &str) -> String {
-    let safe_url = escape_html(url);
-    let safe_name = escape_html(file_name);
-    format!("<audio controls src=\"{safe_url}\">{safe_name}</audio>\n\n[{file_name}]({url})")
-}
-
-fn escape_html(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('\"', "&quot;")
-}
-
-fn is_wav_attachment(mime_type: &str, file_name: &str) -> bool {
-    mime_type.eq_ignore_ascii_case("audio/wav")
-        || mime_type.eq_ignore_ascii_case("audio/x-wav")
-        || file_name
-            .rsplit('.')
-            .next()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("wav"))
-}
-
-fn build_transcript_markdown(transcript: &str) -> Option<String> {
-    let trimmed = transcript.trim();
-    if trimmed.is_empty() {
-        return None;
+    if let Err(error) = db
+        .create_attachment(
+            &note_id,
+            &file_name,
+            &mime_type,
+            file_size_i64(file_bytes.len()),
+            &object_key,
+        )
+        .await
+    {
+        upload_error.set(Some(format!("Failed to save attachment metadata: {error}")));
+        uploading.set(false);
+        return;
     }
 
-    let mut markdown = String::from("**Transcript**\n");
-    for line in trimmed.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            markdown.push_str(">\n");
-        } else {
-            markdown.push_str("> ");
-            markdown.push_str(line);
-            markdown.push('\n');
+    attachment_refresh_signal.set(attachment_refresh_signal() + 1);
+    uploading.set(false);
+}
+
+fn infer_attachment_mime_type(content_type: Option<&str>, file_name: &str) -> String {
+    let extension_guess = mime_guess::from_path(file_name)
+        .first_raw()
+        .map(str::to_string);
+
+    if let Some(content_type) = content_type {
+        let trimmed = content_type.trim();
+        if !trimmed.is_empty() {
+            let normalized = trimmed.to_ascii_lowercase();
+
+            if normalized != "application/octet-stream"
+                && !(normalized.starts_with("text/")
+                    && extension_guess.as_deref().is_some_and(is_media_mime_type))
+            {
+                return trimmed.to_string();
+            }
         }
     }
-    Some(markdown.trim_end().to_string())
+
+    extension_guess.unwrap_or_else(|| {
+        mime_guess::from_path(file_name)
+            .first_or_octet_stream()
+            .essence_str()
+            .to_string()
+    })
 }
 
-fn attachment_kind_label(mime_type: &str) -> &'static str {
-    if mime_type.starts_with("image/") {
-        "image"
-    } else if mime_type.starts_with("audio/") {
-        "audio"
-    } else if mime_type.starts_with("video/") {
-        "video"
-    } else if mime_type.starts_with("text/") {
-        "text"
+fn render_preview_content(
+    preview: AttachmentPreview,
+    preview_title: &str,
+    colors: &crate::theme::ColorPalette,
+) -> Element {
+    match preview {
+        AttachmentPreview::None => rsx! {
+            div {
+                style: "color: {colors.text_muted};",
+                "No preview available."
+            }
+        },
+        AttachmentPreview::Text { content, truncated } => rsx! {
+            div {
+                if truncated {
+                    div {
+                        style: "font-size: 12px; color: {colors.text_muted}; margin-bottom: 8px;",
+                        "Preview truncated to 256 KB"
+                    }
+                }
+                pre {
+                    style: "margin: 0; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.5;",
+                    "{content}"
+                }
+            }
+        },
+        AttachmentPreview::MediaDataUri {
+            mime_type,
+            data_uri,
+        } => rsx! {
+            if mime_type.starts_with("image/") {
+                img {
+                    src: "{data_uri}",
+                    alt: "{preview_title}",
+                    style: "display: block; max-width: 100%; max-height: 56vh; margin: 0 auto; border-radius: 6px;",
+                }
+            } else if mime_type.starts_with("video/") {
+                video {
+                    src: "{data_uri}",
+                    controls: true,
+                    style: "display: block; width: 100%; max-height: 56vh; border-radius: 6px;",
+                }
+            } else if mime_type.starts_with("audio/") {
+                audio {
+                    src: "{data_uri}",
+                    controls: true,
+                    style: "width: 100%;",
+                }
+            }
+        },
+        AttachmentPreview::Unsupported { mime_type, reason } => rsx! {
+            div {
+                style: "display: flex; flex-direction: column; gap: 6px; color: {colors.text_secondary};",
+                div { "MIME type: {mime_type}" }
+                div { "{reason}" }
+            }
+        },
+    }
+}
+
+fn build_attachment_preview(file_name: &str, mime_type: &str, bytes: &[u8]) -> AttachmentPreview {
+    match attachment_kind(file_name, mime_type) {
+        AttachmentKind::Text => {
+            let (content, truncated) = decode_text_preview(bytes);
+            AttachmentPreview::Text { content, truncated }
+        }
+        AttachmentKind::Image | AttachmentKind::Video | AttachmentKind::Audio => {
+            if bytes.len() > MAX_MEDIA_PREVIEW_BYTES {
+                return AttachmentPreview::Unsupported {
+                    mime_type: mime_type.to_string(),
+                    reason: format!(
+                        "Attachment is too large for in-app preview (limit: {}).",
+                        format_attachment_size(file_size_i64(MAX_MEDIA_PREVIEW_BYTES))
+                    ),
+                };
+            }
+
+            let encoded = BASE64_STANDARD.encode(bytes);
+            AttachmentPreview::MediaDataUri {
+                mime_type: mime_type.to_string(),
+                data_uri: format!("data:{mime_type};base64,{encoded}"),
+            }
+        }
+        AttachmentKind::File => AttachmentPreview::Unsupported {
+            mime_type: mime_type.to_string(),
+            reason: "This file type does not have an in-app preview yet.".to_string(),
+        },
+    }
+}
+
+fn decode_text_preview(bytes: &[u8]) -> (String, bool) {
+    if bytes.len() <= MAX_TEXT_PREVIEW_BYTES {
+        return (String::from_utf8_lossy(bytes).to_string(), false);
+    }
+
+    let content = String::from_utf8_lossy(&bytes[..MAX_TEXT_PREVIEW_BYTES]).to_string();
+    (content, true)
+}
+
+fn attachment_kind(file_name: &str, mime_type: &str) -> AttachmentKind {
+    let normalized_mime = infer_attachment_mime_type(Some(mime_type), file_name);
+    if normalized_mime.starts_with("image/") {
+        AttachmentKind::Image
+    } else if normalized_mime.starts_with("video/") {
+        AttachmentKind::Video
+    } else if normalized_mime.starts_with("audio/") {
+        AttachmentKind::Audio
+    } else if normalized_mime.starts_with("text/") {
+        AttachmentKind::Text
     } else {
-        "file"
+        AttachmentKind::File
+    }
+}
+
+fn is_media_mime_type(mime_type: &str) -> bool {
+    mime_type.starts_with("image/")
+        || mime_type.starts_with("video/")
+        || mime_type.starts_with("audio/")
+}
+
+fn attachment_kind_label(file_name: &str, mime_type: &str) -> &'static str {
+    match attachment_kind(file_name, mime_type) {
+        AttachmentKind::Image => "image",
+        AttachmentKind::Video => "video",
+        AttachmentKind::Audio => "audio",
+        AttachmentKind::Text => "text",
+        AttachmentKind::File => "file",
     }
 }
 
@@ -841,6 +1037,10 @@ mod tests {
             infer_attachment_mime_type(Some("application/octet-stream"), "file.pdf"),
             "application/pdf"
         );
+        assert_eq!(
+            infer_attachment_mime_type(Some("text/plain"), "photo.png"),
+            "image/png"
+        );
         assert_eq!(infer_attachment_mime_type(None, "photo.jpg"), "image/jpeg");
         assert_eq!(
             infer_attachment_mime_type(None, "unknown.bin"),
@@ -849,31 +1049,49 @@ mod tests {
     }
 
     #[test]
-    fn builds_image_markdown_for_image_mime_types() {
+    fn maps_attachment_kind_labels_by_mime_or_extension() {
+        assert_eq!(attachment_kind_label("photo.png", "image/png"), "image");
+        assert_eq!(attachment_kind_label("voice.wav", "audio/wav"), "audio");
+        assert_eq!(attachment_kind_label("clip.mp4", "video/mp4"), "video");
+        assert_eq!(attachment_kind_label("readme.md", "text/plain"), "text");
+        assert_eq!(attachment_kind_label("photo.png", "text/plain"), "image");
         assert_eq!(
-            build_attachment_markdown("photo.png", "https://example.test/photo.png", "image/png"),
-            "![photo.png](https://example.test/photo.png)"
+            attachment_kind_label("archive.zip", "application/zip"),
+            "file"
         );
     }
 
     #[test]
-    fn builds_link_markdown_for_non_image_mime_types() {
-        assert_eq!(
-            build_attachment_markdown(
-                "notes.pdf",
-                "https://example.test/notes.pdf",
-                "application/pdf"
-            ),
-            "[notes.pdf](https://example.test/notes.pdf)"
-        );
+    fn builds_preview_for_text_and_media() {
+        let text_preview = build_attachment_preview("notes.txt", "text/plain", b"hello");
+        assert!(matches!(
+            text_preview,
+            AttachmentPreview::Text {
+                content,
+                truncated: false,
+            } if content == "hello"
+        ));
+
+        let image_preview = build_attachment_preview("photo.png", "image/png", b"abc");
+        assert!(matches!(
+            image_preview,
+            AttachmentPreview::MediaDataUri { .. }
+        ));
     }
 
     #[test]
-    fn builds_audio_embed_markdown_for_audio_mime_types() {
-        assert_eq!(
-            build_attachment_markdown("memo.wav", "https://example.test/memo.wav", "audio/wav"),
-            "<audio controls src=\"https://example.test/memo.wav\">memo.wav</audio>\n\n[memo.wav](https://example.test/memo.wav)"
-        );
+    fn previews_large_media_as_unsupported() {
+        let bytes = vec![0_u8; MAX_MEDIA_PREVIEW_BYTES + 1];
+        let preview = build_attachment_preview("movie.mp4", "video/mp4", &bytes);
+        assert!(matches!(preview, AttachmentPreview::Unsupported { .. }));
+    }
+
+    #[test]
+    fn truncates_large_text_preview() {
+        let bytes = vec![b'a'; MAX_TEXT_PREVIEW_BYTES + 12];
+        let (content, truncated) = decode_text_preview(&bytes);
+        assert!(truncated);
+        assert_eq!(content.len(), MAX_TEXT_PREVIEW_BYTES);
     }
 
     #[test]
@@ -882,53 +1100,5 @@ mod tests {
         assert_eq!(format_attachment_size(1_536), "1.5 KB");
         assert_eq!(format_attachment_size(2_097_152), "2.0 MB");
         assert_eq!(format_attachment_size(-64), "0 B");
-    }
-
-    #[test]
-    fn maps_attachment_kind_labels_by_mime() {
-        assert_eq!(attachment_kind_label("image/png"), "image");
-        assert_eq!(attachment_kind_label("audio/wav"), "audio");
-        assert_eq!(attachment_kind_label("video/mp4"), "video");
-        assert_eq!(attachment_kind_label("text/plain"), "text");
-        assert_eq!(attachment_kind_label("application/pdf"), "file");
-    }
-
-    #[test]
-    fn detects_wav_attachments_by_mime_or_extension() {
-        assert!(is_wav_attachment("audio/wav", "memo.bin"));
-        assert!(is_wav_attachment("audio/x-wav", "memo.bin"));
-        assert!(is_wav_attachment("application/octet-stream", "memo.wav"));
-        assert!(!is_wav_attachment("audio/mpeg", "memo.mp3"));
-    }
-
-    #[test]
-    fn builds_transcript_markdown_when_text_exists() {
-        assert_eq!(
-            build_transcript_markdown("first line\nsecond line"),
-            Some("**Transcript**\n> first line\n> second line".to_string())
-        );
-        assert_eq!(build_transcript_markdown("   "), None);
-    }
-
-    #[test]
-    fn resolves_attachment_open_url_from_config_or_fallback() {
-        let with_public_base = R2Config {
-            account_id: "account".to_string(),
-            bucket: "bucket".to_string(),
-            access_key_id: "key".to_string(),
-            secret_access_key: "secret".to_string(),
-            public_base_url: Some("https://cdn.example.test".to_string()),
-        };
-        assert_eq!(
-            resolve_attachment_open_url_with_config("notes/a/file.pdf", Some(&with_public_base))
-                .unwrap(),
-            "https://cdn.example.test/notes/a/file.pdf"
-        );
-
-        assert_eq!(
-            resolve_attachment_open_url_with_config("notes/a/file.pdf", None).unwrap(),
-            "r2://notes/a/file.pdf"
-        );
-        assert!(resolve_attachment_open_url_with_config("   ", Some(&with_public_base)).is_err());
     }
 }
