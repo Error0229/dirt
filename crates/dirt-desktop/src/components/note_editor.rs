@@ -1,7 +1,6 @@
 //! Note editor component
 
 use std::fmt::Write as _;
-use std::path::Path;
 use std::time::Duration;
 
 use dioxus::html::HasFileData;
@@ -30,8 +29,8 @@ pub fn NoteEditor() -> Element {
     // Version-based save tracking
     let mut save_version = use_signal(|| 0u64);
     let mut last_saved_version = use_signal(|| 0u64);
-    let mut image_upload_error = use_signal(|| None::<String>);
-    let image_uploading = use_signal(|| false);
+    let mut attachment_upload_error = use_signal(|| None::<String>);
+    let attachment_uploading = use_signal(|| false);
     let mut drag_over = use_signal(|| false);
 
     // Sync content when selected note changes
@@ -162,17 +161,19 @@ pub fn NoteEditor() -> Element {
         drag_over.set(false);
     };
 
-    let on_drop_image = move |evt: Event<DragData>| {
+    let on_drop_attachment = move |evt: Event<DragData>| {
         evt.prevent_default();
         drag_over.set(false);
-        image_upload_error.set(None);
+        attachment_upload_error.set(None);
 
-        if image_uploading() {
+        if attachment_uploading() {
             return;
         }
 
         let Some(note_id) = *last_note_id.read() else {
-            image_upload_error.set(Some("Select a note before dropping an image.".to_string()));
+            attachment_upload_error.set(Some(
+                "Select a note before dropping an attachment.".to_string(),
+            ));
             return;
         };
 
@@ -184,15 +185,15 @@ pub fn NoteEditor() -> Element {
         let file_name = file.name();
         let file_content_type = file.content_type();
 
-        if !is_supported_image(file_content_type.as_deref(), &file_name) {
-            image_upload_error.set(Some(
-                "Only image files can be attached in this editor.".to_string(),
+        if file_name.trim().is_empty() {
+            attachment_upload_error.set(Some(
+                "Dropped file is missing a valid filename.".to_string(),
             ));
             return;
         }
 
-        let mut upload_error = image_upload_error;
-        let mut uploading = image_uploading;
+        let mut upload_error = attachment_upload_error;
+        let mut uploading = attachment_uploading;
         let mut content_signal = content;
         let mut version_signal = save_version;
         let mut saved_version_signal = last_saved_version;
@@ -210,7 +211,7 @@ pub fn NoteEditor() -> Element {
             let file_bytes = match file.read_bytes().await {
                 Ok(bytes) => bytes,
                 Err(error) => {
-                    upload_error.set(Some(format!("Failed to read dropped image: {error}")));
+                    upload_error.set(Some(format!("Failed to read dropped file: {error}")));
                     uploading.set(false);
                     return;
                 }
@@ -220,7 +221,7 @@ pub fn NoteEditor() -> Element {
                 Ok(Some(config)) => config,
                 Ok(None) => {
                     upload_error.set(Some(
-                        "R2 is not configured. Set R2 env vars before uploading images."
+                        "R2 is not configured. Set R2 env vars before uploading attachments."
                             .to_string(),
                     ));
                     uploading.set(false);
@@ -243,13 +244,13 @@ pub fn NoteEditor() -> Element {
                 }
             };
 
-            let mime_type = infer_image_mime_type(file_content_type.as_deref(), &file_name);
+            let mime_type = infer_attachment_mime_type(file_content_type.as_deref(), &file_name);
 
             if let Err(error) = storage
                 .upload_bytes(&object_key, file_bytes.as_ref(), Some(&mime_type))
                 .await
             {
-                upload_error.set(Some(format!("Failed to upload image to R2: {error}")));
+                upload_error.set(Some(format!("Failed to upload attachment to R2: {error}")));
                 uploading.set(false);
                 return;
             }
@@ -277,7 +278,8 @@ pub fn NoteEditor() -> Element {
             if !updated_content.is_empty() && !updated_content.ends_with('\n') {
                 updated_content.push('\n');
             }
-            let _ = write!(updated_content, "![{file_name}]({image_url})");
+            let attachment_markdown = build_attachment_markdown(&file_name, &image_url, &mime_type);
+            let _ = write!(updated_content, "{attachment_markdown}");
 
             content_signal.set(updated_content.clone());
             version_signal.set(version_signal() + 1);
@@ -290,7 +292,7 @@ pub fn NoteEditor() -> Element {
                 }
                 Err(error) => {
                     upload_error.set(Some(format!(
-                        "Image uploaded but note update failed: {error}"
+                        "Attachment uploaded but note update failed: {error}"
                     )));
                 }
             }
@@ -317,18 +319,18 @@ pub fn NoteEditor() -> Element {
             ",
 
             if current_note.is_some() {
-                if image_uploading() {
+                if attachment_uploading() {
                     div {
                         style: "
                             margin-bottom: 8px;
                             color: {colors.text_muted};
                             font-size: 12px;
                         ",
-                        "Uploading image..."
+                        "Uploading attachment..."
                     }
                 }
 
-                if let Some(error) = image_upload_error() {
+                if let Some(error) = attachment_upload_error() {
                     div {
                         style: "
                             margin-bottom: 8px;
@@ -361,7 +363,7 @@ pub fn NoteEditor() -> Element {
                     onkeydown: on_keydown,
                     ondragover: on_drag_over,
                     ondragleave: on_drag_leave,
-                    ondrop: on_drop_image,
+                    ondrop: on_drop_attachment,
                 }
             } else {
                 div {
@@ -380,46 +382,26 @@ pub fn NoteEditor() -> Element {
     }
 }
 
-fn is_supported_image(content_type: Option<&str>, file_name: &str) -> bool {
-    let by_type = content_type.is_some_and(|value| value.trim().starts_with("image/"));
-    if by_type {
-        return true;
-    }
-
-    file_extension(file_name).is_some_and(|ext| {
-        ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif"]
-            .iter()
-            .any(|candidate| ext.eq_ignore_ascii_case(candidate))
-    })
-}
-
-fn infer_image_mime_type(content_type: Option<&str>, file_name: &str) -> String {
+fn infer_attachment_mime_type(content_type: Option<&str>, file_name: &str) -> String {
     if let Some(content_type) = content_type {
         let trimmed = content_type.trim();
-        if !trimmed.is_empty() {
+        if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("application/octet-stream") {
             return trimmed.to_string();
         }
     }
 
-    match file_extension(file_name) {
-        Some(ext) if ext.eq_ignore_ascii_case("png") => "image/png".to_string(),
-        Some(ext) if ext.eq_ignore_ascii_case("jpg") || ext.eq_ignore_ascii_case("jpeg") => {
-            "image/jpeg".to_string()
-        }
-        Some(ext) if ext.eq_ignore_ascii_case("gif") => "image/gif".to_string(),
-        Some(ext) if ext.eq_ignore_ascii_case("webp") => "image/webp".to_string(),
-        Some(ext) if ext.eq_ignore_ascii_case("bmp") => "image/bmp".to_string(),
-        Some(ext) if ext.eq_ignore_ascii_case("tiff") || ext.eq_ignore_ascii_case("tif") => {
-            "image/tiff".to_string()
-        }
-        _ => "application/octet-stream".to_string(),
-    }
+    mime_guess::from_path(file_name)
+        .first_or_octet_stream()
+        .essence_str()
+        .to_string()
 }
 
-fn file_extension(file_name: &str) -> Option<&str> {
-    Path::new(file_name)
-        .extension()
-        .and_then(|ext| ext.to_str())
+fn build_attachment_markdown(file_name: &str, url: &str, mime_type: &str) -> String {
+    if mime_type.starts_with("image/") {
+        format!("![{file_name}]({url})")
+    } else {
+        format!("[{file_name}]({url})")
+    }
 }
 
 fn file_size_i64(len: usize) -> i64 {
@@ -431,26 +413,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detects_supported_images_by_mime_or_extension() {
-        assert!(is_supported_image(Some("image/png"), "file.txt"));
-        assert!(is_supported_image(None, "photo.jpeg"));
-        assert!(is_supported_image(
-            Some(" application/octet-stream "),
-            "photo.webp"
-        ));
-        assert!(!is_supported_image(None, "document.pdf"));
+    fn infers_attachment_mime_type_with_fallback() {
+        assert_eq!(
+            infer_attachment_mime_type(Some("image/gif"), "x.bin"),
+            "image/gif"
+        );
+        assert_eq!(
+            infer_attachment_mime_type(Some("application/octet-stream"), "file.pdf"),
+            "application/pdf"
+        );
+        assert_eq!(infer_attachment_mime_type(None, "photo.jpg"), "image/jpeg");
+        assert_eq!(
+            infer_attachment_mime_type(None, "unknown.bin"),
+            "application/octet-stream"
+        );
     }
 
     #[test]
-    fn infers_mime_type_with_fallback() {
+    fn builds_image_markdown_for_image_mime_types() {
         assert_eq!(
-            infer_image_mime_type(Some("image/gif"), "x.bin"),
-            "image/gif"
+            build_attachment_markdown("photo.png", "https://example.test/photo.png", "image/png"),
+            "![photo.png](https://example.test/photo.png)"
         );
-        assert_eq!(infer_image_mime_type(None, "photo.jpg"), "image/jpeg");
+    }
+
+    #[test]
+    fn builds_link_markdown_for_non_image_mime_types() {
         assert_eq!(
-            infer_image_mime_type(None, "unknown.bin"),
-            "application/octet-stream"
+            build_attachment_markdown(
+                "notes.pdf",
+                "https://example.test/notes.pdf",
+                "application/pdf"
+            ),
+            "[notes.pdf](https://example.test/notes.pdf)"
         );
     }
 }

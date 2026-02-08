@@ -1968,6 +1968,7 @@ dependencies = [
  "global-hotkey 0.6.4",
  "image",
  "keyring",
+ "mime_guess",
  "reqwest",
  "serde",
  "serde_json",
