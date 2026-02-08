@@ -2,6 +2,7 @@
 
 use dioxus::prelude::*;
 use dioxus_primitives::slider::SliderValue;
+use rfd::AsyncFileDialog;
 
 use dirt_core::models::{Settings, ThemeMode};
 
@@ -12,7 +13,10 @@ use super::select::{
     Select, SelectItemIndicator, SelectList, SelectOption, SelectTrigger, SelectValue,
 };
 use super::slider::{Slider, SliderRange, SliderThumb, SliderTrack};
-use crate::services::{AuthConfigStatus, SignUpOutcome};
+use crate::services::{
+    export_notes_to_path, suggested_export_file_name, AuthConfigStatus, NotesExportFormat,
+    SignUpOutcome,
+};
 use crate::state::AppState;
 use crate::theme::resolve_theme;
 
@@ -83,6 +87,8 @@ pub fn SettingsPanel() -> Element {
     let auth_config_status = use_signal(|| None::<AuthConfigStatus>);
     let mut auth_config_checked = use_signal(|| false);
     let auth_service_for_preflight = auth_service.clone();
+    let mut export_busy = use_signal(|| false);
+    let mut export_message = use_signal(|| None::<String>);
 
     use_effect(move || {
         if auth_config_checked() || auth_service_for_preflight.is_none() {
@@ -293,6 +299,99 @@ pub fn SettingsPanel() -> Element {
         });
     };
 
+    let export_json = move |_: MouseEvent| {
+        if export_busy() {
+            return;
+        }
+
+        export_busy.set(true);
+        export_message.set(None);
+
+        let db = state.db_service.read().clone();
+        let mut export_busy_signal = export_busy;
+        let mut export_message_signal = export_message;
+        spawn(async move {
+            let Some(db) = db else {
+                export_message_signal.set(Some("Database service is not available.".to_string()));
+                export_busy_signal.set(false);
+                return;
+            };
+
+            let default_name = suggested_export_file_name(
+                NotesExportFormat::Json,
+                chrono::Utc::now().timestamp_millis(),
+            );
+            let Some(file) = AsyncFileDialog::new()
+                .set_file_name(&default_name)
+                .save_file()
+                .await
+            else {
+                export_busy_signal.set(false);
+                return;
+            };
+
+            match export_notes_to_path(db.as_ref(), NotesExportFormat::Json, file.path()).await {
+                Ok(count) => {
+                    export_message_signal.set(Some(format!(
+                        "Exported {count} notes to {}",
+                        file.path().display()
+                    )));
+                }
+                Err(error) => {
+                    export_message_signal.set(Some(format!("Export failed: {error}")));
+                }
+            }
+            export_busy_signal.set(false);
+        });
+    };
+
+    let export_markdown = move |_: MouseEvent| {
+        if export_busy() {
+            return;
+        }
+
+        export_busy.set(true);
+        export_message.set(None);
+
+        let db = state.db_service.read().clone();
+        let mut export_busy_signal = export_busy;
+        let mut export_message_signal = export_message;
+        spawn(async move {
+            let Some(db) = db else {
+                export_message_signal.set(Some("Database service is not available.".to_string()));
+                export_busy_signal.set(false);
+                return;
+            };
+
+            let default_name = suggested_export_file_name(
+                NotesExportFormat::Markdown,
+                chrono::Utc::now().timestamp_millis(),
+            );
+            let Some(file) = AsyncFileDialog::new()
+                .set_file_name(&default_name)
+                .save_file()
+                .await
+            else {
+                export_busy_signal.set(false);
+                return;
+            };
+
+            match export_notes_to_path(db.as_ref(), NotesExportFormat::Markdown, file.path()).await
+            {
+                Ok(count) => {
+                    export_message_signal.set(Some(format!(
+                        "Exported {count} notes to {}",
+                        file.path().display()
+                    )));
+                }
+                Err(error) => {
+                    export_message_signal.set(Some(format!("Export failed: {error}")));
+                }
+            }
+            export_busy_signal.set(false);
+        });
+    };
+
     let auth_working = auth_busy() || auth_verifying();
     let sign_up_blocked_reason = sign_up_block_reason(auth_config_status());
     let sign_up_blocked = sign_up_blocked_reason.is_some();
@@ -468,6 +567,44 @@ pub fn SettingsPanel() -> Element {
                             border: 1px solid {colors.border};
                         ",
                         "Ctrl + Alt + N"
+                    }
+                }
+
+                SettingRow {
+                    label: "Export",
+                    description: "Export all notes as JSON or Markdown",
+
+                    div {
+                        class: "auth-panel",
+                        div {
+                            class: "auth-actions",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                disabled: export_busy(),
+                                onclick: export_json,
+                                "Export JSON"
+                            }
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                disabled: export_busy(),
+                                onclick: export_markdown,
+                                "Export Markdown"
+                            }
+                        }
+
+                        if export_busy() {
+                            div {
+                                class: "auth-message",
+                                "Exporting..."
+                            }
+                        }
+
+                        if let Some(message) = export_message() {
+                            div {
+                                class: "auth-message",
+                                "{message}"
+                            }
+                        }
                     }
                 }
 
