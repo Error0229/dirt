@@ -6,7 +6,7 @@ use std::time::Duration;
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 
-use dirt_core::models::Attachment;
+use dirt_core::models::{Attachment, AttachmentId};
 use dirt_core::storage::{MediaStorage, R2Config, R2Storage};
 use dirt_core::NoteId;
 
@@ -40,6 +40,7 @@ pub fn NoteEditor() -> Element {
     let attachments_error = use_signal(|| None::<String>);
     let attachments_loading = use_signal(|| false);
     let attachment_refresh_version = use_signal(|| 0u64);
+    let mut deleting_attachment_id = use_signal(|| None::<AttachmentId>);
     let mut drag_over = use_signal(|| false);
 
     // Sync content when selected note changes
@@ -57,6 +58,7 @@ pub fn NoteEditor() -> Element {
             // Reset save tracking for new note
             save_version.set(0);
             last_saved_version.set(0);
+            deleting_attachment_id.set(None);
         }
     });
 
@@ -384,6 +386,8 @@ pub fn NoteEditor() -> Element {
     } else {
         "transparent"
     };
+    let attachment_items = attachments();
+    let active_deleting_attachment = deleting_attachment_id();
 
     rsx! {
         div {
@@ -482,7 +486,7 @@ pub fn NoteEditor() -> Element {
                             ",
                             "Loading attachments..."
                         }
-                    } else if attachments().is_empty() {
+                    } else if attachment_items.is_empty() {
                         div {
                             style: "
                                 font-size: 12px;
@@ -491,12 +495,12 @@ pub fn NoteEditor() -> Element {
                             "No attachments yet"
                         }
                     } else {
-                        for attachment in attachments().iter() {
+                        for attachment in attachment_items.clone() {
                             div {
                                 key: "{attachment.id}",
                                 style: "
                                     display: flex;
-                                    align-items: baseline;
+                                    align-items: center;
                                     justify-content: space-between;
                                     gap: 12px;
                                     font-size: 12px;
@@ -532,6 +536,56 @@ pub fn NoteEditor() -> Element {
                                         white-space: nowrap;
                                     ",
                                     "{format_attachment_size(attachment.size_bytes)}"
+                                }
+                                button {
+                                    style: "
+                                        border: 1px solid {colors.border};
+                                        border-radius: 6px;
+                                        background: transparent;
+                                        color: {colors.text_muted};
+                                        font-size: 11px;
+                                        padding: 2px 8px;
+                                        cursor: pointer;
+                                    ",
+                                    disabled: active_deleting_attachment == Some(attachment.id),
+                                    onclick: move |_| {
+                                        let mut deleting_signal = deleting_attachment_id;
+                                        let mut attachment_error_signal = attachments_error;
+                                        let mut refresh_signal = attachment_refresh_version;
+                                        let db = state.db_service.read().clone();
+                                        let attachment_id = attachment.id;
+
+                                        spawn(async move {
+                                            attachment_error_signal.set(None);
+                                            deleting_signal.set(Some(attachment_id));
+
+                                            let Some(db) = db else {
+                                                attachment_error_signal.set(Some(
+                                                    "Database service is not available.".to_string(),
+                                                ));
+                                                deleting_signal.set(None);
+                                                return;
+                                            };
+
+                                            match db.delete_attachment(&attachment_id).await {
+                                                Ok(()) => {
+                                                    refresh_signal.set(refresh_signal() + 1);
+                                                }
+                                                Err(error) => {
+                                                    attachment_error_signal.set(Some(format!(
+                                                        "Failed to delete attachment: {error}"
+                                                    )));
+                                                }
+                                            }
+
+                                            deleting_signal.set(None);
+                                        });
+                                    },
+                                    if active_deleting_attachment == Some(attachment.id) {
+                                        "Deleting..."
+                                    } else {
+                                        "Delete"
+                                    }
                                 }
                             }
                         }

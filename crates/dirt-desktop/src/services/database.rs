@@ -10,7 +10,7 @@ use dirt_core::db::{
     SyncConfig,
 };
 use dirt_core::error::Result;
-use dirt_core::models::{Attachment, Note, Settings};
+use dirt_core::models::{Attachment, AttachmentId, Note, Settings};
 use dirt_core::NoteId;
 use tokio::sync::Mutex;
 
@@ -213,6 +213,13 @@ impl DatabaseService {
         let db = self.db.lock().await;
         let repo = LibSqlNoteRepository::new(db.connection());
         repo.list_attachments(note_id).await
+    }
+
+    /// Soft delete attachment metadata by id
+    pub async fn delete_attachment(&self, attachment_id: &AttachmentId) -> Result<()> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.delete_attachment(attachment_id).await
     }
 
     /// Load settings from database
