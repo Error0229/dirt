@@ -31,12 +31,15 @@ pub struct LaunchIntent {
 /// Detect launch intent settings from process arguments and environment.
 #[cfg(target_os = "android")]
 pub fn detect_launch_intent_from_runtime() -> LaunchIntent {
-    let args: Vec<String> = std::env::args().collect();
     let env_quick_content = std::env::var(QUICK_CAPTURE_ENV_CONTENT).ok();
     let env_quick_enabled = std::env::var(QUICK_CAPTURE_ENV_ENABLED).ok();
     let env_share_text = std::env::var(SHARE_TEXT_ENV_CONTENT).ok();
+
+    // Android NativeActivity launches do not provide reliable process argv.
+    // Reading std::env::args() can crash on some devices/emulators, so use
+    // environment-based intent metadata only.
     parse_launch_intent(
-        args.iter().map(std::string::String::as_str),
+        ["dirt-mobile"],
         env_quick_content.as_deref(),
         env_quick_enabled.as_deref(),
         env_share_text.as_deref(),

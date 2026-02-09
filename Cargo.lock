@@ -2171,6 +2171,7 @@ dependencies = [
 name = "dirt-mobile"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "dioxus",
  "dioxus-primitives",
  "dirs",
