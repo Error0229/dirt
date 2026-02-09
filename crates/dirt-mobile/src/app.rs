@@ -8,13 +8,12 @@ use dioxus_primitives::toast::{use_toast, ToastOptions, ToastProvider};
 use dirt_core::{Attachment, Note, NoteId};
 
 use crate::data::MobileNoteStore;
-use crate::launch::{LaunchIntent, QuickCaptureLaunch};
+use crate::launch::LaunchIntent;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MobileView {
     List,
     Editor,
-    QuickCapture,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -87,7 +86,6 @@ fn AppShell() -> Element {
     let mut notes = use_signal(Vec::<Note>::new);
     let mut selected_note_id = use_signal(|| None::<NoteId>);
     let mut draft_content = use_signal(String::new);
-    let mut quick_capture_content = use_signal(String::new);
     let mut view = use_signal(|| MobileView::List);
     let mut status_message = use_signal(|| None::<String>);
     let mut loading = use_signal(|| true);
@@ -99,7 +97,7 @@ fn AppShell() -> Element {
     let mut attachments_loading = use_signal(|| false);
     let mut attachments_error = use_signal(|| None::<String>);
     let attachment_refresh_version = use_signal(|| 0u64);
-    let db_init_retry_version = use_signal(|| 0u64);
+    let mut db_init_retry_version = use_signal(|| 0u64);
     let launch: Signal<LaunchIntent> = use_signal(crate::launch::detect_launch_intent_from_runtime);
     let mut launch_applied = use_signal(|| false);
     let toasts = use_toast();
@@ -175,12 +173,10 @@ fn AppShell() -> Element {
                 view.set(MobileView::Editor);
                 launch_applied.set(true);
             } else if launch.quick_capture.enabled {
-                apply_quick_capture_launch(
-                    launch.quick_capture,
-                    &mut quick_capture_content,
-                    &mut status_message,
-                );
-                view.set(MobileView::QuickCapture);
+                apply_quick_capture_launch(launch.quick_capture.seed_text, &mut draft_content);
+                selected_note_id.set(None);
+                status_message.set(Some("Quick capture ready to save".to_string()));
+                view.set(MobileView::Editor);
                 launch_applied.set(true);
             }
         }
@@ -283,18 +279,6 @@ fn AppShell() -> Element {
         view.set(MobileView::Editor);
     };
 
-    let on_open_quick_capture = move |_| {
-        if store.read().is_none() {
-            status_message.set(Some(
-                "Database is not ready yet. Retry initialization first.".to_string(),
-            ));
-            return;
-        }
-        quick_capture_content.set(String::new());
-        status_message.set(None);
-        view.set(MobileView::QuickCapture);
-    };
-
     let on_retry_db_init = move |_| {
         if loading() {
             return;
@@ -352,48 +336,6 @@ fn AppShell() -> Element {
                 }
                 Err(error) => {
                     status_message.set(Some(format!("Failed to save note: {error}")));
-                }
-            }
-
-            saving.set(false);
-        });
-    };
-
-    let on_save_quick_capture = move |_| {
-        if saving() {
-            return;
-        }
-
-        let Some(note_store) = store.read().clone() else {
-            status_message.set(Some("Database is not ready yet".to_string()));
-            return;
-        };
-
-        let content = quick_capture_content().trim().to_string();
-        if content.is_empty() {
-            status_message.set(Some("Quick capture cannot be empty".to_string()));
-            return;
-        }
-
-        saving.set(true);
-        status_message.set(Some("Saving quick capture...".to_string()));
-
-        spawn(async move {
-            match note_store.create_note(&content).await {
-                Ok(_) => match note_store.list_notes().await {
-                    Ok(fresh_notes) => {
-                        notes.set(fresh_notes);
-                        quick_capture_content.set(String::new());
-                        view.set(MobileView::List);
-                        status_message.set(Some("Quick capture saved".to_string()));
-                    }
-                    Err(error) => {
-                        status_message
-                            .set(Some(format!("Saved, but failed to refresh list: {error}")));
-                    }
-                },
-                Err(error) => {
-                    status_message.set(Some(format!("Failed to save quick capture: {error}")));
                 }
             }
 
@@ -573,21 +515,6 @@ fn AppShell() -> Element {
                             onclick: on_new_note,
                             "New note"
                         }
-                        button {
-                            type: "button",
-                            style: "
-                                flex: 1;
-                                border: 1px solid #2563eb;
-                                border-radius: 10px;
-                                padding: 12px;
-                                background: #eff6ff;
-                                color: #1d4ed8;
-                                font-weight: 600;
-                                font-size: 14px;
-                            ",
-                            onclick: on_open_quick_capture,
-                            "Quick capture"
-                        }
                     }
 
                     ScrollArea {
@@ -668,65 +595,6 @@ fn AppShell() -> Element {
                             }
                         }
                     }
-                }
-            } else if view() == MobileView::QuickCapture {
-                div {
-                    style: "
-                        padding: 10px 12px;
-                        display: flex;
-                        gap: 8px;
-                        background: #ffffff;
-                    ",
-                    button {
-                        type: "button",
-                        style: "
-                            border: 1px solid #d1d5db;
-                            border-radius: 8px;
-                            padding: 10px 12px;
-                            background: #ffffff;
-                            font-weight: 600;
-                        ",
-                        onclick: on_back_to_list,
-                        "Cancel"
-                    }
-                    button {
-                        type: "button",
-                        style: "
-                            border: 0;
-                            border-radius: 8px;
-                            padding: 10px 12px;
-                            background: #2563eb;
-                            color: #ffffff;
-                            font-weight: 600;
-                        ",
-                        disabled: saving(),
-                        onclick: on_save_quick_capture,
-                        if saving() { "Saving..." } else { "Save capture" }
-                    }
-                }
-
-                Separator {
-                    decorative: true,
-                    style: "height: 1px; background: #e5e7eb;",
-                }
-
-                textarea {
-                    style: "
-                        flex: 1;
-                        margin: 12px;
-                        border: 1px solid #93c5fd;
-                        border-radius: 12px;
-                        padding: 14px;
-                        line-height: 1.5;
-                        font-size: 15px;
-                        resize: none;
-                        background: #eff6ff;
-                    ",
-                    value: "{quick_capture_content}",
-                    placeholder: "Quick capture: write and save...",
-                    oninput: move |event: Event<FormData>| {
-                        quick_capture_content.set(event.value());
-                    },
                 }
             } else {
                 div {
@@ -888,17 +756,8 @@ fn AppShell() -> Element {
     }
 }
 
-fn apply_quick_capture_launch(
-    launch: QuickCaptureLaunch,
-    quick_capture_content: &mut Signal<String>,
-    status_message: &mut Signal<Option<String>>,
-) {
-    if let Some(seed) = launch.seed_text {
-        quick_capture_content.set(seed);
-    } else {
-        quick_capture_content.set(String::new());
-    }
-    status_message.set(Some("Quick capture mode ready".to_string()));
+fn apply_quick_capture_launch(seed_text: Option<String>, draft_content: &mut Signal<String>) {
+    draft_content.set(seed_text.unwrap_or_default());
 }
 
 fn apply_share_intent(
