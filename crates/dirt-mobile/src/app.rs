@@ -14,6 +14,7 @@ use crate::launch::LaunchIntent;
 enum MobileView {
     List,
     Editor,
+    Settings,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -22,6 +23,17 @@ enum MobileSyncState {
     Syncing,
     Synced,
     Error,
+}
+
+struct MobileConfigDiagnostics {
+    turso_sync_configured: bool,
+    turso_endpoint: String,
+    turso_token_status: String,
+    supabase_url: String,
+    supabase_anon_key_status: String,
+    r2_bucket: String,
+    r2_endpoint: String,
+    r2_credentials_status: String,
 }
 
 const KIB_BYTES: u64 = 1024;
@@ -291,6 +303,10 @@ fn AppShell() -> Element {
         view.set(MobileView::List);
     };
 
+    let on_open_settings = move |_| {
+        view.set(MobileView::Settings);
+    };
+
     let on_save_note = move |_| {
         if saving() {
             return;
@@ -388,6 +404,19 @@ fn AppShell() -> Element {
         });
     };
 
+    let diagnostics = mobile_config_diagnostics();
+    let heading = if view() == MobileView::Settings {
+        "Settings"
+    } else {
+        "Dirt"
+    };
+    let sync_state_text = sync_state_label(sync_state(), last_sync_at());
+    let last_sync_text = last_sync_at()
+        .map(relative_time)
+        .unwrap_or_else(|| "never".to_string());
+    let app_version = env!("CARGO_PKG_VERSION");
+    let package_name = env!("CARGO_PKG_NAME");
+
     rsx! {
         style {
             "{TOAST_STYLES}"
@@ -413,12 +442,46 @@ fn AppShell() -> Element {
                 ",
                 h1 {
                     style: "margin: 0; font-size: 22px;",
-                    "Dirt"
+                    "{heading}"
                 }
-                if let Some(sync_label) = sync_state_banner_label(sync_state(), last_sync_at()) {
-                    p {
-                        style: "margin: 0; color: #4b5563; font-size: 11px;",
-                        "{sync_label}"
+                div {
+                    style: "display: flex; flex-direction: column; align-items: flex-end; gap: 6px;",
+                    if let Some(sync_label) = sync_state_banner_label(sync_state(), last_sync_at()) {
+                        p {
+                            style: "margin: 0; color: #4b5563; font-size: 11px;",
+                            "{sync_label}"
+                        }
+                    }
+                    if view() == MobileView::Settings {
+                        button {
+                            type: "button",
+                            style: "
+                                border: 1px solid #d1d5db;
+                                border-radius: 8px;
+                                padding: 6px 10px;
+                                background: #ffffff;
+                                color: #111827;
+                                font-size: 12px;
+                                font-weight: 600;
+                            ",
+                            onclick: on_back_to_list,
+                            "Notes"
+                        }
+                    } else {
+                        button {
+                            type: "button",
+                            style: "
+                                border: 1px solid #d1d5db;
+                                border-radius: 8px;
+                                padding: 6px 10px;
+                                background: #ffffff;
+                                color: #111827;
+                                font-size: 12px;
+                                font-weight: 600;
+                            ",
+                            onclick: on_open_settings,
+                            "Settings"
+                        }
                     }
                 }
             }
@@ -593,6 +656,136 @@ fn AppShell() -> Element {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            } else if view() == MobileView::Settings {
+                ScrollArea {
+                    direction: ScrollDirection::Vertical,
+                    scroll_type: ScrollType::Auto,
+                    tabindex: "0",
+                    style: "flex: 1; padding: 12px;",
+
+                    div {
+                        style: "
+                            padding: 12px;
+                            border: 1px solid #e5e7eb;
+                            border-radius: 12px;
+                            background: #ffffff;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 6px;
+                            margin-bottom: 10px;
+                        ",
+                        p {
+                            style: "
+                                margin: 0;
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: #6b7280;
+                                text-transform: uppercase;
+                                letter-spacing: 0.04em;
+                            ",
+                            "Sync"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 14px; color: #111827;",
+                            "{sync_state_text}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Last successful sync: {last_sync_text}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            if diagnostics.turso_sync_configured {
+                                "Mode: remote sync configured"
+                            } else {
+                                "Mode: local-only (set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN)"
+                            }
+                        }
+                    }
+
+                    div {
+                        style: "
+                            padding: 12px;
+                            border: 1px solid #e5e7eb;
+                            border-radius: 12px;
+                            background: #ffffff;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 6px;
+                            margin-bottom: 10px;
+                        ",
+                        p {
+                            style: "
+                                margin: 0;
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: #6b7280;
+                                text-transform: uppercase;
+                                letter-spacing: 0.04em;
+                            ",
+                            "Build"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 13px; color: #111827;",
+                            "{package_name} v{app_version}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Target: {std::env::consts::ARCH}/{std::env::consts::OS}"
+                        }
+                    }
+
+                    div {
+                        style: "
+                            padding: 12px;
+                            border: 1px solid #e5e7eb;
+                            border-radius: 12px;
+                            background: #ffffff;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 6px;
+                        ",
+                        p {
+                            style: "
+                                margin: 0;
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: #6b7280;
+                                text-transform: uppercase;
+                                letter-spacing: 0.04em;
+                            ",
+                            "Configuration diagnostics"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #374151;",
+                            "Turso endpoint: {diagnostics.turso_endpoint}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #374151;",
+                            "Turso token: {diagnostics.turso_token_status}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #374151;",
+                            "Supabase URL: {diagnostics.supabase_url}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #374151;",
+                            "Supabase anon key: {diagnostics.supabase_anon_key_status}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #374151;",
+                            "R2 bucket: {diagnostics.r2_bucket}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #374151;",
+                            "R2 endpoint: {diagnostics.r2_endpoint}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #374151;",
+                            "R2 credentials: {diagnostics.r2_credentials_status}"
                         }
                     }
                 }
@@ -789,6 +982,71 @@ fn sync_state_banner_label(state: MobileSyncState, last_sync_at: Option<i64>) ->
     }
 }
 
+fn mobile_config_diagnostics() -> MobileConfigDiagnostics {
+    let turso_url = env_var_trimmed("TURSO_DATABASE_URL");
+    let turso_token_set = env_var_trimmed("TURSO_AUTH_TOKEN").is_some();
+    let supabase_url = env_var_trimmed("SUPABASE_URL");
+    let supabase_anon_key_set = env_var_trimmed("SUPABASE_ANON_KEY").is_some();
+
+    let r2_account_id = env_var_trimmed("R2_ACCOUNT_ID");
+    let r2_bucket = env_var_trimmed("R2_BUCKET");
+    let r2_access_key_set = env_var_trimmed("R2_ACCESS_KEY_ID").is_some();
+    let r2_secret_key_set = env_var_trimmed("R2_SECRET_ACCESS_KEY").is_some();
+
+    let r2_endpoint = r2_account_id
+        .as_deref()
+        .map(|account_id| format!("https://{account_id}.r2.cloudflarestorage.com"));
+
+    MobileConfigDiagnostics {
+        turso_sync_configured: turso_url.is_some() && turso_token_set,
+        turso_endpoint: turso_url
+            .as_deref()
+            .map(mask_endpoint_value)
+            .unwrap_or_else(|| "not set".to_string()),
+        turso_token_status: configured_status_label(turso_token_set).to_string(),
+        supabase_url: supabase_url
+            .as_deref()
+            .map(mask_endpoint_value)
+            .unwrap_or_else(|| "not set".to_string()),
+        supabase_anon_key_status: configured_status_label(supabase_anon_key_set).to_string(),
+        r2_bucket: r2_bucket.unwrap_or_else(|| "not set".to_string()),
+        r2_endpoint: r2_endpoint.unwrap_or_else(|| "not set".to_string()),
+        r2_credentials_status: configured_status_label(r2_access_key_set && r2_secret_key_set)
+            .to_string(),
+    }
+}
+
+fn env_var_trimmed(name: &str) -> Option<String> {
+    let value = std::env::var(name).ok()?;
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn configured_status_label(is_configured: bool) -> &'static str {
+    if is_configured {
+        "configured"
+    } else {
+        "not set"
+    }
+}
+
+fn mask_endpoint_value(raw: &str) -> String {
+    if let Some((scheme, rest)) = raw.split_once("://") {
+        let host = rest.split('/').next().unwrap_or(rest);
+        if host.is_empty() {
+            raw.to_string()
+        } else {
+            format!("{scheme}://{host}")
+        }
+    } else {
+        raw.split('/').next().unwrap_or(raw).to_string()
+    }
+}
+
 fn note_title(note: &Note) -> String {
     let title = note.title_preview(48);
     if title.trim().is_empty() {
@@ -891,5 +1149,21 @@ mod tests {
         assert_eq!(attachment_kind_label("video/mp4"), "video");
         assert_eq!(attachment_kind_label("text/plain"), "text");
         assert_eq!(attachment_kind_label("application/pdf"), "file");
+    }
+
+    #[test]
+    fn masks_configured_endpoints() {
+        assert_eq!(
+            mask_endpoint_value("libsql://dirt-main.aws-ap-northeast-1.turso.io?authToken=secret"),
+            "libsql://dirt-main.aws-ap-northeast-1.turso.io"
+        );
+        assert_eq!(
+            mask_endpoint_value("https://project.supabase.co/rest/v1"),
+            "https://project.supabase.co"
+        );
+        assert_eq!(
+            mask_endpoint_value("project.supabase.co/path"),
+            "project.supabase.co"
+        );
     }
 }
