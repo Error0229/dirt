@@ -1,5 +1,7 @@
 //! Data access layer for the mobile app.
 
+#[cfg(any(target_os = "android", test))]
+use std::path::Path;
 #[cfg(target_os = "android")]
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,9 +29,9 @@ impl MobileNoteStore {
         }
 
         let db = if let Some(sync_config) = sync_config_from_env() {
-            Database::open_with_sync(db_path, sync_config).await?
+            open_with_sync_recovery(&db_path, sync_config).await?
         } else {
-            Database::open(db_path).await?
+            Database::open(&db_path).await?
         };
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
@@ -137,6 +139,75 @@ fn parse_sync_config(url: Option<String>, auth_token: Option<String>) -> Option<
     }
 
     Some(SyncConfig::new(url, auth_token))
+}
+
+#[cfg(target_os = "android")]
+async fn open_with_sync_recovery(db_path: &Path, sync_config: SyncConfig) -> Result<Database> {
+    match Database::open_with_sync(db_path, sync_config.clone()).await {
+        Ok(db) => Ok(db),
+        Err(error) if is_recoverable_local_replica_error(&error) => {
+            tracing::warn!(
+                "Detected inconsistent local mobile replica at {}: {}. Resetting local replica files and retrying once.",
+                db_path.display(),
+                error
+            );
+            quarantine_local_replica_files(db_path)?;
+            Database::open_with_sync(db_path, sync_config).await
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(any(target_os = "android", test))]
+fn is_recoverable_local_replica_error(error: &Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("file is not a database")
+        || message.contains("invalid local state")
+        || message.contains("metadata file exists but db file does not")
+}
+
+#[cfg(any(target_os = "android", test))]
+fn quarantine_local_replica_files(db_path: &Path) -> Result<()> {
+    if db_path.exists() {
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        let base_name = db_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("dirt-mobile.db");
+        let backup_path = db_path.with_file_name(format!("{base_name}.corrupt-{timestamp}"));
+
+        std::fs::rename(db_path, &backup_path)?;
+        tracing::warn!(
+            "Moved corrupted mobile DB file from {} to {}",
+            db_path.display(),
+            backup_path.display()
+        );
+    }
+
+    let Some(parent) = db_path.parent() else {
+        return Ok(());
+    };
+    let Some(base_name) = db_path.file_name().and_then(|name| name.to_str()) else {
+        return Ok(());
+    };
+    let sidecar_prefix = format!("{base_name}-");
+
+    for entry in std::fs::read_dir(parent)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if file_name.starts_with(&sidecar_prefix) {
+            let path = entry.path();
+            std::fs::remove_file(&path)?;
+            tracing::warn!("Removed stale mobile replica file {}", path.display());
+        }
+    }
+
+    Ok(())
 }
 
 /// Build a mobile-friendly local DB path.
@@ -266,5 +337,56 @@ mod tests {
             Error::NotFound(value) => assert_eq!(value, missing_note.to_string()),
             other => panic!("expected not found, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn detects_recoverable_local_replica_errors() {
+        assert!(is_recoverable_local_replica_error(&Error::Database(
+            "SQLite failure: file is not a database".to_string()
+        )));
+        assert!(is_recoverable_local_replica_error(&Error::Database(
+            "sync error: invalid local state: metadata file exists but db file does not"
+                .to_string()
+        )));
+        assert!(!is_recoverable_local_replica_error(&Error::InvalidInput(
+            "note content cannot be empty".to_string()
+        )));
+    }
+
+    #[test]
+    fn quarantine_local_replica_files_moves_db_and_removes_sidecars() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "dirt-mobile-recovery-test-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&test_dir).unwrap();
+
+        let db_path = test_dir.join("dirt-mobile.db");
+        let info_path = test_dir.join("dirt-mobile.db-info");
+        let wal_path = test_dir.join("dirt-mobile.db-wal");
+
+        std::fs::write(&db_path, b"bad-db").unwrap();
+        std::fs::write(&info_path, b"meta").unwrap();
+        std::fs::write(&wal_path, b"wal").unwrap();
+
+        quarantine_local_replica_files(&db_path).unwrap();
+
+        assert!(!db_path.exists());
+        assert!(!info_path.exists());
+        assert!(!wal_path.exists());
+
+        let mut found_backup = false;
+        for entry in std::fs::read_dir(&test_dir).unwrap() {
+            let entry = entry.unwrap();
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            if file_name.starts_with("dirt-mobile.db.corrupt-") {
+                found_backup = true;
+                break;
+            }
+        }
+        assert!(found_backup);
+
+        let _ = std::fs::remove_dir_all(test_dir);
     }
 }

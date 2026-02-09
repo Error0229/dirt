@@ -28,6 +28,49 @@ enum MobileSyncState {
 const KIB_BYTES: u64 = 1024;
 const MIB_BYTES: u64 = KIB_BYTES * 1024;
 const GIB_BYTES: u64 = MIB_BYTES * 1024;
+const TOAST_STYLES: &str = r#"
+.toast-container {
+    position: fixed;
+    inset: auto 12px 12px 12px;
+    z-index: 9999;
+    pointer-events: none;
+}
+.toast-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.toast {
+    pointer-events: auto;
+    border-radius: 10px;
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    box-shadow: 0 10px 30px rgba(17, 24, 39, 0.12);
+    padding: 10px 12px;
+    color: #111827;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+.toast[data-type='success'] { border-color: #10b981; }
+.toast[data-type='error'] { border-color: #ef4444; }
+.toast[data-type='warning'] { border-color: #f59e0b; }
+.toast[data-type='info'] { border-color: #3b82f6; }
+.toast-content { flex: 1; }
+.toast-title { font-size: 13px; font-weight: 700; }
+.toast-description { font-size: 12px; color: #4b5563; margin-top: 2px; }
+.toast-close {
+    border: 0;
+    background: transparent;
+    color: #6b7280;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0;
+}
+"#;
 
 #[component]
 pub fn App() -> Element {
@@ -56,15 +99,25 @@ fn AppShell() -> Element {
     let mut attachments_loading = use_signal(|| false);
     let mut attachments_error = use_signal(|| None::<String>);
     let attachment_refresh_version = use_signal(|| 0u64);
+    let db_init_retry_version = use_signal(|| 0u64);
     let launch: Signal<LaunchIntent> = use_signal(crate::launch::detect_launch_intent_from_runtime);
+    let mut launch_applied = use_signal(|| false);
     let toasts = use_toast();
 
     use_future(move || async move {
+        let _db_init_retry_version = db_init_retry_version();
+        loading.set(true);
+        store.set(None);
+        notes.set(Vec::new());
+        sync_state.set(MobileSyncState::Offline);
+        last_sync_at.set(None);
         let launch = launch();
+        let mut initialized = false;
 
         match MobileNoteStore::open_default().await {
             Ok(note_store) => {
                 let note_store = Arc::new(note_store);
+                initialized = true;
 
                 store.set(Some(note_store.clone()));
 
@@ -111,21 +164,25 @@ fn AppShell() -> Element {
             }
         }
 
-        if let Some(shared_text) = launch.share_text {
-            apply_share_intent(
-                shared_text,
-                &mut selected_note_id,
-                &mut draft_content,
-                &mut status_message,
-            );
-            view.set(MobileView::Editor);
-        } else if launch.quick_capture.enabled {
-            apply_quick_capture_launch(
-                launch.quick_capture,
-                &mut quick_capture_content,
-                &mut status_message,
-            );
-            view.set(MobileView::QuickCapture);
+        if initialized && !launch_applied() {
+            if let Some(shared_text) = launch.share_text {
+                apply_share_intent(
+                    shared_text,
+                    &mut selected_note_id,
+                    &mut draft_content,
+                    &mut status_message,
+                );
+                view.set(MobileView::Editor);
+                launch_applied.set(true);
+            } else if launch.quick_capture.enabled {
+                apply_quick_capture_launch(
+                    launch.quick_capture,
+                    &mut quick_capture_content,
+                    &mut status_message,
+                );
+                view.set(MobileView::QuickCapture);
+                launch_applied.set(true);
+            }
         }
 
         loading.set(false);
@@ -214,6 +271,12 @@ fn AppShell() -> Element {
     });
 
     let on_new_note = move |_| {
+        if store.read().is_none() {
+            status_message.set(Some(
+                "Database is not ready yet. Retry initialization first.".to_string(),
+            ));
+            return;
+        }
         selected_note_id.set(None);
         draft_content.set(String::new());
         status_message.set(None);
@@ -221,9 +284,23 @@ fn AppShell() -> Element {
     };
 
     let on_open_quick_capture = move |_| {
+        if store.read().is_none() {
+            status_message.set(Some(
+                "Database is not ready yet. Retry initialization first.".to_string(),
+            ));
+            return;
+        }
         quick_capture_content.set(String::new());
         status_message.set(None);
         view.set(MobileView::QuickCapture);
+    };
+
+    let on_retry_db_init = move |_| {
+        if loading() {
+            return;
+        }
+        status_message.set(Some("Retrying database initialization...".to_string()));
+        db_init_retry_version.set(db_init_retry_version() + 1);
     };
 
     let on_back_to_list = move |_| {
@@ -371,49 +448,7 @@ fn AppShell() -> Element {
 
     rsx! {
         style {
-            r#"
-            .toast-container {
-                position: fixed;
-                inset: auto 12px 12px 12px;
-                z-index: 9999;
-                pointer-events: none;
-            }
-            .toast-list {
-                margin: 0;
-                padding: 0;
-                list-style: none;
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-            }
-            .toast {
-                pointer-events: auto;
-                border-radius: 10px;
-                border: 1px solid #d1d5db;
-                background: #ffffff;
-                box-shadow: 0 10px 30px rgba(17, 24, 39, 0.12);
-                padding: 10px 12px;
-                color: #111827;
-                display: flex;
-                gap: 10px;
-                align-items: flex-start;
-            }
-            .toast[data-type='success'] { border-color: #10b981; }
-            .toast[data-type='error'] { border-color: #ef4444; }
-            .toast[data-type='warning'] { border-color: #f59e0b; }
-            .toast[data-type='info'] { border-color: #3b82f6; }
-            .toast-content { flex: 1; }
-            .toast-title { font-size: 13px; font-weight: 700; }
-            .toast-description { font-size: 12px; color: #4b5563; margin-top: 2px; }
-            .toast-close {
-                border: 0;
-                background: transparent;
-                color: #6b7280;
-                font-size: 16px;
-                line-height: 1;
-                padding: 0;
-            }
-            "#
+            "{TOAST_STYLES}"
         }
 
         div {
@@ -438,15 +473,10 @@ fn AppShell() -> Element {
                     style: "margin: 0; font-size: 22px;",
                     "Dirt"
                 }
-                div {
-                    style: "display: flex; flex-direction: column; align-items: flex-end; gap: 2px;",
-                    p {
-                        style: "margin: 0; color: #6b7280; font-size: 12px;",
-                        "F4.5 sync notifications"
-                    }
+                if let Some(sync_label) = sync_state_banner_label(sync_state(), last_sync_at()) {
                     p {
                         style: "margin: 0; color: #4b5563; font-size: 11px;",
-                        "{sync_state_label(sync_state(), last_sync_at())}"
+                        "{sync_label}"
                     }
                 }
             }
@@ -479,111 +509,159 @@ fn AppShell() -> Element {
                     "Loading notes..."
                 }
             } else if view() == MobileView::List {
-                div {
-                    style: "padding: 12px 16px; display: flex; gap: 8px;",
-                    button {
-                        type: "button",
+                if store.read().is_none() {
+                    div {
                         style: "
                             flex: 1;
-                            border: 0;
-                            border-radius: 10px;
-                            padding: 12px;
-                            background: #111827;
-                            color: #ffffff;
-                            font-weight: 600;
-                            font-size: 14px;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            padding: 20px;
                         ",
-                        onclick: on_new_note,
-                        "New note"
-                    }
-                    button {
-                        type: "button",
-                        style: "
-                            flex: 1;
-                            border: 1px solid #2563eb;
-                            border-radius: 10px;
-                            padding: 12px;
-                            background: #eff6ff;
-                            color: #1d4ed8;
-                            font-weight: 600;
-                            font-size: 14px;
-                        ",
-                        onclick: on_open_quick_capture,
-                        "Quick capture"
-                    }
-                }
-
-                ScrollArea {
-                    direction: ScrollDirection::Vertical,
-                    scroll_type: ScrollType::Auto,
-                    tabindex: "0",
-                    style: "flex: 1; padding: 0 12px 16px 12px;",
-
-                    if notes().is_empty() {
                         div {
                             style: "
-                                margin-top: 24px;
-                                padding: 20px;
+                                width: 100%;
+                                max-width: 360px;
                                 background: #ffffff;
                                 border: 1px solid #e5e7eb;
                                 border-radius: 12px;
-                                text-align: center;
-                                color: #6b7280;
+                                padding: 16px;
+                                display: flex;
+                                flex-direction: column;
+                                gap: 10px;
+                                color: #374151;
                             ",
-                            "No notes yet. Create your first note."
+                            p {
+                                style: "margin: 0; font-size: 14px; font-weight: 600; color: #111827;",
+                                "Database initialization failed"
+                            }
+                            p {
+                                style: "margin: 0; font-size: 12px; color: #6b7280;",
+                                "Retry initialization to continue."
+                            }
+                            button {
+                                type: "button",
+                                style: "
+                                    border: 0;
+                                    border-radius: 8px;
+                                    padding: 10px 12px;
+                                    background: #2563eb;
+                                    color: #ffffff;
+                                    font-weight: 600;
+                                ",
+                                onclick: on_retry_db_init,
+                                disabled: loading(),
+                                "Retry"
+                            }
                         }
-                    } else {
-                        for note in notes() {
-                            {
-                                let note_id = note.id;
-                                let note_content = note.content.clone();
-                                let title = note_title(&note);
-                                let preview = note_preview(&note);
-                                let updated = relative_time(note.updated_at);
-                                let selected = selected_note_id() == Some(note_id);
-                                let border_color = if selected { "#2563eb" } else { "#e5e7eb" };
-                                let card_style = format!(
-                                    "margin-bottom: 10px;\
-                                     width: 100%;\
-                                     border: 1px solid {border_color};\
-                                     background: #ffffff;\
-                                     border-radius: 12px;\
-                                     padding: 12px;\
-                                     text-align: left;"
-                                );
+                    }
+                } else {
+                    div {
+                        style: "padding: 12px 16px; display: flex; gap: 8px;",
+                        button {
+                            type: "button",
+                            style: "
+                                flex: 1;
+                                border: 0;
+                                border-radius: 10px;
+                                padding: 12px;
+                                background: #111827;
+                                color: #ffffff;
+                                font-weight: 600;
+                                font-size: 14px;
+                            ",
+                            onclick: on_new_note,
+                            "New note"
+                        }
+                        button {
+                            type: "button",
+                            style: "
+                                flex: 1;
+                                border: 1px solid #2563eb;
+                                border-radius: 10px;
+                                padding: 12px;
+                                background: #eff6ff;
+                                color: #1d4ed8;
+                                font-weight: 600;
+                                font-size: 14px;
+                            ",
+                            onclick: on_open_quick_capture,
+                            "Quick capture"
+                        }
+                    }
 
-                                rsx! {
-                                    button {
-                                        key: "{note_id}",
-                                        type: "button",
-                                        style: "{card_style}",
-                                        onclick: move |_| {
-                                            selected_note_id.set(Some(note_id));
-                                            draft_content.set(note_content.clone());
-                                            status_message.set(None);
-                                            view.set(MobileView::Editor);
-                                        },
+                    ScrollArea {
+                        direction: ScrollDirection::Vertical,
+                        scroll_type: ScrollType::Auto,
+                        tabindex: "0",
+                        style: "flex: 1; padding: 0 12px 16px 12px;",
 
-                                        p {
-                                            style: "
-                                                margin: 0 0 6px 0;
-                                                font-size: 15px;
-                                                font-weight: 600;
-                                                color: #111827;
-                                            ",
-                                            "{title}"
-                                        }
-                                        p {
-                                            style: "
-                                                margin: 0 0 6px 0;
-                                                font-size: 13px;
-                                                color: #6b7280;
-                                            ",
-                                            "{preview}"
-                                        }
-                                        p {
-                                            style: "margin: 0; font-size: 12px; color: #9ca3af;",
-                                            "Updated {updated}"
+                        if notes().is_empty() {
+                            div {
+                                style: "
+                                    margin-top: 24px;
+                                    padding: 20px;
+                                    background: #ffffff;
+                                    border: 1px solid #e5e7eb;
+                                    border-radius: 12px;
+                                    text-align: center;
+                                    color: #6b7280;
+                                ",
+                                "No notes yet. Create your first note."
+                            }
+                        } else {
+                            for note in notes() {
+                                {
+                                    let note_id = note.id;
+                                    let note_content = note.content.clone();
+                                    let title = note_title(&note);
+                                    let preview = note_preview(&note);
+                                    let updated = relative_time(note.updated_at);
+                                    let selected = selected_note_id() == Some(note_id);
+                                    let border_color = if selected { "#2563eb" } else { "#e5e7eb" };
+                                    let card_style = format!(
+                                        "margin-bottom: 10px;\
+                                         width: 100%;\
+                                         border: 1px solid {border_color};\
+                                         background: #ffffff;\
+                                         border-radius: 12px;\
+                                         padding: 12px;\
+                                         text-align: left;"
+                                    );
+
+                                    rsx! {
+                                        button {
+                                            key: "{note_id}",
+                                            type: "button",
+                                            style: "{card_style}",
+                                            onclick: move |_| {
+                                                selected_note_id.set(Some(note_id));
+                                                draft_content.set(note_content.clone());
+                                                status_message.set(None);
+                                                view.set(MobileView::Editor);
+                                            },
+
+                                            p {
+                                                style: "
+                                                    margin: 0 0 6px 0;
+                                                    font-size: 15px;
+                                                    font-weight: 600;
+                                                    color: #111827;
+                                                ",
+                                                "{title}"
+                                            }
+                                            p {
+                                                style: "
+                                                    margin: 0 0 6px 0;
+                                                    font-size: 13px;
+                                                    color: #6b7280;
+                                                ",
+                                                "{preview}"
+                                            }
+                                            p {
+                                                style: "margin: 0; font-size: 12px; color: #9ca3af;",
+                                                "Updated {updated}"
+                                            }
                                         }
                                     }
                                 }
@@ -842,6 +920,13 @@ fn sync_state_label(state: MobileSyncState, last_sync_at: Option<i64>) -> String
             .map(|timestamp| format!("Sync: updated {}", relative_time(timestamp)))
             .unwrap_or_else(|| "Sync: connected".to_string()),
         MobileSyncState::Error => "Sync: retrying after error".to_string(),
+    }
+}
+
+fn sync_state_banner_label(state: MobileSyncState, last_sync_at: Option<i64>) -> Option<String> {
+    match state {
+        MobileSyncState::Offline => None,
+        _ => Some(sync_state_label(state, last_sync_at)),
     }
 }
 
