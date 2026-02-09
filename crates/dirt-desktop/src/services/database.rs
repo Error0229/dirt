@@ -20,6 +20,8 @@ use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct DatabaseService {
     db: Arc<Mutex<Database>>,
+    db_path: Option<PathBuf>,
+    sync_config: Option<SyncConfig>,
 }
 
 impl DatabaseService {
@@ -38,34 +40,12 @@ impl DatabaseService {
         // Check for sync config from environment
         let sync_config = Self::sync_config_from_env();
 
-        // Run database initialization in a thread with larger stack (8MB)
-        // to handle deep libsql call stacks during sync
-        let db = if let Some(config) = sync_config {
-            tracing::info!(
-                "Sync enabled with Turso: {}",
-                config.url.as_deref().unwrap_or("unknown")
-            );
-            let path = db_path.clone();
-            let result = std::thread::Builder::new()
-                .stack_size(8 * 1024 * 1024) // 8MB stack
-                .spawn(move || {
-                    tokio::runtime::Builder::new_multi_thread()
-                        .enable_all()
-                        .build()
-                        .unwrap()
-                        .block_on(Database::open_with_sync(&path, config))
-                })
-                .map_err(|e| dirt_core::error::Error::Database(e.to_string()))?
-                .join()
-                .map_err(|_| dirt_core::error::Error::Database("Thread panicked".to_string()))??;
-            result
-        } else {
-            tracing::info!("Running in local-only mode (no TURSO_DATABASE_URL/TURSO_AUTH_TOKEN)");
-            Database::open(&db_path).await?
-        };
+        let db = Self::open_database(db_path.clone(), sync_config.clone()).await?;
 
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
+            db_path: Some(db_path),
+            sync_config,
         })
     }
 
@@ -90,9 +70,11 @@ impl DatabaseService {
             std::fs::create_dir_all(parent)?;
         }
 
-        let db = Database::open_with_sync(&db_path, sync_config).await?;
+        let db = Self::open_database(db_path.clone(), Some(sync_config.clone())).await?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
+            db_path: Some(db_path),
+            sync_config: Some(sync_config),
         })
     }
 
@@ -102,7 +84,146 @@ impl DatabaseService {
         let db = Database::open_in_memory().await?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
+            db_path: None,
+            sync_config: None,
         })
+    }
+
+    /// Open a local DB or embedded replica using the same initialization strategy
+    /// as app startup.
+    async fn open_database(db_path: PathBuf, sync_config: Option<SyncConfig>) -> Result<Database> {
+        if let Some(config) = sync_config {
+            Self::open_database_with_sync_recovery(db_path, config)
+        } else {
+            tracing::info!("Running in local-only mode (no TURSO_DATABASE_URL/TURSO_AUTH_TOKEN)");
+            Database::open(&db_path).await
+        }
+    }
+
+    fn open_database_with_sync_recovery(
+        db_path: PathBuf,
+        sync_config: SyncConfig,
+    ) -> Result<Database> {
+        tracing::info!(
+            "Sync enabled with Turso: {}",
+            sync_config.url.as_deref().unwrap_or("unknown")
+        );
+        match Self::open_database_with_sync_thread(db_path.clone(), sync_config.clone()) {
+            Ok(db) => Ok(db),
+            Err(error) if Self::is_recoverable_local_replica_error(&error) => {
+                tracing::warn!(
+                    "Detected inconsistent local replica state at {}: {}. Resetting local replica files and retrying once.",
+                    db_path.display(),
+                    error
+                );
+                Self::quarantine_corrupted_db_files(&db_path)?;
+                Self::open_database_with_sync_thread(db_path, sync_config)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn open_database_with_sync_thread(
+        db_path: PathBuf,
+        sync_config: SyncConfig,
+    ) -> Result<Database> {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024) // 8MB stack
+            .spawn(move || {
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(Database::open_with_sync(&db_path, sync_config))
+            })
+            .map_err(|error| dirt_core::error::Error::Database(error.to_string()))?
+            .join()
+            .map_err(|_| dirt_core::error::Error::Database("Thread panicked".to_string()))?
+    }
+
+    fn is_corrupted_db_error(error: &dirt_core::Error) -> bool {
+        error
+            .to_string()
+            .to_ascii_lowercase()
+            .contains("file is not a database")
+    }
+
+    fn is_recoverable_local_replica_error(error: &dirt_core::Error) -> bool {
+        if Self::is_corrupted_db_error(error) {
+            return true;
+        }
+
+        let message = error.to_string().to_ascii_lowercase();
+        message.contains("invalid local state")
+            || message.contains("metadata file exists but db file does not")
+    }
+
+    fn quarantine_corrupted_db_files(db_path: &PathBuf) -> Result<()> {
+        if db_path.exists() {
+            let timestamp = chrono::Utc::now().timestamp_millis();
+            let backup_name = format!("dirt.db.corrupt-{timestamp}");
+            let backup_path = db_path.with_file_name(backup_name);
+
+            std::fs::rename(db_path, &backup_path)?;
+            tracing::warn!(
+                "Moved corrupted local DB file from {} to {}",
+                db_path.display(),
+                backup_path.display()
+            );
+        }
+
+        let Some(parent) = db_path.parent() else {
+            return Ok(());
+        };
+        let Some(base_name) = db_path.file_name().and_then(|name| name.to_str()) else {
+            return Ok(());
+        };
+        let sidecar_prefix = format!("{base_name}-");
+
+        for entry in std::fs::read_dir(parent)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            if file_name.starts_with(&sidecar_prefix) {
+                let path = entry.path();
+                std::fs::remove_file(&path)?;
+                tracing::warn!("Removed stale local replica file {}", path.display());
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn reopen_after_corruption(&self) -> Result<bool> {
+        let Some(db_path) = self.db_path.clone() else {
+            return Ok(false);
+        };
+
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        tracing::warn!(
+            "Detected invalid local DB file; attempting to reopen connection at {}",
+            db_path.display()
+        );
+
+        // Replace with an in-memory placeholder first so the old file handle is released on
+        // Windows before we move corrupted files out of the way.
+        {
+            let mut db = self.db.lock().await;
+            let placeholder = Database::open_in_memory().await?;
+            let _old = std::mem::replace(&mut *db, placeholder);
+        }
+
+        Self::quarantine_corrupted_db_files(&db_path)?;
+        let reopened = Self::open_database(db_path, self.sync_config.clone()).await?;
+        let mut db = self.db.lock().await;
+        *db = reopened;
+        Ok(true)
     }
 
     /// Get the default database path
@@ -202,17 +323,50 @@ impl DatabaseService {
         size_bytes: i64,
         r2_key: &str,
     ) -> Result<Attachment> {
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.create_attachment(note_id, filename, mime_type, size_bytes, r2_key)
-            .await
+        let first_attempt = {
+            let db = self.db.lock().await;
+            let repo = LibSqlNoteRepository::new(db.connection());
+            repo.create_attachment(note_id, filename, mime_type, size_bytes, r2_key)
+                .await
+        };
+
+        match first_attempt {
+            Ok(attachment) => Ok(attachment),
+            Err(error) if Self::is_corrupted_db_error(&error) => {
+                if self.reopen_after_corruption().await? {
+                    let db = self.db.lock().await;
+                    let repo = LibSqlNoteRepository::new(db.connection());
+                    repo.create_attachment(note_id, filename, mime_type, size_bytes, r2_key)
+                        .await
+                } else {
+                    Err(error)
+                }
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// List non-deleted attachment metadata for a note
     pub async fn list_attachments(&self, note_id: &NoteId) -> Result<Vec<Attachment>> {
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.list_attachments(note_id).await
+        let first_attempt = {
+            let db = self.db.lock().await;
+            let repo = LibSqlNoteRepository::new(db.connection());
+            repo.list_attachments(note_id).await
+        };
+
+        match first_attempt {
+            Ok(attachments) => Ok(attachments),
+            Err(error) if Self::is_corrupted_db_error(&error) => {
+                if self.reopen_after_corruption().await? {
+                    let db = self.db.lock().await;
+                    let repo = LibSqlNoteRepository::new(db.connection());
+                    repo.list_attachments(note_id).await
+                } else {
+                    Err(error)
+                }
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Soft delete attachment metadata by id

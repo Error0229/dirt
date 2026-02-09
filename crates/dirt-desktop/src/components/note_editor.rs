@@ -1,5 +1,6 @@
 //! Note editor component
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,6 +27,8 @@ const MIB_BYTES: u64 = KIB_BYTES * 1024;
 const GIB_BYTES: u64 = MIB_BYTES * 1024;
 const MAX_TEXT_PREVIEW_BYTES: usize = 256 * 1024;
 const MAX_MEDIA_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
+const ATTACHMENT_LIST_MAX_ATTEMPTS: usize = 3;
+const ATTACHMENT_LIST_RETRY_DELAY_MS: u64 = 120;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AttachmentKind {
@@ -81,6 +84,7 @@ pub fn NoteEditor() -> Element {
     let mut attachments_error = use_signal(|| None::<String>);
     let attachments_loading = use_signal(|| false);
     let attachment_refresh_version = use_signal(|| 0u64);
+    let attachment_load_request_id = use_hook(|| Arc::new(AtomicU64::new(0)));
     let mut deleting_attachment_id = use_signal(|| None::<AttachmentId>);
     let mut drag_over = use_signal(|| false);
     let mut preview_open = use_signal(|| false);
@@ -111,29 +115,48 @@ pub fn NoteEditor() -> Element {
     use_effect(move || {
         let note_id = *last_note_id.read();
         let _attachment_refresh_version = attachment_refresh_version();
+        let request_id = attachment_load_request_id.fetch_add(1, Ordering::SeqCst) + 1;
         let db = state.db_service.read().clone();
         let mut attachment_signal = attachments;
         let mut attachment_error_signal = attachments_error;
         let mut attachment_loading_signal = attachments_loading;
+        let request_id_signal = attachment_load_request_id.clone();
 
         spawn(async move {
+            if request_id_signal.load(Ordering::SeqCst) != request_id {
+                return;
+            }
             attachment_error_signal.set(None);
 
             let Some(note_id) = note_id else {
-                attachment_signal.set(Vec::new());
-                attachment_loading_signal.set(false);
+                if request_id_signal.load(Ordering::SeqCst) == request_id {
+                    attachment_signal.set(Vec::new());
+                    attachment_loading_signal.set(false);
+                }
                 return;
             };
 
             let Some(db) = db else {
-                attachment_signal.set(Vec::new());
-                attachment_error_signal.set(Some("Database service is not available.".to_string()));
-                attachment_loading_signal.set(false);
+                if request_id_signal.load(Ordering::SeqCst) == request_id {
+                    attachment_signal.set(Vec::new());
+                    attachment_error_signal
+                        .set(Some("Database service is not available.".to_string()));
+                    attachment_loading_signal.set(false);
+                }
                 return;
             };
 
-            attachment_loading_signal.set(true);
-            match db.list_attachments(&note_id).await {
+            if request_id_signal.load(Ordering::SeqCst) == request_id {
+                attachment_loading_signal.set(true);
+            }
+
+            let load_result = list_attachments_with_retry(db.as_ref(), &note_id).await;
+
+            if request_id_signal.load(Ordering::SeqCst) != request_id {
+                return;
+            }
+
+            match load_result {
                 Ok(list) => attachment_signal.set(list),
                 Err(error) => {
                     attachment_signal.set(Vec::new());
@@ -451,6 +474,8 @@ pub fn NoteEditor() -> Element {
                         display: flex;
                         flex-direction: column;
                         gap: 6px;
+                        min-width: 0;
+                        overflow-x: hidden;
                     ",
                     div {
                         style: "
@@ -499,15 +524,19 @@ pub fn NoteEditor() -> Element {
                             div {
                                 key: "{attachment.id}",
                                 style: "
-                                    display: flex;
+                                    display: grid;
+                                    grid-template-columns: minmax(0, 1fr) auto auto;
                                     align-items: center;
-                                    justify-content: space-between;
-                                    gap: 12px;
+                                    column-gap: 12px;
+                                    min-width: 0;
+                                    width: 100%;
+                                    overflow: hidden;
                                     font-size: 12px;
                                 ",
                                 div {
                                     style: "
                                         min-width: 0;
+                                        overflow: hidden;
                                         display: flex;
                                         align-items: baseline;
                                         gap: 8px;
@@ -515,8 +544,10 @@ pub fn NoteEditor() -> Element {
                                     ",
                                     span {
                                         style: "
-                                            flex: 1;
+                                            display: block;
+                                            flex: 1 1 auto;
                                             min-width: 0;
+                                            max-width: 100%;
                                             overflow: hidden;
                                             text-overflow: ellipsis;
                                             white-space: nowrap;
@@ -526,6 +557,8 @@ pub fn NoteEditor() -> Element {
                                     span {
                                         style: "
                                             color: {colors.text_muted};
+                                            white-space: nowrap;
+                                            flex-shrink: 0;
                                         ",
                                         "{attachment_kind_label(&attachment.filename, &attachment.mime_type)}"
                                     }
@@ -534,6 +567,7 @@ pub fn NoteEditor() -> Element {
                                     style: "
                                         color: {colors.text_muted};
                                         white-space: nowrap;
+                                        flex-shrink: 0;
                                     ",
                                     "{format_attachment_size(attachment.size_bytes)}"
                                 }
@@ -542,6 +576,7 @@ pub fn NoteEditor() -> Element {
                                         display: flex;
                                         align-items: center;
                                         gap: 6px;
+                                        flex-shrink: 0;
                                     ",
                                     Button {
                                         variant: ButtonVariant::Ghost,
@@ -704,7 +739,10 @@ pub fn NoteEditor() -> Element {
 
                         div {
                             style: "display: flex; align-items: center; justify-content: space-between; gap: 12px;",
-                            DialogTitle { "{preview_title}" }
+                            DialogTitle {
+                                style: "flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                                "{preview_title}"
+                            }
                             Button {
                                 variant: ButtonVariant::Ghost,
                                 onclick: move |_| preview_open.set(false),
@@ -834,6 +872,45 @@ async fn upload_attachment(
 
     attachment_refresh_signal.set(attachment_refresh_signal() + 1);
     uploading.set(false);
+}
+
+async fn list_attachments_with_retry(
+    db: &DatabaseService,
+    note_id: &NoteId,
+) -> Result<Vec<Attachment>, dirt_core::Error> {
+    let mut attempt = 0usize;
+
+    loop {
+        match db.list_attachments(note_id).await {
+            Ok(attachments) => return Ok(attachments),
+            Err(error) => {
+                let should_retry = attempt + 1 < ATTACHMENT_LIST_MAX_ATTEMPTS
+                    && is_retryable_attachment_list_error(&error);
+
+                if !should_retry {
+                    return Err(error);
+                }
+
+                attempt += 1;
+                let delay_ms = ATTACHMENT_LIST_RETRY_DELAY_MS * u64::try_from(attempt).unwrap_or(1);
+                tracing::warn!(
+                    note_id = %note_id,
+                    attempt,
+                    "Transient attachment load failure, retrying in {}ms: {}",
+                    delay_ms,
+                    error
+                );
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            }
+        }
+    }
+}
+
+fn is_retryable_attachment_list_error(error: &dirt_core::Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("database is locked")
+        || message.contains("database busy")
+        || message.contains("temporarily unavailable")
 }
 
 fn infer_attachment_mime_type(content_type: Option<&str>, file_name: &str) -> String {
