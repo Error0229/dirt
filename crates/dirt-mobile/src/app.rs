@@ -39,6 +39,7 @@ struct MobileConfigDiagnostics {
 const KIB_BYTES: u64 = 1024;
 const MIB_BYTES: u64 = KIB_BYTES * 1024;
 const GIB_BYTES: u64 = MIB_BYTES * 1024;
+const SYNC_INTERVAL_SECS: u64 = 30;
 const TOAST_STYLES: &str = r#"
 .toast-container {
     position: fixed;
@@ -105,6 +106,9 @@ fn AppShell() -> Element {
     let mut deleting = use_signal(|| false);
     let mut sync_state = use_signal(|| MobileSyncState::Offline);
     let mut last_sync_at = use_signal(|| None::<i64>);
+    let mut sync_scheduler_active = use_signal(|| false);
+    let mut last_sync_attempt_at = use_signal(|| None::<i64>);
+    let mut consecutive_sync_failures = use_signal(|| 0u32);
     let mut note_attachments = use_signal(Vec::<Attachment>::new);
     let mut attachments_loading = use_signal(|| false);
     let mut attachments_error = use_signal(|| None::<String>);
@@ -121,6 +125,9 @@ fn AppShell() -> Element {
         notes.set(Vec::new());
         sync_state.set(MobileSyncState::Offline);
         last_sync_at.set(None);
+        sync_scheduler_active.set(false);
+        last_sync_attempt_at.set(None);
+        consecutive_sync_failures.set(0);
         let launch = launch();
         let mut initialized = false;
 
@@ -132,11 +139,14 @@ fn AppShell() -> Element {
                 store.set(Some(note_store.clone()));
 
                 if note_store.is_sync_enabled().await {
+                    sync_scheduler_active.set(true);
                     sync_state.set(MobileSyncState::Syncing);
+                    last_sync_attempt_at.set(Some(chrono::Utc::now().timestamp_millis()));
                     match note_store.sync().await {
                         Ok(()) => {
                             sync_state.set(MobileSyncState::Synced);
                             last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
+                            consecutive_sync_failures.set(0);
                             toasts.info(
                                 "Sync connected".to_string(),
                                 ToastOptions::new()
@@ -146,6 +156,7 @@ fn AppShell() -> Element {
                         Err(error) => {
                             tracing::error!("Initial mobile sync failed: {}", error);
                             sync_state.set(MobileSyncState::Error);
+                            consecutive_sync_failures.set(1);
                             status_message.set(Some(format!(
                                 "Initial sync failed; retrying in background: {error}"
                             )));
@@ -157,7 +168,12 @@ fn AppShell() -> Element {
                         }
                     }
                 } else {
+                    sync_scheduler_active.set(false);
                     sync_state.set(MobileSyncState::Offline);
+                    status_message.set(Some(
+                        "Running in local-only mode (set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN to enable auto-sync)"
+                            .to_string(),
+                    ));
                 }
 
                 match note_store.list_notes().await {
@@ -170,6 +186,7 @@ fn AppShell() -> Element {
                 }
             }
             Err(error) => {
+                sync_scheduler_active.set(false);
                 status_message.set(Some(format!("Failed to open database: {error}")));
             }
         }
@@ -198,16 +215,26 @@ fn AppShell() -> Element {
 
     use_future(move || async move {
         loop {
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            tokio::time::sleep(Duration::from_secs(SYNC_INTERVAL_SECS)).await;
 
             let Some(note_store) = store.read().clone() else {
+                sync_scheduler_active.set(false);
                 continue;
             };
 
             if !note_store.is_sync_enabled().await {
+                sync_scheduler_active.set(false);
                 sync_state.set(MobileSyncState::Offline);
                 continue;
             }
+
+            sync_scheduler_active.set(true);
+            let sync_attempt_timestamp = chrono::Utc::now().timestamp_millis();
+            last_sync_attempt_at.set(Some(sync_attempt_timestamp));
+            tracing::debug!(
+                "Mobile sync scheduler tick: interval={}s, attempt_at={sync_attempt_timestamp}",
+                SYNC_INTERVAL_SECS
+            );
 
             let previous_sync_state = sync_state();
             sync_state.set(MobileSyncState::Syncing);
@@ -216,6 +243,7 @@ fn AppShell() -> Element {
                 Ok(()) => {
                     sync_state.set(MobileSyncState::Synced);
                     last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
+                    consecutive_sync_failures.set(0);
 
                     if previous_sync_state == MobileSyncState::Error {
                         toasts.success(
@@ -232,6 +260,7 @@ fn AppShell() -> Element {
                 Err(error) => {
                     tracing::error!("Periodic mobile sync failed: {}", error);
                     sync_state.set(MobileSyncState::Error);
+                    consecutive_sync_failures.set(consecutive_sync_failures().saturating_add(1));
 
                     if previous_sync_state != MobileSyncState::Error {
                         toasts.error(
@@ -414,6 +443,14 @@ fn AppShell() -> Element {
     let last_sync_text = last_sync_at()
         .map(relative_time)
         .unwrap_or_else(|| "never".to_string());
+    let last_sync_attempt_text = last_sync_attempt_at()
+        .map(relative_time)
+        .unwrap_or_else(|| "never".to_string());
+    let sync_scheduler_text = if sync_scheduler_active() {
+        format!("active (every {SYNC_INTERVAL_SECS}s)")
+    } else {
+        "inactive".to_string()
+    };
     let app_version = env!("CARGO_PKG_VERSION");
     let package_name = env!("CARGO_PKG_NAME");
 
@@ -698,6 +735,18 @@ fn AppShell() -> Element {
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Scheduler: {sync_scheduler_text}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Last scheduler attempt: {last_sync_attempt_text}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Consecutive sync failures: {consecutive_sync_failures}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
                             if diagnostics.turso_sync_configured {
                                 "Mode: remote sync configured"
                             } else {
@@ -971,7 +1020,7 @@ fn sync_state_label(state: MobileSyncState, last_sync_at: Option<i64>) -> String
         MobileSyncState::Synced => last_sync_at
             .map(|timestamp| format!("Sync: updated {}", relative_time(timestamp)))
             .unwrap_or_else(|| "Sync: connected".to_string()),
-        MobileSyncState::Error => "Sync: retrying after error".to_string(),
+        MobileSyncState::Error => format!("Sync: retrying every {SYNC_INTERVAL_SECS}s after error"),
     }
 }
 
