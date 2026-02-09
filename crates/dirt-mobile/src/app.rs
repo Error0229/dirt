@@ -97,7 +97,7 @@ fn AppShell() -> Element {
     let mut attachments_loading = use_signal(|| false);
     let mut attachments_error = use_signal(|| None::<String>);
     let attachment_refresh_version = use_signal(|| 0u64);
-    let db_init_retry_version = use_signal(|| 0u64);
+    let mut db_init_retry_version = use_signal(|| 0u64);
     let launch: Signal<LaunchIntent> = use_signal(crate::launch::detect_launch_intent_from_runtime);
     let mut launch_applied = use_signal(|| false);
     let toasts = use_toast();
