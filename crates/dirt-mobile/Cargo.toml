@@ -25,6 +25,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 thiserror.workspace = true
 base64 = "0.22"
 mime_guess = "2.0"
+urlencoding = "2.1"
 
 [target.'cfg(target_os = "android")'.dependencies]
 dioxus = { workspace = true, features = ["mobile"] }
