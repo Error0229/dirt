@@ -8,6 +8,7 @@
 #![allow(unknown_lints, clippy::volatile_composites)]
 
 mod app;
+mod bootstrap_config;
 mod components;
 mod hotkey;
 mod queries;

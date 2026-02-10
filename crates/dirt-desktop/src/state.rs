@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 
 use dirt_core::models::{Note, NoteId, Settings};
 
-use crate::services::{AuthSession, DatabaseService, SupabaseAuthService};
+use crate::services::{AuthSession, DatabaseService, MediaApiClient, SupabaseAuthService};
 use crate::theme::ResolvedTheme;
 
 /// Current sync status for the app
@@ -39,10 +39,14 @@ pub struct AppState {
     pub db_service: Signal<Option<Arc<DatabaseService>>>,
     /// Auth service if cloud auth is configured
     pub auth_service: Signal<Option<Arc<SupabaseAuthService>>>,
+    /// Managed media API client, if configured
+    pub media_api_client: Signal<Option<Arc<MediaApiClient>>>,
     /// Active auth session, if signed in
     pub auth_session: Signal<Option<AuthSession>>,
     /// Last auth initialization/sign-in error for UI display
     pub auth_error: Signal<Option<String>>,
+    /// Monotonic reconnect trigger for db reinitialization flows.
+    pub db_reconnect_version: Signal<u64>,
     /// Current sync status
     pub sync_status: Signal<SyncStatus>,
     /// Timestamp (unix ms) of the most recent successful sync

@@ -11,13 +11,12 @@ use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 
 use dirt_core::models::{Attachment, AttachmentId};
-use dirt_core::storage::{MediaStorage, R2Config, R2Storage};
 use dirt_core::NoteId;
 
 use super::button::{Button, ButtonVariant};
 use super::dialog::{DialogContent, DialogDescription, DialogRoot, DialogTitle};
 use crate::queries::invalidate_notes_query;
-use crate::services::DatabaseService;
+use crate::services::{AuthSession, DatabaseService, MediaApiClient};
 use crate::state::AppState;
 
 /// Idle save delay - save after 2 seconds of no typing
@@ -62,6 +61,14 @@ struct UploadSignals {
     uploading: Signal<bool>,
     upload_error: Signal<Option<String>>,
     attachment_refresh_signal: Signal<u64>,
+}
+
+#[derive(Clone)]
+struct UploadContext {
+    db: Option<Arc<DatabaseService>>,
+    media_api: Option<Arc<MediaApiClient>>,
+    auth_session: Option<AuthSession>,
+    signals: UploadSignals,
 }
 
 /// Plain text note editor with auto-save
@@ -315,7 +322,12 @@ pub fn NoteEditor() -> Element {
             upload_error,
             attachment_refresh_signal: attachment_refresh_version,
         };
-        let db = state.db_service.read().clone();
+        let upload_context = UploadContext {
+            db: state.db_service.read().clone(),
+            media_api: state.media_api_client.read().clone(),
+            auth_session: (state.auth_session)(),
+            signals,
+        };
 
         spawn(async move {
             let file_bytes = match file.read_bytes().await {
@@ -331,8 +343,7 @@ pub fn NoteEditor() -> Element {
                 file_name,
                 file_content_type,
                 file_bytes,
-                db,
-                signals,
+                upload_context,
             )
             .await;
         });
@@ -352,12 +363,17 @@ pub fn NoteEditor() -> Element {
             return;
         };
 
-        let db = state.db_service.read().clone();
         let mut upload_error = attachment_upload_error;
         let signals = UploadSignals {
             uploading: attachment_uploading,
             upload_error,
             attachment_refresh_signal: attachment_refresh_version,
+        };
+        let upload_context = UploadContext {
+            db: state.db_service.read().clone(),
+            media_api: state.media_api_client.read().clone(),
+            auth_session: (state.auth_session)(),
+            signals,
         };
 
         spawn(async move {
@@ -381,8 +397,7 @@ pub fn NoteEditor() -> Element {
                 file_name,
                 file_content_type,
                 file_bytes,
-                db,
-                signals,
+                upload_context,
             )
             .await;
         });
@@ -595,53 +610,24 @@ pub fn NoteEditor() -> Element {
                                                 let mut preview_error_signal = preview_error;
                                                 let mut preview_content_signal = preview_content;
                                                 let attachment = attachment.clone();
+                                                let media_api = state.media_api_client.read().clone();
+                                                let auth_session = (state.auth_session)();
 
                                                 spawn(async move {
-                                                    let config = match R2Config::from_env() {
-                                                        Ok(Some(config)) => config,
-                                                        Ok(None) => {
-                                                            preview_error_signal.set(Some(
-                                                                "R2 is not configured. Set R2 env vars before opening attachments.".to_string(),
-                                                            ));
-                                                            preview_loading_signal.set(false);
-                                                            return;
+                                                    match load_attachment_preview(
+                                                        &attachment,
+                                                        media_api,
+                                                        auth_session,
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(preview) => {
+                                                            preview_content_signal.set(preview);
                                                         }
                                                         Err(error) => {
-                                                            preview_error_signal.set(Some(format!(
-                                                                "Invalid R2 configuration: {error}"
-                                                            )));
-                                                            preview_loading_signal.set(false);
-                                                            return;
+                                                            preview_error_signal.set(Some(error));
                                                         }
-                                                    };
-
-                                                    let storage = R2Storage::new(config);
-                                                    let (bytes, downloaded_content_type) =
-                                                        match storage.download_bytes(&attachment.r2_key).await
-                                                        {
-                                                            Ok(payload) => payload,
-                                                            Err(error) => {
-                                                                preview_error_signal.set(Some(format!(
-                                                                    "Failed to download attachment: {error}"
-                                                                )));
-                                                                preview_loading_signal.set(false);
-                                                                return;
-                                                            }
-                                                        };
-
-                                                    let content_type_hint = downloaded_content_type
-                                                        .as_deref()
-                                                        .or(Some(attachment.mime_type.as_str()));
-                                                    let mime_type = infer_attachment_mime_type(
-                                                        content_type_hint,
-                                                        &attachment.filename,
-                                                    );
-
-                                                    preview_content_signal.set(build_attachment_preview(
-                                                        &attachment.filename,
-                                                        &mime_type,
-                                                        &bytes,
-                                                    ));
+                                                    }
                                                     preview_loading_signal.set(false);
                                                 });
                                             }
@@ -659,6 +645,8 @@ pub fn NoteEditor() -> Element {
                                             let db = state.db_service.read().clone();
                                             let attachment_id = attachment.id;
                                             let object_key = attachment.r2_key.clone();
+                                            let media_api = state.media_api_client.read().clone();
+                                            let auth_session = (state.auth_session)();
 
                                             spawn(async move {
                                                 attachment_error_signal.set(None);
@@ -676,28 +664,16 @@ pub fn NoteEditor() -> Element {
                                                     Ok(()) => {
                                                         refresh_signal.set(refresh_signal() + 1);
 
-                                                        let remote_delete_warning = match R2Config::from_env()
+                                                        if let Err(error) = delete_remote_attachment(
+                                                            &object_key,
+                                                            media_api,
+                                                            auth_session,
+                                                        )
+                                                        .await
                                                         {
-                                                            Ok(Some(config)) => {
-                                                                let storage = R2Storage::new(config);
-                                                                storage
-                                                                    .delete_object(&object_key)
-                                                                    .await
-                                                                    .err()
-                                                                    .map(|error| {
-                                                                        format!(
-                                                                            "Attachment removed locally, but failed to delete remote object: {error}"
-                                                                        )
-                                                                    })
-                                                            }
-                                                            Ok(None) => None,
-                                                            Err(error) => Some(format!(
-                                                                "Attachment removed locally, but R2 config is invalid: {error}"
-                                                            )),
-                                                        };
-
-                                                        if let Some(warning) = remote_delete_warning {
-                                                            attachment_error_signal.set(Some(warning));
+                                                            attachment_error_signal.set(Some(format!(
+                                                                "Attachment removed locally, but failed to delete remote object: {error}"
+                                                            )));
                                                         }
                                                     }
                                                     Err(error) => {
@@ -803,54 +779,45 @@ async fn upload_attachment(
     file_name: String,
     file_content_type: Option<String>,
     file_bytes: Vec<u8>,
-    db: Option<Arc<DatabaseService>>,
-    signals: UploadSignals,
+    context: UploadContext,
 ) {
-    let mut uploading = signals.uploading;
-    let mut upload_error = signals.upload_error;
-    let mut attachment_refresh_signal = signals.attachment_refresh_signal;
+    let mut uploading = context.signals.uploading;
+    let mut upload_error = context.signals.upload_error;
+    let mut attachment_refresh_signal = context.signals.attachment_refresh_signal;
 
     uploading.set(true);
 
-    let Some(db) = db else {
+    let Some(db) = context.db else {
         upload_error.set(Some("Database service is not available.".to_string()));
         uploading.set(false);
         return;
     };
 
-    let config = match R2Config::from_env() {
-        Ok(Some(config)) => config,
-        Ok(None) => {
-            upload_error.set(Some(
-                "R2 is not configured. Set R2 env vars before uploading attachments.".to_string(),
-            ));
-            uploading.set(false);
-            return;
-        }
+    let Some(media_api) = context.media_api else {
+        upload_error.set(Some(
+            "Cloud media is not configured for this build.".to_string(),
+        ));
+        uploading.set(false);
+        return;
+    };
+    let access_token = match require_media_access_token(context.auth_session) {
+        Ok(token) => token,
         Err(error) => {
-            upload_error.set(Some(format!("Invalid R2 configuration: {error}")));
+            upload_error.set(Some(error));
             uploading.set(false);
             return;
         }
     };
 
-    let storage = R2Storage::new(config);
-    let object_key = match storage.build_media_key(&note_id.to_string(), &file_name) {
-        Ok(key) => key,
-        Err(error) => {
-            upload_error.set(Some(format!("Failed to build media key: {error}")));
-            uploading.set(false);
-            return;
-        }
-    };
+    let object_key = build_media_object_key(&note_id, &file_name);
 
     let mime_type = infer_attachment_mime_type(file_content_type.as_deref(), &file_name);
 
-    if let Err(error) = storage
-        .upload_bytes(&object_key, file_bytes.as_ref(), Some(&mime_type))
+    if let Err(error) = media_api
+        .upload(&access_token, &object_key, &mime_type, file_bytes.as_ref())
         .await
     {
-        upload_error.set(Some(format!("Failed to upload attachment to R2: {error}")));
+        upload_error.set(Some(format!("Failed to upload attachment: {error}")));
         uploading.set(false);
         return;
     }
@@ -872,6 +839,94 @@ async fn upload_attachment(
 
     attachment_refresh_signal.set(attachment_refresh_signal() + 1);
     uploading.set(false);
+}
+
+async fn load_attachment_preview(
+    attachment: &Attachment,
+    media_api: Option<Arc<MediaApiClient>>,
+    auth_session: Option<AuthSession>,
+) -> Result<AttachmentPreview, String> {
+    let Some(media_api) = media_api else {
+        return Err("Cloud media is not configured for this build.".to_string());
+    };
+    let access_token = require_media_access_token(auth_session)?;
+    let (bytes, downloaded_content_type) = media_api
+        .download(&access_token, &attachment.r2_key)
+        .await
+        .map_err(|error| format!("Failed to download attachment: {error}"))?;
+
+    let content_type_hint = downloaded_content_type
+        .as_deref()
+        .or(Some(attachment.mime_type.as_str()));
+    let mime_type = infer_attachment_mime_type(content_type_hint, &attachment.filename);
+
+    Ok(build_attachment_preview(
+        &attachment.filename,
+        &mime_type,
+        &bytes,
+    ))
+}
+
+async fn delete_remote_attachment(
+    object_key: &str,
+    media_api: Option<Arc<MediaApiClient>>,
+    auth_session: Option<AuthSession>,
+) -> Result<(), String> {
+    let Some(media_api) = media_api else {
+        return Ok(());
+    };
+    let access_token = require_media_access_token(auth_session)?;
+    media_api.delete(&access_token, object_key).await
+}
+
+fn require_media_access_token(auth_session: Option<AuthSession>) -> Result<String, String> {
+    auth_session
+        .map(|session| session.access_token)
+        .filter(|token| !token.trim().is_empty())
+        .ok_or_else(|| "Sign in is required for cloud attachment operations.".to_string())
+}
+
+fn build_media_object_key(note_id: &NoteId, file_name: &str) -> String {
+    let stem = file_name
+        .trim()
+        .rsplit_once('.')
+        .map_or(file_name.trim(), |(left, _)| left);
+    let ext = file_name
+        .trim()
+        .rsplit_once('.')
+        .map_or("", |(_, right)| right);
+
+    let safe_stem = sanitize_media_token(stem);
+    let safe_stem = if safe_stem.is_empty() {
+        "file".to_string()
+    } else {
+        safe_stem
+    };
+    let safe_ext = sanitize_media_token(ext);
+    let safe_name = if safe_ext.is_empty() {
+        safe_stem
+    } else {
+        format!("{safe_stem}.{safe_ext}")
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    format!("notes/{note_id}/{now}-{safe_name}")
+}
+
+fn sanitize_media_token(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut last_dash = false;
+
+    for ch in input.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+
+    out.trim_matches('-').to_string()
 }
 
 async fn list_attachments_with_retry(

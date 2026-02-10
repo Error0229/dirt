@@ -168,8 +168,7 @@ pub fn SettingsPanel() -> Element {
     let sign_in = move |_: MouseEvent| {
         let Some(service) = state.auth_service.read().clone() else {
             auth_message.set(Some(
-                "Supabase auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY."
-                    .to_string(),
+                "Authentication is not available in this build.".to_string(),
             ));
             return;
         };
@@ -188,6 +187,7 @@ pub fn SettingsPanel() -> Element {
         let mut auth_message_signal = auth_message;
         let mut auth_password_signal = auth_password;
         let mut auth_busy_signal = auth_busy;
+        let mut db_reconnect_signal = state.db_reconnect_version;
         spawn(async move {
             match service.sign_in(&email, &password).await {
                 Ok(session) => {
@@ -195,6 +195,7 @@ pub fn SettingsPanel() -> Element {
                     auth_error_signal.set(None);
                     auth_password_signal.set(String::new());
                     auth_message_signal.set(Some("Signed in.".to_string()));
+                    db_reconnect_signal.set(db_reconnect_signal().saturating_add(1));
                 }
                 Err(error) => {
                     tracing::error!("Sign-in failed: {}", error);
@@ -210,8 +211,7 @@ pub fn SettingsPanel() -> Element {
     let sign_up = move |_: MouseEvent| {
         let Some(service) = state.auth_service.read().clone() else {
             auth_message.set(Some(
-                "Supabase auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY."
-                    .to_string(),
+                "Authentication is not available in this build.".to_string(),
             ));
             return;
         };
@@ -242,12 +242,14 @@ pub fn SettingsPanel() -> Element {
         let mut auth_error_signal = state.auth_error;
         let mut auth_message_signal = auth_message;
         let mut auth_busy_signal = auth_busy;
+        let mut db_reconnect_signal = state.db_reconnect_version;
         spawn(async move {
             match service.sign_up(&email, &password).await {
                 Ok(SignUpOutcome::SignedIn(session)) => {
                     auth_session_signal.set(Some(session));
                     auth_error_signal.set(None);
                     auth_message_signal.set(Some("Account created and signed in.".to_string()));
+                    db_reconnect_signal.set(db_reconnect_signal().saturating_add(1));
                 }
                 Ok(SignUpOutcome::ConfirmationRequired) => {
                     auth_error_signal.set(None);
@@ -269,8 +271,7 @@ pub fn SettingsPanel() -> Element {
     let sign_out = move |_: MouseEvent| {
         let Some(service) = state.auth_service.read().clone() else {
             auth_message.set(Some(
-                "Supabase auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY."
-                    .to_string(),
+                "Authentication is not available in this build.".to_string(),
             ));
             return;
         };
@@ -286,12 +287,14 @@ pub fn SettingsPanel() -> Element {
         let mut auth_error_signal = state.auth_error;
         let mut auth_message_signal = auth_message;
         let mut auth_busy_signal = auth_busy;
+        let mut db_reconnect_signal = state.db_reconnect_version;
         spawn(async move {
             match service.sign_out(&session.access_token).await {
                 Ok(()) => {
                     auth_session_signal.set(None);
                     auth_error_signal.set(None);
                     auth_message_signal.set(Some("Signed out.".to_string()));
+                    db_reconnect_signal.set(db_reconnect_signal().saturating_add(1));
                 }
                 Err(error) => {
                     tracing::error!("Sign-out failed: {}", error);
@@ -307,8 +310,7 @@ pub fn SettingsPanel() -> Element {
     let verify_config = move |_: MouseEvent| {
         let Some(service) = state.auth_service.read().clone() else {
             auth_message.set(Some(
-                "Supabase auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY."
-                    .to_string(),
+                "Authentication is not available in this build.".to_string(),
             ));
             return;
         };
@@ -786,7 +788,7 @@ pub fn SettingsPanel() -> Element {
                         } else {
                             div {
                                 class: "auth-hint",
-                                "Set SUPABASE_URL and SUPABASE_ANON_KEY in .env to enable authentication."
+                                "Authentication is unavailable in this build."
                             }
                         }
 
@@ -906,7 +908,8 @@ fn format_auth_error_message(raw: &str) -> String {
         || normalized.contains("connection")
         || normalized.contains("timed out")
     {
-        return "Network error while contacting Supabase Auth. Check SUPABASE_URL and your internet connection.".to_string();
+        return "Network error while contacting Supabase Auth. Check your internet connection."
+            .to_string();
     }
 
     raw.to_string()
