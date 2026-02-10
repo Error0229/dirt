@@ -135,6 +135,8 @@ fn AppShell() -> Element {
     let mut active_tag_filter = use_signal(|| None::<String>);
     let mut selected_note_id = use_signal(|| None::<NoteId>);
     let mut draft_content = use_signal(String::new);
+    let mut draft_dirty = use_signal(|| false);
+    let mut draft_edit_version = use_signal(|| 0u64);
     let mut view = use_signal(|| MobileView::List);
     let mut status_message = use_signal(|| None::<String>);
     let mut loading = use_signal(|| true);
@@ -366,14 +368,21 @@ fn AppShell() -> Element {
                         shared_text,
                         &mut selected_note_id,
                         &mut draft_content,
+                        &mut draft_dirty,
+                        &mut draft_edit_version,
                         &mut status_message,
                     );
                     view.set(MobileView::Editor);
                     launch_applied.set(true);
                 } else if launch.quick_capture.enabled {
-                    apply_quick_capture_launch(launch.quick_capture.seed_text, &mut draft_content);
+                    apply_quick_capture_launch(
+                        launch.quick_capture.seed_text,
+                        &mut draft_content,
+                        &mut draft_dirty,
+                        &mut draft_edit_version,
+                    );
                     selected_note_id.set(None);
-                    status_message.set(Some("Quick capture ready to save".to_string()));
+                    status_message.set(Some("Quick capture ready".to_string()));
                     view.set(MobileView::Editor);
                     launch_applied.set(true);
                 }
@@ -574,6 +583,7 @@ fn AppShell() -> Element {
         }
         selected_note_id.set(None);
         draft_content.set(String::new());
+        draft_dirty.set(false);
         status_message.set(None);
         attachment_upload_error.set(None);
         attachment_preview_open.set(false);
@@ -620,8 +630,7 @@ fn AppShell() -> Element {
             Ok(()) => {
                 active_sync_source.set(SyncConfigSource::RuntimeSettings);
                 status_message.set(Some(
-                    "Saved sync settings. Sign in to fetch managed sync credentials, then retry initialization."
-                        .to_string(),
+                    "Sync settings saved. Reconnecting in background.".to_string(),
                 ));
                 db_init_retry_version.set(db_init_retry_version() + 1);
             }
@@ -896,62 +905,67 @@ fn AppShell() -> Element {
         });
     };
 
-    let on_save_note = move |_| {
-        if saving() {
+    use_future(move || async move {
+        let current_revision = draft_edit_version();
+        if !draft_dirty() {
+            return;
+        }
+
+        tokio::time::sleep(Duration::from_millis(650)).await;
+        if current_revision != draft_edit_version() || !draft_dirty() {
             return;
         }
 
         let Some(note_store) = store.read().clone() else {
-            status_message.set(Some("Database is not ready yet".to_string()));
             return;
         };
+        if saving() {
+            return;
+        }
 
         let content = draft_content().trim().to_string();
         if content.is_empty() {
-            status_message.set(Some("Note content cannot be empty".to_string()));
             return;
         }
 
         let current_note_id = selected_note_id();
         saving.set(true);
-        status_message.set(Some("Saving note...".to_string()));
 
-        spawn(async move {
-            let save_result = if let Some(note_id) = current_note_id {
-                note_store.update_note(&note_id, &content).await
-            } else {
-                note_store.create_note(&content).await
-            };
+        let save_result = if let Some(note_id) = current_note_id {
+            note_store.update_note(&note_id, &content).await
+        } else {
+            note_store.create_note(&content).await
+        };
 
-            match save_result {
-                Ok(saved_note) => {
-                    selected_note_id.set(Some(saved_note.id));
-                    draft_content.set(saved_note.content);
-                    enqueue_pending_sync_change(
-                        saved_note.id,
-                        &mut pending_sync_note_ids,
-                        &mut pending_sync_count,
-                    );
+        match save_result {
+            Ok(saved_note) => {
+                selected_note_id.set(Some(saved_note.id));
+                draft_content.set(saved_note.content);
+                if current_revision == draft_edit_version() {
+                    draft_dirty.set(false);
+                }
+                enqueue_pending_sync_change(
+                    saved_note.id,
+                    &mut pending_sync_note_ids,
+                    &mut pending_sync_count,
+                );
 
-                    match note_store.list_notes().await {
-                        Ok(fresh_notes) => {
-                            notes.set(fresh_notes);
-                            status_message.set(Some("Note saved".to_string()));
-                        }
-                        Err(error) => {
-                            status_message
-                                .set(Some(format!("Saved, but failed to refresh list: {error}")));
-                        }
+                match note_store.list_notes().await {
+                    Ok(fresh_notes) => notes.set(fresh_notes),
+                    Err(error) => {
+                        status_message.set(Some(format!(
+                            "Saved, but failed to refresh note list: {error}"
+                        )));
                     }
                 }
-                Err(error) => {
-                    status_message.set(Some(format!("Failed to save note: {error}")));
-                }
             }
+            Err(error) => {
+                status_message.set(Some(format!("Failed to save note: {error}")));
+            }
+        }
 
-            saving.set(false);
-        });
-    };
+        saving.set(false);
+    });
 
     let on_delete_note = move |_| {
         if deleting() {
@@ -1421,6 +1435,7 @@ fn AppShell() -> Element {
                                             onclick: move |_| {
                                                 selected_note_id.set(Some(note_id));
                                                 draft_content.set(note_content.clone());
+                                                draft_dirty.set(false);
                                                 status_message.set(None);
                                                 attachment_upload_error.set(None);
                                                 attachment_preview_open.set(false);
@@ -1941,12 +1956,11 @@ fn AppShell() -> Element {
                         onclick: on_back_to_list,
                         "Back"
                     }
-                    UiButton {
-                        type: "button",
-                        variant: ButtonVariant::Primary,
-                        disabled: saving(),
-                        onclick: on_save_note,
-                        if saving() { "Saving..." } else { "Save" }
+                    if saving() {
+                        p {
+                            style: "margin: 0; align-self: center; font-size: 12px; color: #6b7280;",
+                            "Saving..."
+                        }
                     }
                     if selected_note_id().is_some() {
                         UiButton {
@@ -1978,6 +1992,8 @@ fn AppShell() -> Element {
                     placeholder: "Write your note...",
                     oninput: move |event: Event<FormData>| {
                         draft_content.set(event.value());
+                        draft_dirty.set(true);
+                        draft_edit_version.set(draft_edit_version().saturating_add(1));
                     },
                 }
 
@@ -2240,19 +2256,30 @@ fn AppShell() -> Element {
     }
 }
 
-fn apply_quick_capture_launch(seed_text: Option<String>, draft_content: &mut Signal<String>) {
+fn apply_quick_capture_launch(
+    seed_text: Option<String>,
+    draft_content: &mut Signal<String>,
+    draft_dirty: &mut Signal<bool>,
+    draft_edit_version: &mut Signal<u64>,
+) {
     draft_content.set(seed_text.unwrap_or_default());
+    draft_dirty.set(true);
+    draft_edit_version.set(draft_edit_version().saturating_add(1));
 }
 
 fn apply_share_intent(
     shared_text: String,
     selected_note_id: &mut Signal<Option<NoteId>>,
     draft_content: &mut Signal<String>,
+    draft_dirty: &mut Signal<bool>,
+    draft_edit_version: &mut Signal<u64>,
     status_message: &mut Signal<Option<String>>,
 ) {
     selected_note_id.set(None);
     draft_content.set(shared_text);
-    status_message.set(Some("Shared text ready to save".to_string()));
+    draft_dirty.set(true);
+    draft_edit_version.set(draft_edit_version().saturating_add(1));
+    status_message.set(Some("Shared text ready".to_string()));
 }
 
 async fn upload_attachment_to_r2(
