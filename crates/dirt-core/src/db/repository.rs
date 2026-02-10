@@ -457,7 +457,7 @@ mod tests {
         Database::open_in_memory().await.unwrap()
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_create_and_get() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
@@ -470,7 +470,7 @@ mod tests {
         assert_eq!(fetched.content, "Hello world #test");
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_list() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
@@ -486,7 +486,7 @@ mod tests {
         assert!(notes[0].created_at >= notes[1].created_at);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_update() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
@@ -498,7 +498,7 @@ mod tests {
         assert!(updated.updated_at >= note.updated_at);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_delete() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
@@ -515,7 +515,7 @@ mod tests {
         assert!(notes.is_empty());
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_search() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
@@ -528,7 +528,7 @@ mod tests {
         assert_eq!(results.len(), 2);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_tags() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
@@ -547,7 +547,7 @@ mod tests {
         assert_eq!(rust_tag.1, 2);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_list_by_tag() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
@@ -560,7 +560,7 @@ mod tests {
         assert_eq!(notes.len(), 2);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_lww_stale_update_is_ignored_and_logged() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
@@ -588,7 +588,7 @@ mod tests {
         assert_eq!(conflicts[0].strategy, "lww");
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_lww_newer_update_wins() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
@@ -612,7 +612,7 @@ mod tests {
         assert!(conflicts.is_empty());
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_attachment_metadata_crud() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
@@ -652,7 +652,7 @@ mod tests {
         assert_eq!(attachments[0].id, first.id);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn test_create_attachment_requires_existing_note() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
