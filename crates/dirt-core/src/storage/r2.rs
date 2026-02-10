@@ -1,6 +1,7 @@
 //! Cloudflare R2 storage configuration and key-building helpers.
 
 use std::env;
+use std::fmt;
 
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{primitives::ByteStream, Client};
@@ -26,7 +27,7 @@ pub trait MediaStorage {
 }
 
 /// Cloudflare R2 configuration.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct R2Config {
     /// Cloudflare account identifier.
     pub account_id: String,
@@ -38,6 +39,19 @@ pub struct R2Config {
     pub secret_access_key: String,
     /// Optional public URL base for serving media.
     pub public_base_url: Option<String>,
+}
+
+impl fmt::Debug for R2Config {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("R2Config")
+            .field("account_id", &self.account_id)
+            .field("bucket", &self.bucket)
+            .field("access_key_id", &self.access_key_id)
+            .field("secret_access_key", &"[REDACTED]")
+            .field("public_base_url", &self.public_base_url)
+            .finish()
+    }
 }
 
 impl R2Config {
@@ -435,6 +449,21 @@ mod tests {
             config.endpoint_url(),
             "https://account-1.r2.cloudflarestorage.com"
         );
+    }
+
+    #[test]
+    fn r2_config_debug_redacts_secret_access_key() {
+        let config = R2Config {
+            account_id: "account-1".to_string(),
+            bucket: "bucket-a".to_string(),
+            access_key_id: "AKID123".to_string(),
+            secret_access_key: "SECRET123".to_string(),
+            public_base_url: None,
+        };
+
+        let debug_output = format!("{config:?}");
+        assert!(!debug_output.contains("SECRET123"));
+        assert!(debug_output.contains("[REDACTED]"));
     }
 
     #[test]

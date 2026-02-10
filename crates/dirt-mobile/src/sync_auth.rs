@@ -1,6 +1,7 @@
 //! Managed Turso sync token exchange client for mobile.
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
+use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use reqwest::{Client, StatusCode};
@@ -8,10 +9,20 @@ use serde::Deserialize;
 use thiserror::Error;
 
 /// Short-lived Turso sync token minted by backend auth exchange.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SyncToken {
     pub token: String,
     pub expires_at: i64,
+}
+
+impl fmt::Debug for SyncToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SyncToken")
+            .field("token", &"[REDACTED]")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 #[derive(Debug, Error)]
@@ -168,5 +179,16 @@ mod tests {
     fn normalize_endpoint_trims_trailing_slash() {
         let normalized = normalize_endpoint("https://example.com/token/").unwrap();
         assert_eq!(normalized, "https://example.com/token");
+    }
+
+    #[test]
+    fn sync_token_debug_redacts_token() {
+        let token = SyncToken {
+            token: "sensitive-token".to_string(),
+            expires_at: 1700000000,
+        };
+        let debug_output = format!("{token:?}");
+        assert!(!debug_output.contains("sensitive-token"));
+        assert!(debug_output.contains("[REDACTED]"));
     }
 }
