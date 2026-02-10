@@ -3,8 +3,8 @@
 > "Do I Remember That?" - A cross-platform app for capturing fleeting thoughts.
 
 **Version**: 0.1.0 (Pre-release)
-**Last Updated**: 2026-02-04
-**Status**: Design Phase
+**Last Updated**: 2026-02-10
+**Status**: Active Development
 
 ---
 
@@ -51,9 +51,9 @@ Ideas flash in the mind and disappear. The friction of opening an app, finding t
 
 | Layer | Technology | Version | Rationale |
 |-------|------------|---------|-----------|
-| **Desktop/Mobile UI** | Dioxus | 0.6.x | Native Rust, <5MB bundles, code sharing with CLI |
+| **Desktop/Mobile UI** | Dioxus | 0.7.x | Native Rust, shared UI model/components with core logic |
 | **CLI** | Ratatui + clap | latest | Pure Rust, shares data layer with GUI |
-| **Local Storage** | SQLite (rusqlite) | 3.x | Proven, portable, offline foundation |
+| **Local Storage** | SQLite (libSQL local file) | latest | Proven, portable, offline foundation with embedded replica support |
 | **Sync Layer** | Turso Embedded Replicas | latest | Native libSQL sync, Rust-first |
 | **Backend DB** | Turso (libSQL) | latest | Edge SQLite, embedded replicas |
 | **Media Storage** | Cloudflare R2 | - | Zero egress fees, S3-compatible |
@@ -127,60 +127,60 @@ dirt/
 
 ## Feature Roadmap
 
-### Phase 0: Foundation (Current)
+### Phase 0: Foundation (Completed)
 **Goal**: Project setup, basic infrastructure
 
 | ID | Feature | Priority | Status | Blocks |
 |----|---------|----------|--------|--------|
-| F0.1 | Project scaffolding (Cargo workspace) | P0 | Todo | - |
-| F0.2 | dirt-core crate with Note model | P0 | Todo | F0.1 |
-| F0.3 | SQLite schema + migrations | P0 | Todo | F0.2 |
-| F0.4 | Basic CRUD operations | P0 | Todo | F0.3 |
-| F0.5 | CI/CD pipeline (GitHub Actions) | P1 | Todo | F0.1 |
+| F0.1 | Project scaffolding (Cargo workspace) | P0 | Done | - |
+| F0.2 | dirt-core crate with Note model | P0 | Done | F0.1 |
+| F0.3 | SQLite schema + migrations | P0 | Done | F0.2 |
+| F0.4 | Basic CRUD operations | P0 | Done | F0.3 |
+| F0.5 | CI/CD pipeline (GitHub Actions) | P1 | Done | F0.1 |
 
 ### Phase 1: Desktop MVP
 **Goal**: Usable desktop app with local storage
 
 | ID | Feature | Priority | Status | Blocks |
 |----|---------|----------|--------|--------|
-| F1.1 | Dioxus desktop app shell | P0 | Todo | F0.4 |
-| F1.2 | Note list view (chronological) | P0 | Todo | F1.1 |
-| F1.3 | Note editor (plain text) | P0 | Todo | F1.1 |
-| F1.4 | Create/edit/delete notes | P0 | Todo | F1.2, F1.3 |
-| F1.5 | Global hotkey capture | P0 | Todo | F1.4 |
-| F1.6 | System tray with quick capture | P1 | Todo | F1.4 |
-| F1.7 | Full-text search | P1 | Todo | F1.4 |
-| F1.8 | Tag support (#tags in content) | P1 | Todo | F1.4 |
-| F1.9 | Tag filtering | P2 | Todo | F1.8 |
-| F1.10 | Settings UI (font, size, theme) | P2 | Todo | F1.1 |
-| F1.11 | Dark/light theme | P2 | Todo | F1.10 |
+| F1.1 | Dioxus desktop app shell | P0 | Done | F0.4 |
+| F1.2 | Note list view (chronological) | P0 | Done | F1.1 |
+| F1.3 | Note editor (plain text) | P0 | Done | F1.1 |
+| F1.4 | Create/edit/delete notes | P0 | Done | F1.2, F1.3 |
+| F1.5 | Global hotkey capture | P0 | Done | F1.4 |
+| F1.6 | System tray with quick capture | P1 | Done | F1.4 |
+| F1.7 | Full-text search | P1 | Done | F1.4 |
+| F1.8 | Tag support (#tags in content) | P1 | Done | F1.4 |
+| F1.9 | Tag filtering | P2 | Done | F1.8 |
+| F1.10 | Settings UI (font, size, theme) | P2 | Done | F1.1 |
+| F1.11 | Dark/light theme | P2 | Done | F1.10 |
 
 ### Phase 2: Sync
 **Goal**: Multi-device sync with offline support
 
 | ID | Feature | Priority | Status | Blocks |
 |----|---------|----------|--------|--------|
-| F2.1 | Migrate rusqlite to libsql | P0 | In Progress | F1.4 |
-| F2.2 | Turso backend setup | P0 | In Progress | - |
-| F2.3 | User authentication | P0 | In Progress | F2.2 |
-| F2.4 | Embedded replicas + sync | P0 | Todo | F2.1 |
-| F2.5 | Conflict resolution (LWW) | P0 | Todo | F2.4 |
-| F2.6 | Sync status indicator | P1 | Todo | F2.4 |
-| F2.7 | Offline queue visualization | P2 | Todo | F2.6 |
+| F2.1 | Migrate rusqlite to libsql | P0 | Done | F1.4 |
+| F2.2 | Turso backend setup | P0 | Done | - |
+| F2.3 | User authentication | P0 | Done | F2.2 |
+| F2.4 | Embedded replicas + sync | P0 | Done | F2.1 |
+| F2.5 | Conflict resolution (LWW) | P0 | In Progress | F2.4 |
+| F2.6 | Sync status indicator | P1 | Done | F2.4 |
+| F2.7 | Offline queue visualization | P2 | In Progress | F2.6 |
 
 ### Phase 3: CLI
 **Goal**: Terminal interface for power users
 
 | ID | Feature | Priority | Status | Blocks |
 |----|---------|----------|--------|--------|
-| F3.1 | `dirt add "thought"` command | P0 | Todo | F0.4 |
-| F3.2 | `dirt list` command | P0 | Todo | F0.4 |
-| F3.3 | `dirt search <query>` command | P1 | Todo | F3.2 |
-| F3.4 | `dirt edit <id>` command | P1 | Todo | F3.2 |
-| F3.5 | `dirt delete <id>` command | P1 | Todo | F3.2 |
-| F3.6 | `dirt sync` command | P1 | Todo | F2.4, F3.1 |
-| F3.7 | `dirt export` command | P2 | Todo | F3.2 |
-| F3.8 | Shell completions (bash, zsh, fish) | P2 | Todo | F3.1 |
+| F3.1 | `dirt add "thought"` command | P0 | Done | F0.4 |
+| F3.2 | `dirt list` command | P0 | Done | F0.4 |
+| F3.3 | `dirt search <query>` command | P1 | Done | F3.2 |
+| F3.4 | `dirt edit <id>` command | P1 | Done | F3.2 |
+| F3.5 | `dirt delete <id>` command | P1 | Done | F3.2 |
+| F3.6 | `dirt sync` command | P1 | Done | F2.4, F3.1 |
+| F3.7 | `dirt export` command | P2 | Done | F3.2 |
+| F3.8 | Shell completions (bash, zsh, fish) | P2 | Done | F3.1 |
 
 ### Phase 4: Android
 **Goal**: Mobile capture experience
@@ -189,8 +189,8 @@ dirt/
 |----|---------|----------|--------|--------|
 | F4.1 | Dioxus Android app shell | P0 | Done | F1.4 |
 | F4.2 | Note list + editor (mobile UI) | P0 | Done | F4.1 |
-| F4.3 | Quick capture widget | P1 | In Progress | F4.2 |
-| F4.4 | Share intent receiver | P1 | Done | F4.2 |
+| F4.3 | Quick capture widget | P1 | In Progress (`#119`) | F4.2 |
+| F4.4 | Share intent receiver | P1 | In Progress (`#119`) | F4.2 |
 | F4.5 | Push notifications for sync | P2 | Done | F2.4, F4.1 |
 
 ### Phase 5: Media Support
@@ -198,13 +198,20 @@ dirt/
 
 | ID | Feature | Priority | Status | Blocks |
 |----|---------|----------|--------|--------|
-| F5.1 | Cloudflare R2 integration | P0 | In Progress | F2.3 |
-| F5.2 | Image paste/drop (desktop) | P0 | Todo | F5.1, F1.4 |
-| F5.3 | Image picker (mobile) | P0 | Todo | F5.1, F4.2 |
-| F5.4 | Image thumbnail generation | P1 | Todo | F5.2 |
-| F5.5 | Voice memo recording | P1 | Todo | F5.1 |
-| F5.6 | Voice transcription (optional) | P2 | Todo | F5.5 |
-| F5.7 | File attachments | P2 | Todo | F5.1 |
+| F5.1 | Cloudflare R2 integration | P0 | Done | F2.3 |
+| F5.2 | Image paste/drop (desktop) | P0 | Done | F5.1, F1.4 |
+| F5.3 | Image picker (mobile) | P0 | In Progress (`#118`) | F5.1, F4.2 |
+| F5.4 | Image thumbnail generation | P1 | Done | F5.2 |
+| F5.5 | Voice memo recording | P1 | In Progress | F5.1 |
+| F5.6 | Voice transcription (optional) | P2 | In Progress | F5.5 |
+| F5.7 | File attachments | P2 | In Progress (`#118`) | F5.1 |
+
+### Mobile parity issues currently open
+
+- `#117` Mobile search and tag-filter parity
+- `#118` Mobile attachment UX parity (add/open/delete)
+- `#119` Android-native share-intent and quick-capture widget launch wiring
+- `#120` Mobile JSON/Markdown export parity
 
 ### Phase 6: Polish & Distribution
 **Goal**: Production-ready release
@@ -308,12 +315,12 @@ CREATE TABLE settings (
 
 | Platform | Phase | UI Framework | Status |
 |----------|-------|--------------|--------|
-| Windows | 1 | Dioxus | Planned |
-| macOS | 1 | Dioxus | Planned |
-| Linux | 1 | Dioxus | Planned |
-| Android | 4 | Dioxus | Planned |
+| Windows | 1 | Dioxus | Implemented |
+| macOS | 1 | Dioxus | Implemented (build support; release polish pending Phase 6) |
+| Linux | 1 | Dioxus | Implemented (build support; release polish pending Phase 6) |
+| Android | 4 | Dioxus | Implemented (parity polish in progress) |
 | iOS | Future | Dioxus | Not scheduled |
-| CLI | 3 | clap | Planned |
+| CLI | 3 | clap | Implemented |
 | TUI | Future | Ratatui | Not scheduled |
 | Web | Future | Dioxus | Not scheduled |
 
@@ -379,7 +386,7 @@ Desktop apps will use GitHub Releases as the update source with Tauri-style upda
 **Trade-offs**:
 - Younger ecosystem than Tauri
 - Steeper learning curve (Rust UI patterns vs familiar web tech)
-- Mobile support still maturing (v0.6)
+- Mobile support still maturing (v0.7 generation)
 
 **Alternatives considered**: Tauri 2.0, Flutter, Electron
 
@@ -457,7 +464,7 @@ Desktop apps will use GitHub Releases as the update source with Tauri-style upda
 
 ### DD-006: Sync from Day One
 
-**Decision**: Implement PowerSync + Turso sync immediately, not as later phase.
+**Decision**: Implement Turso embedded-replica sync early, not as a late add-on.
 
 **Rationale**:
 - Multi-device capture is core to the value proposition
