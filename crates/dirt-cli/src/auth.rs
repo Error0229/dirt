@@ -1,8 +1,13 @@
 //! CLI Supabase auth/session helpers with secure keychain persistence.
 
+#[cfg(test)]
+use std::collections::HashMap;
 use std::fmt;
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(not(test))]
 use keyring::Entry;
 use reqwest::{Client, RequestBuilder, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -10,6 +15,7 @@ use thiserror::Error;
 
 use crate::config_profiles::{is_http_url, CliProfile};
 
+#[cfg(not(test))]
 const KEYRING_SERVICE_NAME: &str = "dirt-cli";
 const EXPIRY_SKEW_SECONDS: i64 = 60;
 
@@ -76,11 +82,19 @@ impl SessionStore {
         }
     }
 
+    #[cfg(test)]
+    fn test_store() -> &'static Mutex<HashMap<String, String>> {
+        static STORE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+        STORE.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    #[cfg(not(test))]
     fn entry(&self) -> AuthResult<Entry> {
         Entry::new(KEYRING_SERVICE_NAME, &self.username)
             .map_err(|error| AuthError::SecureStorage(error.to_string()))
     }
 
+    #[cfg(not(test))]
     fn load(&self) -> AuthResult<Option<AuthSession>> {
         let entry = self.entry()?;
         match entry.get_password() {
@@ -90,19 +104,56 @@ impl SessionStore {
         }
     }
 
+    #[cfg(test)]
+    fn load(&self) -> AuthResult<Option<AuthSession>> {
+        let store = Self::test_store();
+        let guard = store
+            .lock()
+            .map_err(|error| AuthError::SecureStorage(error.to_string()))?;
+        if let Some(raw) = guard.get(&self.username) {
+            Ok(Some(serde_json::from_str(raw)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[cfg(not(test))]
     fn save(&self, session: &AuthSession) -> AuthResult<()> {
         let raw = serde_json::to_string(session)?;
         self.entry()?
             .set_password(&raw)
-            .map_err(|error| AuthError::SecureStorage(error.to_string()))
+            .map_err(|error| AuthError::SecureStorage(error.to_string()))?;
+        Ok(())
     }
 
+    #[cfg(test)]
+    fn save(&self, session: &AuthSession) -> AuthResult<()> {
+        let raw = serde_json::to_string(session)?;
+        let store = Self::test_store();
+        let mut guard = store
+            .lock()
+            .map_err(|error| AuthError::SecureStorage(error.to_string()))?;
+        guard.insert(self.username.clone(), raw);
+        Ok(())
+    }
+
+    #[cfg(not(test))]
     fn clear(&self) -> AuthResult<()> {
         let entry = self.entry()?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(AuthError::SecureStorage(error.to_string())),
         }
+    }
+
+    #[cfg(test)]
+    fn clear(&self) -> AuthResult<()> {
+        let store = Self::test_store();
+        let mut guard = store
+            .lock()
+            .map_err(|error| AuthError::SecureStorage(error.to_string()))?;
+        guard.remove(&self.username);
+        Ok(())
     }
 }
 
