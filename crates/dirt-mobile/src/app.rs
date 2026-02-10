@@ -6,8 +6,12 @@ use dioxus_primitives::label::Label;
 use dioxus_primitives::scroll_area::{ScrollArea, ScrollDirection, ScrollType};
 use dioxus_primitives::separator::Separator;
 use dioxus_primitives::toast::{use_toast, ToastOptions, ToastProvider};
-use dirt_core::{Attachment, Note, NoteId};
+use dirt_core::storage::{MediaStorage, R2Config, R2Storage};
+use dirt_core::{Attachment, AttachmentId, Note, NoteId};
 
+use crate::attachments::{
+    attachment_kind_label, build_attachment_preview, infer_attachment_mime_type, AttachmentPreview,
+};
 use crate::auth::{AuthConfigStatus, AuthSession, SignUpOutcome, SupabaseAuthService};
 use crate::config::{
     load_runtime_config, resolve_sync_config, runtime_turso_token_status, save_runtime_config,
@@ -129,7 +133,15 @@ fn AppShell() -> Element {
     let mut note_attachments = use_signal(Vec::<Attachment>::new);
     let mut attachments_loading = use_signal(|| false);
     let mut attachments_error = use_signal(|| None::<String>);
-    let attachment_refresh_version = use_signal(|| 0u64);
+    let mut attachment_uploading = use_signal(|| false);
+    let mut attachment_upload_error = use_signal(|| None::<String>);
+    let mut deleting_attachment_id = use_signal(|| None::<AttachmentId>);
+    let mut attachment_preview_open = use_signal(|| false);
+    let mut attachment_preview_loading = use_signal(|| false);
+    let mut attachment_preview_title = use_signal(String::new);
+    let mut attachment_preview_content = use_signal(AttachmentPreview::default);
+    let mut attachment_preview_error = use_signal(|| None::<String>);
+    let mut attachment_refresh_version = use_signal(|| 0u64);
     let mut db_init_retry_version = use_signal(|| 0u64);
     let mut turso_database_url_input = use_signal(String::new);
     let mut active_sync_source = use_signal(|| SyncConfigSource::None);
@@ -486,6 +498,8 @@ fn AppShell() -> Element {
         selected_note_id.set(None);
         draft_content.set(String::new());
         status_message.set(None);
+        attachment_upload_error.set(None);
+        attachment_preview_open.set(false);
         view.set(MobileView::Editor);
     };
 
@@ -499,6 +513,9 @@ fn AppShell() -> Element {
 
     let on_back_to_list = move |_| {
         view.set(MobileView::List);
+        attachment_preview_open.set(false);
+        attachment_preview_loading.set(false);
+        attachment_preview_error.set(None);
     };
 
     let on_open_settings = move |_| {
@@ -826,6 +843,79 @@ fn AppShell() -> Element {
         });
     };
 
+    let on_pick_attachment = move |event: Event<FormData>| {
+        if attachment_uploading() {
+            return;
+        }
+
+        let Some(note_id) = selected_note_id() else {
+            attachment_upload_error.set(Some(
+                "Save this note before uploading attachments.".to_string(),
+            ));
+            return;
+        };
+        let Some(note_store) = store.read().clone() else {
+            attachment_upload_error.set(Some("Database is not ready yet.".to_string()));
+            return;
+        };
+
+        let mut files = event.files();
+        let Some(file) = files.pop() else {
+            return;
+        };
+
+        let file_name = file.name();
+        if file_name.trim().is_empty() {
+            attachment_upload_error.set(Some("Selected file has no name.".to_string()));
+            return;
+        }
+        let file_content_type = file.content_type();
+
+        attachment_upload_error.set(None);
+        attachment_uploading.set(true);
+        status_message.set(Some(format!("Uploading {file_name}...")));
+
+        spawn(async move {
+            let file_bytes = match file.read_bytes().await {
+                Ok(bytes) => bytes.to_vec(),
+                Err(error) => {
+                    attachment_upload_error
+                        .set(Some(format!("Failed to read selected file: {error}")));
+                    attachment_uploading.set(false);
+                    return;
+                }
+            };
+
+            match upload_attachment_to_r2(
+                note_store,
+                note_id,
+                file_name,
+                file_content_type,
+                file_bytes,
+            )
+            .await
+            {
+                Ok(()) => {
+                    attachment_refresh_version.set(attachment_refresh_version() + 1);
+                    status_message.set(Some("Attachment uploaded.".to_string()));
+                }
+                Err(error) => {
+                    attachment_upload_error.set(Some(error.clone()));
+                    status_message.set(Some(error));
+                }
+            }
+
+            attachment_uploading.set(false);
+        });
+    };
+
+    let on_close_attachment_preview = move |_| {
+        attachment_preview_open.set(false);
+        attachment_preview_loading.set(false);
+        attachment_preview_error.set(None);
+        attachment_preview_content.set(AttachmentPreview::None);
+    };
+
     let diagnostics = mobile_config_diagnostics(active_sync_source(), auth_config_status());
     let heading = if view() == MobileView::Settings {
         "Settings"
@@ -1148,6 +1238,8 @@ fn AppShell() -> Element {
                                                 selected_note_id.set(Some(note_id));
                                                 draft_content.set(note_content.clone());
                                                 status_message.set(None);
+                                                attachment_upload_error.set(None);
+                                                attachment_preview_open.set(false);
                                                 view.set(MobileView::Editor);
                                             },
 
@@ -1563,6 +1655,27 @@ fn AppShell() -> Element {
                         ",
                         "Attachments"
                     }
+                    if selected_note_id().is_some() {
+                        UiInput {
+                            id: "attachment-file-input",
+                            r#type: "file",
+                            disabled: attachment_uploading(),
+                            onchange: on_pick_attachment,
+                        }
+                    }
+
+                    if attachment_uploading() {
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Uploading attachment..."
+                        }
+                    }
+                    if let Some(error) = attachment_upload_error() {
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #b91c1c;",
+                            "{error}"
+                        }
+                    }
 
                     if selected_note_id().is_none() {
                         p {
@@ -1590,30 +1703,166 @@ fn AppShell() -> Element {
                                 key: "{attachment.id}",
                                 style: "
                                     display: flex;
-                                    justify-content: space-between;
-                                    align-items: center;
+                                    flex-direction: column;
                                     gap: 8px;
                                     font-size: 12px;
+                                    padding: 8px;
+                                    border: 1px solid #e5e7eb;
+                                    border-radius: 8px;
                                 ",
-                                p {
-                                    style: "
-                                        margin: 0;
-                                        color: #111827;
-                                        min-width: 0;
-                                        flex: 1;
-                                        overflow: hidden;
-                                        text-overflow: ellipsis;
-                                        white-space: nowrap;
-                                    ",
-                                    "{attachment.filename}"
+                                div {
+                                    style: "display: flex; justify-content: space-between; align-items: center; gap: 8px;",
+                                    p {
+                                        style: "
+                                            margin: 0;
+                                            color: #111827;
+                                            min-width: 0;
+                                            flex: 1;
+                                            overflow: hidden;
+                                            text-overflow: ellipsis;
+                                            white-space: nowrap;
+                                        ",
+                                        "{attachment.filename}"
+                                    }
+                                    p {
+                                        style: "margin: 0; color: #6b7280; white-space: nowrap;",
+                                        "{attachment_kind_label(&attachment.filename, &attachment.mime_type)}"
+                                    }
+                                    p {
+                                        style: "margin: 0; color: #6b7280; white-space: nowrap;",
+                                        "{format_attachment_size(attachment.size_bytes)}"
+                                    }
                                 }
-                                p {
-                                    style: "margin: 0; color: #6b7280; white-space: nowrap;",
-                                    "{attachment_kind_label(&attachment.mime_type)}"
+                                div {
+                                    style: "display: flex; gap: 8px;",
+                                    {
+                                        let attachment_id = attachment.id;
+                                        let attachment_for_preview = attachment.clone();
+                                        let attachment_for_delete = attachment.clone();
+                                        let deleting_now = deleting_attachment_id() == Some(attachment_id);
+
+                                        rsx! {
+                                            UiButton {
+                                                type: "button",
+                                                variant: ButtonVariant::Outline,
+                                                style: "padding: 6px 10px; font-size: 12px;",
+                                                disabled: deleting_now,
+                                                onclick: move |_| {
+                                                    let attachment_for_preview =
+                                                        attachment_for_preview.clone();
+                                                    attachment_preview_open.set(true);
+                                                    attachment_preview_loading.set(true);
+                                                    attachment_preview_error.set(None);
+                                                    attachment_preview_content.set(AttachmentPreview::None);
+                                                    attachment_preview_title.set(attachment_for_preview.filename.clone());
+
+                                                    spawn(async move {
+                                                        match load_attachment_preview_from_r2(&attachment_for_preview).await {
+                                                            Ok(preview) => attachment_preview_content.set(preview),
+                                                            Err(error) => attachment_preview_error.set(Some(error)),
+                                                        }
+                                                        attachment_preview_loading.set(false);
+                                                    });
+                                                },
+                                                "Open"
+                                            }
+                                            UiButton {
+                                                type: "button",
+                                                variant: ButtonVariant::Danger,
+                                                style: "padding: 6px 10px; font-size: 12px;",
+                                                disabled: deleting_now,
+                                                onclick: move |_| {
+                                                    let attachment_for_delete =
+                                                        attachment_for_delete.clone();
+                                                    let Some(note_store) = store.read().clone() else {
+                                                        attachments_error.set(Some("Database is not ready yet.".to_string()));
+                                                        return;
+                                                    };
+
+                                                    deleting_attachment_id.set(Some(attachment_id));
+                                                    attachments_error.set(None);
+
+                                                    spawn(async move {
+                                                        match note_store.delete_attachment(&attachment_id).await {
+                                                            Ok(()) => {
+                                                                if let Err(error) = delete_attachment_object_from_r2(&attachment_for_delete.r2_key).await {
+                                                                    attachments_error.set(Some(format!(
+                                                                        "Attachment removed, but failed to delete remote object: {error}"
+                                                                    )));
+                                                                }
+                                                                attachment_refresh_version.set(attachment_refresh_version() + 1);
+                                                                status_message.set(Some("Attachment deleted.".to_string()));
+                                                            }
+                                                            Err(error) => {
+                                                                attachments_error.set(Some(format!(
+                                                                    "Failed to delete attachment: {error}"
+                                                                )));
+                                                            }
+                                                        }
+                                                        deleting_attachment_id.set(None);
+                                                    });
+                                                },
+                                                if deleting_now { "Deleting..." } else { "Delete" }
+                                            }
+                                        }
+                                    }
                                 }
+                            }
+                        }
+                    }
+                }
+
+                if attachment_preview_open() {
+                    div {
+                        style: "
+                            position: fixed;
+                            inset: 0;
+                            background: rgba(17, 24, 39, 0.55);
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            padding: 16px;
+                            z-index: 9998;
+                        ",
+                        div {
+                            style: "
+                                width: 100%;
+                                max-width: 520px;
+                                max-height: 80vh;
+                                background: #ffffff;
+                                border-radius: 12px;
+                                border: 1px solid #e5e7eb;
+                                display: flex;
+                                flex-direction: column;
+                            ",
+                            div {
+                                style: "display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid #e5e7eb;",
                                 p {
-                                    style: "margin: 0; color: #6b7280; white-space: nowrap;",
-                                    "{format_attachment_size(attachment.size_bytes)}"
+                                    style: "margin: 0; font-size: 14px; font-weight: 600; color: #111827; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                                    "{attachment_preview_title()}"
+                                }
+                                UiButton {
+                                    type: "button",
+                                    variant: ButtonVariant::Outline,
+                                    style: "padding: 6px 10px; font-size: 12px;",
+                                    onclick: on_close_attachment_preview,
+                                    "Close"
+                                }
+                            }
+                            div {
+                                style: "padding: 12px; overflow: auto;",
+                                if attachment_preview_loading() {
+                                    p {
+                                        style: "margin: 0; font-size: 12px; color: #6b7280;",
+                                        "Loading preview..."
+                                    }
+                                } else if let Some(error) = attachment_preview_error() {
+                                    p {
+                                        style: "margin: 0; font-size: 12px; color: #b91c1c;",
+                                        "{error}"
+                                    }
+                                } else {
+                                    {render_attachment_preview(attachment_preview_content(), &attachment_preview_title())}
                                 }
                             }
                         }
@@ -1637,6 +1886,136 @@ fn apply_share_intent(
     selected_note_id.set(None);
     draft_content.set(shared_text);
     status_message.set(Some("Shared text ready to save".to_string()));
+}
+
+fn resolve_r2_storage() -> Result<R2Storage, String> {
+    match R2Config::from_env() {
+        Ok(Some(config)) => Ok(R2Storage::new(config)),
+        Ok(None) => Err("R2 is not configured. Set R2 env vars first.".to_string()),
+        Err(error) => Err(format!("Invalid R2 configuration: {error}")),
+    }
+}
+
+async fn upload_attachment_to_r2(
+    note_store: Arc<MobileNoteStore>,
+    note_id: NoteId,
+    file_name: String,
+    content_type: Option<String>,
+    file_bytes: Vec<u8>,
+) -> Result<(), String> {
+    let storage = resolve_r2_storage()?;
+    let object_key = storage
+        .build_media_key(&note_id.to_string(), &file_name)
+        .map_err(|error| format!("Failed to build media key: {error}"))?;
+    let mime_type = infer_attachment_mime_type(content_type.as_deref(), &file_name);
+
+    storage
+        .upload_bytes(&object_key, file_bytes.as_ref(), Some(&mime_type))
+        .await
+        .map_err(|error| format!("Failed to upload attachment to R2: {error}"))?;
+
+    note_store
+        .create_attachment(
+            &note_id,
+            &file_name,
+            &mime_type,
+            file_size_i64(file_bytes.len()),
+            &object_key,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("Failed to save attachment metadata: {error}"))
+}
+
+async fn load_attachment_preview_from_r2(
+    attachment: &Attachment,
+) -> Result<AttachmentPreview, String> {
+    let storage = resolve_r2_storage()?;
+    let (bytes, downloaded_content_type) = storage
+        .download_bytes(&attachment.r2_key)
+        .await
+        .map_err(|error| format!("Failed to download attachment: {error}"))?;
+
+    let content_type_hint = downloaded_content_type
+        .as_deref()
+        .or(Some(attachment.mime_type.as_str()));
+    let mime_type = infer_attachment_mime_type(content_type_hint, &attachment.filename);
+
+    Ok(build_attachment_preview(
+        &attachment.filename,
+        &mime_type,
+        &bytes,
+    ))
+}
+
+async fn delete_attachment_object_from_r2(object_key: &str) -> Result<(), String> {
+    let storage = resolve_r2_storage()?;
+    storage
+        .delete_object(object_key)
+        .await
+        .map_err(|error| format!("{error}"))
+}
+
+fn render_attachment_preview(preview: AttachmentPreview, preview_title: &str) -> Element {
+    match preview {
+        AttachmentPreview::None => rsx! {
+            p {
+                style: "margin: 0; font-size: 12px; color: #6b7280;",
+                "No preview available."
+            }
+        },
+        AttachmentPreview::Text { content, truncated } => rsx! {
+            div {
+                if truncated {
+                    p {
+                        style: "margin: 0 0 8px 0; font-size: 12px; color: #6b7280;",
+                        "Preview truncated to 256 KB."
+                    }
+                }
+                pre {
+                    style: "margin: 0; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.5;",
+                    "{content}"
+                }
+            }
+        },
+        AttachmentPreview::MediaDataUri {
+            mime_type,
+            data_uri,
+        } => rsx! {
+            if mime_type.starts_with("image/") {
+                img {
+                    src: "{data_uri}",
+                    alt: "{preview_title}",
+                    style: "display: block; max-width: 100%; max-height: 60vh; margin: 0 auto; border-radius: 8px;",
+                }
+            } else if mime_type.starts_with("video/") {
+                video {
+                    src: "{data_uri}",
+                    controls: true,
+                    style: "display: block; width: 100%; max-height: 60vh; border-radius: 8px;",
+                }
+            } else if mime_type.starts_with("audio/") {
+                audio {
+                    src: "{data_uri}",
+                    controls: true,
+                    style: "width: 100%;",
+                }
+            }
+        },
+        AttachmentPreview::Unsupported { mime_type, reason } => rsx! {
+            div {
+                style: "display: flex; flex-direction: column; gap: 6px;",
+                p {
+                    style: "margin: 0; font-size: 12px; color: #4b5563;",
+                    "MIME type: {mime_type}"
+                }
+                p {
+                    style: "margin: 0; font-size: 12px; color: #6b7280;",
+                    "{reason}"
+                }
+            }
+        },
+    }
 }
 
 fn sync_state_label(state: MobileSyncState, last_sync_at: Option<i64>) -> String {
@@ -1839,20 +2218,6 @@ fn note_preview(note: &Note) -> String {
     }
 }
 
-fn attachment_kind_label(mime_type: &str) -> &'static str {
-    if mime_type.starts_with("image/") {
-        "image"
-    } else if mime_type.starts_with("audio/") {
-        "audio"
-    } else if mime_type.starts_with("video/") {
-        "video"
-    } else if mime_type.starts_with("text/") {
-        "text"
-    } else {
-        "file"
-    }
-}
-
 fn format_attachment_size(size_bytes: i64) -> String {
     let bytes = u64::try_from(size_bytes).unwrap_or(0);
 
@@ -1877,6 +2242,10 @@ fn format_scaled_one_decimal(bytes: u64, unit: u64, suffix: &str) -> String {
     }
 
     format!("{whole}.{tenth} {suffix}")
+}
+
+fn file_size_i64(len: usize) -> i64 {
+    i64::try_from(len).map_or(i64::MAX, |size| size)
 }
 
 fn relative_time(updated_at_ms: i64) -> String {
@@ -1908,11 +2277,14 @@ mod tests {
 
     #[test]
     fn maps_attachment_kind_labels() {
-        assert_eq!(attachment_kind_label("image/png"), "image");
-        assert_eq!(attachment_kind_label("audio/wav"), "audio");
-        assert_eq!(attachment_kind_label("video/mp4"), "video");
-        assert_eq!(attachment_kind_label("text/plain"), "text");
-        assert_eq!(attachment_kind_label("application/pdf"), "file");
+        assert_eq!(attachment_kind_label("photo.png", "image/png"), "image");
+        assert_eq!(attachment_kind_label("voice.wav", "audio/wav"), "audio");
+        assert_eq!(attachment_kind_label("clip.mp4", "video/mp4"), "video");
+        assert_eq!(attachment_kind_label("notes.txt", "text/plain"), "text");
+        assert_eq!(
+            attachment_kind_label("report.pdf", "application/pdf"),
+            "file"
+        );
     }
 
     #[test]

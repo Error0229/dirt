@@ -2186,6 +2186,7 @@ name = "dirt-mobile"
 version = "0.1.0"
 dependencies = [
  "android-native-keyring-store",
+ "base64 0.22.1",
  "chrono",
  "dioxus",
  "dioxus-primitives",
@@ -2193,6 +2194,7 @@ dependencies = [
  "dirt-core",
  "dotenvy",
  "keyring-core",
+ "mime_guess",
  "reqwest",
  "serde",
  "serde_json",
