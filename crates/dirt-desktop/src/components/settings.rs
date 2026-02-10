@@ -4,7 +4,7 @@ use dioxus::prelude::*;
 use dioxus_primitives::slider::SliderValue;
 use rfd::AsyncFileDialog;
 
-use dirt_core::models::{Settings, SyncConflict, ThemeMode};
+use dirt_core::models::{NoteId, Settings, SyncConflict, ThemeMode};
 
 use super::button::{Button, ButtonVariant};
 use super::dialog::{DialogContent, DialogRoot, DialogTitle};
@@ -72,6 +72,9 @@ pub fn SettingsPanel() -> Element {
     };
     let auth_service = state.auth_service.read().clone();
     let active_session = (state.auth_session)();
+    let pending_sync_count = (state.pending_sync_count)();
+    let pending_sync_note_ids = (state.pending_sync_note_ids)();
+    let pending_sync_preview = format_pending_sync_preview(&pending_sync_note_ids);
     let init_auth_error = (state.auth_error)();
     let signed_in_identity = active_session.as_ref().map(|session| {
         session
@@ -650,6 +653,25 @@ pub fn SettingsPanel() -> Element {
                 }
 
                 SettingRow {
+                    label: "Offline Queue",
+                    description: "Pending local changes waiting for sync",
+
+                    div {
+                        class: "auth-panel",
+                        div {
+                            class: "auth-hint",
+                            "Pending changes: {pending_sync_count}"
+                        }
+                        if pending_sync_count > 0 {
+                            div {
+                                class: "auth-hint",
+                                "Pending note IDs: {pending_sync_preview}"
+                            }
+                        }
+                    }
+                }
+
+                SettingRow {
                     label: "Sync Conflicts",
                     description: "Recent LWW conflict resolutions",
 
@@ -918,6 +940,25 @@ fn format_sync_conflict_timestamp(timestamp_ms: i64) -> String {
     )
 }
 
+fn format_pending_sync_preview(note_ids: &[NoteId]) -> String {
+    if note_ids.is_empty() {
+        return "none".to_string();
+    }
+
+    let preview = note_ids
+        .iter()
+        .take(5)
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    if note_ids.len() > 5 {
+        format!("{preview}, +{}", note_ids.len() - 5)
+    } else {
+        preview
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -990,5 +1031,19 @@ mod tests {
     fn format_sync_conflict_timestamp_uses_utc_display() {
         let formatted = format_sync_conflict_timestamp(0);
         assert_eq!(formatted, "1970-01-01 00:00:00 UTC");
+    }
+
+    #[test]
+    fn format_pending_sync_preview_shows_overflow_suffix() {
+        let ids = vec![
+            "11111111-1111-7111-8111-111111111111".parse().unwrap(),
+            "11111111-1111-7111-8111-222222222222".parse().unwrap(),
+            "11111111-1111-7111-8111-333333333333".parse().unwrap(),
+            "11111111-1111-7111-8111-444444444444".parse().unwrap(),
+            "11111111-1111-7111-8111-555555555555".parse().unwrap(),
+            "11111111-1111-7111-8111-666666666666".parse().unwrap(),
+        ];
+        let preview = format_pending_sync_preview(&ids);
+        assert!(preview.contains("+1"));
     }
 }

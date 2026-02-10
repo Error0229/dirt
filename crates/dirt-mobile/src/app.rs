@@ -134,6 +134,8 @@ fn AppShell() -> Element {
     let mut sync_scheduler_active = use_signal(|| false);
     let mut last_sync_attempt_at = use_signal(|| None::<i64>);
     let mut consecutive_sync_failures = use_signal(|| 0u32);
+    let mut pending_sync_count = use_signal(|| 0usize);
+    let mut pending_sync_note_ids = use_signal(Vec::<NoteId>::new);
     let mut sync_conflicts = use_signal(Vec::<SyncConflict>::new);
     let mut sync_conflicts_loading = use_signal(|| false);
     let mut sync_conflicts_error = use_signal(|| None::<String>);
@@ -259,6 +261,7 @@ fn AppShell() -> Element {
         sync_scheduler_active.set(false);
         last_sync_attempt_at.set(None);
         consecutive_sync_failures.set(0);
+        clear_pending_sync_queue(&mut pending_sync_note_ids, &mut pending_sync_count);
         let launch = launch();
         let mut initialized = false;
 
@@ -278,6 +281,10 @@ fn AppShell() -> Element {
                             sync_state.set(MobileSyncState::Synced);
                             last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
                             consecutive_sync_failures.set(0);
+                            clear_pending_sync_queue(
+                                &mut pending_sync_note_ids,
+                                &mut pending_sync_count,
+                            );
                             toasts.info(
                                 "Sync connected".to_string(),
                                 ToastOptions::new()
@@ -407,6 +414,7 @@ fn AppShell() -> Element {
                     sync_state.set(MobileSyncState::Synced);
                     last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
                     consecutive_sync_failures.set(0);
+                    clear_pending_sync_queue(&mut pending_sync_note_ids, &mut pending_sync_count);
 
                     if previous_sync_state == MobileSyncState::Error {
                         toasts.success(
@@ -890,6 +898,11 @@ fn AppShell() -> Element {
                 Ok(saved_note) => {
                     selected_note_id.set(Some(saved_note.id));
                     draft_content.set(saved_note.content);
+                    enqueue_pending_sync_change(
+                        saved_note.id,
+                        &mut pending_sync_note_ids,
+                        &mut pending_sync_count,
+                    );
 
                     match note_store.list_notes().await {
                         Ok(fresh_notes) => {
@@ -931,6 +944,11 @@ fn AppShell() -> Element {
         spawn(async move {
             match note_store.delete_note(&note_id).await {
                 Ok(()) => {
+                    enqueue_pending_sync_change(
+                        note_id,
+                        &mut pending_sync_note_ids,
+                        &mut pending_sync_count,
+                    );
                     selected_note_id.set(None);
                     draft_content.set(String::new());
                     view.set(MobileView::List);
@@ -1009,6 +1027,11 @@ fn AppShell() -> Element {
             .await
             {
                 Ok(()) => {
+                    enqueue_pending_sync_change(
+                        note_id,
+                        &mut pending_sync_note_ids,
+                        &mut pending_sync_count,
+                    );
                     attachment_refresh_version.set(attachment_refresh_version() + 1);
                     status_message.set(Some("Attachment uploaded.".to_string()));
                 }
@@ -1047,6 +1070,8 @@ fn AppShell() -> Element {
     } else {
         "inactive".to_string()
     };
+    let pending_sync_count_value = pending_sync_count();
+    let pending_sync_preview = format_pending_title(&pending_sync_note_ids());
     let auth_session_summary = auth_session()
         .as_ref()
         .map(|session| {
@@ -1434,6 +1459,16 @@ fn AppShell() -> Element {
                         p {
                             style: "margin: 0; font-size: 12px; color: #6b7280;",
                             "Consecutive sync failures: {consecutive_sync_failures}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Pending local changes: {pending_sync_count_value}"
+                        }
+                        if pending_sync_count_value > 0 {
+                            p {
+                                style: "margin: 0; font-size: 12px; color: #6b7280;",
+                                "Pending note IDs: {pending_sync_preview}"
+                            }
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #6b7280;",
@@ -2021,6 +2056,11 @@ fn AppShell() -> Element {
                                                     spawn(async move {
                                                         match note_store.delete_attachment(&attachment_id).await {
                                                             Ok(()) => {
+                                                                enqueue_pending_sync_change(
+                                                                    attachment_for_delete.note_id,
+                                                                    &mut pending_sync_note_ids,
+                                                                    &mut pending_sync_count,
+                                                                );
                                                                 if let Err(error) = delete_attachment_object_from_r2(&attachment_for_delete.r2_key).await {
                                                                     attachments_error.set(Some(format!(
                                                                         "Attachment removed, but failed to delete remote object: {error}"
@@ -2251,6 +2291,45 @@ fn render_attachment_preview(preview: AttachmentPreview, preview_title: &str) ->
                 }
             }
         },
+    }
+}
+
+fn enqueue_pending_sync_change(
+    note_id: NoteId,
+    pending_sync_note_ids: &mut Signal<Vec<NoteId>>,
+    pending_sync_count: &mut Signal<usize>,
+) {
+    let mut pending_notes = pending_sync_note_ids.write();
+    if !pending_notes.contains(&note_id) {
+        pending_notes.push(note_id);
+        pending_sync_count.set(pending_notes.len());
+    }
+}
+
+fn clear_pending_sync_queue(
+    pending_sync_note_ids: &mut Signal<Vec<NoteId>>,
+    pending_sync_count: &mut Signal<usize>,
+) {
+    pending_sync_note_ids.write().clear();
+    pending_sync_count.set(0);
+}
+
+fn format_pending_title(note_ids: &[NoteId]) -> String {
+    if note_ids.is_empty() {
+        return "none".to_string();
+    }
+
+    let preview = note_ids
+        .iter()
+        .take(5)
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    if note_ids.len() > 5 {
+        format!("{preview}, +{}", note_ids.len() - 5)
+    } else {
+        preview
     }
 }
 
@@ -2565,5 +2644,19 @@ mod tests {
             format_sync_conflict_time(0),
             "1970-01-01 00:00:00 UTC".to_string()
         );
+    }
+
+    #[test]
+    fn formats_pending_note_title_preview() {
+        let ids = vec![
+            NoteId::new(),
+            NoteId::new(),
+            NoteId::new(),
+            NoteId::new(),
+            NoteId::new(),
+            NoteId::new(),
+        ];
+        let title = format_pending_title(&ids);
+        assert!(title.contains("+1"));
     }
 }
