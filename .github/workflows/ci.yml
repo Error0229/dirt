@@ -72,7 +72,14 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Run tests
+        if: runner.os != 'Windows'
         run: cargo test --all --verbose
+
+      - name: Run tests (Windows serialized)
+        if: runner.os == 'Windows'
+        run: |
+          $env:RUST_TEST_THREADS = "1"
+          cargo test --all --verbose
 
   clippy:
     name: Clippy
