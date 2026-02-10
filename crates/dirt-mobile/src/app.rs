@@ -14,6 +14,7 @@ use crate::config::{
     MobileRuntimeConfig, SecretStatus, SyncConfigSource,
 };
 use crate::data::MobileNoteStore;
+use crate::filters::{collect_note_tags, filter_notes};
 use crate::launch::LaunchIntent;
 use crate::secret_store;
 use crate::sync_auth::{SyncToken, TursoSyncAuthClient};
@@ -111,6 +112,8 @@ pub fn App() -> Element {
 fn AppShell() -> Element {
     let mut store = use_signal(|| None::<Arc<MobileNoteStore>>);
     let mut notes = use_signal(Vec::<Note>::new);
+    let mut search_query = use_signal(String::new);
+    let mut active_tag_filter = use_signal(|| None::<String>);
     let mut selected_note_id = use_signal(|| None::<NoteId>);
     let mut draft_content = use_signal(String::new);
     let mut view = use_signal(|| MobileView::List);
@@ -854,6 +857,19 @@ fn AppShell() -> Element {
     let auth_config_summary_text = auth_config_status()
         .map(auth_config_summary)
         .unwrap_or_else(|| "unknown".to_string());
+    let all_notes = notes();
+    let search_query_value = search_query();
+    let active_tag_filter_value = active_tag_filter();
+    let available_tags = collect_note_tags(&all_notes);
+    let filtered_notes = filter_notes(
+        &all_notes,
+        &search_query_value,
+        active_tag_filter_value.as_deref(),
+    );
+    let total_note_count = all_notes.len();
+    let filtered_note_count = filtered_notes.len();
+    let has_active_note_filters =
+        !search_query_value.trim().is_empty() || active_tag_filter_value.is_some();
     let app_version = env!("CARGO_PKG_VERSION");
     let package_name = env!("CARGO_PKG_NAME");
 
@@ -992,13 +1008,91 @@ fn AppShell() -> Element {
                         }
                     }
 
+                    div {
+                        style: "padding: 0 16px 12px 16px; display: flex; flex-direction: column; gap: 8px;",
+                        Label {
+                            html_for: "note-search",
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Search"
+                        }
+                        UiInput {
+                            id: "note-search",
+                            r#type: "search",
+                            placeholder: "Search notes...",
+                            value: "{search_query_value}",
+                            oninput: move |event: Event<FormData>| {
+                                search_query.set(event.value());
+                            },
+                        }
+
+                        if !available_tags.is_empty() {
+                            div {
+                                style: "display: flex; gap: 6px; flex-wrap: wrap;",
+                                UiButton {
+                                    type: "button",
+                                    variant: if active_tag_filter_value.is_none() {
+                                        ButtonVariant::Secondary
+                                    } else {
+                                        ButtonVariant::Outline
+                                    },
+                                    style: "padding: 6px 10px; font-size: 12px;",
+                                    onclick: move |_| active_tag_filter.set(None),
+                                    "All tags"
+                                }
+                                for tag in available_tags {
+                                    {
+                                        let tag_label = format!("#{tag}");
+                                        let tag_value = tag.clone();
+                                        let is_active =
+                                            active_tag_filter_value.as_deref() == Some(tag.as_str());
+
+                                        rsx! {
+                                            UiButton {
+                                                key: "{tag}",
+                                                type: "button",
+                                                variant: if is_active {
+                                                    ButtonVariant::Secondary
+                                                } else {
+                                                    ButtonVariant::Outline
+                                                },
+                                                style: "padding: 6px 10px; font-size: 12px;",
+                                                onclick: move |_| active_tag_filter.set(Some(tag_value.clone())),
+                                                "{tag_label}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if has_active_note_filters {
+                            div {
+                                style: "display: flex; align-items: center; justify-content: space-between; gap: 8px;",
+                                p {
+                                    style: "margin: 0; font-size: 12px; color: #6b7280;",
+                                    "Showing {filtered_note_count} of {total_note_count} notes"
+                                }
+                                UiButton {
+                                    type: "button",
+                                    variant: ButtonVariant::Outline,
+                                    style: "padding: 6px 10px; font-size: 12px;",
+                                    onclick: move |_| {
+                                        search_query.set(String::new());
+                                        active_tag_filter.set(None);
+                                    },
+                                    "Clear filters"
+                                }
+                            }
+                        }
+                    }
+
                     ScrollArea {
                         direction: ScrollDirection::Vertical,
                         scroll_type: ScrollType::Auto,
                         tabindex: "0",
                         style: "flex: 1; padding: 0 12px 16px 12px;",
 
-                        if notes().is_empty() {
+                        if all_notes.is_empty() {
                             div {
                                 style: "
                                     margin-top: 24px;
@@ -1011,8 +1105,21 @@ fn AppShell() -> Element {
                                 ",
                                 "No notes yet. Create your first note."
                             }
+                        } else if filtered_notes.is_empty() {
+                            div {
+                                style: "
+                                    margin-top: 24px;
+                                    padding: 20px;
+                                    background: #ffffff;
+                                    border: 1px solid #e5e7eb;
+                                    border-radius: 12px;
+                                    text-align: center;
+                                    color: #6b7280;
+                                ",
+                                "No notes match the current filters."
+                            }
                         } else {
-                            for note in notes() {
+                            for note in filtered_notes {
                                 {
                                     let note_id = note.id;
                                     let note_content = note.content.clone();
