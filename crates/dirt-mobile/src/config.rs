@@ -19,9 +19,13 @@ pub enum SyncConfigSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Status of a runtime secret in secure storage.
 pub enum SecretStatus {
+    /// Secret exists and can be read.
     Present,
+    /// Secret is not present.
     Missing,
+    /// Secret read failed.
     Error(String),
 }
 
@@ -29,6 +33,7 @@ pub enum SecretStatus {
 pub struct ResolvedSyncConfig {
     pub sync_config: Option<SyncConfig>,
     pub source: SyncConfigSource,
+    /// User-facing warning for partial/invalid sync configuration states.
     pub warning: Option<String>,
 }
 
@@ -116,6 +121,7 @@ pub fn resolve_sync_config() -> ResolvedSyncConfig {
     )
 }
 
+/// Report secure-storage status for the runtime Turso auth token.
 pub fn runtime_turso_token_status() -> SecretStatus {
     match secret_store::read_secret(secret_store::SECRET_TURSO_AUTH_TOKEN) {
         Ok(Some(_)) => SecretStatus::Present,

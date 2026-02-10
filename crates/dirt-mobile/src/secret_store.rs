@@ -5,12 +5,16 @@ use std::sync::{Arc, OnceLock};
 use keyring_core::{CredentialStore, Entry, Error as KeyringError};
 
 const SECRET_SERVICE_NAME: &str = "dirt-mobile";
+/// Secret key used for the Turso auth token in secure storage.
 pub const SECRET_TURSO_AUTH_TOKEN: &str = "turso_auth_token";
 
 type SecretResult<T> = Result<T, String>;
 
 static STORE_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 
+/// Persist a secret by key into secure storage.
+///
+/// The provided value is trimmed and must be non-empty.
 pub fn write_secret(name: &str, value: &str) -> SecretResult<()> {
     let value = value.trim();
     if value.is_empty() {
@@ -21,6 +25,9 @@ pub fn write_secret(name: &str, value: &str) -> SecretResult<()> {
     entry.set_password(value).map_err(map_keyring_error)
 }
 
+/// Read a secret by key from secure storage.
+///
+/// Returns `Ok(None)` when the key is not present.
 pub fn read_secret(name: &str) -> SecretResult<Option<String>> {
     let entry = entry(name)?;
     match entry.get_password() {
@@ -37,10 +44,14 @@ pub fn read_secret(name: &str) -> SecretResult<Option<String>> {
     }
 }
 
+/// Check whether a secret exists for the provided key.
 pub fn has_secret(name: &str) -> SecretResult<bool> {
     Ok(read_secret(name)?.is_some())
 }
 
+/// Delete a secret by key from secure storage.
+///
+/// Missing entries are treated as a successful no-op.
 pub fn delete_secret(name: &str) -> SecretResult<()> {
     let entry = entry(name)?;
     match entry.delete_credential() {
