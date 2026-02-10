@@ -56,6 +56,7 @@ Ideas flash in the mind and disappear. The friction of opening an app, finding t
 | **Local Storage** | SQLite (libSQL local file) | latest | Proven, portable, offline foundation with embedded replica support |
 | **Sync Layer** | Turso Embedded Replicas | latest | Native libSQL sync, Rust-first |
 | **Backend DB** | Turso (libSQL) | latest | Edge SQLite, embedded replicas |
+| **Backend API** | Dirt API (token broker + media signing) | latest | Keeps long-lived secrets off clients; mints short-lived tokens and presigned URLs |
 | **Media Storage** | Cloudflare R2 | - | Zero egress fees, S3-compatible |
 | **Auth** | Supabase Auth | latest | Email/password auth with JWT sessions |
 
@@ -64,6 +65,7 @@ Ideas flash in the mind and disappear. The friction of opening an app, finding t
 - **Dioxus over Tauri**: Full Rust enables sharing models, sync logic, and utilities between GUI and CLI. Single language, single build system.
 - **Turso Embedded Replicas over PowerSync**: PowerSync has no Rust SDK and doesn't support Turso as a backend. Turso's native embedded replicas provide local SQLite reads with microsecond latency, automatic background sync to cloud, and offline capability—all with first-class Rust support via the `libsql` crate.
 - **Turso over raw Postgres**: SQLite everywhere means same queries work locally and in cloud. Embedded replicas for edge performance.
+- **Backend token broker for production clients**: Desktop/mobile apps should ship only public bootstrap config (Supabase URL, anon key, API endpoint). Long-lived Turso/R2 credentials remain server-side.
 
 ---
 
@@ -206,12 +208,36 @@ dirt/
 | F5.6 | Voice transcription (optional) | P2 | In Progress | F5.5 |
 | F5.7 | File attachments | P2 | In Progress (`#118`) | F5.1 |
 
+### Phase 5.5: Backend Credential Architecture
+**Goal**: Install-and-use clients without user-managed keys/env vars
+
+| ID | Feature | Priority | Status | Blocks |
+|----|---------|----------|--------|--------|
+| F5.8 | Mobile bootstrap config (public values only) | P0 | Todo (`#149`) | F4.1, F2.3 |
+| F5.9 | Token exchange API (Supabase JWT -> short-lived Turso token) | P0 | Todo (`#154`) | F5.8 |
+| F5.10 | Media signing API (presigned upload/download/delete) | P0 | Todo (`#154`, `#150`) | F5.1, F2.3 |
+| F5.11 | Remove runtime env dependency from mobile prod path | P0 | Todo (`#149`, `#151`) | F5.8, F5.9 |
+| F5.12 | Replace mobile R2 client-secret flow with presigned flow | P0 | Todo (`#150`) | F5.10 |
+| F5.13 | Settings UX: user-centric provisioning states (no raw env names) | P1 | Todo (`#151`) | F5.11 |
+| F5.14 | Desktop managed-sync bootstrap parity (no end-user key entry) | P1 | Todo (`#155`) | F5.9 |
+| F5.15 | CLI config profile + optional login flow (env remains advanced mode) | P2 | Todo (`#153`) | F5.9 |
+| F5.16 | Security baseline + CI guardrails for managed credentials | P0 | In Progress (`#152`) | - |
+| F5.17 | Ordered rollout tracker across security/backend/clients | P1 | Todo (`#156`) | F5.16 |
+
 ### Mobile parity issues currently open
 
 - `#117` Mobile search and tag-filter parity
 - `#118` Mobile attachment UX parity (add/open/delete)
 - `#119` Android-native share-intent and quick-capture widget launch wiring
 - `#120` Mobile JSON/Markdown export parity
+- `#149` Mobile: replace runtime env dependency with app bootstrap config
+- `#150` Mobile attachments: remove client-side R2 credentials, use presigned backend flow
+- `#151` Mobile settings UX: replace raw env diagnostics with user-centric provisioning status
+- `#152` Security baseline: threat model and hardening for managed credential architecture
+- `#153` CLI config profiles: reduce env dependency with optional managed auth flow
+- `#154` Backend API foundation: secure token broker and media signing service
+- `#155` Desktop parity: move to managed bootstrap and backend-issued credentials
+- `#156` Execution plan: managed credential architecture rollout order
 
 ### Phase 6: Polish & Distribution
 **Goal**: Production-ready release
@@ -366,8 +392,11 @@ Desktop apps will use GitHub Releases as the update source with Tauri-style upda
 |---------|------|------|--------|
 | Turso | Free | $0 | Unlimited DBs, 5GB storage, 500M reads, 10M writes |
 | Cloudflare R2 | Free | $0 | 10GB storage, 1M writes, 10M reads |
+| Dirt API host (token/signing service) | TBD | TBD | Depends on provider and traffic |
 
 **Total infrastructure cost**: $0/month for hobby use
+
+> Note: With Phase 5.5, infrastructure cost may include a lightweight API host for secure token/signing flows.
 
 ---
 
@@ -507,6 +536,25 @@ Desktop apps will use GitHub Releases as the update source with Tauri-style upda
 - Data never truly deleted (privacy consideration)
 - Need periodic cleanup job
 - Queries must filter `WHERE is_deleted = 0`
+
+---
+
+### DD-009: No Long-Lived Secrets in Client Apps
+
+**Decision**: Desktop/mobile clients must not require users to provide infra keys or environment variables in production.
+
+**Rationale**:
+- Mobile/desktop users expect install-and-use behavior.
+- Bundling long-lived Turso/R2/service-role secrets in apps is unsafe.
+- Backend-mediated short-lived credentials reduce blast radius and support revocation/rotation.
+
+**Trade-offs**:
+- Requires operating a small backend API service.
+- Adds one network hop for token exchange/media signing flows.
+- Introduces backend observability and uptime requirements.
+
+**Reference**:
+- `docs/SECURITY_BASELINE.md` (threat model, credential policy, incident response, CI guardrails)
 
 ---
 

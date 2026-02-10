@@ -2,13 +2,14 @@
 
 use crate::error::Result;
 use libsql::{Builder, Connection, Database as LibSqlDatabase};
+use std::fmt;
 use std::path::Path;
 use std::time::Duration;
 
 use super::migrations;
 
 /// Configuration for database sync
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct SyncConfig {
     /// Remote database URL (e.g., `libsql://your-db.turso.io`)
     pub url: Option<String>,
@@ -16,6 +17,20 @@ pub struct SyncConfig {
     pub auth_token: Option<String>,
     /// Automatic sync interval (default: 60 seconds)
     pub sync_interval: Option<Duration>,
+}
+
+impl fmt::Debug for SyncConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SyncConfig")
+            .field("url", &self.url)
+            .field(
+                "auth_token",
+                &self.auth_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("sync_interval", &self.sync_interval)
+            .finish()
+    }
 }
 
 impl SyncConfig {
@@ -207,6 +222,14 @@ mod tests {
     fn test_sync_config_default_not_configured() {
         let config = SyncConfig::default();
         assert!(!config.is_configured());
+    }
+
+    #[test]
+    fn test_sync_config_debug_redacts_auth_token() {
+        let config = SyncConfig::new("libsql://test.turso.io", "secret-token-value");
+        let debug_output = format!("{config:?}");
+        assert!(!debug_output.contains("secret-token-value"));
+        assert!(debug_output.contains("[REDACTED]"));
     }
 
     /// Integration test for Turso sync - only runs if env vars are set
