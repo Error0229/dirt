@@ -65,6 +65,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "android-native-keyring-store"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e473c725eac862e418e7c3296059e72cdb7bbfb6ffefe625a452be988b2cd44f"
+dependencies = [
+ "base64 0.22.1",
+ "jni",
+ "keyring-core",
+ "ndk-context",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2171,12 +2185,14 @@ dependencies = [
 name = "dirt-mobile"
 version = "0.1.0"
 dependencies = [
+ "android-native-keyring-store",
  "chrono",
  "dioxus",
  "dioxus-primitives",
  "dirs",
  "dirt-core",
  "dotenvy",
+ "keyring-core",
  "serde",
  "serde_json",
  "tokio",
@@ -3800,6 +3816,15 @@ checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
 dependencies = [
  "log",
  "zeroize",
+]
+
+[[package]]
+name = "keyring-core"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f668c4c52e5e79879d9ce68b2da363b78a378c4becae267f8cfc26c55db4ed3"
+dependencies = [
+ "log",
 ]
 
 [[package]]

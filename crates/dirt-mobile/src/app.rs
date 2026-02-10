@@ -8,11 +8,12 @@ use dioxus_primitives::toast::{use_toast, ToastOptions, ToastProvider};
 use dirt_core::{Attachment, Note, NoteId};
 
 use crate::config::{
-    load_runtime_config, resolve_sync_config, save_runtime_config, MobileRuntimeConfig,
-    SyncConfigSource,
+    load_runtime_config, resolve_sync_config, runtime_turso_token_status, save_runtime_config,
+    MobileRuntimeConfig, SecretStatus, SyncConfigSource,
 };
 use crate::data::MobileNoteStore;
 use crate::launch::LaunchIntent;
+use crate::secret_store;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MobileView {
@@ -132,8 +133,9 @@ fn AppShell() -> Element {
         let _db_init_retry_version = db_init_retry_version();
         let runtime_config = load_runtime_config();
         turso_database_url_input.set(runtime_config.turso_database_url.unwrap_or_default());
-        turso_auth_token_input.set(runtime_config.turso_auth_token.unwrap_or_default());
-        active_sync_source.set(resolve_sync_config().source);
+        turso_auth_token_input.set(String::new());
+        let resolved_sync_config = resolve_sync_config();
+        active_sync_source.set(resolved_sync_config.source);
 
         loading.set(true);
         store.set(None);
@@ -185,10 +187,11 @@ fn AppShell() -> Element {
                 } else {
                     sync_scheduler_active.set(false);
                     sync_state.set(MobileSyncState::Offline);
-                    status_message.set(Some(
+                    let offline_message = resolved_sync_config.warning.clone().unwrap_or_else(|| {
                         "Running in local-only mode (set Turso URL + auth token in Settings to enable auto-sync)"
-                            .to_string(),
-                    ));
+                            .to_string()
+                    });
+                    status_message.set(Some(offline_message));
                 }
 
                 match note_store.list_notes().await {
@@ -352,20 +355,44 @@ fn AppShell() -> Element {
     };
 
     let on_save_sync_settings = move |_| {
-        let runtime_config = MobileRuntimeConfig::from_raw(
-            Some(turso_database_url_input()),
-            Some(turso_auth_token_input()),
-        );
-
-        if !runtime_config.has_sync_config() {
+        let runtime_config = MobileRuntimeConfig::from_raw(Some(turso_database_url_input()));
+        if !runtime_config.has_sync_url() {
             status_message.set(Some(
-                "Both Turso URL and auth token are required to enable remote sync".to_string(),
+                "Turso URL is required to enable remote sync".to_string(),
             ));
+            return;
+        }
+
+        let entered_token = turso_auth_token_input().trim().to_string();
+        if entered_token.is_empty() {
+            match secret_store::has_secret(secret_store::SECRET_TURSO_AUTH_TOKEN) {
+                Ok(true) => {}
+                Ok(false) => {
+                    status_message.set(Some(
+                        "Turso auth token is required. Enter it once to store it securely."
+                            .to_string(),
+                    ));
+                    return;
+                }
+                Err(error) => {
+                    status_message.set(Some(format!(
+                        "Secure storage is unavailable; cannot read existing token: {error}"
+                    )));
+                    return;
+                }
+            }
+        } else if let Err(error) =
+            secret_store::write_secret(secret_store::SECRET_TURSO_AUTH_TOKEN, &entered_token)
+        {
+            status_message.set(Some(format!(
+                "Failed to save Turso auth token to secure storage: {error}"
+            )));
             return;
         }
 
         match save_runtime_config(&runtime_config) {
             Ok(()) => {
+                turso_auth_token_input.set(String::new());
                 active_sync_source.set(SyncConfigSource::RuntimeSettings);
                 status_message.set(Some(
                     "Saved sync settings. Reinitializing database connection...".to_string(),
@@ -380,21 +407,24 @@ fn AppShell() -> Element {
 
     let on_clear_sync_settings = move |_| {
         let empty_config = MobileRuntimeConfig::default();
-        match save_runtime_config(&empty_config) {
-            Ok(()) => {
-                turso_database_url_input.set(String::new());
-                turso_auth_token_input.set(String::new());
-                active_sync_source.set(SyncConfigSource::None);
-                status_message.set(Some(
-                    "Cleared runtime sync settings. Reinitializing database connection..."
-                        .to_string(),
-                ));
-                db_init_retry_version.set(db_init_retry_version() + 1);
-            }
-            Err(error) => {
-                status_message.set(Some(format!("Failed to clear sync settings: {error}")));
-            }
+        if let Err(error) = save_runtime_config(&empty_config) {
+            status_message.set(Some(format!("Failed to clear sync settings: {error}")));
+            return;
         }
+        if let Err(error) = secret_store::delete_secret(secret_store::SECRET_TURSO_AUTH_TOKEN) {
+            status_message.set(Some(format!(
+                "Failed to clear secure Turso token; URL was cleared: {error}"
+            )));
+            return;
+        }
+
+        turso_database_url_input.set(String::new());
+        turso_auth_token_input.set(String::new());
+        active_sync_source.set(SyncConfigSource::None);
+        status_message.set(Some(
+            "Cleared runtime sync settings. Reinitializing database connection...".to_string(),
+        ));
+        db_init_retry_version.set(db_init_retry_version() + 1);
     };
 
     let on_save_note = move |_| {
@@ -1192,10 +1222,7 @@ fn sync_state_banner_label(state: MobileSyncState, last_sync_at: Option<i64>) ->
 fn mobile_config_diagnostics(active_sync_source: SyncConfigSource) -> MobileConfigDiagnostics {
     let runtime_config = load_runtime_config();
     let turso_runtime_url = runtime_config.turso_database_url;
-    let turso_runtime_token_set = runtime_config
-        .turso_auth_token
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty());
+    let turso_runtime_token_status = runtime_turso_token_status();
 
     let turso_env_url = env_var_trimmed("TURSO_DATABASE_URL");
     let turso_env_token_set = env_var_trimmed("TURSO_AUTH_TOKEN").is_some();
@@ -1218,7 +1245,7 @@ fn mobile_config_diagnostics(active_sync_source: SyncConfigSource) -> MobileConf
             .as_deref()
             .map(mask_endpoint_value)
             .unwrap_or_else(|| "not set".to_string()),
-        turso_runtime_token_status: configured_status_label(turso_runtime_token_set).to_string(),
+        turso_runtime_token_status: secure_status_label(&turso_runtime_token_status),
         turso_env_endpoint: turso_env_url
             .as_deref()
             .map(mask_endpoint_value)
@@ -1259,6 +1286,14 @@ fn configured_status_label(is_configured: bool) -> &'static str {
         "configured"
     } else {
         "not set"
+    }
+}
+
+fn secure_status_label(status: &SecretStatus) -> String {
+    match status {
+        SecretStatus::Present => "configured".to_string(),
+        SecretStatus::Missing => "not set".to_string(),
+        SecretStatus::Error(error) => format!("error ({error})"),
     }
 }
 
