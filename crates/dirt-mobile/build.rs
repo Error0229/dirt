@@ -21,6 +21,7 @@ struct MobileBootstrapConfig {
     supabase_url: Option<String>,
     supabase_anon_key: Option<String>,
     turso_sync_token_endpoint: Option<String>,
+    dirt_api_base_url: Option<String>,
 }
 
 fn main() {
@@ -28,6 +29,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SUPABASE_URL");
     println!("cargo:rerun-if-env-changed=SUPABASE_ANON_KEY");
     println!("cargo:rerun-if-env-changed=TURSO_SYNC_TOKEN_ENDPOINT");
+    println!("cargo:rerun-if-env-changed=DIRT_API_BASE_URL");
 
     if let Err(error) = write_mobile_bootstrap_config() {
         println!("cargo:warning=failed to generate mobile bootstrap config: {error}");
@@ -82,6 +84,7 @@ fn write_mobile_bootstrap_config() -> io::Result<()> {
         supabase_url: env_var_trimmed("SUPABASE_URL"),
         supabase_anon_key: env_var_trimmed("SUPABASE_ANON_KEY"),
         turso_sync_token_endpoint: env_var_trimmed("TURSO_SYNC_TOKEN_ENDPOINT"),
+        dirt_api_base_url: env_var_trimmed("DIRT_API_BASE_URL"),
     };
 
     let content = serde_json::to_string_pretty(&config)

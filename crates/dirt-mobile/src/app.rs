@@ -6,7 +6,6 @@ use dioxus_primitives::label::Label;
 use dioxus_primitives::scroll_area::{ScrollArea, ScrollDirection, ScrollType};
 use dioxus_primitives::separator::Separator;
 use dioxus_primitives::toast::{use_toast, ToastOptions, ToastProvider};
-use dirt_core::storage::{MediaStorage, R2Config, R2Storage};
 use dirt_core::{Attachment, AttachmentId, Note, NoteId, SyncConflict};
 
 use crate::attachments::{
@@ -24,6 +23,7 @@ use crate::export::{
 };
 use crate::filters::{collect_note_tags, filter_notes};
 use crate::launch::LaunchIntent;
+use crate::media_api::MediaApiClient;
 use crate::secret_store;
 use crate::sync_auth::{SyncToken, TursoSyncAuthClient};
 use crate::ui::{ButtonVariant, UiButton, UiInput, UiTextarea, MOBILE_UI_STYLES};
@@ -156,6 +156,7 @@ fn AppShell() -> Element {
     let mut active_sync_source = use_signal(|| SyncConfigSource::None);
     let mut auth_service = use_signal(|| None::<Arc<SupabaseAuthService>>);
     let mut auth_session = use_signal(|| None::<AuthSession>);
+    let mut media_api_client = use_signal(|| None::<Arc<MediaApiClient>>);
     let mut sync_auth_client = use_signal(|| None::<Arc<TursoSyncAuthClient>>);
     let mut sync_token_expires_at = use_signal(|| None::<i64>);
     let mut auth_email_input = use_signal(String::new);
@@ -186,8 +187,18 @@ fn AppShell() -> Element {
             auth_service.set(None);
             auth_session.set(None);
             auth_config_status.set(None);
+            media_api_client.set(None);
             sync_auth_client.set(None);
             sync_token_expires_at.set(None);
+
+            match MediaApiClient::new_from_bootstrap(&bootstrap_config) {
+                Ok(Some(client)) => media_api_client.set(Some(Arc::new(client))),
+                Ok(None) => {}
+                Err(error) => {
+                    status_message
+                        .set(Some(format!("Managed media API is misconfigured: {error}")));
+                }
+            }
 
             match TursoSyncAuthClient::new_from_bootstrap(&bootstrap_config) {
                 Ok(Some(client)) => {
@@ -1012,6 +1023,8 @@ fn AppShell() -> Element {
         attachment_uploading.set(true);
         status_message.set(Some(format!("Uploading {file_name}...")));
 
+        let media_api = media_api_client.read().clone();
+        let auth_session_value = auth_session();
         spawn(async move {
             let file_bytes = match file.read_bytes().await {
                 Ok(bytes) => bytes.to_vec(),
@@ -1029,6 +1042,8 @@ fn AppShell() -> Element {
                 file_name,
                 file_content_type,
                 file_bytes,
+                media_api,
+                auth_session_value,
             )
             .await
             {
@@ -2029,8 +2044,15 @@ fn AppShell() -> Element {
                                                     attachment_preview_content.set(AttachmentPreview::None);
                                                     attachment_preview_title.set(attachment_for_preview.filename.clone());
 
+                                                    let media_api = media_api_client.read().clone();
+                                                    let auth_session_value = auth_session();
                                                     spawn(async move {
-                                                        match load_attachment_preview_from_r2(&attachment_for_preview).await {
+                                                        match load_attachment_preview_from_r2(
+                                                            &attachment_for_preview,
+                                                            media_api,
+                                                            auth_session_value,
+                                                        )
+                                                        .await {
                                                             Ok(preview) => attachment_preview_content.set(preview),
                                                             Err(error) => attachment_preview_error.set(Some(error)),
                                                         }
@@ -2055,6 +2077,8 @@ fn AppShell() -> Element {
                                                     deleting_attachment_id.set(Some(attachment_id));
                                                     attachments_error.set(None);
 
+                                                    let media_api = media_api_client.read().clone();
+                                                    let auth_session_value = auth_session();
                                                     spawn(async move {
                                                         match note_store.delete_attachment(&attachment_id).await {
                                                             Ok(()) => {
@@ -2063,7 +2087,12 @@ fn AppShell() -> Element {
                                                                     &mut pending_sync_note_ids,
                                                                     &mut pending_sync_count,
                                                                 );
-                                                                if let Err(error) = delete_attachment_object_from_r2(&attachment_for_delete.r2_key).await {
+                                                                if let Err(error) = delete_attachment_object_from_r2(
+                                                                    &attachment_for_delete.r2_key,
+                                                                    media_api,
+                                                                    auth_session_value,
+                                                                )
+                                                                .await {
                                                                     attachments_error.set(Some(format!(
                                                                         "Attachment removed, but failed to delete remote object: {error}"
                                                                     )));
@@ -2166,31 +2195,26 @@ fn apply_share_intent(
     status_message.set(Some("Shared text ready to save".to_string()));
 }
 
-fn resolve_r2_storage() -> Result<R2Storage, String> {
-    match R2Config::from_env() {
-        Ok(Some(config)) => Ok(R2Storage::new(config)),
-        Ok(None) => Err("R2 is not configured. Set R2 env vars first.".to_string()),
-        Err(error) => Err(format!("Invalid R2 configuration: {error}")),
-    }
-}
-
 async fn upload_attachment_to_r2(
     note_store: Arc<MobileNoteStore>,
     note_id: NoteId,
     file_name: String,
     content_type: Option<String>,
     file_bytes: Vec<u8>,
+    media_api: Option<Arc<MediaApiClient>>,
+    auth_session: Option<AuthSession>,
 ) -> Result<(), String> {
-    let storage = resolve_r2_storage()?;
-    let object_key = storage
-        .build_media_key(&note_id.to_string(), &file_name)
-        .map_err(|error| format!("Failed to build media key: {error}"))?;
+    let media_api = media_api.ok_or_else(|| {
+        "Managed media API is not configured in bootstrap. Set DIRT_API_BASE_URL.".to_string()
+    })?;
+    let access_token = require_media_access_token(auth_session)?;
+    let object_key = build_media_object_key(&note_id, &file_name);
     let mime_type = infer_attachment_mime_type(content_type.as_deref(), &file_name);
 
-    storage
-        .upload_bytes(&object_key, file_bytes.as_ref(), Some(&mime_type))
+    media_api
+        .upload(&access_token, &object_key, &mime_type, file_bytes.as_ref())
         .await
-        .map_err(|error| format!("Failed to upload attachment to R2: {error}"))?;
+        .map_err(|error| format!("Failed to upload attachment via media API: {error}"))?;
 
     note_store
         .create_attachment(
@@ -2207,12 +2231,17 @@ async fn upload_attachment_to_r2(
 
 async fn load_attachment_preview_from_r2(
     attachment: &Attachment,
+    media_api: Option<Arc<MediaApiClient>>,
+    auth_session: Option<AuthSession>,
 ) -> Result<AttachmentPreview, String> {
-    let storage = resolve_r2_storage()?;
-    let (bytes, downloaded_content_type) = storage
-        .download_bytes(&attachment.r2_key)
+    let media_api = media_api.ok_or_else(|| {
+        "Managed media API is not configured in bootstrap. Set DIRT_API_BASE_URL.".to_string()
+    })?;
+    let access_token = require_media_access_token(auth_session)?;
+    let (bytes, downloaded_content_type) = media_api
+        .download(&access_token, &attachment.r2_key)
         .await
-        .map_err(|error| format!("Failed to download attachment: {error}"))?;
+        .map_err(|error| format!("Failed to download attachment via media API: {error}"))?;
 
     let content_type_hint = downloaded_content_type
         .as_deref()
@@ -2226,12 +2255,69 @@ async fn load_attachment_preview_from_r2(
     ))
 }
 
-async fn delete_attachment_object_from_r2(object_key: &str) -> Result<(), String> {
-    let storage = resolve_r2_storage()?;
-    storage
-        .delete_object(object_key)
+async fn delete_attachment_object_from_r2(
+    object_key: &str,
+    media_api: Option<Arc<MediaApiClient>>,
+    auth_session: Option<AuthSession>,
+) -> Result<(), String> {
+    let media_api = media_api.ok_or_else(|| {
+        "Managed media API is not configured in bootstrap. Set DIRT_API_BASE_URL.".to_string()
+    })?;
+    let access_token = require_media_access_token(auth_session)?;
+    media_api
+        .delete(&access_token, object_key)
         .await
         .map_err(|error| format!("{error}"))
+}
+
+fn require_media_access_token(auth_session: Option<AuthSession>) -> Result<String, String> {
+    auth_session
+        .map(|session| session.access_token)
+        .filter(|token| !token.trim().is_empty())
+        .ok_or_else(|| "Sign in is required for managed attachment operations.".to_string())
+}
+
+fn build_media_object_key(note_id: &NoteId, file_name: &str) -> String {
+    let stem = file_name
+        .trim()
+        .rsplit_once('.')
+        .map_or(file_name.trim(), |(left, _)| left);
+    let ext = file_name
+        .trim()
+        .rsplit_once('.')
+        .map_or("", |(_, right)| right);
+
+    let safe_stem = sanitize_media_token(stem);
+    let safe_stem = if safe_stem.is_empty() {
+        "file".to_string()
+    } else {
+        safe_stem
+    };
+    let safe_ext = sanitize_media_token(ext);
+    let safe_name = if safe_ext.is_empty() {
+        safe_stem
+    } else {
+        format!("{safe_stem}.{safe_ext}")
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    format!("notes/{note_id}/{now}-{safe_name}")
+}
+
+fn sanitize_media_token(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut last_dash = false;
+
+    for ch in input.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+
+    out.trim_matches('-').to_string()
 }
 
 fn render_attachment_preview(preview: AttachmentPreview, preview_title: &str) -> Element {
@@ -2372,14 +2458,7 @@ fn mobile_config_diagnostics(
     let supabase_url = bootstrap_config.supabase_url.clone();
     let supabase_anon_key_set = bootstrap_config.supabase_anon_key.is_some();
 
-    let r2_account_id = env_var_trimmed("R2_ACCOUNT_ID");
-    let r2_bucket = env_var_trimmed("R2_BUCKET");
-    let r2_access_key_set = env_var_trimmed("R2_ACCESS_KEY_ID").is_some();
-    let r2_secret_key_set = env_var_trimmed("R2_SECRET_ACCESS_KEY").is_some();
-
-    let r2_endpoint = r2_account_id
-        .as_deref()
-        .map(|account_id| format!("https://{account_id}.r2.cloudflarestorage.com"));
+    let managed_api_base = bootstrap_config.managed_api_base_url();
 
     MobileConfigDiagnostics {
         turso_sync_configured: !matches!(active_sync_source, SyncConfigSource::None),
@@ -2401,10 +2480,20 @@ fn mobile_config_diagnostics(
         supabase_auth_status: auth_config
             .map(auth_config_summary)
             .unwrap_or_else(|| "unknown".to_string()),
-        r2_bucket: r2_bucket.unwrap_or_else(|| "not set".to_string()),
-        r2_endpoint: r2_endpoint.unwrap_or_else(|| "not set".to_string()),
-        r2_credentials_status: configured_status_label(r2_access_key_set && r2_secret_key_set)
-            .to_string(),
+        r2_bucket: if managed_api_base.is_some() {
+            "managed (backend)".to_string()
+        } else {
+            "not set".to_string()
+        },
+        r2_endpoint: managed_api_base
+            .as_deref()
+            .map(mask_endpoint_value)
+            .unwrap_or_else(|| "not set".to_string()),
+        r2_credentials_status: if managed_api_base.is_some() {
+            "managed (backend)".to_string()
+        } else {
+            "not set".to_string()
+        },
     }
 }
 
@@ -2466,16 +2555,6 @@ fn should_refresh_managed_token_after_sync_error(error: &dirt_core::Error) -> bo
         || message.contains("unauthorized")
         || message.contains("forbidden")
         || message.contains("permission denied")
-}
-
-fn env_var_trimmed(name: &str) -> Option<String> {
-    let value = std::env::var(name).ok()?;
-    let value = value.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
 }
 
 fn configured_status_label(is_configured: bool) -> &'static str {
@@ -2653,5 +2732,19 @@ mod tests {
         ];
         let title = format_pending_title(&ids);
         assert!(title.contains("+1"));
+    }
+
+    #[test]
+    fn builds_managed_media_object_key() {
+        let note_id = NoteId::new();
+        let key = build_media_object_key(&note_id, "My File (Final).PNG");
+        assert!(key.starts_with(&format!("notes/{note_id}/")));
+        assert!(key.ends_with("-my-file-final.png"));
+    }
+
+    #[test]
+    fn sanitizes_media_token() {
+        assert_eq!(sanitize_media_token(" My  File__Name "), "my-file-name");
+        assert_eq!(sanitize_media_token("..."), "");
     }
 }
