@@ -8,6 +8,7 @@ use reqwest::{Client, RequestBuilder, StatusCode};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::bootstrap_config::MobileBootstrapConfig;
 use crate::secret_store;
 
 const EXPIRY_SKEW_SECONDS: i64 = 60;
@@ -87,7 +88,9 @@ pub struct AuthConfigStatus {
 /// Errors from authentication and secure storage flows.
 #[derive(Debug, Error)]
 pub enum AuthError {
-    #[error("Supabase auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY.")]
+    #[error(
+        "Supabase auth is not configured. Provide SUPABASE_URL and SUPABASE_ANON_KEY at build time."
+    )]
     NotConfigured,
     #[error("Invalid auth configuration: {0}")]
     InvalidConfiguration(&'static str),
@@ -136,11 +139,23 @@ pub struct SupabaseAuthService {
 }
 
 impl SupabaseAuthService {
+    /// Create a service from build-time bootstrap config values.
+    pub fn new_from_bootstrap(config: &MobileBootstrapConfig) -> AuthResult<Option<Self>> {
+        Self::new_from_sources(
+            config.supabase_url.clone(),
+            config.supabase_anon_key.clone(),
+        )
+    }
+
     /// Create a service from `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
     pub fn new_from_env() -> AuthResult<Option<Self>> {
-        let url = std::env::var("SUPABASE_URL").ok();
-        let anon_key = std::env::var("SUPABASE_ANON_KEY").ok();
+        Self::new_from_sources(
+            std::env::var("SUPABASE_URL").ok(),
+            std::env::var("SUPABASE_ANON_KEY").ok(),
+        )
+    }
 
+    fn new_from_sources(url: Option<String>, anon_key: Option<String>) -> AuthResult<Option<Self>> {
         match (url, anon_key) {
             (None, None) => Ok(None),
             (Some(url), Some(anon_key)) => Ok(Some(Self::new(url, anon_key)?)),
@@ -485,6 +500,7 @@ fn unix_timestamp_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bootstrap_config::MobileBootstrapConfig;
 
     #[test]
     fn normalize_auth_url_appends_auth_path() {
@@ -496,6 +512,14 @@ mod tests {
     fn normalize_auth_url_keeps_existing_auth_path() {
         let normalized = normalize_auth_url("https://demo.supabase.co/auth/v1").unwrap();
         assert_eq!(normalized, "https://demo.supabase.co/auth/v1");
+    }
+
+    #[test]
+    fn new_from_bootstrap_returns_none_when_values_missing() {
+        let config = MobileBootstrapConfig::default();
+        assert!(SupabaseAuthService::new_from_bootstrap(&config)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

@@ -13,6 +13,7 @@ use crate::attachments::{
     attachment_kind_label, build_attachment_preview, infer_attachment_mime_type, AttachmentPreview,
 };
 use crate::auth::{AuthConfigStatus, AuthSession, SignUpOutcome, SupabaseAuthService};
+use crate::bootstrap_config::{load_bootstrap_config, MobileBootstrapConfig};
 use crate::config::{
     load_runtime_config, resolve_sync_config, runtime_turso_token_status, save_runtime_config,
     MobileRuntimeConfig, SecretStatus, SyncConfigSource,
@@ -48,8 +49,8 @@ struct MobileConfigDiagnostics {
     turso_managed_auth_endpoint: String,
     turso_runtime_endpoint: String,
     turso_runtime_token_status: String,
-    turso_env_endpoint: String,
-    turso_env_token_status: String,
+    turso_bootstrap_endpoint: String,
+    turso_bootstrap_token_status: String,
     supabase_url: String,
     supabase_anon_key_status: String,
     supabase_auth_status: String,
@@ -166,9 +167,12 @@ fn AppShell() -> Element {
     let mut export_busy = use_signal(|| false);
     let launch: Signal<LaunchIntent> = use_signal(crate::launch::detect_launch_intent_from_runtime);
     let mut launch_applied = use_signal(|| false);
+    let bootstrap_config = load_bootstrap_config();
     let toasts = use_toast();
 
+    let bootstrap_config_for_init = bootstrap_config.clone();
     use_future(move || async move {
+        let bootstrap_config = bootstrap_config_for_init.clone();
         let _db_init_retry_version = db_init_retry_version();
         let runtime_config = load_runtime_config();
         let runtime_has_sync_url = runtime_config.has_sync_url();
@@ -186,7 +190,7 @@ fn AppShell() -> Element {
         sync_auth_client.set(None);
         sync_token_expires_at.set(None);
 
-        match TursoSyncAuthClient::new_from_env() {
+        match TursoSyncAuthClient::new_from_bootstrap(&bootstrap_config) {
             Ok(Some(client)) => {
                 sync_auth_client.set(Some(Arc::new(client)));
             }
@@ -196,7 +200,7 @@ fn AppShell() -> Element {
             }
         }
 
-        match SupabaseAuthService::new_from_env() {
+        match SupabaseAuthService::new_from_bootstrap(&bootstrap_config) {
             Ok(Some(service)) => {
                 let service = Arc::new(service);
                 match service.restore_session().await {
@@ -628,8 +632,7 @@ fn AppShell() -> Element {
         }
         let Some(service) = auth_service.read().clone() else {
             status_message.set(Some(
-                "Supabase auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY."
-                    .to_string(),
+                "Supabase auth is not configured in mobile bootstrap.".to_string(),
             ));
             return;
         };
@@ -696,8 +699,7 @@ fn AppShell() -> Element {
         }
         let Some(service) = auth_service.read().clone() else {
             status_message.set(Some(
-                "Supabase auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY."
-                    .to_string(),
+                "Supabase auth is not configured in mobile bootstrap.".to_string(),
             ));
             return;
         };
@@ -1052,7 +1054,11 @@ fn AppShell() -> Element {
         attachment_preview_content.set(AttachmentPreview::None);
     };
 
-    let diagnostics = mobile_config_diagnostics(active_sync_source(), auth_config_status());
+    let diagnostics = mobile_config_diagnostics(
+        active_sync_source(),
+        auth_config_status(),
+        &bootstrap_config,
+    );
     let heading = if view() == MobileView::Settings {
         "Settings"
     } else {
@@ -1730,7 +1736,7 @@ fn AppShell() -> Element {
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #6b7280;",
-                            "Managed mode uses signed-in Supabase session + TURSO_SYNC_TOKEN_ENDPOINT to fetch short-lived sync credentials."
+                            "Managed mode uses signed-in Supabase session + bootstrap sync endpoint to fetch short-lived sync credentials."
                         }
                         div {
                             style: "display: flex; gap: 8px;",
@@ -1818,11 +1824,11 @@ fn AppShell() -> Element {
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Turso env endpoint: {diagnostics.turso_env_endpoint}"
+                            "Turso bootstrap endpoint: {diagnostics.turso_bootstrap_endpoint}"
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Turso env token: {diagnostics.turso_env_token_status}"
+                            "Turso bootstrap token: {diagnostics.turso_bootstrap_token_status}"
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
@@ -2361,16 +2367,17 @@ fn sync_state_banner_label(state: MobileSyncState, last_sync_at: Option<i64>) ->
 fn mobile_config_diagnostics(
     active_sync_source: SyncConfigSource,
     auth_config: Option<AuthConfigStatus>,
+    bootstrap_config: &MobileBootstrapConfig,
 ) -> MobileConfigDiagnostics {
     let runtime_config = load_runtime_config();
     let turso_runtime_url = runtime_config.turso_database_url;
     let turso_runtime_token_status = runtime_turso_token_status();
-    let managed_sync_endpoint = env_var_trimmed("TURSO_SYNC_TOKEN_ENDPOINT");
+    let managed_sync_endpoint = bootstrap_config.turso_sync_token_endpoint.clone();
 
-    let turso_env_url = env_var_trimmed("TURSO_DATABASE_URL");
-    let turso_env_token_set = env_var_trimmed("TURSO_AUTH_TOKEN").is_some();
-    let supabase_url = env_var_trimmed("SUPABASE_URL");
-    let supabase_anon_key_set = env_var_trimmed("SUPABASE_ANON_KEY").is_some();
+    let turso_bootstrap_url = bootstrap_config.turso_sync_token_endpoint.clone();
+    let turso_bootstrap_token_set = bootstrap_config.turso_sync_token_endpoint.is_some();
+    let supabase_url = bootstrap_config.supabase_url.clone();
+    let supabase_anon_key_set = bootstrap_config.supabase_anon_key.is_some();
 
     let r2_account_id = env_var_trimmed("R2_ACCOUNT_ID");
     let r2_bucket = env_var_trimmed("R2_BUCKET");
@@ -2393,11 +2400,12 @@ fn mobile_config_diagnostics(
             .map(mask_endpoint_value)
             .unwrap_or_else(|| "not set".to_string()),
         turso_runtime_token_status: secure_status_label(&turso_runtime_token_status),
-        turso_env_endpoint: turso_env_url
+        turso_bootstrap_endpoint: turso_bootstrap_url
             .as_deref()
             .map(mask_endpoint_value)
             .unwrap_or_else(|| "not set".to_string()),
-        turso_env_token_status: configured_status_label(turso_env_token_set).to_string(),
+        turso_bootstrap_token_status: configured_status_label(turso_bootstrap_token_set)
+            .to_string(),
         supabase_url: supabase_url
             .as_deref()
             .map(mask_endpoint_value)

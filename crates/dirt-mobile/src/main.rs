@@ -9,6 +9,8 @@ mod attachments;
 #[cfg(any(target_os = "android", test))]
 mod auth;
 #[cfg(any(target_os = "android", test))]
+mod bootstrap_config;
+#[cfg(any(target_os = "android", test))]
 mod config;
 #[cfg(any(target_os = "android", test))]
 mod data;

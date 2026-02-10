@@ -31,5 +31,10 @@ dioxus = { workspace = true, features = ["mobile"] }
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
 android-native-keyring-store = "0.5"
 
+[build-dependencies]
+dotenvy = "0.15"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
 [lints]
 workspace = true
