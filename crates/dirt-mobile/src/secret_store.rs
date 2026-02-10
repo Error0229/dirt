@@ -48,6 +48,7 @@ pub fn read_secret(name: &str) -> SecretResult<Option<String>> {
 }
 
 /// Check whether a secret exists for the provided key.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn has_secret(name: &str) -> SecretResult<bool> {
     Ok(read_secret(name)?.is_some())
 }
