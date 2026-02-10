@@ -7,6 +7,7 @@ use dioxus_primitives::separator::Separator;
 use dioxus_primitives::toast::{use_toast, ToastOptions, ToastProvider};
 use dirt_core::{Attachment, Note, NoteId};
 
+use crate::auth::{AuthConfigStatus, AuthSession, SignUpOutcome, SupabaseAuthService};
 use crate::config::{
     load_runtime_config, resolve_sync_config, runtime_turso_token_status, save_runtime_config,
     MobileRuntimeConfig, SecretStatus, SyncConfigSource,
@@ -39,6 +40,7 @@ struct MobileConfigDiagnostics {
     turso_env_token_status: String,
     supabase_url: String,
     supabase_anon_key_status: String,
+    supabase_auth_status: String,
     r2_bucket: String,
     r2_endpoint: String,
     r2_credentials_status: String,
@@ -125,6 +127,12 @@ fn AppShell() -> Element {
     let mut turso_database_url_input = use_signal(String::new);
     let mut turso_auth_token_input = use_signal(String::new);
     let mut active_sync_source = use_signal(|| SyncConfigSource::None);
+    let mut auth_service = use_signal(|| None::<Arc<SupabaseAuthService>>);
+    let mut auth_session = use_signal(|| None::<AuthSession>);
+    let mut auth_email_input = use_signal(String::new);
+    let mut auth_password_input = use_signal(String::new);
+    let mut auth_config_status = use_signal(|| None::<AuthConfigStatus>);
+    let mut auth_loading = use_signal(|| false);
     let launch: Signal<LaunchIntent> = use_signal(crate::launch::detect_launch_intent_from_runtime);
     let mut launch_applied = use_signal(|| false);
     let toasts = use_toast();
@@ -136,6 +144,35 @@ fn AppShell() -> Element {
         turso_auth_token_input.set(String::new());
         let resolved_sync_config = resolve_sync_config();
         active_sync_source.set(resolved_sync_config.source);
+        auth_service.set(None);
+        auth_session.set(None);
+        auth_config_status.set(None);
+
+        match SupabaseAuthService::new_from_env() {
+            Ok(Some(service)) => {
+                let service = Arc::new(service);
+                match service.restore_session().await {
+                    Ok(session) => auth_session.set(session),
+                    Err(error) => {
+                        tracing::warn!("Failed to restore mobile auth session: {}", error);
+                        status_message.set(Some(format!("Auth session restore failed: {error}")));
+                    }
+                }
+                match service.verify_configuration().await {
+                    Ok(config) => auth_config_status.set(Some(config)),
+                    Err(error) => {
+                        tracing::warn!("Mobile auth config verification failed: {}", error);
+                        status_message
+                            .set(Some(format!("Auth configuration check failed: {error}")));
+                    }
+                }
+                auth_service.set(Some(service));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                status_message.set(Some(format!("Auth is not configured: {error}")));
+            }
+        }
 
         loading.set(true);
         store.set(None);
@@ -427,6 +464,129 @@ fn AppShell() -> Element {
         db_init_retry_version.set(db_init_retry_version() + 1);
     };
 
+    let on_auth_sign_in = move |_| {
+        if auth_loading() {
+            return;
+        }
+        let Some(service) = auth_service.read().clone() else {
+            status_message.set(Some(
+                "Supabase auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY."
+                    .to_string(),
+            ));
+            return;
+        };
+
+        let email = auth_email_input().trim().to_string();
+        let password = auth_password_input().trim().to_string();
+        if email.is_empty() || password.is_empty() {
+            status_message.set(Some("Email and password are required".to_string()));
+            return;
+        }
+
+        auth_loading.set(true);
+        status_message.set(Some("Signing in...".to_string()));
+
+        spawn(async move {
+            match service.sign_in(&email, &password).await {
+                Ok(session) => {
+                    let session_email = session
+                        .user
+                        .email
+                        .clone()
+                        .unwrap_or_else(|| "unknown user".to_string());
+                    auth_session.set(Some(session));
+                    auth_password_input.set(String::new());
+                    status_message.set(Some(format!("Signed in as {session_email}")));
+                    if let Ok(config) = service.verify_configuration().await {
+                        auth_config_status.set(Some(config));
+                    }
+                }
+                Err(error) => {
+                    status_message.set(Some(format!("Sign-in failed: {error}")));
+                }
+            }
+            auth_loading.set(false);
+        });
+    };
+
+    let on_auth_sign_up = move |_| {
+        if auth_loading() {
+            return;
+        }
+        let Some(service) = auth_service.read().clone() else {
+            status_message.set(Some(
+                "Supabase auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY."
+                    .to_string(),
+            ));
+            return;
+        };
+
+        let email = auth_email_input().trim().to_string();
+        let password = auth_password_input().trim().to_string();
+        if email.is_empty() || password.is_empty() {
+            status_message.set(Some("Email and password are required".to_string()));
+            return;
+        }
+
+        auth_loading.set(true);
+        status_message.set(Some("Signing up...".to_string()));
+
+        spawn(async move {
+            match service.sign_up(&email, &password).await {
+                Ok(SignUpOutcome::SignedIn(session)) => {
+                    let session_email = session
+                        .user
+                        .email
+                        .clone()
+                        .unwrap_or_else(|| "unknown user".to_string());
+                    auth_session.set(Some(session));
+                    auth_password_input.set(String::new());
+                    status_message.set(Some(format!("Signed up and signed in as {session_email}")));
+                }
+                Ok(SignUpOutcome::ConfirmationRequired) => {
+                    status_message.set(Some(
+                        "Sign-up succeeded. Check your email to confirm the account.".to_string(),
+                    ));
+                }
+                Err(error) => {
+                    status_message.set(Some(format!("Sign-up failed: {error}")));
+                }
+            }
+            auth_loading.set(false);
+        });
+    };
+
+    let on_auth_sign_out = move |_| {
+        if auth_loading() {
+            return;
+        }
+        let Some(service) = auth_service.read().clone() else {
+            status_message.set(Some("Auth service is unavailable".to_string()));
+            return;
+        };
+        let Some(session) = auth_session() else {
+            status_message.set(Some("No active session to sign out".to_string()));
+            return;
+        };
+
+        auth_loading.set(true);
+        status_message.set(Some("Signing out...".to_string()));
+
+        spawn(async move {
+            match service.sign_out(&session.access_token).await {
+                Ok(()) => {
+                    auth_session.set(None);
+                    auth_password_input.set(String::new());
+                    status_message.set(Some("Signed out".to_string()));
+                }
+                Err(error) => {
+                    status_message.set(Some(format!("Sign-out failed: {error}")));
+                }
+            }
+            auth_loading.set(false);
+        });
+    };
+
     let on_save_note = move |_| {
         if saving() {
             return;
@@ -524,7 +684,7 @@ fn AppShell() -> Element {
         });
     };
 
-    let diagnostics = mobile_config_diagnostics(active_sync_source());
+    let diagnostics = mobile_config_diagnostics(active_sync_source(), auth_config_status());
     let heading = if view() == MobileView::Settings {
         "Settings"
     } else {
@@ -542,6 +702,19 @@ fn AppShell() -> Element {
     } else {
         "inactive".to_string()
     };
+    let auth_session_summary = auth_session()
+        .as_ref()
+        .map(|session| {
+            session
+                .user
+                .email
+                .clone()
+                .unwrap_or_else(|| format!("user {}", session.user.id))
+        })
+        .unwrap_or_else(|| "Not signed in".to_string());
+    let auth_config_summary_text = auth_config_status()
+        .map(auth_config_summary)
+        .unwrap_or_else(|| "unknown".to_string());
     let app_version = env!("CARGO_PKG_VERSION");
     let package_name = env!("CARGO_PKG_NAME");
 
@@ -870,6 +1043,120 @@ fn AppShell() -> Element {
                                 text-transform: uppercase;
                                 letter-spacing: 0.04em;
                             ",
+                            "Authentication"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #374151;",
+                            "Session: {auth_session_summary}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Auth config: {auth_config_summary_text}"
+                        }
+                        input {
+                            r#type: "email",
+                            placeholder: "Email",
+                            value: "{auth_email_input}",
+                            style: "
+                                border: 1px solid #d1d5db;
+                                border-radius: 8px;
+                                padding: 10px;
+                                font-size: 13px;
+                            ",
+                            oninput: move |event: Event<FormData>| {
+                                auth_email_input.set(event.value());
+                            },
+                        }
+                        input {
+                            r#type: "password",
+                            placeholder: "Password",
+                            value: "{auth_password_input}",
+                            style: "
+                                border: 1px solid #d1d5db;
+                                border-radius: 8px;
+                                padding: 10px;
+                                font-size: 13px;
+                            ",
+                            oninput: move |event: Event<FormData>| {
+                                auth_password_input.set(event.value());
+                            },
+                        }
+                        div {
+                            style: "display: flex; gap: 8px; flex-wrap: wrap;",
+                            button {
+                                type: "button",
+                                style: "
+                                    flex: 1;
+                                    min-width: 100px;
+                                    border: 0;
+                                    border-radius: 8px;
+                                    padding: 10px;
+                                    background: #2563eb;
+                                    color: #ffffff;
+                                    font-weight: 600;
+                                    font-size: 13px;
+                                ",
+                                disabled: auth_loading(),
+                                onclick: on_auth_sign_in,
+                                if auth_loading() { "Working..." } else { "Sign in" }
+                            }
+                            button {
+                                type: "button",
+                                style: "
+                                    flex: 1;
+                                    min-width: 100px;
+                                    border: 1px solid #2563eb;
+                                    border-radius: 8px;
+                                    padding: 10px;
+                                    background: #ffffff;
+                                    color: #2563eb;
+                                    font-weight: 600;
+                                    font-size: 13px;
+                                ",
+                                disabled: auth_loading(),
+                                onclick: on_auth_sign_up,
+                                "Sign up"
+                            }
+                            button {
+                                type: "button",
+                                style: "
+                                    flex: 1;
+                                    min-width: 100px;
+                                    border: 1px solid #d1d5db;
+                                    border-radius: 8px;
+                                    padding: 10px;
+                                    background: #ffffff;
+                                    color: #374151;
+                                    font-weight: 600;
+                                    font-size: 13px;
+                                ",
+                                disabled: auth_loading() || auth_session().is_none(),
+                                onclick: on_auth_sign_out,
+                                "Sign out"
+                            }
+                        }
+                    }
+
+                    div {
+                        style: "
+                            padding: 12px;
+                            border: 1px solid #e5e7eb;
+                            border-radius: 12px;
+                            background: #ffffff;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 8px;
+                            margin-bottom: 10px;
+                        ",
+                        p {
+                            style: "
+                                margin: 0;
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: #6b7280;
+                                text-transform: uppercase;
+                                letter-spacing: 0.04em;
+                            ",
                             "Turso sync settings"
                         }
                         input {
@@ -1011,6 +1298,10 @@ fn AppShell() -> Element {
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
                             "Supabase anon key: {diagnostics.supabase_anon_key_status}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #374151;",
+                            "Supabase auth config: {diagnostics.supabase_auth_status}"
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
@@ -1219,7 +1510,10 @@ fn sync_state_banner_label(state: MobileSyncState, last_sync_at: Option<i64>) ->
     }
 }
 
-fn mobile_config_diagnostics(active_sync_source: SyncConfigSource) -> MobileConfigDiagnostics {
+fn mobile_config_diagnostics(
+    active_sync_source: SyncConfigSource,
+    auth_config: Option<AuthConfigStatus>,
+) -> MobileConfigDiagnostics {
     let runtime_config = load_runtime_config();
     let turso_runtime_url = runtime_config.turso_database_url;
     let turso_runtime_token_status = runtime_turso_token_status();
@@ -1256,6 +1550,9 @@ fn mobile_config_diagnostics(active_sync_source: SyncConfigSource) -> MobileConf
             .map(mask_endpoint_value)
             .unwrap_or_else(|| "not set".to_string()),
         supabase_anon_key_status: configured_status_label(supabase_anon_key_set).to_string(),
+        supabase_auth_status: auth_config
+            .map(auth_config_summary)
+            .unwrap_or_else(|| "unknown".to_string()),
         r2_bucket: r2_bucket.unwrap_or_else(|| "not set".to_string()),
         r2_endpoint: r2_endpoint.unwrap_or_else(|| "not set".to_string()),
         r2_credentials_status: configured_status_label(r2_access_key_set && r2_secret_key_set)
@@ -1269,6 +1566,25 @@ fn sync_config_source_label(source: SyncConfigSource) -> &'static str {
         SyncConfigSource::EnvironmentFallback => "env fallback",
         SyncConfigSource::None => "none",
     }
+}
+
+fn auth_config_summary(status: AuthConfigStatus) -> String {
+    let email = if status.email_enabled {
+        "email:on"
+    } else {
+        "email:off"
+    };
+    let signup = if status.signup_enabled {
+        "signup:on"
+    } else {
+        "signup:off"
+    };
+    let confirm = if status.mailer_autoconfirm {
+        "autoconfirm:on"
+    } else {
+        "autoconfirm:off"
+    };
+    format!("{email}, {signup}, {confirm}")
 }
 
 fn env_var_trimmed(name: &str) -> Option<String> {

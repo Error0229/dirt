@@ -7,6 +7,9 @@ use keyring_core::{CredentialStore, Entry, Error as KeyringError};
 const SECRET_SERVICE_NAME: &str = "dirt-mobile";
 /// Secret key used for the Turso auth token in secure storage.
 pub const SECRET_TURSO_AUTH_TOKEN: &str = "turso_auth_token";
+/// Secret key used for the serialized Supabase session payload.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub const SECRET_SUPABASE_SESSION: &str = "supabase_session";
 
 type SecretResult<T> = Result<T, String>;
 
