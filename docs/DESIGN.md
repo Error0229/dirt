@@ -214,8 +214,8 @@ dirt/
 | ID | Feature | Priority | Status | Blocks |
 |----|---------|----------|--------|--------|
 | F5.8 | Mobile bootstrap config (public values only) | P0 | Todo (`#149`) | F4.1, F2.3 |
-| F5.9 | Token exchange API (Supabase JWT -> short-lived Turso token) | P0 | Todo (`#154`) | F5.8 |
-| F5.10 | Media signing API (presigned upload/download/delete) | P0 | Todo (`#154`, `#150`) | F5.1, F2.3 |
+| F5.9 | Token exchange API (Supabase JWT -> short-lived Turso token) | P0 | In Progress (`#154`) | F5.8 |
+| F5.10 | Media signing API (presigned upload/download/delete) | P0 | In Progress (`#154`, `#150`) | F5.1, F2.3 |
 | F5.11 | Remove runtime env dependency from mobile prod path | P0 | Todo (`#149`, `#151`) | F5.8, F5.9 |
 | F5.12 | Replace mobile R2 client-secret flow with presigned flow | P0 | Todo (`#150`) | F5.10 |
 | F5.13 | Settings UX: user-centric provisioning states (no raw env names) | P1 | Todo (`#151`) | F5.11 |
@@ -555,6 +555,7 @@ Desktop apps will use GitHub Releases as the update source with Tauri-style upda
 
 **Reference**:
 - `docs/SECURITY_BASELINE.md` (threat model, credential policy, incident response, CI guardrails)
+- `docs/BACKEND_API.md` (token broker and media-signing API contract)
 
 ---
 
