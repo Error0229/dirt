@@ -44,7 +44,10 @@ enum MobileSyncState {
 }
 
 struct MobileConfigDiagnostics {
-    turso_sync_configured: bool,
+    auth_bootstrap_configured: bool,
+    runtime_sync_url_configured: bool,
+    managed_sync_endpoint_configured: bool,
+    managed_media_configured: bool,
     turso_active_source: String,
     turso_managed_auth_endpoint: String,
     turso_runtime_endpoint: String,
@@ -55,6 +58,15 @@ struct MobileConfigDiagnostics {
     r2_bucket: String,
     r2_endpoint: String,
     r2_credentials_status: String,
+}
+
+struct MobileProvisioningStatus {
+    auth_status: String,
+    auth_action: Option<String>,
+    sync_status: String,
+    sync_action: Option<String>,
+    media_status: String,
+    media_action: Option<String>,
 }
 
 const KIB_BYTES: u64 = 1024;
@@ -1078,6 +1090,13 @@ fn AppShell() -> Element {
         auth_config_status(),
         &bootstrap_config,
     );
+    let current_auth_session = auth_session();
+    let provisioning = mobile_provisioning_status(
+        &diagnostics,
+        current_auth_session.as_ref(),
+        sync_state(),
+        sync_scheduler_active(),
+    );
     let heading = if view() == MobileView::Settings {
         "Settings"
     } else {
@@ -1097,7 +1116,7 @@ fn AppShell() -> Element {
     };
     let pending_sync_count_value = pending_sync_count();
     let pending_sync_preview = format_pending_title(&pending_sync_note_ids());
-    let auth_session_summary = auth_session()
+    let auth_session_summary = current_auth_session
         .as_ref()
         .map(|session| {
             session
@@ -1497,15 +1516,13 @@ fn AppShell() -> Element {
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #6b7280;",
-                            if diagnostics.turso_sync_configured {
-                                "Mode: remote sync configured"
-                            } else {
-                                "Mode: local-only (no Turso sync config)"
-                            }
+                            "Provisioning: {provisioning.sync_status}"
                         }
-                        p {
-                            style: "margin: 0; font-size: 12px; color: #6b7280;",
-                            "Config source: {diagnostics.turso_active_source}"
+                        if let Some(sync_action) = provisioning.sync_action.as_ref() {
+                            p {
+                                style: "margin: 0; font-size: 12px; color: #6b7280;",
+                                "{sync_action}"
+                            }
                         }
                     }
 
@@ -1827,43 +1844,86 @@ fn AppShell() -> Element {
                                 text-transform: uppercase;
                                 letter-spacing: 0.04em;
                             ",
-                            "Configuration diagnostics"
+                            "Provisioning status"
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Turso runtime endpoint: {diagnostics.turso_runtime_endpoint}"
+                            "Auth: {provisioning.auth_status}"
+                        }
+                        if let Some(auth_action) = provisioning.auth_action.as_ref() {
+                            p {
+                                style: "margin: 0; font-size: 12px; color: #6b7280;",
+                                "{auth_action}"
+                            }
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Turso runtime token: {diagnostics.turso_runtime_token_status}"
+                            "Sync: {provisioning.sync_status}"
+                        }
+                        if let Some(sync_action) = provisioning.sync_action.as_ref() {
+                            p {
+                                style: "margin: 0; font-size: 12px; color: #6b7280;",
+                                "{sync_action}"
+                            }
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Managed token endpoint: {diagnostics.turso_managed_auth_endpoint}"
+                            "Media: {provisioning.media_status}"
                         }
-                        p {
-                            style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Supabase URL: {diagnostics.supabase_url}"
+                        if let Some(media_action) = provisioning.media_action.as_ref() {
+                            p {
+                                style: "margin: 0; font-size: 12px; color: #6b7280;",
+                                "{media_action}"
+                            }
                         }
-                        p {
-                            style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Supabase anon key: {diagnostics.supabase_anon_key_status}"
-                        }
-                        p {
-                            style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Supabase auth config: {diagnostics.supabase_auth_status}"
-                        }
-                        p {
-                            style: "margin: 0; font-size: 12px; color: #374151;",
-                            "R2 bucket: {diagnostics.r2_bucket}"
-                        }
-                        p {
-                            style: "margin: 0; font-size: 12px; color: #374151;",
-                            "R2 endpoint: {diagnostics.r2_endpoint}"
-                        }
-                        p {
-                            style: "margin: 0; font-size: 12px; color: #374151;",
-                            "R2 credentials: {diagnostics.r2_credentials_status}"
+                        if cfg!(debug_assertions) {
+                            div {
+                                style: "margin-top: 8px; padding-top: 8px; border-top: 1px dashed #d1d5db; display: flex; flex-direction: column; gap: 6px;",
+                                p {
+                                    style: "margin: 0; font-size: 11px; color: #6b7280; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;",
+                                    "Developer diagnostics (debug)"
+                                }
+                                p {
+                                    style: "margin: 0; font-size: 12px; color: #374151;",
+                                    "Turso runtime endpoint: {diagnostics.turso_runtime_endpoint}"
+                                }
+                                p {
+                                    style: "margin: 0; font-size: 12px; color: #374151;",
+                                    "Turso runtime token: {diagnostics.turso_runtime_token_status}"
+                                }
+                                p {
+                                    style: "margin: 0; font-size: 12px; color: #374151;",
+                                    "Managed token endpoint: {diagnostics.turso_managed_auth_endpoint}"
+                                }
+                                p {
+                                    style: "margin: 0; font-size: 12px; color: #374151;",
+                                    "Config source: {diagnostics.turso_active_source}"
+                                }
+                                p {
+                                    style: "margin: 0; font-size: 12px; color: #374151;",
+                                    "Supabase URL: {diagnostics.supabase_url}"
+                                }
+                                p {
+                                    style: "margin: 0; font-size: 12px; color: #374151;",
+                                    "Supabase anon key: {diagnostics.supabase_anon_key_status}"
+                                }
+                                p {
+                                    style: "margin: 0; font-size: 12px; color: #374151;",
+                                    "Supabase auth config: {diagnostics.supabase_auth_status}"
+                                }
+                                p {
+                                    style: "margin: 0; font-size: 12px; color: #374151;",
+                                    "Media bucket status: {diagnostics.r2_bucket}"
+                                }
+                                p {
+                                    style: "margin: 0; font-size: 12px; color: #374151;",
+                                    "Media endpoint: {diagnostics.r2_endpoint}"
+                                }
+                                p {
+                                    style: "margin: 0; font-size: 12px; color: #374151;",
+                                    "Media credentials: {diagnostics.r2_credentials_status}"
+                                }
+                            }
                         }
                     }
                 }
@@ -2452,16 +2512,23 @@ fn mobile_config_diagnostics(
     bootstrap_config: &MobileBootstrapConfig,
 ) -> MobileConfigDiagnostics {
     let runtime_config = load_runtime_config();
+    let runtime_sync_url_configured = runtime_config.has_sync_url();
     let turso_runtime_url = runtime_config.turso_database_url;
     let turso_runtime_token_status = runtime_turso_token_status();
     let managed_sync_endpoint = bootstrap_config.turso_sync_token_endpoint.clone();
     let supabase_url = bootstrap_config.supabase_url.clone();
     let supabase_anon_key_set = bootstrap_config.supabase_anon_key.is_some();
+    let auth_bootstrap_configured = supabase_url.is_some() && supabase_anon_key_set;
 
     let managed_api_base = bootstrap_config.managed_api_base_url();
+    let managed_sync_endpoint_configured = managed_sync_endpoint.is_some();
+    let managed_media_configured = managed_api_base.is_some();
 
     MobileConfigDiagnostics {
-        turso_sync_configured: !matches!(active_sync_source, SyncConfigSource::None),
+        auth_bootstrap_configured,
+        runtime_sync_url_configured,
+        managed_sync_endpoint_configured,
+        managed_media_configured,
         turso_active_source: sync_config_source_label(active_sync_source).to_string(),
         turso_managed_auth_endpoint: managed_sync_endpoint
             .as_deref()
@@ -2480,7 +2547,7 @@ fn mobile_config_diagnostics(
         supabase_auth_status: auth_config
             .map(auth_config_summary)
             .unwrap_or_else(|| "unknown".to_string()),
-        r2_bucket: if managed_api_base.is_some() {
+        r2_bucket: if managed_media_configured {
             "managed (backend)".to_string()
         } else {
             "not set".to_string()
@@ -2489,11 +2556,91 @@ fn mobile_config_diagnostics(
             .as_deref()
             .map(mask_endpoint_value)
             .unwrap_or_else(|| "not set".to_string()),
-        r2_credentials_status: if managed_api_base.is_some() {
+        r2_credentials_status: if managed_media_configured {
             "managed (backend)".to_string()
         } else {
             "not set".to_string()
         },
+    }
+}
+
+fn mobile_provisioning_status(
+    diagnostics: &MobileConfigDiagnostics,
+    auth_session: Option<&AuthSession>,
+    sync_state: MobileSyncState,
+    sync_scheduler_active: bool,
+) -> MobileProvisioningStatus {
+    let signed_in = auth_session.is_some();
+
+    let (auth_status, auth_action) = if !diagnostics.auth_bootstrap_configured {
+        (
+            "Unavailable".to_string(),
+            Some("This build is missing auth provisioning.".to_string()),
+        )
+    } else if signed_in {
+        ("Configured and signed in".to_string(), None)
+    } else {
+        (
+            "Configured (sign in required)".to_string(),
+            Some("Sign in to enable cloud sync and attachment access.".to_string()),
+        )
+    };
+
+    let (sync_status, sync_action) = if !diagnostics.runtime_sync_url_configured {
+        (
+            "Local-only".to_string(),
+            Some("Add your Turso URL in Sync settings to enable cloud sync.".to_string()),
+        )
+    } else if !diagnostics.managed_sync_endpoint_configured {
+        (
+            "Unavailable".to_string(),
+            Some("This build is missing managed sync provisioning.".to_string()),
+        )
+    } else if !signed_in {
+        (
+            "Waiting for sign-in".to_string(),
+            Some("Sign in to fetch short-lived sync credentials.".to_string()),
+        )
+    } else if sync_scheduler_active {
+        match sync_state {
+            MobileSyncState::Synced => ("Active".to_string(), None),
+            MobileSyncState::Syncing => ("Connecting".to_string(), None),
+            MobileSyncState::Error => (
+                "Retrying automatically".to_string(),
+                Some("Sync failures are retried in the background.".to_string()),
+            ),
+            MobileSyncState::Offline => ("Connecting".to_string(), None),
+        }
+    } else if sync_state == MobileSyncState::Error {
+        (
+            "Retrying automatically".to_string(),
+            Some("Sync failures are retried in the background.".to_string()),
+        )
+    } else {
+        ("Paused".to_string(), None)
+    };
+
+    let (media_status, media_action) = if !diagnostics.managed_media_configured {
+        (
+            "Unavailable".to_string(),
+            Some("Attachment cloud operations are not provisioned for this build.".to_string()),
+        )
+    } else if !signed_in {
+        (
+            "Configured (sign in required)".to_string(),
+            Some("Sign in to upload, open, or delete cloud attachments.".to_string()),
+        )
+    } else {
+        ("Available".to_string(), None)
+    };
+
+    MobileProvisioningStatus {
+        auth_status,
+        auth_action,
+        sync_status,
+        sync_action,
+        media_status,
+        media_action,
     }
 }
 
@@ -2663,6 +2810,37 @@ fn relative_time(updated_at_ms: i64) -> String {
 mod tests {
     use super::*;
 
+    fn diagnostics_fixture() -> MobileConfigDiagnostics {
+        MobileConfigDiagnostics {
+            auth_bootstrap_configured: true,
+            runtime_sync_url_configured: true,
+            managed_sync_endpoint_configured: true,
+            managed_media_configured: true,
+            turso_active_source: "runtime settings".to_string(),
+            turso_managed_auth_endpoint: "https://api.example.com".to_string(),
+            turso_runtime_endpoint: "libsql://example.turso.io".to_string(),
+            turso_runtime_token_status: "configured".to_string(),
+            supabase_url: "https://project.supabase.co".to_string(),
+            supabase_anon_key_status: "configured".to_string(),
+            supabase_auth_status: "email:on, signup:on, autoconfirm:off".to_string(),
+            r2_bucket: "managed (backend)".to_string(),
+            r2_endpoint: "https://api.example.com".to_string(),
+            r2_credentials_status: "managed (backend)".to_string(),
+        }
+    }
+
+    fn auth_session_fixture() -> AuthSession {
+        AuthSession {
+            access_token: "access".to_string(),
+            refresh_token: "refresh".to_string(),
+            expires_at: i64::MAX,
+            user: crate::auth::AuthUser {
+                id: "user-id".to_string(),
+                email: Some("test@example.com".to_string()),
+            },
+        }
+    }
+
     #[test]
     fn formats_attachment_sizes_for_mobile_ui() {
         assert_eq!(format_attachment_size(800), "800 B");
@@ -2746,5 +2924,34 @@ mod tests {
     fn sanitizes_media_token() {
         assert_eq!(sanitize_media_token(" My  File__Name "), "my-file-name");
         assert_eq!(sanitize_media_token("..."), "");
+    }
+
+    #[test]
+    fn provisioning_status_prompts_for_sign_in() {
+        let diagnostics = diagnostics_fixture();
+        let status =
+            mobile_provisioning_status(&diagnostics, None, MobileSyncState::Offline, false);
+
+        assert_eq!(status.auth_status, "Configured (sign in required)");
+        assert_eq!(status.sync_status, "Waiting for sign-in");
+        assert_eq!(status.media_status, "Configured (sign in required)");
+        assert!(status.auth_action.is_some());
+        assert!(status.sync_action.is_some());
+        assert!(status.media_action.is_some());
+    }
+
+    #[test]
+    fn provisioning_status_reports_active_when_ready() {
+        let diagnostics = diagnostics_fixture();
+        let session = auth_session_fixture();
+        let status =
+            mobile_provisioning_status(&diagnostics, Some(&session), MobileSyncState::Synced, true);
+
+        assert_eq!(status.auth_status, "Configured and signed in");
+        assert_eq!(status.sync_status, "Active");
+        assert_eq!(status.media_status, "Available");
+        assert!(status.auth_action.is_none());
+        assert!(status.sync_action.is_none());
+        assert!(status.media_action.is_none());
     }
 }
