@@ -912,9 +912,10 @@ fn format_auth_config_status(status: AuthConfigStatus) -> String {
 }
 
 fn format_sync_conflict_timestamp(timestamp_ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(timestamp_ms)
-        .map(|date_time| date_time.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-        .unwrap_or_else(|| timestamp_ms.to_string())
+    chrono::DateTime::from_timestamp_millis(timestamp_ms).map_or_else(
+        || timestamp_ms.to_string(),
+        |date_time| date_time.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+    )
 }
 
 #[cfg(test)]

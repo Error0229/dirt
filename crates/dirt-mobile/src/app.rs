@@ -2255,9 +2255,10 @@ fn render_attachment_preview(preview: AttachmentPreview, preview_title: &str) ->
 }
 
 fn format_sync_conflict_time(timestamp_ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(timestamp_ms)
-        .map(|date_time| date_time.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-        .unwrap_or_else(|| timestamp_ms.to_string())
+    chrono::DateTime::from_timestamp_millis(timestamp_ms).map_or_else(
+        || timestamp_ms.to_string(),
+        |date_time| date_time.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+    )
 }
 
 fn sync_state_label(state: MobileSyncState, last_sync_at: Option<i64>) -> String {

@@ -602,9 +602,10 @@ fn format_sync_conflict_lines(conflicts: &[SyncConflict]) -> Vec<String> {
 }
 
 fn format_sync_timestamp(timestamp_ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(timestamp_ms)
-        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-        .unwrap_or_else(|| timestamp_ms.to_string())
+    chrono::DateTime::from_timestamp_millis(timestamp_ms).map_or_else(
+        || timestamp_ms.to_string(),
+        |dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+    )
 }
 
 fn format_relative_time(timestamp_ms: i64, now_ms: i64) -> String {
