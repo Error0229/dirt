@@ -185,7 +185,7 @@ mod tests {
     fn sync_token_debug_redacts_token() {
         let token = SyncToken {
             token: "sensitive-token".to_string(),
-            expires_at: 1700000000,
+            expires_at: 1_700_000_000,
         };
         let debug_output = format!("{token:?}");
         assert!(!debug_output.contains("sensitive-token"));
