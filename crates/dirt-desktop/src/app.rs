@@ -6,11 +6,15 @@ use std::time::Duration;
 
 use dioxus::desktop::{window, LogicalPosition, LogicalSize};
 use dioxus::prelude::*;
+use dirt_core::db::SyncConfig;
 use dirt_core::models::Note;
 
+use crate::bootstrap_config::load_bootstrap_config;
 use crate::components::{QuickCapture, SettingsPanel};
 use crate::queries::use_notes_query;
-use crate::services::{AuthSession, DatabaseService, SupabaseAuthService};
+use crate::services::{
+    AuthSession, DatabaseService, MediaApiClient, SupabaseAuthService, TursoSyncAuthClient,
+};
 use crate::state::{AppState, SyncStatus};
 use crate::theme::{resolve_theme, ResolvedTheme};
 use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
@@ -32,14 +36,17 @@ pub fn App() -> Element {
     let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
     let mut db_service: Signal<Option<Arc<DatabaseService>>> = use_signal(|| None);
     let mut auth_service: Signal<Option<Arc<SupabaseAuthService>>> = use_signal(|| None);
+    let mut sync_auth_client: Signal<Option<Arc<TursoSyncAuthClient>>> = use_signal(|| None);
+    let mut media_api_client: Signal<Option<Arc<MediaApiClient>>> = use_signal(|| None);
     let mut auth_session: Signal<Option<AuthSession>> = use_signal(|| None);
     let mut auth_error: Signal<Option<String>> = use_signal(|| None);
-    let mut db_initialized = use_signal(|| false);
+    let mut db_reconnect_version = use_signal(|| 0u64);
     let mut auth_initialized = use_signal(|| false);
     let mut sync_status = use_signal(|| SyncStatus::Offline);
     let mut last_sync_at = use_signal(|| None::<i64>);
     let mut pending_sync_count = use_signal(|| 0usize);
     let mut pending_sync_note_ids = use_signal(Vec::new);
+    let bootstrap_config = load_bootstrap_config();
 
     // Initialize authentication service and restore persisted session.
     use_effect(move || {
@@ -47,15 +54,41 @@ pub fn App() -> Element {
             return;
         }
         auth_initialized.set(true);
+        let bootstrap = bootstrap_config.clone();
 
         spawn(async move {
-            match SupabaseAuthService::new_from_env() {
+            match TursoSyncAuthClient::new_from_bootstrap(&bootstrap) {
+                Ok(Some(client)) => sync_auth_client.set(Some(Arc::new(client))),
+                Ok(None) => sync_auth_client.set(None),
+                Err(error) => {
+                    tracing::warn!("Managed sync auth bootstrap is invalid: {}", error);
+                    sync_auth_client.set(None);
+                }
+            }
+
+            match MediaApiClient::new_from_bootstrap(&bootstrap) {
+                Ok(Some(client)) => media_api_client.set(Some(Arc::new(client))),
+                Ok(None) => media_api_client.set(None),
+                Err(error) => {
+                    tracing::warn!("Managed media bootstrap is invalid: {}", error);
+                    media_api_client.set(None);
+                }
+            }
+
+            let service_result = match SupabaseAuthService::new_from_bootstrap(&bootstrap) {
+                Ok(Some(service)) => Ok(Some(service)),
+                Ok(None) => SupabaseAuthService::new_from_env(),
+                Err(error) => Err(error),
+            };
+
+            match service_result {
                 Ok(Some(service)) => {
                     let service = Arc::new(service);
                     match service.restore_session().await {
                         Ok(session) => {
                             auth_session.set(session);
                             auth_error.set(None);
+                            db_reconnect_version.set(db_reconnect_version().saturating_add(1));
                         }
                         Err(error) => {
                             tracing::error!("Failed to restore auth session: {}", error);
@@ -76,51 +109,66 @@ pub fn App() -> Element {
         });
     });
 
-    // Initialize database asynchronously (only once)
-    use_effect(move || {
-        if db_initialized() {
-            return;
-        }
-        db_initialized.set(true);
+    // Initialize or reconnect database when auth/session context changes.
+    use_future(move || async move {
+        let _db_reconnect_version = db_reconnect_version();
+        let current_session = auth_session();
+        let managed_sync_client = sync_auth_client.read().clone();
 
-        spawn(async move {
-            match DatabaseService::new().await {
-                Ok(db) => {
-                    let db = Arc::new(db);
-
-                    // Load initial settings
-                    let loaded_settings = db.load_settings().await.unwrap_or_default();
-                    let resolved_theme = resolve_theme(loaded_settings.theme);
-
-                    // Update state
-                    settings.set(loaded_settings);
-                    theme.set(resolved_theme);
-
-                    if db.is_sync_enabled().await {
-                        sync_status.set(SyncStatus::Syncing);
-                        match db.sync().await {
-                            Ok(()) => {
-                                sync_status.set(SyncStatus::Synced);
-                                last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
-                                pending_sync_count.set(0);
-                                pending_sync_note_ids.write().clear();
-                            }
-                            Err(error) => {
-                                tracing::error!("Initial sync failed: {}", error);
-                                sync_status.set(SyncStatus::Error);
-                            }
-                        }
-                    } else {
-                        sync_status.set(SyncStatus::Offline);
+        let db_result =
+            if let (Some(client), Some(session)) = (managed_sync_client, current_session) {
+                match client.exchange_token(&session.access_token).await {
+                    Ok(token) => {
+                        let sync_config = SyncConfig::new(token.database_url, token.token);
+                        DatabaseService::new_with_sync(sync_config).await
                     }
+                    Err(error) => {
+                        tracing::warn!(
+                        "Managed sync token exchange failed; falling back to local/env mode: {}",
+                        error
+                    );
+                        DatabaseService::new().await
+                    }
+                }
+            } else {
+                DatabaseService::new().await
+            };
 
-                    db_service.set(Some(db));
+        match db_result {
+            Ok(db) => {
+                let db = Arc::new(db);
+
+                let loaded_settings = db.load_settings().await.unwrap_or_default();
+                let resolved_theme = resolve_theme(loaded_settings.theme);
+                settings.set(loaded_settings);
+                theme.set(resolved_theme);
+
+                if db.is_sync_enabled().await {
+                    sync_status.set(SyncStatus::Syncing);
+                    match db.sync().await {
+                        Ok(()) => {
+                            sync_status.set(SyncStatus::Synced);
+                            last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
+                            pending_sync_count.set(0);
+                            pending_sync_note_ids.write().clear();
+                        }
+                        Err(error) => {
+                            tracing::error!("Initial sync failed: {}", error);
+                            sync_status.set(SyncStatus::Error);
+                        }
+                    }
+                } else {
+                    sync_status.set(SyncStatus::Offline);
                 }
-                Err(e) => {
-                    tracing::error!("Failed to initialize database: {}", e);
-                }
+
+                db_service.set(Some(db));
             }
-        });
+            Err(error) => {
+                tracing::error!("Failed to initialize database: {}", error);
+                sync_status.set(SyncStatus::Error);
+                db_service.set(None);
+            }
+        }
     });
 
     // Periodically sync and update sync status metadata.
@@ -269,8 +317,10 @@ pub fn App() -> Element {
         theme,
         db_service,
         auth_service,
+        media_api_client,
         auth_session,
         auth_error,
+        db_reconnect_version,
         sync_status,
         last_sync_at,
         pending_sync_count,

@@ -8,6 +8,8 @@ use reqwest::{Client, RequestBuilder, StatusCode};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::bootstrap_config::{normalize_text_option, DesktopBootstrapConfig};
+
 const KEYRING_SERVICE_NAME: &str = "dirt";
 const KEYRING_SESSION_USERNAME: &str = "supabase_session";
 const EXPIRY_SKEW_SECONDS: i64 = 60;
@@ -86,7 +88,7 @@ pub struct AuthConfigStatus {
 /// Errors from authentication and secure storage flows.
 #[derive(Debug, Error)]
 pub enum AuthError {
-    #[error("Supabase auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY.")]
+    #[error("Supabase auth is not configured for this build.")]
     NotConfigured,
     #[error("Invalid auth configuration: {0}")]
     InvalidConfiguration(&'static str),
@@ -158,6 +160,21 @@ pub struct SupabaseAuthService {
 }
 
 impl SupabaseAuthService {
+    /// Create a service from desktop bootstrap config.
+    pub fn new_from_bootstrap(config: &DesktopBootstrapConfig) -> AuthResult<Option<Self>> {
+        let url = normalize_text_option(config.supabase_url.clone());
+        let anon_key = normalize_text_option(config.supabase_anon_key.clone());
+
+        match (url, anon_key) {
+            (None, None) => Ok(None),
+            (Some(url), Some(anon_key)) => {
+                let service = Self::new(url, anon_key)?;
+                Ok(Some(service))
+            }
+            _ => Err(AuthError::NotConfigured),
+        }
+    }
+
     /// Create a service from `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
     pub fn new_from_env() -> AuthResult<Option<Self>> {
         let url = std::env::var("SUPABASE_URL").ok();
@@ -179,7 +196,7 @@ impl SupabaseAuthService {
         let anon_key = anon_key.into().trim().to_string();
         if anon_key.is_empty() {
             return Err(AuthError::InvalidConfiguration(
-                "SUPABASE_ANON_KEY must not be empty",
+                "Supabase anon key must not be empty",
             ));
         }
 
@@ -458,12 +475,12 @@ fn normalize_auth_url(url: &str) -> AuthResult<String> {
     let trimmed = url.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return Err(AuthError::InvalidConfiguration(
-            "SUPABASE_URL must not be empty",
+            "Supabase URL must not be empty",
         ));
     }
     if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
         return Err(AuthError::InvalidConfiguration(
-            "SUPABASE_URL must include http:// or https://",
+            "Supabase URL must include http:// or https://",
         ));
     }
 
