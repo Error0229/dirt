@@ -2,6 +2,10 @@
 //!
 //! Quick capture from the terminal with minimal friction.
 
+mod auth;
+mod config_profiles;
+mod managed_sync;
+
 use std::env;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -18,6 +22,12 @@ use dirt_core::{Note, NoteId, SyncConflict};
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::auth::{clear_stored_session, load_stored_session, SupabaseAuthService};
+use crate::config_profiles::{
+    is_http_url, normalize_profile_name, normalize_text_option, CliProfilesConfig,
+};
+use crate::managed_sync::ManagedSyncAuthClient;
+
 #[derive(Parser)]
 #[command(name = "dirt")]
 #[command(about = "Capture fleeting thoughts from the command line")]
@@ -29,6 +39,10 @@ struct Cli {
     /// Optional path to local database file
     #[arg(long, value_name = "PATH")]
     db_path: Option<PathBuf>,
+
+    /// CLI profile name for managed auth/sync configuration
+    #[arg(long, global = true, value_name = "NAME")]
+    profile: Option<String>,
 
     /// Quick capture: dirt "my thought here"
     #[arg(trailing_var_arg = true)]
@@ -99,6 +113,16 @@ enum Commands {
         #[command(subcommand)]
         command: Option<SyncCommands>,
     },
+    /// Configure CLI managed profiles
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+    /// Authenticate CLI profile with Supabase
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommands,
+    },
     /// Open TUI interface
     Tui,
 }
@@ -129,8 +153,14 @@ enum CliError {
     EditorFailed(String),
     #[error("Database initialization failed: {0}")]
     DatabaseInit(String),
+    #[error("Configuration error: {0}")]
+    Config(String),
+    #[error("Authentication error: {0}")]
+    Auth(String),
+    #[error("Managed sync error: {0}")]
+    ManagedSync(String),
     #[error(
-        "Sync is not configured. Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN to enable `dirt sync`."
+        "Sync is not configured. Run `dirt config init` + `dirt auth login`, or set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN for advanced env mode."
     )]
     SyncNotConfigured,
 }
@@ -161,6 +191,59 @@ enum SyncCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum ConfigCommands {
+    /// Initialize or update profile config
+    Init {
+        /// Profile name to initialize
+        #[arg(long, value_name = "NAME")]
+        profile: Option<String>,
+        /// Supabase project URL
+        #[arg(long, value_name = "URL")]
+        supabase_url: Option<String>,
+        /// Supabase anon/public key
+        #[arg(long, value_name = "KEY")]
+        supabase_anon_key: Option<String>,
+        /// Backend sync token exchange endpoint
+        #[arg(long, value_name = "URL")]
+        sync_token_endpoint: Option<String>,
+        /// Optional managed API base URL
+        #[arg(long, value_name = "URL")]
+        api_base_url: Option<String>,
+        /// Keep current active profile instead of activating this one
+        #[arg(long)]
+        no_activate: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AuthCommands {
+    /// Login with Supabase email/password and store session in keychain
+    Login {
+        /// Optional profile override
+        #[arg(long, value_name = "NAME")]
+        profile: Option<String>,
+        /// Supabase account email
+        #[arg(long, value_name = "EMAIL")]
+        email: String,
+        /// Supabase account password
+        #[arg(long, value_name = "PASSWORD")]
+        password: String,
+    },
+    /// Show auth status for profile
+    Status {
+        /// Optional profile override
+        #[arg(long, value_name = "NAME")]
+        profile: Option<String>,
+    },
+    /// Logout profile and clear stored session
+    Logout {
+        /// Optional profile override
+        #[arg(long, value_name = "NAME")]
+        profile: Option<String>,
+    },
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -181,6 +264,10 @@ async fn run() -> Result<(), CliError> {
 
     let cli = Cli::parse();
     let db_path = resolve_db_path(cli.db_path);
+    let global_profile = normalize_profile_name(cli.profile.as_deref());
+    if let Some(profile) = &global_profile {
+        env::set_var("DIRT_PROFILE", profile);
+    }
 
     match cli.command {
         Some(Commands::Add { content }) => run_add(&content, &db_path).await?,
@@ -204,6 +291,12 @@ async fn run() -> Result<(), CliError> {
             }
             None => run_sync(&db_path).await?,
         },
+        Some(Commands::Config { command }) => {
+            run_config(command, global_profile.as_deref())?;
+        }
+        Some(Commands::Auth { command }) => {
+            run_auth(command, global_profile.as_deref()).await?;
+        }
         Some(Commands::Tui) => {
             println!("Opening TUI...");
             // TODO: Implement TUI with ratatui
@@ -219,6 +312,222 @@ async fn run() -> Result<(), CliError> {
         }
     }
 
+    Ok(())
+}
+
+fn run_config(command: ConfigCommands, global_profile: Option<&str>) -> Result<(), CliError> {
+    match command {
+        ConfigCommands::Init {
+            profile,
+            supabase_url,
+            supabase_anon_key,
+            sync_token_endpoint,
+            api_base_url,
+            no_activate,
+        } => run_config_init(
+            profile.as_deref().or(global_profile),
+            supabase_url,
+            supabase_anon_key,
+            sync_token_endpoint,
+            api_base_url,
+            no_activate,
+        ),
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn run_config_init(
+    profile_name: Option<&str>,
+    supabase_url: Option<String>,
+    supabase_anon_key: Option<String>,
+    sync_token_endpoint: Option<String>,
+    api_base_url: Option<String>,
+    no_activate: bool,
+) -> Result<(), CliError> {
+    let mut config = CliProfilesConfig::load().map_err(CliError::Config)?;
+    let profile_name = config.resolve_profile_name(profile_name);
+
+    let merged_supabase_url = normalize_text_option(supabase_url)
+        .or_else(|| normalize_text_option(env::var("SUPABASE_URL").ok()));
+    let merged_supabase_anon_key = normalize_text_option(supabase_anon_key)
+        .or_else(|| normalize_text_option(env::var("SUPABASE_ANON_KEY").ok()));
+    let merged_sync_token_endpoint = normalize_text_option(sync_token_endpoint)
+        .or_else(|| normalize_text_option(env::var("TURSO_SYNC_TOKEN_ENDPOINT").ok()));
+    let merged_api_base_url = normalize_text_option(api_base_url)
+        .or_else(|| normalize_text_option(env::var("DIRT_API_BASE_URL").ok()));
+
+    let profile = config.profile_mut_or_default(&profile_name);
+    if let Some(value) = merged_supabase_url {
+        profile.supabase_url = Some(value);
+    }
+    if let Some(value) = merged_supabase_anon_key {
+        profile.supabase_anon_key = Some(value);
+    }
+    if let Some(value) = merged_sync_token_endpoint {
+        profile.turso_sync_token_endpoint = Some(value);
+    }
+    if let Some(value) = merged_api_base_url {
+        profile.dirt_api_base_url = Some(value);
+    }
+
+    validate_profile_urls(profile)?;
+
+    if !no_activate {
+        config.active_profile = Some(profile_name.clone());
+    }
+
+    let path = config.save().map_err(CliError::Config)?;
+    println!(
+        "Profile '{}' initialized at {}",
+        profile_name,
+        path.display()
+    );
+
+    let profile = config
+        .profiles
+        .get(&profile_name)
+        .ok_or_else(|| CliError::Config("Failed to persist profile".to_string()))?;
+    let mut missing_fields = Vec::new();
+    if profile.supabase_url().is_none() {
+        missing_fields.push("supabase_url");
+    }
+    if profile.supabase_anon_key().is_none() {
+        missing_fields.push("supabase_anon_key");
+    }
+    if profile.managed_sync_endpoint().is_none() {
+        missing_fields.push("sync_token_endpoint");
+    }
+    if missing_fields.is_empty() {
+        println!(
+            "Managed sync profile '{profile_name}' is ready. Run `dirt auth login --email <email> --password <password>`."
+        );
+    } else {
+        println!(
+            "Profile '{}' is missing: {}",
+            profile_name,
+            missing_fields.join(", ")
+        );
+    }
+
+    Ok(())
+}
+
+async fn run_auth(command: AuthCommands, global_profile: Option<&str>) -> Result<(), CliError> {
+    match command {
+        AuthCommands::Login {
+            profile,
+            email,
+            password,
+        } => {
+            let config = CliProfilesConfig::load().map_err(CliError::Config)?;
+            let profile_name = config.resolve_profile_name(profile.as_deref().or(global_profile));
+            let profile_config = config.profiles.get(&profile_name).ok_or_else(|| {
+                CliError::Config(format!(
+                    "Profile '{profile_name}' is not configured. Run `dirt config init --profile {profile_name}` first."
+                ))
+            })?;
+            let auth_service = SupabaseAuthService::new_for_profile(&profile_name, profile_config)
+                .map_err(|error| CliError::Auth(error.to_string()))?
+                .ok_or_else(|| {
+                    CliError::Config(format!(
+                        "Profile '{profile_name}' missing Supabase auth config. Set SUPABASE_URL and SUPABASE_ANON_KEY via `dirt config init`."
+                    ))
+                })?;
+            let session = auth_service
+                .sign_in(&email, &password)
+                .await
+                .map_err(|error| CliError::Auth(error.to_string()))?;
+            let email_label = session.user.email.as_deref().unwrap_or("(no email)");
+            println!("Signed in profile '{profile_name}' as {email_label}");
+            Ok(())
+        }
+        AuthCommands::Status { profile } => {
+            let config = CliProfilesConfig::load().map_err(CliError::Config)?;
+            let profile_name = config.resolve_profile_name(profile.as_deref().or(global_profile));
+            let maybe_profile = config.profiles.get(&profile_name);
+            if maybe_profile.is_none() {
+                println!("Profile '{profile_name}' is not configured.");
+                return Ok(());
+            }
+
+            let profile = maybe_profile.expect("checked is_some");
+            let maybe_auth_service = SupabaseAuthService::new_for_profile(&profile_name, profile)
+                .map_err(|error| CliError::Auth(error.to_string()))?;
+            let session = if let Some(service) = maybe_auth_service {
+                service
+                    .restore_session()
+                    .await
+                    .map_err(|error| CliError::Auth(error.to_string()))?
+            } else {
+                load_stored_session(&profile_name)
+                    .map_err(|error| CliError::Auth(error.to_string()))?
+            };
+
+            if let Some(session) = session {
+                let email_label = session.user.email.as_deref().unwrap_or("(no email)");
+                println!(
+                    "Profile '{}' is signed in as {} (expires_at={})",
+                    profile_name, email_label, session.expires_at
+                );
+            } else {
+                println!("Profile '{profile_name}' is not signed in.");
+            }
+            Ok(())
+        }
+        AuthCommands::Logout { profile } => {
+            let config = CliProfilesConfig::load().map_err(CliError::Config)?;
+            let profile_name = config.resolve_profile_name(profile.as_deref().or(global_profile));
+            let maybe_profile = config.profiles.get(&profile_name);
+
+            let stored_session = load_stored_session(&profile_name)
+                .map_err(|error| CliError::Auth(error.to_string()))?;
+
+            if let Some(profile) = maybe_profile {
+                let maybe_auth_service =
+                    SupabaseAuthService::new_for_profile(&profile_name, profile)
+                        .map_err(|error| CliError::Auth(error.to_string()))?;
+                if let (Some(service), Some(session)) = (maybe_auth_service, stored_session) {
+                    service
+                        .sign_out(&session.access_token)
+                        .await
+                        .map_err(|error| CliError::Auth(error.to_string()))?;
+                } else {
+                    clear_stored_session(&profile_name)
+                        .map_err(|error| CliError::Auth(error.to_string()))?;
+                }
+            } else {
+                clear_stored_session(&profile_name)
+                    .map_err(|error| CliError::Auth(error.to_string()))?;
+            }
+
+            println!("Signed out profile '{profile_name}'");
+            Ok(())
+        }
+    }
+}
+
+fn validate_profile_urls(profile: &crate::config_profiles::CliProfile) -> Result<(), CliError> {
+    if let Some(url) = profile.supabase_url() {
+        if !is_http_url(&url) {
+            return Err(CliError::Config(
+                "supabase_url must include http:// or https://".to_string(),
+            ));
+        }
+    }
+    if let Some(url) = profile.managed_sync_endpoint() {
+        if !is_http_url(&url) {
+            return Err(CliError::Config(
+                "sync_token_endpoint must include http:// or https://".to_string(),
+            ));
+        }
+    }
+    if let Some(url) = normalize_text_option(profile.dirt_api_base_url.clone()) {
+        if !is_http_url(&url) {
+            return Err(CliError::Config(
+                "api_base_url must include http:// or https://".to_string(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -334,7 +643,7 @@ async fn run_delete(id: &str, db_path: &Path) -> Result<(), CliError> {
 }
 
 async fn run_sync(db_path: &Path) -> Result<(), CliError> {
-    let db = open_database(db_path).await?;
+    let db = open_database_with_mode(db_path, OpenDatabaseMode::RequireSync).await?;
     if !db.is_sync_enabled() {
         return Err(CliError::SyncNotConfigured);
     }
@@ -784,13 +1093,38 @@ fn sync_config_from_env() -> Option<SyncConfig> {
     Some(SyncConfig::new(url, auth_token))
 }
 
+#[derive(Clone, Copy)]
+enum OpenDatabaseMode {
+    Standard,
+    RequireSync,
+}
+
+impl OpenDatabaseMode {
+    const fn requires_sync(self) -> bool {
+        matches!(self, Self::RequireSync)
+    }
+}
+
 async fn open_database(path: &Path) -> Result<Database, CliError> {
+    open_database_with_mode(path, OpenDatabaseMode::Standard).await
+}
+
+async fn open_database_with_mode(
+    path: &Path,
+    mode: OpenDatabaseMode,
+) -> Result<Database, CliError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    if let Some(sync_config) = sync_config_from_env() {
+    let sync_config = if let Some(env_sync_config) = sync_config_from_env() {
         tracing::info!("Sync enabled with Turso");
+        Some(env_sync_config)
+    } else {
+        sync_config_from_profile(mode).await?
+    };
+
+    if let Some(sync_config) = sync_config {
         let path_buf = path.to_path_buf();
         let db = std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
@@ -809,6 +1143,74 @@ async fn open_database(path: &Path) -> Result<Database, CliError> {
     } else {
         Ok(Database::open(path).await?)
     }
+}
+
+async fn sync_config_from_profile(mode: OpenDatabaseMode) -> Result<Option<SyncConfig>, CliError> {
+    let config = CliProfilesConfig::load().map_err(CliError::Config)?;
+    let profile_name = config.resolve_profile_name(None);
+    let Some(profile) = config.profile(&profile_name) else {
+        return Ok(None);
+    };
+    let Some(endpoint) = profile.managed_sync_endpoint() else {
+        return Ok(None);
+    };
+
+    let maybe_auth_service = SupabaseAuthService::new_for_profile(&profile_name, profile)
+        .map_err(|error| CliError::Auth(error.to_string()))?;
+    let mut session = if let Some(service) = maybe_auth_service.as_ref() {
+        service
+            .restore_session()
+            .await
+            .map_err(|error| CliError::Auth(error.to_string()))?
+    } else {
+        load_stored_session(&profile_name).map_err(|error| CliError::Auth(error.to_string()))?
+    };
+
+    if let Some(stored) = session.as_ref() {
+        if stored.is_expired() {
+            if let Some(service) = maybe_auth_service {
+                session = service
+                    .refresh_session(&stored.refresh_token)
+                    .await
+                    .map(Some)
+                    .map_err(|error| CliError::Auth(error.to_string()))?;
+            } else {
+                clear_stored_session(&profile_name)
+                    .map_err(|error| CliError::Auth(error.to_string()))?;
+                session = None;
+            }
+        }
+    }
+
+    let Some(session) = session else {
+        if mode.requires_sync() {
+            return Err(CliError::SyncNotConfigured);
+        }
+        return Ok(None);
+    };
+
+    let sync_auth_client = ManagedSyncAuthClient::new(endpoint)
+        .map_err(|error| CliError::ManagedSync(error.to_string()))?;
+    let managed_token = match sync_auth_client.exchange_token(&session.access_token).await {
+        Ok(token) => token,
+        Err(error) => {
+            if mode.requires_sync() {
+                return Err(CliError::ManagedSync(error.to_string()));
+            }
+            tracing::warn!(
+                "Managed sync token exchange failed for profile '{}': {}",
+                profile_name,
+                error
+            );
+            return Ok(None);
+        }
+    };
+
+    tracing::info!("Managed sync enabled via profile '{}'", profile_name);
+    Ok(Some(SyncConfig::new(
+        managed_token.database_url,
+        managed_token.auth_token,
+    )))
 }
 
 #[cfg(test)]
