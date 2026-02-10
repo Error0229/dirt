@@ -28,6 +28,10 @@ pub struct AppConfig {
     pub turso_platform_api_token: String,
     pub turso_token_ttl: Duration,
     pub media_url_ttl: Duration,
+    pub auth_clock_skew: Duration,
+    pub rate_limit_window: Duration,
+    pub sync_token_rate_limit_per_window: u32,
+    pub media_presign_rate_limit_per_window: u32,
     pub r2: Option<R2RuntimeConfig>,
 }
 
@@ -68,6 +72,16 @@ impl fmt::Debug for AppConfig {
             .field("turso_platform_api_token", &"[REDACTED]")
             .field("turso_token_ttl", &self.turso_token_ttl)
             .field("media_url_ttl", &self.media_url_ttl)
+            .field("auth_clock_skew", &self.auth_clock_skew)
+            .field("rate_limit_window", &self.rate_limit_window)
+            .field(
+                "sync_token_rate_limit_per_window",
+                &self.sync_token_rate_limit_per_window,
+            )
+            .field(
+                "media_presign_rate_limit_per_window",
+                &self.media_presign_rate_limit_per_window,
+            )
             .field("r2", &self.r2)
             .finish()
     }
@@ -156,6 +170,62 @@ impl AppConfig {
             ));
         }
 
+        let auth_clock_skew_secs = value_or_default(&lookup, "AUTH_CLOCK_SKEW_SECS", "60")
+            .parse::<u64>()
+            .map_err(|_| {
+                ConfigError::Invalid(
+                    "AUTH_CLOCK_SKEW_SECS must be an integer in [0, 300]".to_string(),
+                )
+            })?;
+        if auth_clock_skew_secs > 300 {
+            return Err(ConfigError::Invalid(
+                "AUTH_CLOCK_SKEW_SECS must be in [0, 300]".to_string(),
+            ));
+        }
+
+        let rate_limit_window_secs = value_or_default(&lookup, "RATE_LIMIT_WINDOW_SECS", "60")
+            .parse::<u64>()
+            .map_err(|_| {
+                ConfigError::Invalid(
+                    "RATE_LIMIT_WINDOW_SECS must be an integer in [10, 3600]".to_string(),
+                )
+            })?;
+        if !(10..=3_600).contains(&rate_limit_window_secs) {
+            return Err(ConfigError::Invalid(
+                "RATE_LIMIT_WINDOW_SECS must be in [10, 3600]".to_string(),
+            ));
+        }
+
+        let sync_token_rate_limit_per_window =
+            value_or_default(&lookup, "SYNC_TOKEN_RATE_LIMIT_PER_WINDOW", "20")
+                .parse::<u32>()
+                .map_err(|_| {
+                    ConfigError::Invalid(
+                        "SYNC_TOKEN_RATE_LIMIT_PER_WINDOW must be an integer in [1, 1000]"
+                            .to_string(),
+                    )
+                })?;
+        if !(1..=1_000).contains(&sync_token_rate_limit_per_window) {
+            return Err(ConfigError::Invalid(
+                "SYNC_TOKEN_RATE_LIMIT_PER_WINDOW must be in [1, 1000]".to_string(),
+            ));
+        }
+
+        let media_presign_rate_limit_per_window =
+            value_or_default(&lookup, "MEDIA_PRESIGN_RATE_LIMIT_PER_WINDOW", "120")
+                .parse::<u32>()
+                .map_err(|_| {
+                    ConfigError::Invalid(
+                        "MEDIA_PRESIGN_RATE_LIMIT_PER_WINDOW must be an integer in [1, 5000]"
+                            .to_string(),
+                    )
+                })?;
+        if !(1..=5_000).contains(&media_presign_rate_limit_per_window) {
+            return Err(ConfigError::Invalid(
+                "MEDIA_PRESIGN_RATE_LIMIT_PER_WINDOW must be in [1, 5000]".to_string(),
+            ));
+        }
+
         let r2 = parse_r2_config(&lookup)?;
 
         Ok(Self {
@@ -172,6 +242,10 @@ impl AppConfig {
             turso_platform_api_token,
             turso_token_ttl: Duration::from_secs(turso_ttl_secs),
             media_url_ttl: Duration::from_secs(media_ttl_secs),
+            auth_clock_skew: Duration::from_secs(auth_clock_skew_secs),
+            rate_limit_window: Duration::from_secs(rate_limit_window_secs),
+            sync_token_rate_limit_per_window,
+            media_presign_rate_limit_per_window,
             r2,
         })
     }

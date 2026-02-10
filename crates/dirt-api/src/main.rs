@@ -2,6 +2,7 @@ mod auth;
 mod config;
 mod error;
 mod media;
+mod rate_limit;
 mod routes;
 mod turso;
 
