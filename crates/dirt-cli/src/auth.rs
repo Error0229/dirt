@@ -1,8 +1,8 @@
 //! CLI Supabase auth/session helpers with secure keychain persistence.
 
-use std::fmt;
 #[cfg(test)]
 use std::collections::HashMap;
+use std::fmt;
 #[cfg(test)]
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
