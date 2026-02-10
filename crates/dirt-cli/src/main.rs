@@ -886,7 +886,7 @@ mod tests {
         assert!(rendered[0].contains("incoming=100"));
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn list_notes_respects_limit_and_tag_filter() {
         let db_path = unique_test_db_path();
         {
@@ -912,7 +912,7 @@ mod tests {
         cleanup_db_files(&db_path);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn search_notes_finds_matches_with_limit() {
         let db_path = unique_test_db_path();
         {
@@ -954,7 +954,7 @@ mod tests {
         );
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn resolve_note_for_edit_supports_exact_and_prefix_id() {
         let db_path = unique_test_db_path();
         let db = Database::open(&db_path).await.unwrap();
@@ -990,7 +990,7 @@ mod tests {
         cleanup_db_files(&db_path);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn resolve_note_for_edit_rejects_ambiguous_prefix() {
         let db_path = unique_test_db_path();
         let db = Database::open(&db_path).await.unwrap();
@@ -1021,7 +1021,7 @@ mod tests {
         cleanup_db_files(&db_path);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn resolve_note_for_edit_rejects_missing_note() {
         let db_path = unique_test_db_path();
         let db = Database::open(&db_path).await.unwrap();
@@ -1034,7 +1034,7 @@ mod tests {
         cleanup_db_files(&db_path);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn run_delete_soft_deletes_note_by_exact_and_prefix_id() {
         let db_path = unique_test_db_path();
         let db = Database::open(&db_path).await.unwrap();
@@ -1079,7 +1079,7 @@ mod tests {
         cleanup_db_files(&db_path);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn run_sync_requires_sync_configuration() {
         let db_path = unique_test_db_path();
 
@@ -1115,7 +1115,7 @@ mod tests {
         assert!(rendered.contains("Hello export #tag"));
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn run_export_writes_json_file() {
         let db_path = unique_test_db_path();
         {
