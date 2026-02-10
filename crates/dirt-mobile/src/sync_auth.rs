@@ -8,6 +8,8 @@ use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::bootstrap_config::MobileBootstrapConfig;
+
 /// Short-lived Turso sync token minted by backend auth exchange.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SyncToken {
@@ -44,6 +46,14 @@ pub struct TursoSyncAuthClient {
 }
 
 impl TursoSyncAuthClient {
+    /// Create a token exchange client from bootstrap config.
+    pub fn new_from_bootstrap(config: &MobileBootstrapConfig) -> SyncAuthResult<Option<Self>> {
+        let Some(endpoint) = config.turso_sync_token_endpoint.clone() else {
+            return Ok(None);
+        };
+        Ok(Some(Self::new(endpoint)?))
+    }
+
     /// Create a token exchange client from `TURSO_SYNC_TOKEN_ENDPOINT`.
     pub fn new_from_env() -> SyncAuthResult<Option<Self>> {
         let Some(endpoint) = std::env::var("TURSO_SYNC_TOKEN_ENDPOINT").ok() else {
@@ -162,6 +172,7 @@ fn unix_timestamp_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bootstrap_config::MobileBootstrapConfig;
 
     #[test]
     fn normalize_endpoint_rejects_empty() {
@@ -190,5 +201,13 @@ mod tests {
         let debug_output = format!("{token:?}");
         assert!(!debug_output.contains("sensitive-token"));
         assert!(debug_output.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn new_from_bootstrap_returns_none_when_missing_endpoint() {
+        let config = MobileBootstrapConfig::default();
+        assert!(TursoSyncAuthClient::new_from_bootstrap(&config)
+            .unwrap()
+            .is_none());
     }
 }

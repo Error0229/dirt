@@ -13,6 +13,7 @@ use crate::attachments::{
     attachment_kind_label, build_attachment_preview, infer_attachment_mime_type, AttachmentPreview,
 };
 use crate::auth::{AuthConfigStatus, AuthSession, SignUpOutcome, SupabaseAuthService};
+use crate::bootstrap_config::{load_bootstrap_config, MobileBootstrapConfig};
 use crate::config::{
     load_runtime_config, resolve_sync_config, runtime_turso_token_status, save_runtime_config,
     MobileRuntimeConfig, SecretStatus, SyncConfigSource,
@@ -48,8 +49,6 @@ struct MobileConfigDiagnostics {
     turso_managed_auth_endpoint: String,
     turso_runtime_endpoint: String,
     turso_runtime_token_status: String,
-    turso_env_endpoint: String,
-    turso_env_token_status: String,
     supabase_url: String,
     supabase_anon_key_status: String,
     supabase_auth_status: String,
@@ -166,190 +165,199 @@ fn AppShell() -> Element {
     let mut export_busy = use_signal(|| false);
     let launch: Signal<LaunchIntent> = use_signal(crate::launch::detect_launch_intent_from_runtime);
     let mut launch_applied = use_signal(|| false);
+    let bootstrap_config = load_bootstrap_config();
     let toasts = use_toast();
 
-    use_future(move || async move {
-        let _db_init_retry_version = db_init_retry_version();
-        let runtime_config = load_runtime_config();
-        let runtime_has_sync_url = runtime_config.has_sync_url();
-        turso_database_url_input.set(
-            runtime_config
-                .turso_database_url
-                .clone()
-                .unwrap_or_default(),
-        );
-        let mut resolved_sync_config = resolve_sync_config();
-        active_sync_source.set(resolved_sync_config.source);
-        auth_service.set(None);
-        auth_session.set(None);
-        auth_config_status.set(None);
-        sync_auth_client.set(None);
-        sync_token_expires_at.set(None);
+    let bootstrap_config_for_init = bootstrap_config.clone();
+    use_future(move || {
+        let bootstrap_config = bootstrap_config_for_init.clone();
+        async move {
+            let _db_init_retry_version = db_init_retry_version();
+            let runtime_config = load_runtime_config();
+            let runtime_has_sync_url = runtime_config.has_sync_url();
+            turso_database_url_input.set(
+                runtime_config
+                    .turso_database_url
+                    .clone()
+                    .unwrap_or_default(),
+            );
+            let mut resolved_sync_config = resolve_sync_config();
+            active_sync_source.set(resolved_sync_config.source);
+            auth_service.set(None);
+            auth_session.set(None);
+            auth_config_status.set(None);
+            sync_auth_client.set(None);
+            sync_token_expires_at.set(None);
 
-        match TursoSyncAuthClient::new_from_env() {
-            Ok(Some(client)) => {
-                sync_auth_client.set(Some(Arc::new(client)));
-            }
-            Ok(None) => {}
-            Err(error) => {
-                status_message.set(Some(format!("Managed sync auth is misconfigured: {error}")));
-            }
-        }
-
-        match SupabaseAuthService::new_from_env() {
-            Ok(Some(service)) => {
-                let service = Arc::new(service);
-                match service.restore_session().await {
-                    Ok(session) => auth_session.set(session.clone()),
-                    Err(error) => {
-                        tracing::warn!("Failed to restore mobile auth session: {}", error);
-                        status_message.set(Some(format!("Auth session restore failed: {error}")));
-                    }
-                }
-                match service.verify_configuration().await {
-                    Ok(config) => auth_config_status.set(Some(config)),
-                    Err(error) => {
-                        tracing::warn!("Mobile auth config verification failed: {}", error);
-                        status_message
-                            .set(Some(format!("Auth configuration check failed: {error}")));
-                    }
-                }
-                auth_service.set(Some(service));
-            }
-            Ok(None) => {}
-            Err(error) => {
-                status_message.set(Some(format!("Auth is not configured: {error}")));
-            }
-        }
-
-        if runtime_has_sync_url {
-            if sync_auth_client.read().is_some() && auth_session().is_none() {
-                if let Err(error) =
-                    secret_store::delete_secret(secret_store::SECRET_TURSO_AUTH_TOKEN)
-                {
-                    tracing::warn!(
-                        "Failed to clear stale managed sync token without active session: {}",
-                        error
-                    );
-                }
-            }
-            match refresh_managed_sync_token(
-                sync_auth_client.read().clone(),
-                auth_session(),
-                &mut status_message,
-            )
-            .await
-            {
-                Ok(Some(token)) => {
-                    sync_token_expires_at.set(Some(token.expires_at));
-                    resolved_sync_config = resolve_sync_config();
-                    active_sync_source.set(resolved_sync_config.source);
+            match TursoSyncAuthClient::new_from_bootstrap(&bootstrap_config) {
+                Ok(Some(client)) => {
+                    sync_auth_client.set(Some(Arc::new(client)));
                 }
                 Ok(None) => {}
                 Err(error) => {
                     status_message
-                        .set(Some(format!("Managed sync token exchange failed: {error}")));
+                        .set(Some(format!("Managed sync auth is misconfigured: {error}")));
                 }
             }
-        }
 
-        loading.set(true);
-        store.set(None);
-        notes.set(Vec::new());
-        sync_state.set(MobileSyncState::Offline);
-        last_sync_at.set(None);
-        sync_scheduler_active.set(false);
-        last_sync_attempt_at.set(None);
-        consecutive_sync_failures.set(0);
-        clear_pending_sync_queue(&mut pending_sync_note_ids, &mut pending_sync_count);
-        let launch = launch();
-        let mut initialized = false;
-
-        match MobileNoteStore::open_default().await {
-            Ok(note_store) => {
-                let note_store = Arc::new(note_store);
-                initialized = true;
-
-                store.set(Some(note_store.clone()));
-
-                if note_store.is_sync_enabled().await {
-                    sync_scheduler_active.set(true);
-                    sync_state.set(MobileSyncState::Syncing);
-                    last_sync_attempt_at.set(Some(chrono::Utc::now().timestamp_millis()));
-                    match note_store.sync().await {
-                        Ok(()) => {
-                            sync_state.set(MobileSyncState::Synced);
-                            last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
-                            consecutive_sync_failures.set(0);
-                            clear_pending_sync_queue(
-                                &mut pending_sync_note_ids,
-                                &mut pending_sync_count,
-                            );
-                            toasts.info(
-                                "Sync connected".to_string(),
-                                ToastOptions::new()
-                                    .description("Remote sync is active for this mobile database"),
-                            );
-                        }
+            match SupabaseAuthService::new_from_bootstrap(&bootstrap_config) {
+                Ok(Some(service)) => {
+                    let service = Arc::new(service);
+                    match service.restore_session().await {
+                        Ok(session) => auth_session.set(session.clone()),
                         Err(error) => {
-                            tracing::error!("Initial mobile sync failed: {}", error);
-                            sync_state.set(MobileSyncState::Error);
-                            consecutive_sync_failures.set(1);
-                            status_message.set(Some(format!(
-                                "Initial sync failed; retrying in background: {error}"
-                            )));
-                            toasts.error(
-                                "Initial sync failed".to_string(),
-                                ToastOptions::new()
-                                    .description("Changes will keep retrying in the background"),
-                            );
+                            tracing::warn!("Failed to restore mobile auth session: {}", error);
+                            status_message
+                                .set(Some(format!("Auth session restore failed: {error}")));
                         }
                     }
-                } else {
-                    sync_scheduler_active.set(false);
-                    sync_state.set(MobileSyncState::Offline);
-                    let offline_message = resolved_sync_config.warning.clone().unwrap_or_else(|| {
+                    match service.verify_configuration().await {
+                        Ok(config) => auth_config_status.set(Some(config)),
+                        Err(error) => {
+                            tracing::warn!("Mobile auth config verification failed: {}", error);
+                            status_message
+                                .set(Some(format!("Auth configuration check failed: {error}")));
+                        }
+                    }
+                    auth_service.set(Some(service));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    status_message.set(Some(format!("Auth is not configured: {error}")));
+                }
+            }
+
+            if runtime_has_sync_url {
+                if sync_auth_client.read().is_some() && auth_session().is_none() {
+                    if let Err(error) =
+                        secret_store::delete_secret(secret_store::SECRET_TURSO_AUTH_TOKEN)
+                    {
+                        tracing::warn!(
+                            "Failed to clear stale managed sync token without active session: {}",
+                            error
+                        );
+                    }
+                }
+                match refresh_managed_sync_token(
+                    sync_auth_client.read().clone(),
+                    auth_session(),
+                    &mut status_message,
+                )
+                .await
+                {
+                    Ok(Some(token)) => {
+                        sync_token_expires_at.set(Some(token.expires_at));
+                        resolved_sync_config = resolve_sync_config();
+                        active_sync_source.set(resolved_sync_config.source);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        status_message
+                            .set(Some(format!("Managed sync token exchange failed: {error}")));
+                    }
+                }
+            }
+
+            loading.set(true);
+            store.set(None);
+            notes.set(Vec::new());
+            sync_state.set(MobileSyncState::Offline);
+            last_sync_at.set(None);
+            sync_scheduler_active.set(false);
+            last_sync_attempt_at.set(None);
+            consecutive_sync_failures.set(0);
+            clear_pending_sync_queue(&mut pending_sync_note_ids, &mut pending_sync_count);
+            let launch = launch();
+            let mut initialized = false;
+
+            match MobileNoteStore::open_default().await {
+                Ok(note_store) => {
+                    let note_store = Arc::new(note_store);
+                    initialized = true;
+
+                    store.set(Some(note_store.clone()));
+
+                    if note_store.is_sync_enabled().await {
+                        sync_scheduler_active.set(true);
+                        sync_state.set(MobileSyncState::Syncing);
+                        last_sync_attempt_at.set(Some(chrono::Utc::now().timestamp_millis()));
+                        match note_store.sync().await {
+                            Ok(()) => {
+                                sync_state.set(MobileSyncState::Synced);
+                                last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
+                                consecutive_sync_failures.set(0);
+                                clear_pending_sync_queue(
+                                    &mut pending_sync_note_ids,
+                                    &mut pending_sync_count,
+                                );
+                                toasts.info(
+                                    "Sync connected".to_string(),
+                                    ToastOptions::new().description(
+                                        "Remote sync is active for this mobile database",
+                                    ),
+                                );
+                            }
+                            Err(error) => {
+                                tracing::error!("Initial mobile sync failed: {}", error);
+                                sync_state.set(MobileSyncState::Error);
+                                consecutive_sync_failures.set(1);
+                                status_message.set(Some(format!(
+                                    "Initial sync failed; retrying in background: {error}"
+                                )));
+                                toasts.error(
+                                    "Initial sync failed".to_string(),
+                                    ToastOptions::new().description(
+                                        "Changes will keep retrying in the background",
+                                    ),
+                                );
+                            }
+                        }
+                    } else {
+                        sync_scheduler_active.set(false);
+                        sync_state.set(MobileSyncState::Offline);
+                        let offline_message = resolved_sync_config.warning.clone().unwrap_or_else(|| {
                         "Running in local-only mode (set Turso URL and sign in to enable auto-sync)"
                             .to_string()
                     });
-                    status_message.set(Some(offline_message));
-                }
-
-                match note_store.list_notes().await {
-                    Ok(loaded_notes) => {
-                        notes.set(loaded_notes);
+                        status_message.set(Some(offline_message));
                     }
-                    Err(error) => {
-                        status_message.set(Some(format!("Failed to load notes: {error}")));
+
+                    match note_store.list_notes().await {
+                        Ok(loaded_notes) => {
+                            notes.set(loaded_notes);
+                        }
+                        Err(error) => {
+                            status_message.set(Some(format!("Failed to load notes: {error}")));
+                        }
                     }
                 }
+                Err(error) => {
+                    sync_scheduler_active.set(false);
+                    status_message.set(Some(format!("Failed to open database: {error}")));
+                }
             }
-            Err(error) => {
-                sync_scheduler_active.set(false);
-                status_message.set(Some(format!("Failed to open database: {error}")));
-            }
-        }
 
-        if initialized && !launch_applied() {
-            if let Some(shared_text) = launch.share_text {
-                apply_share_intent(
-                    shared_text,
-                    &mut selected_note_id,
-                    &mut draft_content,
-                    &mut status_message,
-                );
-                view.set(MobileView::Editor);
-                launch_applied.set(true);
-            } else if launch.quick_capture.enabled {
-                apply_quick_capture_launch(launch.quick_capture.seed_text, &mut draft_content);
-                selected_note_id.set(None);
-                status_message.set(Some("Quick capture ready to save".to_string()));
-                view.set(MobileView::Editor);
-                launch_applied.set(true);
+            if initialized && !launch_applied() {
+                if let Some(shared_text) = launch.share_text {
+                    apply_share_intent(
+                        shared_text,
+                        &mut selected_note_id,
+                        &mut draft_content,
+                        &mut status_message,
+                    );
+                    view.set(MobileView::Editor);
+                    launch_applied.set(true);
+                } else if launch.quick_capture.enabled {
+                    apply_quick_capture_launch(launch.quick_capture.seed_text, &mut draft_content);
+                    selected_note_id.set(None);
+                    status_message.set(Some("Quick capture ready to save".to_string()));
+                    view.set(MobileView::Editor);
+                    launch_applied.set(true);
+                }
             }
-        }
 
-        loading.set(false);
+            loading.set(false);
+        }
     });
 
     use_future(move || async move {
@@ -628,8 +636,7 @@ fn AppShell() -> Element {
         }
         let Some(service) = auth_service.read().clone() else {
             status_message.set(Some(
-                "Supabase auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY."
-                    .to_string(),
+                "Supabase auth is not configured in mobile bootstrap.".to_string(),
             ));
             return;
         };
@@ -696,8 +703,7 @@ fn AppShell() -> Element {
         }
         let Some(service) = auth_service.read().clone() else {
             status_message.set(Some(
-                "Supabase auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY."
-                    .to_string(),
+                "Supabase auth is not configured in mobile bootstrap.".to_string(),
             ));
             return;
         };
@@ -1052,7 +1058,11 @@ fn AppShell() -> Element {
         attachment_preview_content.set(AttachmentPreview::None);
     };
 
-    let diagnostics = mobile_config_diagnostics(active_sync_source(), auth_config_status());
+    let diagnostics = mobile_config_diagnostics(
+        active_sync_source(),
+        auth_config_status(),
+        &bootstrap_config,
+    );
     let heading = if view() == MobileView::Settings {
         "Settings"
     } else {
@@ -1730,7 +1740,7 @@ fn AppShell() -> Element {
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #6b7280;",
-                            "Managed mode uses signed-in Supabase session + TURSO_SYNC_TOKEN_ENDPOINT to fetch short-lived sync credentials."
+                            "Managed mode uses signed-in Supabase session + bootstrap sync endpoint to fetch short-lived sync credentials."
                         }
                         div {
                             style: "display: flex; gap: 8px;",
@@ -1815,14 +1825,6 @@ fn AppShell() -> Element {
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
                             "Managed token endpoint: {diagnostics.turso_managed_auth_endpoint}"
-                        }
-                        p {
-                            style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Turso env endpoint: {diagnostics.turso_env_endpoint}"
-                        }
-                        p {
-                            style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Turso env token: {diagnostics.turso_env_token_status}"
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
@@ -2361,16 +2363,14 @@ fn sync_state_banner_label(state: MobileSyncState, last_sync_at: Option<i64>) ->
 fn mobile_config_diagnostics(
     active_sync_source: SyncConfigSource,
     auth_config: Option<AuthConfigStatus>,
+    bootstrap_config: &MobileBootstrapConfig,
 ) -> MobileConfigDiagnostics {
     let runtime_config = load_runtime_config();
     let turso_runtime_url = runtime_config.turso_database_url;
     let turso_runtime_token_status = runtime_turso_token_status();
-    let managed_sync_endpoint = env_var_trimmed("TURSO_SYNC_TOKEN_ENDPOINT");
-
-    let turso_env_url = env_var_trimmed("TURSO_DATABASE_URL");
-    let turso_env_token_set = env_var_trimmed("TURSO_AUTH_TOKEN").is_some();
-    let supabase_url = env_var_trimmed("SUPABASE_URL");
-    let supabase_anon_key_set = env_var_trimmed("SUPABASE_ANON_KEY").is_some();
+    let managed_sync_endpoint = bootstrap_config.turso_sync_token_endpoint.clone();
+    let supabase_url = bootstrap_config.supabase_url.clone();
+    let supabase_anon_key_set = bootstrap_config.supabase_anon_key.is_some();
 
     let r2_account_id = env_var_trimmed("R2_ACCOUNT_ID");
     let r2_bucket = env_var_trimmed("R2_BUCKET");
@@ -2393,11 +2393,6 @@ fn mobile_config_diagnostics(
             .map(mask_endpoint_value)
             .unwrap_or_else(|| "not set".to_string()),
         turso_runtime_token_status: secure_status_label(&turso_runtime_token_status),
-        turso_env_endpoint: turso_env_url
-            .as_deref()
-            .map(mask_endpoint_value)
-            .unwrap_or_else(|| "not set".to_string()),
-        turso_env_token_status: configured_status_label(turso_env_token_set).to_string(),
         supabase_url: supabase_url
             .as_deref()
             .map(mask_endpoint_value)
