@@ -16,6 +16,8 @@ mod launch;
 mod secret_store;
 #[cfg(any(target_os = "android", test))]
 mod sync_auth;
+#[cfg(target_os = "android")]
+mod ui;
 
 #[cfg(target_os = "android")]
 fn main() {

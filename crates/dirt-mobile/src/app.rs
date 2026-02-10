@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dioxus::prelude::*;
+use dioxus_primitives::label::Label;
 use dioxus_primitives::scroll_area::{ScrollArea, ScrollDirection, ScrollType};
 use dioxus_primitives::separator::Separator;
 use dioxus_primitives::toast::{use_toast, ToastOptions, ToastProvider};
@@ -16,6 +17,7 @@ use crate::data::MobileNoteStore;
 use crate::launch::LaunchIntent;
 use crate::secret_store;
 use crate::sync_auth::{SyncToken, TursoSyncAuthClient};
+use crate::ui::{ButtonVariant, UiButton, UiInput, UiTextarea, MOBILE_UI_STYLES};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MobileView {
@@ -857,7 +859,7 @@ fn AppShell() -> Element {
 
     rsx! {
         style {
-            "{TOAST_STYLES}"
+            "{TOAST_STYLES}{MOBILE_UI_STYLES}"
         }
 
         div {
@@ -891,32 +893,18 @@ fn AppShell() -> Element {
                         }
                     }
                     if view() == MobileView::Settings {
-                        button {
+                        UiButton {
                             type: "button",
-                            style: "
-                                border: 1px solid #d1d5db;
-                                border-radius: 8px;
-                                padding: 6px 10px;
-                                background: #ffffff;
-                                color: #111827;
-                                font-size: 12px;
-                                font-weight: 600;
-                            ",
+                            variant: ButtonVariant::Outline,
+                            style: "padding: 6px 10px; font-size: 12px;",
                             onclick: on_back_to_list,
                             "Notes"
                         }
                     } else {
-                        button {
+                        UiButton {
                             type: "button",
-                            style: "
-                                border: 1px solid #d1d5db;
-                                border-radius: 8px;
-                                padding: 6px 10px;
-                                background: #ffffff;
-                                color: #111827;
-                                font-size: 12px;
-                                font-weight: 600;
-                            ",
+                            variant: ButtonVariant::Outline,
+                            style: "padding: 6px 10px; font-size: 12px;",
                             onclick: on_open_settings,
                             "Settings"
                         }
@@ -982,16 +970,9 @@ fn AppShell() -> Element {
                                 style: "margin: 0; font-size: 12px; color: #6b7280;",
                                 "Retry initialization to continue."
                             }
-                            button {
+                            UiButton {
                                 type: "button",
-                                style: "
-                                    border: 0;
-                                    border-radius: 8px;
-                                    padding: 10px 12px;
-                                    background: #2563eb;
-                                    color: #ffffff;
-                                    font-weight: 600;
-                                ",
+                                variant: ButtonVariant::Primary,
                                 onclick: on_retry_db_init,
                                 disabled: loading(),
                                 "Retry"
@@ -1001,18 +982,11 @@ fn AppShell() -> Element {
                 } else {
                     div {
                         style: "padding: 12px 16px; display: flex; gap: 8px;",
-                        button {
+                        UiButton {
                             type: "button",
-                            style: "
-                                flex: 1;
-                                border: 0;
-                                border-radius: 10px;
-                                padding: 12px;
-                                background: #111827;
-                                color: #ffffff;
-                                font-weight: 600;
-                                font-size: 14px;
-                            ",
+                            block: true,
+                            variant: ButtonVariant::Secondary,
+                            style: "font-size: 14px; padding: 12px;",
                             onclick: on_new_note,
                             "New note"
                         }
@@ -1058,9 +1032,10 @@ fn AppShell() -> Element {
                                     );
 
                                     rsx! {
-                                        button {
+                                        UiButton {
                                             key: "{note_id}",
                                             type: "button",
+                                            variant: ButtonVariant::Ghost,
                                             style: "{card_style}",
                                             onclick: move |_| {
                                                 selected_note_id.set(Some(note_id));
@@ -1190,83 +1165,56 @@ fn AppShell() -> Element {
                             style: "margin: 0; font-size: 12px; color: #6b7280;",
                             "Auth config: {auth_config_summary_text}"
                         }
-                        input {
+                        Label {
+                            html_for: "auth-email",
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Email"
+                        }
+                        UiInput {
+                            id: "auth-email",
                             r#type: "email",
                             placeholder: "Email",
                             value: "{auth_email_input}",
-                            style: "
-                                border: 1px solid #d1d5db;
-                                border-radius: 8px;
-                                padding: 10px;
-                                font-size: 13px;
-                            ",
                             oninput: move |event: Event<FormData>| {
                                 auth_email_input.set(event.value());
                             },
                         }
-                        input {
+                        Label {
+                            html_for: "auth-password",
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Password"
+                        }
+                        UiInput {
+                            id: "auth-password",
                             r#type: "password",
                             placeholder: "Password",
                             value: "{auth_password_input}",
-                            style: "
-                                border: 1px solid #d1d5db;
-                                border-radius: 8px;
-                                padding: 10px;
-                                font-size: 13px;
-                            ",
                             oninput: move |event: Event<FormData>| {
                                 auth_password_input.set(event.value());
                             },
                         }
                         div {
                             style: "display: flex; gap: 8px; flex-wrap: wrap;",
-                            button {
+                            UiButton {
                                 type: "button",
-                                style: "
-                                    flex: 1;
-                                    min-width: 100px;
-                                    border: 0;
-                                    border-radius: 8px;
-                                    padding: 10px;
-                                    background: #2563eb;
-                                    color: #ffffff;
-                                    font-weight: 600;
-                                    font-size: 13px;
-                                ",
+                                variant: ButtonVariant::Primary,
+                                style: "flex: 1; min-width: 100px;",
                                 disabled: auth_loading(),
                                 onclick: on_auth_sign_in,
                                 if auth_loading() { "Working..." } else { "Sign in" }
                             }
-                            button {
+                            UiButton {
                                 type: "button",
-                                style: "
-                                    flex: 1;
-                                    min-width: 100px;
-                                    border: 1px solid #2563eb;
-                                    border-radius: 8px;
-                                    padding: 10px;
-                                    background: #ffffff;
-                                    color: #2563eb;
-                                    font-weight: 600;
-                                    font-size: 13px;
-                                ",
+                                variant: ButtonVariant::Outline,
+                                style: "flex: 1; min-width: 100px;",
                                 disabled: auth_loading(),
                                 onclick: on_auth_sign_up,
                                 "Sign up"
                             }
-                            button {
+                            UiButton {
                                 type: "button",
-                                style: "
-                                    flex: 1;
-                                    min-width: 100px;
-                                    border: 1px solid #d1d5db;
-                                    border-radius: 8px;
-                                    padding: 10px;
-                                    background: #ffffff;
-                                    color: #374151;
-                                    font-weight: 600;
-                                    font-size: 13px;
-                                ",
+                                variant: ButtonVariant::Outline,
+                                style: "flex: 1; min-width: 100px;",
                                 disabled: auth_loading() || auth_session().is_none(),
                                 onclick: on_auth_sign_out,
                                 "Sign out"
@@ -1296,16 +1244,16 @@ fn AppShell() -> Element {
                             ",
                             "Turso sync settings"
                         }
-                        input {
+                        Label {
+                            html_for: "turso-url",
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Turso URL"
+                        }
+                        UiInput {
+                            id: "turso-url",
                             r#type: "text",
                             placeholder: "libsql://your-db.region.turso.io",
                             value: "{turso_database_url_input}",
-                            style: "
-                                border: 1px solid #d1d5db;
-                                border-radius: 8px;
-                                padding: 10px;
-                                font-size: 13px;
-                            ",
                             oninput: move |event: Event<FormData>| {
                                 turso_database_url_input.set(event.value());
                             },
@@ -1316,33 +1264,17 @@ fn AppShell() -> Element {
                         }
                         div {
                             style: "display: flex; gap: 8px;",
-                            button {
+                            UiButton {
                                 type: "button",
-                                style: "
-                                    flex: 1;
-                                    border: 0;
-                                    border-radius: 8px;
-                                    padding: 10px;
-                                    background: #2563eb;
-                                    color: #ffffff;
-                                    font-weight: 600;
-                                    font-size: 13px;
-                                ",
+                                block: true,
+                                variant: ButtonVariant::Primary,
                                 onclick: on_save_sync_settings,
                                 "Save sync config"
                             }
-                            button {
+                            UiButton {
                                 type: "button",
-                                style: "
-                                    flex: 1;
-                                    border: 1px solid #d1d5db;
-                                    border-radius: 8px;
-                                    padding: 10px;
-                                    background: #ffffff;
-                                    color: #374151;
-                                    font-weight: 600;
-                                    font-size: 13px;
-                                ",
+                                block: true,
+                                variant: ButtonVariant::Outline,
                                 onclick: on_clear_sync_settings,
                                 "Clear"
                             }
@@ -1456,44 +1388,24 @@ fn AppShell() -> Element {
                         gap: 8px;
                         background: #ffffff;
                     ",
-                    button {
+                    UiButton {
                         type: "button",
-                        style: "
-                            border: 1px solid #d1d5db;
-                            border-radius: 8px;
-                            padding: 10px 12px;
-                            background: #ffffff;
-                            font-weight: 600;
-                        ",
+                        variant: ButtonVariant::Outline,
                         onclick: on_back_to_list,
                         "Back"
                     }
-                    button {
+                    UiButton {
                         type: "button",
-                        style: "
-                            border: 0;
-                            border-radius: 8px;
-                            padding: 10px 12px;
-                            background: #2563eb;
-                            color: #ffffff;
-                            font-weight: 600;
-                        ",
+                        variant: ButtonVariant::Primary,
                         disabled: saving(),
                         onclick: on_save_note,
                         if saving() { "Saving..." } else { "Save" }
                     }
                     if selected_note_id().is_some() {
-                        button {
+                        UiButton {
                             type: "button",
-                            style: "
-                                margin-left: auto;
-                                border: 1px solid #ef4444;
-                                border-radius: 8px;
-                                padding: 10px 12px;
-                                background: #ffffff;
-                                color: #b91c1c;
-                                font-weight: 600;
-                            ",
+                            variant: ButtonVariant::Danger,
+                            style: "margin-left: auto;",
                             disabled: deleting(),
                             onclick: on_delete_note,
                             if deleting() { "Deleting..." } else { "Delete" }
@@ -1506,17 +1418,14 @@ fn AppShell() -> Element {
                     style: "height: 1px; background: #e5e7eb;",
                 }
 
-                textarea {
+                UiTextarea {
                     style: "
                         flex: 1;
                         margin: 12px;
-                        border: 1px solid #d1d5db;
                         border-radius: 12px;
                         padding: 14px;
                         line-height: 1.5;
                         font-size: 15px;
-                        resize: none;
-                        background: #ffffff;
                     ",
                     value: "{draft_content}",
                     placeholder: "Write your note...",
