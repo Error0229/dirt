@@ -7,6 +7,10 @@ use dioxus_primitives::separator::Separator;
 use dioxus_primitives::toast::{use_toast, ToastOptions, ToastProvider};
 use dirt_core::{Attachment, Note, NoteId};
 
+use crate::config::{
+    load_runtime_config, resolve_sync_config, save_runtime_config, MobileRuntimeConfig,
+    SyncConfigSource,
+};
 use crate::data::MobileNoteStore;
 use crate::launch::LaunchIntent;
 
@@ -27,8 +31,11 @@ enum MobileSyncState {
 
 struct MobileConfigDiagnostics {
     turso_sync_configured: bool,
-    turso_endpoint: String,
-    turso_token_status: String,
+    turso_active_source: String,
+    turso_runtime_endpoint: String,
+    turso_runtime_token_status: String,
+    turso_env_endpoint: String,
+    turso_env_token_status: String,
     supabase_url: String,
     supabase_anon_key_status: String,
     r2_bucket: String,
@@ -114,12 +121,20 @@ fn AppShell() -> Element {
     let mut attachments_error = use_signal(|| None::<String>);
     let attachment_refresh_version = use_signal(|| 0u64);
     let mut db_init_retry_version = use_signal(|| 0u64);
+    let mut turso_database_url_input = use_signal(String::new);
+    let mut turso_auth_token_input = use_signal(String::new);
+    let mut active_sync_source = use_signal(|| SyncConfigSource::None);
     let launch: Signal<LaunchIntent> = use_signal(crate::launch::detect_launch_intent_from_runtime);
     let mut launch_applied = use_signal(|| false);
     let toasts = use_toast();
 
     use_future(move || async move {
         let _db_init_retry_version = db_init_retry_version();
+        let runtime_config = load_runtime_config();
+        turso_database_url_input.set(runtime_config.turso_database_url.unwrap_or_default());
+        turso_auth_token_input.set(runtime_config.turso_auth_token.unwrap_or_default());
+        active_sync_source.set(resolve_sync_config().source);
+
         loading.set(true);
         store.set(None);
         notes.set(Vec::new());
@@ -171,7 +186,7 @@ fn AppShell() -> Element {
                     sync_scheduler_active.set(false);
                     sync_state.set(MobileSyncState::Offline);
                     status_message.set(Some(
-                        "Running in local-only mode (set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN to enable auto-sync)"
+                        "Running in local-only mode (set Turso URL + auth token in Settings to enable auto-sync)"
                             .to_string(),
                     ));
                 }
@@ -336,6 +351,52 @@ fn AppShell() -> Element {
         view.set(MobileView::Settings);
     };
 
+    let on_save_sync_settings = move |_| {
+        let runtime_config = MobileRuntimeConfig::from_raw(
+            Some(turso_database_url_input()),
+            Some(turso_auth_token_input()),
+        );
+
+        if !runtime_config.has_sync_config() {
+            status_message.set(Some(
+                "Both Turso URL and auth token are required to enable remote sync".to_string(),
+            ));
+            return;
+        }
+
+        match save_runtime_config(&runtime_config) {
+            Ok(()) => {
+                active_sync_source.set(SyncConfigSource::RuntimeSettings);
+                status_message.set(Some(
+                    "Saved sync settings. Reinitializing database connection...".to_string(),
+                ));
+                db_init_retry_version.set(db_init_retry_version() + 1);
+            }
+            Err(error) => {
+                status_message.set(Some(format!("Failed to save sync settings: {error}")));
+            }
+        }
+    };
+
+    let on_clear_sync_settings = move |_| {
+        let empty_config = MobileRuntimeConfig::default();
+        match save_runtime_config(&empty_config) {
+            Ok(()) => {
+                turso_database_url_input.set(String::new());
+                turso_auth_token_input.set(String::new());
+                active_sync_source.set(SyncConfigSource::None);
+                status_message.set(Some(
+                    "Cleared runtime sync settings. Reinitializing database connection..."
+                        .to_string(),
+                ));
+                db_init_retry_version.set(db_init_retry_version() + 1);
+            }
+            Err(error) => {
+                status_message.set(Some(format!("Failed to clear sync settings: {error}")));
+            }
+        }
+    };
+
     let on_save_note = move |_| {
         if saving() {
             return;
@@ -433,7 +494,7 @@ fn AppShell() -> Element {
         });
     };
 
-    let diagnostics = mobile_config_diagnostics();
+    let diagnostics = mobile_config_diagnostics(active_sync_source());
     let heading = if view() == MobileView::Settings {
         "Settings"
     } else {
@@ -750,7 +811,96 @@ fn AppShell() -> Element {
                             if diagnostics.turso_sync_configured {
                                 "Mode: remote sync configured"
                             } else {
-                                "Mode: local-only (set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN)"
+                                "Mode: local-only (no Turso sync config)"
+                            }
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Config source: {diagnostics.turso_active_source}"
+                        }
+                    }
+
+                    div {
+                        style: "
+                            padding: 12px;
+                            border: 1px solid #e5e7eb;
+                            border-radius: 12px;
+                            background: #ffffff;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 8px;
+                            margin-bottom: 10px;
+                        ",
+                        p {
+                            style: "
+                                margin: 0;
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: #6b7280;
+                                text-transform: uppercase;
+                                letter-spacing: 0.04em;
+                            ",
+                            "Turso sync settings"
+                        }
+                        input {
+                            r#type: "text",
+                            placeholder: "libsql://your-db.region.turso.io",
+                            value: "{turso_database_url_input}",
+                            style: "
+                                border: 1px solid #d1d5db;
+                                border-radius: 8px;
+                                padding: 10px;
+                                font-size: 13px;
+                            ",
+                            oninput: move |event: Event<FormData>| {
+                                turso_database_url_input.set(event.value());
+                            },
+                        }
+                        input {
+                            r#type: "password",
+                            placeholder: "Turso auth token",
+                            value: "{turso_auth_token_input}",
+                            style: "
+                                border: 1px solid #d1d5db;
+                                border-radius: 8px;
+                                padding: 10px;
+                                font-size: 13px;
+                            ",
+                            oninput: move |event: Event<FormData>| {
+                                turso_auth_token_input.set(event.value());
+                            },
+                        }
+                        div {
+                            style: "display: flex; gap: 8px;",
+                            button {
+                                type: "button",
+                                style: "
+                                    flex: 1;
+                                    border: 0;
+                                    border-radius: 8px;
+                                    padding: 10px;
+                                    background: #2563eb;
+                                    color: #ffffff;
+                                    font-weight: 600;
+                                    font-size: 13px;
+                                ",
+                                onclick: on_save_sync_settings,
+                                "Save sync config"
+                            }
+                            button {
+                                type: "button",
+                                style: "
+                                    flex: 1;
+                                    border: 1px solid #d1d5db;
+                                    border-radius: 8px;
+                                    padding: 10px;
+                                    background: #ffffff;
+                                    color: #374151;
+                                    font-weight: 600;
+                                    font-size: 13px;
+                                ",
+                                onclick: on_clear_sync_settings,
+                                "Clear"
                             }
                         }
                     }
@@ -810,11 +960,19 @@ fn AppShell() -> Element {
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Turso endpoint: {diagnostics.turso_endpoint}"
+                            "Turso runtime endpoint: {diagnostics.turso_runtime_endpoint}"
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Turso token: {diagnostics.turso_token_status}"
+                            "Turso runtime token: {diagnostics.turso_runtime_token_status}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #374151;",
+                            "Turso env endpoint: {diagnostics.turso_env_endpoint}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #374151;",
+                            "Turso env token: {diagnostics.turso_env_token_status}"
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
@@ -1031,9 +1189,16 @@ fn sync_state_banner_label(state: MobileSyncState, last_sync_at: Option<i64>) ->
     }
 }
 
-fn mobile_config_diagnostics() -> MobileConfigDiagnostics {
-    let turso_url = env_var_trimmed("TURSO_DATABASE_URL");
-    let turso_token_set = env_var_trimmed("TURSO_AUTH_TOKEN").is_some();
+fn mobile_config_diagnostics(active_sync_source: SyncConfigSource) -> MobileConfigDiagnostics {
+    let runtime_config = load_runtime_config();
+    let turso_runtime_url = runtime_config.turso_database_url;
+    let turso_runtime_token_set = runtime_config
+        .turso_auth_token
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+
+    let turso_env_url = env_var_trimmed("TURSO_DATABASE_URL");
+    let turso_env_token_set = env_var_trimmed("TURSO_AUTH_TOKEN").is_some();
     let supabase_url = env_var_trimmed("SUPABASE_URL");
     let supabase_anon_key_set = env_var_trimmed("SUPABASE_ANON_KEY").is_some();
 
@@ -1047,12 +1212,18 @@ fn mobile_config_diagnostics() -> MobileConfigDiagnostics {
         .map(|account_id| format!("https://{account_id}.r2.cloudflarestorage.com"));
 
     MobileConfigDiagnostics {
-        turso_sync_configured: turso_url.is_some() && turso_token_set,
-        turso_endpoint: turso_url
+        turso_sync_configured: !matches!(active_sync_source, SyncConfigSource::None),
+        turso_active_source: sync_config_source_label(active_sync_source).to_string(),
+        turso_runtime_endpoint: turso_runtime_url
             .as_deref()
             .map(mask_endpoint_value)
             .unwrap_or_else(|| "not set".to_string()),
-        turso_token_status: configured_status_label(turso_token_set).to_string(),
+        turso_runtime_token_status: configured_status_label(turso_runtime_token_set).to_string(),
+        turso_env_endpoint: turso_env_url
+            .as_deref()
+            .map(mask_endpoint_value)
+            .unwrap_or_else(|| "not set".to_string()),
+        turso_env_token_status: configured_status_label(turso_env_token_set).to_string(),
         supabase_url: supabase_url
             .as_deref()
             .map(mask_endpoint_value)
@@ -1062,6 +1233,14 @@ fn mobile_config_diagnostics() -> MobileConfigDiagnostics {
         r2_endpoint: r2_endpoint.unwrap_or_else(|| "not set".to_string()),
         r2_credentials_status: configured_status_label(r2_access_key_set && r2_secret_key_set)
             .to_string(),
+    }
+}
+
+fn sync_config_source_label(source: SyncConfigSource) -> &'static str {
+    match source {
+        SyncConfigSource::RuntimeSettings => "runtime settings",
+        SyncConfigSource::EnvironmentFallback => "env fallback",
+        SyncConfigSource::None => "none",
     }
 }
 

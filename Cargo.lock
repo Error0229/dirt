@@ -2177,6 +2177,8 @@ dependencies = [
  "dirs",
  "dirt-core",
  "dotenvy",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

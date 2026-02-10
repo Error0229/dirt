@@ -6,10 +6,15 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository, SyncConfig};
+#[cfg(target_os = "android")]
+use dirt_core::db::SyncConfig;
+use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository};
 use dirt_core::models::{Attachment, Note, NoteId};
 use dirt_core::{Error, Result};
 use tokio::sync::Mutex;
+
+#[cfg(target_os = "android")]
+use crate::config::resolve_sync_config;
 
 const DEFAULT_NOTES_LIMIT: usize = 100;
 
@@ -28,9 +33,12 @@ impl MobileNoteStore {
             std::fs::create_dir_all(parent)?;
         }
 
-        let db = if let Some(sync_config) = sync_config_from_env() {
+        let resolved_sync_config = resolve_sync_config();
+        let db = if let Some(sync_config) = resolved_sync_config.sync_config {
+            tracing::info!("Mobile sync enabled via {:?}", resolved_sync_config.source);
             open_with_sync_recovery(&db_path, sync_config).await?
         } else {
+            tracing::info!("Mobile sync config not found; opening local-only database");
             Database::open(&db_path).await?
         };
         Ok(Self {
@@ -120,25 +128,6 @@ fn normalize_content(content: &str) -> Result<String> {
         ));
     }
     Ok(normalized.to_string())
-}
-
-#[cfg(target_os = "android")]
-fn sync_config_from_env() -> Option<SyncConfig> {
-    parse_sync_config(
-        std::env::var("TURSO_DATABASE_URL").ok(),
-        std::env::var("TURSO_AUTH_TOKEN").ok(),
-    )
-}
-
-fn parse_sync_config(url: Option<String>, auth_token: Option<String>) -> Option<SyncConfig> {
-    let url = url?.trim().to_string();
-    let auth_token = auth_token?.trim().to_string();
-
-    if url.is_empty() || auth_token.is_empty() {
-        return None;
-    }
-
-    Some(SyncConfig::new(url, auth_token))
 }
 
 #[cfg(target_os = "android")]
@@ -252,35 +241,6 @@ mod tests {
             Error::InvalidInput(msg) => assert!(msg.contains("cannot be empty")),
             other => panic!("expected invalid input error, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn parse_sync_config_requires_both_values() {
-        assert!(parse_sync_config(None, Some("token".to_string())).is_none());
-        assert!(parse_sync_config(Some("libsql://db.turso.io".to_string()), None).is_none());
-    }
-
-    #[test]
-    fn parse_sync_config_rejects_empty_values() {
-        assert!(parse_sync_config(Some("   ".to_string()), Some("token".to_string())).is_none());
-        assert!(parse_sync_config(
-            Some("libsql://db.turso.io".to_string()),
-            Some("   ".to_string())
-        )
-        .is_none());
-    }
-
-    #[test]
-    fn parse_sync_config_accepts_valid_values() {
-        let config = parse_sync_config(
-            Some(" libsql://db.turso.io ".to_string()),
-            Some(" token ".to_string()),
-        )
-        .unwrap();
-
-        assert_eq!(config.url.as_deref(), Some("libsql://db.turso.io"));
-        assert_eq!(config.auth_token.as_deref(), Some("token"));
-        assert!(config.is_configured());
     }
 
     #[tokio::test(flavor = "multi_thread")]
