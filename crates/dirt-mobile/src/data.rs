@@ -9,7 +9,7 @@ use std::sync::Arc;
 #[cfg(target_os = "android")]
 use dirt_core::db::SyncConfig;
 use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository};
-use dirt_core::models::{Attachment, AttachmentId, Note, NoteId};
+use dirt_core::models::{Attachment, AttachmentId, Note, NoteId, SyncConflict};
 use dirt_core::{Error, Result};
 use tokio::sync::Mutex;
 
@@ -137,6 +137,13 @@ impl MobileNoteStore {
         let db = self.db.lock().await;
         let repo = LibSqlNoteRepository::new(db.connection());
         repo.delete_attachment(attachment_id).await
+    }
+
+    /// List recently resolved sync conflicts.
+    pub async fn list_conflicts(&self, limit: usize) -> Result<Vec<SyncConflict>> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.list_conflicts(limit).await
     }
 
     /// Sync with remote database (if configured).
@@ -296,6 +303,13 @@ mod tests {
     async fn in_memory_store_sync_is_noop() {
         let store = MobileNoteStore::open_in_memory().await.unwrap();
         store.sync().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn in_memory_store_conflict_list_defaults_empty() {
+        let store = MobileNoteStore::open_in_memory().await.unwrap();
+        let conflicts = store.list_conflicts(10).await.unwrap();
+        assert!(conflicts.is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread")]

@@ -10,7 +10,7 @@ use dirt_core::db::{
     SyncConfig,
 };
 use dirt_core::error::Result;
-use dirt_core::models::{Attachment, AttachmentId, Note, Settings};
+use dirt_core::models::{Attachment, AttachmentId, Note, Settings, SyncConflict};
 use dirt_core::NoteId;
 use tokio::sync::Mutex;
 
@@ -312,6 +312,13 @@ impl DatabaseService {
         let db = self.db.lock().await;
         let repo = LibSqlNoteRepository::new(db.connection());
         repo.list_tags().await
+    }
+
+    /// List recently resolved sync conflicts.
+    pub async fn list_conflicts(&self, limit: usize) -> Result<Vec<SyncConflict>> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.list_conflicts(limit).await
     }
 
     /// Create attachment metadata for a note

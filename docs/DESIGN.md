@@ -164,7 +164,7 @@ dirt/
 | F2.2 | Turso backend setup | P0 | Done | - |
 | F2.3 | User authentication | P0 | Done | F2.2 |
 | F2.4 | Embedded replicas + sync | P0 | Done | F2.1 |
-| F2.5 | Conflict resolution (LWW) | P0 | In Progress | F2.4 |
+| F2.5 | Conflict resolution (LWW) | P0 | Done | F2.4 |
 | F2.6 | Sync status indicator | P1 | Done | F2.4 |
 | F2.7 | Offline queue visualization | P2 | In Progress | F2.6 |
 

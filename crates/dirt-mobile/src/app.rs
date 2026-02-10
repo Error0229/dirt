@@ -7,7 +7,7 @@ use dioxus_primitives::scroll_area::{ScrollArea, ScrollDirection, ScrollType};
 use dioxus_primitives::separator::Separator;
 use dioxus_primitives::toast::{use_toast, ToastOptions, ToastProvider};
 use dirt_core::storage::{MediaStorage, R2Config, R2Storage};
-use dirt_core::{Attachment, AttachmentId, Note, NoteId};
+use dirt_core::{Attachment, AttachmentId, Note, NoteId, SyncConflict};
 
 use crate::attachments::{
     attachment_kind_label, build_attachment_preview, infer_attachment_mime_type, AttachmentPreview,
@@ -62,6 +62,7 @@ const KIB_BYTES: u64 = 1024;
 const MIB_BYTES: u64 = KIB_BYTES * 1024;
 const GIB_BYTES: u64 = MIB_BYTES * 1024;
 const SYNC_INTERVAL_SECS: u64 = 30;
+const SYNC_CONFLICT_LIMIT: usize = 10;
 const TOAST_STYLES: &str = r#"
 .toast-container {
     position: fixed;
@@ -133,6 +134,10 @@ fn AppShell() -> Element {
     let mut sync_scheduler_active = use_signal(|| false);
     let mut last_sync_attempt_at = use_signal(|| None::<i64>);
     let mut consecutive_sync_failures = use_signal(|| 0u32);
+    let mut sync_conflicts = use_signal(Vec::<SyncConflict>::new);
+    let mut sync_conflicts_loading = use_signal(|| false);
+    let mut sync_conflicts_error = use_signal(|| None::<String>);
+    let mut sync_conflicts_refresh_version = use_signal(|| 0u64);
     let mut note_attachments = use_signal(Vec::<Attachment>::new);
     let mut attachments_loading = use_signal(|| false);
     let mut attachments_error = use_signal(|| None::<String>);
@@ -492,6 +497,35 @@ fn AppShell() -> Element {
         attachments_loading.set(false);
     });
 
+    use_future(move || async move {
+        let _sync_conflicts_refresh_version = sync_conflicts_refresh_version();
+        if view() != MobileView::Settings {
+            return;
+        }
+
+        let Some(note_store) = store.read().clone() else {
+            sync_conflicts.set(Vec::new());
+            sync_conflicts_error.set(Some("Database is not ready yet.".to_string()));
+            sync_conflicts_loading.set(false);
+            return;
+        };
+
+        sync_conflicts_loading.set(true);
+        sync_conflicts_error.set(None);
+
+        match note_store.list_conflicts(SYNC_CONFLICT_LIMIT).await {
+            Ok(conflicts) => {
+                sync_conflicts.set(conflicts);
+            }
+            Err(error) => {
+                sync_conflicts.set(Vec::new());
+                sync_conflicts_error.set(Some(format!("Failed to load conflicts: {error}")));
+            }
+        }
+
+        sync_conflicts_loading.set(false);
+    });
+
     let on_new_note = move |_| {
         if store.read().is_none() {
             status_message.set(Some(
@@ -524,6 +558,14 @@ fn AppShell() -> Element {
 
     let on_open_settings = move |_| {
         view.set(MobileView::Settings);
+        sync_conflicts_refresh_version.set(sync_conflicts_refresh_version().saturating_add(1));
+    };
+
+    let on_refresh_sync_conflicts = move |_| {
+        if sync_conflicts_loading() {
+            return;
+        }
+        sync_conflicts_refresh_version.set(sync_conflicts_refresh_version().saturating_add(1));
     };
 
     let on_save_sync_settings = move |_| {
@@ -1418,6 +1460,80 @@ fn AppShell() -> Element {
                             gap: 8px;
                             margin-bottom: 10px;
                         ",
+                        div {
+                            style: "display: flex; align-items: center; justify-content: space-between; gap: 8px;",
+                            p {
+                                style: "
+                                    margin: 0;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                    color: #6b7280;
+                                    text-transform: uppercase;
+                                    letter-spacing: 0.04em;
+                                ",
+                                "Sync conflicts"
+                            }
+                            UiButton {
+                                type: "button",
+                                variant: ButtonVariant::Outline,
+                                style: "padding: 6px 10px; font-size: 12px;",
+                                disabled: sync_conflicts_loading(),
+                                onclick: on_refresh_sync_conflicts,
+                                "Refresh"
+                            }
+                        }
+
+                        if sync_conflicts_loading() {
+                            p {
+                                style: "margin: 0; font-size: 12px; color: #6b7280;",
+                                "Loading recent conflicts..."
+                            }
+                        } else if let Some(error) = sync_conflicts_error() {
+                            p {
+                                style: "margin: 0; font-size: 12px; color: #b91c1c;",
+                                "{error}"
+                            }
+                        } else if sync_conflicts().is_empty() {
+                            p {
+                                style: "margin: 0; font-size: 12px; color: #6b7280;",
+                                "No sync conflicts recorded yet."
+                            }
+                        } else {
+                            div {
+                                style: "display: flex; flex-direction: column; gap: 8px;",
+                                for conflict in sync_conflicts() {
+                                    div {
+                                        key: "{conflict.id}",
+                                        style: "padding: 8px; border: 1px solid #e5e7eb; border-radius: 8px; display: flex; flex-direction: column; gap: 3px;",
+                                        p {
+                                            style: "margin: 0; font-size: 12px; color: #111827;",
+                                            "Note {conflict.note_id}"
+                                        }
+                                        p {
+                                            style: "margin: 0; font-size: 11px; color: #6b7280;",
+                                            "Resolved: {format_sync_conflict_time(conflict.resolved_at)}"
+                                        }
+                                        p {
+                                            style: "margin: 0; font-size: 11px; color: #6b7280;",
+                                            "Local ts: {conflict.local_updated_at}, incoming ts: {conflict.incoming_updated_at}, strategy: {conflict.strategy}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    div {
+                        style: "
+                            padding: 12px;
+                            border: 1px solid #e5e7eb;
+                            border-radius: 12px;
+                            background: #ffffff;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 8px;
+                            margin-bottom: 10px;
+                        ",
                         p {
                             style: "
                                 margin: 0;
@@ -2138,6 +2254,12 @@ fn render_attachment_preview(preview: AttachmentPreview, preview_title: &str) ->
     }
 }
 
+fn format_sync_conflict_time(timestamp_ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(timestamp_ms)
+        .map(|date_time| date_time.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+        .unwrap_or_else(|| timestamp_ms.to_string())
+}
+
 fn sync_state_label(state: MobileSyncState, last_sync_at: Option<i64>) -> String {
     match state {
         MobileSyncState::Offline => "Sync: local-only mode".to_string(),
@@ -2434,5 +2556,13 @@ mod tests {
         assert!(!should_refresh_managed_token_after_sync_error(
             &dirt_core::Error::Database("disk I/O error".to_string())
         ));
+    }
+
+    #[test]
+    fn formats_sync_conflict_timestamps_for_display() {
+        assert_eq!(
+            format_sync_conflict_time(0),
+            "1970-01-01 00:00:00 UTC".to_string()
+        );
     }
 }

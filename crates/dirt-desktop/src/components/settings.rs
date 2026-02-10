@@ -4,7 +4,7 @@ use dioxus::prelude::*;
 use dioxus_primitives::slider::SliderValue;
 use rfd::AsyncFileDialog;
 
-use dirt_core::models::{Settings, ThemeMode};
+use dirt_core::models::{Settings, SyncConflict, ThemeMode};
 
 use super::button::{Button, ButtonVariant};
 use super::dialog::{DialogContent, DialogRoot, DialogTitle};
@@ -29,6 +29,7 @@ const FONT_FAMILIES: &[(&str, &str)] = &[
     ("Monaco", "Monaco"),
     ("Menlo", "Menlo"),
 ];
+const SYNC_CONFLICT_LIMIT: usize = 10;
 
 /// Settings panel component
 #[component]
@@ -89,6 +90,10 @@ pub fn SettingsPanel() -> Element {
     let auth_service_for_preflight = auth_service.clone();
     let mut export_busy = use_signal(|| false);
     let mut export_message = use_signal(|| None::<String>);
+    let sync_conflicts = use_signal(Vec::<SyncConflict>::new);
+    let mut sync_conflicts_loading = use_signal(|| false);
+    let mut sync_conflicts_error = use_signal(|| None::<String>);
+    let mut sync_conflicts_refresh_version = use_signal(|| 0u64);
 
     use_effect(move || {
         if auth_config_checked() || auth_service_for_preflight.is_none() {
@@ -122,6 +127,38 @@ pub fn SettingsPanel() -> Element {
             }
 
             auth_verifying_signal.set(false);
+        });
+    });
+
+    use_effect(move || {
+        let _refresh_version = sync_conflicts_refresh_version();
+        let db = state.db_service.read().clone();
+
+        sync_conflicts_loading.set(true);
+        sync_conflicts_error.set(None);
+
+        let mut conflicts_signal = sync_conflicts;
+        let mut loading_signal = sync_conflicts_loading;
+        let mut error_signal = sync_conflicts_error;
+        spawn(async move {
+            let Some(db) = db else {
+                conflicts_signal.set(Vec::new());
+                loading_signal.set(false);
+                error_signal.set(Some("Database service is not available.".to_string()));
+                return;
+            };
+
+            match db.list_conflicts(SYNC_CONFLICT_LIMIT).await {
+                Ok(conflicts) => {
+                    conflicts_signal.set(conflicts);
+                }
+                Err(error) => {
+                    conflicts_signal.set(Vec::new());
+                    error_signal.set(Some(format!("Failed to load sync conflicts: {error}")));
+                }
+            }
+
+            loading_signal.set(false);
         });
     });
 
@@ -392,6 +429,10 @@ pub fn SettingsPanel() -> Element {
         });
     };
 
+    let refresh_sync_conflicts = move |_: MouseEvent| {
+        sync_conflicts_refresh_version.set(sync_conflicts_refresh_version().saturating_add(1));
+    };
+
     let auth_working = auth_busy() || auth_verifying();
     let sign_up_blocked_reason = sign_up_block_reason(auth_config_status());
     let sign_up_blocked = sign_up_blocked_reason.is_some();
@@ -608,6 +649,63 @@ pub fn SettingsPanel() -> Element {
                     }
                 }
 
+                SettingRow {
+                    label: "Sync Conflicts",
+                    description: "Recent LWW conflict resolutions",
+
+                    div {
+                        class: "auth-panel",
+                        div {
+                            class: "auth-actions",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                disabled: sync_conflicts_loading(),
+                                onclick: refresh_sync_conflicts,
+                                "Refresh"
+                            }
+                        }
+
+                        if sync_conflicts_loading() {
+                            div {
+                                class: "auth-message",
+                                "Loading recent conflicts..."
+                            }
+                        } else if let Some(error) = sync_conflicts_error() {
+                            div {
+                                class: "auth-error",
+                                "{error}"
+                            }
+                        } else if sync_conflicts().is_empty() {
+                            div {
+                                class: "auth-hint",
+                                "No sync conflicts recorded yet."
+                            }
+                        } else {
+                            div {
+                                style: "display: flex; flex-direction: column; gap: 8px;",
+                                for conflict in sync_conflicts() {
+                                    div {
+                                        key: "{conflict.id}",
+                                        style: "padding: 8px; border: 1px solid #37415133; border-radius: 8px;",
+                                        div {
+                                            style: "font-size: 12px; font-weight: 600;",
+                                            "Note {conflict.note_id}"
+                                        }
+                                        div {
+                                            style: "font-size: 11px; opacity: 0.9;",
+                                            "Resolved: {format_sync_conflict_timestamp(conflict.resolved_at)}"
+                                        }
+                                        div {
+                                            style: "font-size: 11px; opacity: 0.9;",
+                                            "Local ts: {conflict.local_updated_at}, incoming ts: {conflict.incoming_updated_at}, strategy: {conflict.strategy}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Account authentication
                 SettingRow {
                     label: "Account",
@@ -813,6 +911,12 @@ fn format_auth_config_status(status: AuthConfigStatus) -> String {
     "Auth config check passed.".to_string()
 }
 
+fn format_sync_conflict_timestamp(timestamp_ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(timestamp_ms)
+        .map(|date_time| date_time.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+        .unwrap_or_else(|| timestamp_ms.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -879,5 +983,11 @@ mod tests {
         };
 
         assert!(sign_up_block_reason(Some(status)).is_none());
+    }
+
+    #[test]
+    fn format_sync_conflict_timestamp_uses_utc_display() {
+        let formatted = format_sync_conflict_timestamp(0);
+        assert_eq!(formatted, "1970-01-01 00:00:00 UTC");
     }
 }
