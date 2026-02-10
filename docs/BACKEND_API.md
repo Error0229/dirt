@@ -14,9 +14,11 @@ Last updated: 2026-02-10
 
 - Clients authenticate with Supabase access tokens (`Bearer ...`).
 - Backend verifies JWT signatures against Supabase JWKS.
+- Backend enforces JWT claim checks (`aud`, `iss`, `sub`, `role`, `exp`, `iat`, optional `nbf`).
 - Backend returns short-lived credentials only:
   - Turso sync token
   - R2 presigned media operation URLs
+- Protected endpoints apply per-user rate limits and return HTTP `429` with `Retry-After` when exceeded.
 
 ## Endpoints
 
@@ -35,6 +37,8 @@ Last updated: 2026-02-10
   - Query: `object_key`
 - `POST /v1/media/presign/delete` (auth required)
   - Body: `object_key`
+- `GET /healthz`
+  - Includes in-memory abuse-rate counters (`sync_allowed`, `sync_limited`, `media_allowed`, `media_limited`).
 
 ## Configuration
 
@@ -51,6 +55,11 @@ Use server environment variables (see `.env.example` backend section):
   - `TURSO_DATABASE_NAME`
   - `TURSO_DATABASE_URL`
   - `TURSO_PLATFORM_API_TOKEN` (server-only secret)
+- Hardening/rate limits:
+  - `AUTH_CLOCK_SKEW_SECS` (default `60`)
+  - `RATE_LIMIT_WINDOW_SECS` (default `60`)
+  - `SYNC_TOKEN_RATE_LIMIT_PER_WINDOW` (default `20`)
+  - `MEDIA_PRESIGN_RATE_LIMIT_PER_WINDOW` (default `120`)
 - Media signing (optional):
   - `R2_ACCOUNT_ID`
   - `R2_BUCKET`

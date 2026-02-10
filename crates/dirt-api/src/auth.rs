@@ -14,6 +14,7 @@ use crate::error::AppError;
 #[derive(Debug, Clone)]
 pub struct AuthenticatedUser {
     pub user_id: String,
+    pub session_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -59,9 +60,14 @@ impl SupabaseJwtVerifier {
         if decoded.claims.sub.trim().is_empty() {
             return Err(AppError::unauthorized("Token subject is missing"));
         }
+        if decoded.claims.role.as_deref() != Some("authenticated") {
+            return Err(AppError::unauthorized("Token role is not allowed"));
+        }
+        validate_temporal_claims(&decoded.claims, self.config.auth_clock_skew)?;
 
         Ok(AuthenticatedUser {
             user_id: decoded.claims.sub,
+            session_id: decoded.claims.session_id.or(decoded.claims.jti),
         })
     }
 
@@ -148,6 +154,42 @@ struct Jwk {
 struct SupabaseClaims {
     sub: String,
     aud: Option<Value>,
+    role: Option<String>,
+    exp: Option<i64>,
+    iat: Option<i64>,
+    nbf: Option<i64>,
+    jti: Option<String>,
+    session_id: Option<String>,
+}
+
+fn validate_temporal_claims(
+    claims: &SupabaseClaims,
+    clock_skew: std::time::Duration,
+) -> Result<(), AppError> {
+    let now = chrono::Utc::now().timestamp();
+    let skew = i64::try_from(clock_skew.as_secs()).unwrap_or(0);
+
+    let exp = claims
+        .exp
+        .ok_or_else(|| AppError::unauthorized("Token missing `exp` claim"))?;
+    if exp <= now.saturating_sub(skew) {
+        return Err(AppError::unauthorized("Token is expired"));
+    }
+
+    let iat = claims
+        .iat
+        .ok_or_else(|| AppError::unauthorized("Token missing `iat` claim"))?;
+    if iat > now.saturating_add(skew) {
+        return Err(AppError::unauthorized("Token `iat` is in the future"));
+    }
+
+    if let Some(nbf) = claims.nbf {
+        if nbf > now.saturating_add(skew) {
+            return Err(AppError::unauthorized("Token is not yet valid"));
+        }
+    }
+
+    Ok(())
 }
 
 async fn fetch_jwks(
@@ -266,5 +308,40 @@ mod tests {
             Some(&Value::String("anon".to_string())),
             "authenticated"
         ));
+    }
+
+    #[test]
+    fn temporal_claims_require_exp_and_iat() {
+        let claims = SupabaseClaims {
+            sub: "user".to_string(),
+            aud: Some(Value::String("authenticated".to_string())),
+            role: Some("authenticated".to_string()),
+            exp: None,
+            iat: None,
+            nbf: None,
+            jti: None,
+            session_id: None,
+        };
+        let err =
+            validate_temporal_claims(&claims, std::time::Duration::from_secs(60)).unwrap_err();
+        assert!(err.to_string().contains("missing `exp`"));
+    }
+
+    #[test]
+    fn temporal_claims_reject_future_iat() {
+        let now = chrono::Utc::now().timestamp();
+        let claims = SupabaseClaims {
+            sub: "user".to_string(),
+            aud: Some(Value::String("authenticated".to_string())),
+            role: Some("authenticated".to_string()),
+            exp: Some(now + 300),
+            iat: Some(now + 120),
+            nbf: None,
+            jti: None,
+            session_id: None,
+        };
+        let err =
+            validate_temporal_claims(&claims, std::time::Duration::from_secs(30)).unwrap_err();
+        assert!(err.to_string().contains("future"));
     }
 }
