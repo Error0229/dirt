@@ -24,4 +24,18 @@ if rg --line-number --pcre2 \
   exit 1
 fi
 
+# Guardrail 3: block server-only secret identifiers from client crates.
+CLIENT_CRATES=(
+  crates/dirt-cli
+  crates/dirt-desktop
+  crates/dirt-mobile
+)
+if rg --line-number --pcre2 \
+  "\\b(?:SUPABASE_SERVICE_ROLE_KEY|R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|TURSO_ADMIN_AUTH_TOKEN|TURSO_GROUP_TOKEN)\\b" \
+  "${CLIENT_CRATES[@]}" \
+  -g '*.rs'; then
+  echo "ERROR: server-only secret identifier referenced in a client crate."
+  exit 1
+fi
+
 echo "Security guardrails passed."

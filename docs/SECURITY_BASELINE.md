@@ -1,6 +1,6 @@
 # Dirt Security Baseline
 
-Last updated: 2026-02-10
+Last updated: 2026-02-10 (ops playbook aligned)
 
 This document defines minimum security requirements for authentication, sync, and media flows.
 
@@ -48,6 +48,7 @@ This document defines minimum security requirements for authentication, sync, an
 - Rotate server-side Turso/R2 credentials on a fixed schedule.
 - Rotate immediately on suspected leak or compromise.
 - Support forced session revocation (sign-out all sessions) through auth provider controls.
+- Follow `docs/SECURITY_OPERATIONS.md` for inventory, cadence, and incident runbooks.
 
 ## Incident Response (Minimum)
 

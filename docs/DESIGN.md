@@ -213,31 +213,39 @@ dirt/
 
 | ID | Feature | Priority | Status | Blocks |
 |----|---------|----------|--------|--------|
-| F5.8 | Mobile bootstrap config (public values only) | P0 | Todo (`#149`) | F4.1, F2.3 |
-| F5.9 | Token exchange API (Supabase JWT -> short-lived Turso token) | P0 | In Progress (`#154`) | F5.8 |
-| F5.10 | Media signing API (presigned upload/download/delete) | P0 | In Progress (`#154`, `#150`) | F5.1, F2.3 |
-| F5.11 | Remove runtime env dependency from mobile prod path | P0 | Todo (`#149`, `#151`) | F5.8, F5.9 |
-| F5.12 | Replace mobile R2 client-secret flow with presigned flow | P0 | Todo (`#150`) | F5.10 |
-| F5.13 | Settings UX: user-centric provisioning states (no raw env names) | P1 | Todo (`#151`) | F5.11 |
-| F5.14 | Desktop managed-sync bootstrap parity (no end-user key entry) | P1 | Todo (`#155`) | F5.9 |
-| F5.15 | CLI config profile + optional login flow (env remains advanced mode) | P2 | Todo (`#153`) | F5.9 |
-| F5.16 | Security baseline + CI guardrails for managed credentials | P0 | In Progress (`#152`) | - |
-| F5.17 | Ordered rollout tracker across security/backend/clients | P1 | Todo (`#156`) | F5.16 |
+| F5.8 | Mobile bootstrap config (public values only) | P0 | Done (`#149`) | F4.1, F2.3 |
+| F5.9 | Token exchange API (Supabase JWT -> short-lived Turso token) | P0 | Done (`#154`) | F5.8 |
+| F5.10 | Media signing API (presigned upload/download/delete) | P0 | Done (`#154`, `#150`) | F5.1, F2.3 |
+| F5.11 | Remove runtime env dependency from mobile prod path | P0 | Done (`#149`, `#151`) | F5.8, F5.9 |
+| F5.12 | Replace mobile R2 client-secret flow with presigned flow | P0 | Done (`#150`) | F5.10 |
+| F5.13 | Settings UX: user-centric provisioning states (no raw env names) | P1 | Done (`#151`) | F5.11 |
+| F5.14 | Desktop managed-sync bootstrap parity (no end-user key entry) | P1 | Done (`#155`) | F5.9 |
+| F5.15 | CLI config profile + optional login flow (env remains advanced mode) | P2 | Done (`#153`) | F5.9 |
+| F5.16 | Security baseline + CI guardrails for managed credentials | P0 | Done (`#152`) | - |
+| F5.17 | Ordered rollout tracker across security/backend/clients | P1 | Done (`#156`) | F5.16 |
 
-### Mobile parity issues currently open
+### Phase 5.6: Zero-Key Production Hardening
+**Goal**: Production-ready security operations and zero-key onboarding enforcement
+
+| ID | Feature | Priority | Status | Blocks |
+|----|---------|----------|--------|--------|
+| F5.18 | Security operations lifecycle (inventory, rotation, revocation, IR drills) | P0 | In Progress (`#171`) | F5.16 |
+| F5.19 | Backend auth gateway abuse protections + auditability | P0 | Todo (`#169`) | F5.18 |
+| F5.20 | Zero-config managed bootstrap delivery for desktop/mobile/CLI | P0 | Todo (`#168`) | F5.19 |
+| F5.21 | Managed-mode cross-client security E2E gates | P0 | Todo (`#170`) | F5.20 |
+| F5.22 | Ordered rollout tracker for Phase 5.6 | P1 | Todo (`#172`) | F5.18 |
+
+### Mobile and managed-architecture issues currently open
 
 - `#117` Mobile search and tag-filter parity
 - `#118` Mobile attachment UX parity (add/open/delete)
 - `#119` Android-native share-intent and quick-capture widget launch wiring
 - `#120` Mobile JSON/Markdown export parity
-- `#149` Mobile: replace runtime env dependency with app bootstrap config
-- `#150` Mobile attachments: remove client-side R2 credentials, use presigned backend flow
-- `#151` Mobile settings UX: replace raw env diagnostics with user-centric provisioning status
-- `#152` Security baseline: threat model and hardening for managed credential architecture
-- `#153` CLI config profiles: reduce env dependency with optional managed auth flow
-- `#154` Backend API foundation: secure token broker and media signing service
-- `#155` Desktop parity: move to managed bootstrap and backend-issued credentials
-- `#156` Execution plan: managed credential architecture rollout order
+- `#168` Zero-config client bootstrap: managed public config delivery for desktop/mobile/CLI
+- `#169` Backend auth gateway hardening: token broker/signing abuse controls and auditability
+- `#170` Managed mode E2E security validation across desktop/mobile/CLI
+- `#171` Security operations hardening: production secret lifecycle and incident response
+- `#172` Execution plan: zero-key managed architecture and security rollout
 
 ### Phase 6: Polish & Distribution
 **Goal**: Production-ready release
