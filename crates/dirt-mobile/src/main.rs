@@ -10,6 +10,8 @@ mod config;
 mod data;
 #[cfg(any(target_os = "android", test))]
 mod launch;
+#[cfg(any(target_os = "android", test))]
+mod secret_store;
 
 #[cfg(target_os = "android")]
 fn main() {

@@ -34,6 +34,9 @@ impl MobileNoteStore {
         }
 
         let resolved_sync_config = resolve_sync_config();
+        if let Some(warning) = resolved_sync_config.warning.as_deref() {
+            tracing::warn!("Mobile sync configuration warning: {warning}");
+        }
         let db = if let Some(sync_config) = resolved_sync_config.sync_config {
             tracing::info!("Mobile sync enabled via {:?}", resolved_sync_config.source);
             open_with_sync_recovery(&db_path, sync_config).await?

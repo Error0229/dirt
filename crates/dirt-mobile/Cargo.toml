@@ -20,10 +20,12 @@ chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 dirs = "6"
+keyring-core = "0.7"
 
 [target.'cfg(target_os = "android")'.dependencies]
 dioxus = { workspace = true, features = ["mobile"] }
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
+android-native-keyring-store = "0.5"
 
 [lints]
 workspace = true
