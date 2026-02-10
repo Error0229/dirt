@@ -553,7 +553,9 @@ fn AppShell() -> Element {
 
         let Some(note_store) = store.read().clone() else {
             sync_conflicts.set(Vec::new());
-            sync_conflicts_error.set(Some("Database is not ready yet.".to_string()));
+            sync_conflicts_error.set(Some(
+                "Sync details will appear once initialization finishes.".to_string(),
+            ));
             sync_conflicts_loading.set(false);
             return;
         };
@@ -577,7 +579,7 @@ fn AppShell() -> Element {
     let on_new_note = move |_| {
         if store.read().is_none() {
             status_message.set(Some(
-                "Database is not ready yet. Retry initialization first.".to_string(),
+                "Still initializing your notes. Please try again in a moment.".to_string(),
             ));
             return;
         }
@@ -843,7 +845,9 @@ fn AppShell() -> Element {
             return;
         }
         let Some(note_store) = store.read().clone() else {
-            status_message.set(Some("Database is not ready yet.".to_string()));
+            status_message.set(Some(
+                "Still initializing your notes. Please try again in a moment.".to_string(),
+            ));
             return;
         };
 
@@ -876,7 +880,9 @@ fn AppShell() -> Element {
             return;
         }
         let Some(note_store) = store.read().clone() else {
-            status_message.set(Some("Database is not ready yet.".to_string()));
+            status_message.set(Some(
+                "Still initializing your notes. Please try again in a moment.".to_string(),
+            ));
             return;
         };
 
@@ -973,7 +979,9 @@ fn AppShell() -> Element {
         }
 
         let Some(note_store) = store.read().clone() else {
-            status_message.set(Some("Database is not ready yet".to_string()));
+            status_message.set(Some(
+                "Still initializing your notes. Please try again in a moment.".to_string(),
+            ));
             return;
         };
         let Some(note_id) = selected_note_id() else {
@@ -1029,7 +1037,9 @@ fn AppShell() -> Element {
             return;
         };
         let Some(note_store) = store.read().clone() else {
-            attachment_upload_error.set(Some("Database is not ready yet.".to_string()));
+            attachment_upload_error.set(Some(
+                "Still initializing your notes. Please try again in a moment.".to_string(),
+            ));
             return;
         };
 
@@ -2146,7 +2156,10 @@ fn AppShell() -> Element {
                                                     let attachment_for_delete =
                                                         attachment_for_delete.clone();
                                                     let Some(note_store) = store.read().clone() else {
-                                                        attachments_error.set(Some("Database is not ready yet.".to_string()));
+                                                        attachments_error.set(Some(
+                                                            "Still initializing your notes. Please try again in a moment."
+                                                                .to_string(),
+                                                        ));
                                                         return;
                                                     };
 
