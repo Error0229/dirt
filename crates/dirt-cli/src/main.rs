@@ -14,7 +14,7 @@ use clap_complete::aot::Generator;
 use clap_complete::{generate, shells};
 use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository, SyncConfig};
 use dirt_core::export::{render_json_export, render_markdown_export};
-use dirt_core::{Note, NoteId};
+use dirt_core::{Note, NoteId, SyncConflict};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -95,7 +95,10 @@ enum Commands {
         output: Option<PathBuf>,
     },
     /// Sync local replica with remote Turso database
-    Sync,
+    Sync {
+        #[command(subcommand)]
+        command: Option<SyncCommands>,
+    },
     /// Open TUI interface
     Tui,
 }
@@ -145,6 +148,19 @@ enum CompletionShell {
     Fish,
 }
 
+#[derive(Subcommand)]
+enum SyncCommands {
+    /// List recently resolved sync conflicts
+    Conflicts {
+        /// Number of conflicts to show
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -182,7 +198,12 @@ async fn run() -> Result<(), CliError> {
         Some(Commands::Completions { shell, output }) => {
             run_completions(shell, output.as_deref())?;
         }
-        Some(Commands::Sync) => run_sync(&db_path).await?,
+        Some(Commands::Sync { command }) => match command {
+            Some(SyncCommands::Conflicts { limit, json }) => {
+                run_sync_conflicts(limit, json, &db_path).await?;
+            }
+            None => run_sync(&db_path).await?,
+        },
         Some(Commands::Tui) => {
             println!("Opening TUI...");
             // TODO: Implement TUI with ratatui
@@ -221,6 +242,17 @@ struct NoteListItem {
     updated_at: i64,
     relative_time: String,
     tags: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SyncConflictItem {
+    id: i64,
+    note_id: String,
+    local_updated_at: i64,
+    incoming_updated_at: i64,
+    resolved_at: i64,
+    resolved_at_iso: String,
+    strategy: String,
 }
 
 async fn run_list(
@@ -309,6 +341,26 @@ async fn run_sync(db_path: &Path) -> Result<(), CliError> {
 
     db.sync().await?;
     println!("Sync completed");
+    Ok(())
+}
+
+async fn run_sync_conflicts(limit: usize, as_json: bool, db_path: &Path) -> Result<(), CliError> {
+    let conflicts = list_sync_conflicts(limit, db_path).await?;
+
+    if as_json {
+        let items = conflicts
+            .iter()
+            .map(sync_conflict_to_item)
+            .collect::<Vec<SyncConflictItem>>();
+        println!("{}", serde_json::to_string_pretty(&items)?);
+    } else if conflicts.is_empty() {
+        println!("No sync conflicts recorded.");
+    } else {
+        for line in format_sync_conflict_lines(&conflicts) {
+            println!("{line}");
+        }
+    }
+
     Ok(())
 }
 
@@ -405,6 +457,12 @@ async fn search_notes(query: &str, limit: usize, db_path: &Path) -> Result<Vec<N
     Ok(repo.search(query, limit).await?)
 }
 
+async fn list_sync_conflicts(limit: usize, db_path: &Path) -> Result<Vec<SyncConflict>, CliError> {
+    let db = open_database(db_path).await?;
+    let repo = LibSqlNoteRepository::new(db.connection());
+    Ok(repo.list_conflicts(limit).await?)
+}
+
 async fn resolve_note_for_edit(note_query: &str, db: &Database) -> Result<Note, CliError> {
     let repo = LibSqlNoteRepository::new(db.connection());
 
@@ -492,6 +550,18 @@ fn note_to_list_item(note: &Note) -> NoteListItem {
     }
 }
 
+fn sync_conflict_to_item(conflict: &SyncConflict) -> SyncConflictItem {
+    SyncConflictItem {
+        id: conflict.id,
+        note_id: conflict.note_id.clone(),
+        local_updated_at: conflict.local_updated_at,
+        incoming_updated_at: conflict.incoming_updated_at,
+        resolved_at: conflict.resolved_at,
+        resolved_at_iso: format_sync_timestamp(conflict.resolved_at),
+        strategy: conflict.strategy.clone(),
+    }
+}
+
 fn note_preview(note: &Note, max_chars: usize) -> String {
     let first_line = note.content.lines().next().unwrap_or("").trim();
     let collapsed = first_line.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -513,6 +583,29 @@ fn render_tags(note: &Note) -> String {
         .map(|tag| format!("#{tag}"))
         .collect::<Vec<String>>()
         .join(" ")
+}
+
+fn format_sync_conflict_lines(conflicts: &[SyncConflict]) -> Vec<String> {
+    conflicts
+        .iter()
+        .map(|conflict| {
+            format!(
+                "{}  {:<4}  note={}  local={} incoming={}",
+                format_sync_timestamp(conflict.resolved_at),
+                conflict.strategy,
+                conflict.note_id,
+                conflict.local_updated_at,
+                conflict.incoming_updated_at
+            )
+        })
+        .collect()
+}
+
+fn format_sync_timestamp(timestamp_ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(timestamp_ms).map_or_else(
+        || timestamp_ms.to_string(),
+        |dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+    )
 }
 
 fn format_relative_time(timestamp_ms: i64, now_ms: i64) -> String {
@@ -725,14 +818,14 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository};
-    use dirt_core::Note;
+    use dirt_core::{Note, SyncConflict};
     use tokio::time::sleep;
 
     use super::{
-        default_editor, format_relative_time, list_notes, normalize_content,
-        normalize_note_identifier, normalize_search_query, note_preview, render_markdown_export,
-        resolve_note_for_edit, run_completions, run_delete, run_export, run_sync, search_notes,
-        CliError, CompletionShell, ExportFormat,
+        default_editor, format_relative_time, format_sync_conflict_lines, format_sync_timestamp,
+        list_notes, normalize_content, normalize_note_identifier, normalize_search_query,
+        note_preview, render_markdown_export, resolve_note_for_edit, run_completions, run_delete,
+        run_export, run_sync, search_notes, CliError, CompletionShell, ExportFormat,
     };
 
     #[test]
@@ -767,6 +860,30 @@ mod tests {
         let note = dirt_core::Note::new("This is a very long sentence that should be shortened");
         let preview = note_preview(&note, 20);
         assert_eq!(preview, "This is a very lo...");
+    }
+
+    #[test]
+    fn format_sync_timestamp_returns_utc_label() {
+        assert_eq!(format_sync_timestamp(0), "1970-01-01 00:00:00 UTC");
+    }
+
+    #[test]
+    fn format_sync_conflict_lines_include_key_fields() {
+        let conflicts = vec![SyncConflict {
+            id: 1,
+            note_id: "11111111-1111-7111-8111-111111111111".to_string(),
+            local_updated_at: 200,
+            incoming_updated_at: 100,
+            resolved_at: 300,
+            strategy: "lww".to_string(),
+        }];
+
+        let rendered = format_sync_conflict_lines(&conflicts);
+        assert_eq!(rendered.len(), 1);
+        assert!(rendered[0].contains("lww"));
+        assert!(rendered[0].contains("note=11111111-1111-7111-8111-111111111111"));
+        assert!(rendered[0].contains("local=200"));
+        assert!(rendered[0].contains("incoming=100"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
