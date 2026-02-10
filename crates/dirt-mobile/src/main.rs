@@ -11,6 +11,8 @@ mod config;
 #[cfg(any(target_os = "android", test))]
 mod data;
 #[cfg(any(target_os = "android", test))]
+mod filters;
+#[cfg(any(target_os = "android", test))]
 mod launch;
 #[cfg(any(target_os = "android", test))]
 mod secret_store;
