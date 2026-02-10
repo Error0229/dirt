@@ -18,6 +18,9 @@ use crate::config::{
     MobileRuntimeConfig, SecretStatus, SyncConfigSource,
 };
 use crate::data::MobileNoteStore;
+use crate::export::{
+    default_export_directory, export_notes_to_path, suggested_export_file_name, MobileExportFormat,
+};
 use crate::filters::{collect_note_tags, filter_notes};
 use crate::launch::LaunchIntent;
 use crate::secret_store;
@@ -153,6 +156,7 @@ fn AppShell() -> Element {
     let mut auth_password_input = use_signal(String::new);
     let mut auth_config_status = use_signal(|| None::<AuthConfigStatus>);
     let mut auth_loading = use_signal(|| false);
+    let mut export_busy = use_signal(|| false);
     let launch: Signal<LaunchIntent> = use_signal(crate::launch::detect_launch_intent_from_runtime);
     let mut launch_applied = use_signal(|| false);
     let toasts = use_toast();
@@ -746,6 +750,73 @@ fn AppShell() -> Element {
         });
     };
 
+    let on_export_json = move |_| {
+        if export_busy() {
+            return;
+        }
+        let Some(note_store) = store.read().clone() else {
+            status_message.set(Some("Database is not ready yet.".to_string()));
+            return;
+        };
+
+        export_busy.set(true);
+        status_message.set(Some("Exporting notes as JSON...".to_string()));
+
+        let output_path = default_export_directory().join(suggested_export_file_name(
+            MobileExportFormat::Json,
+            chrono::Utc::now().timestamp_millis(),
+        ));
+
+        spawn(async move {
+            match export_notes_to_path(note_store, MobileExportFormat::Json, &output_path).await {
+                Ok(note_count) => {
+                    status_message.set(Some(format!(
+                        "Exported {note_count} notes to {}",
+                        output_path.display()
+                    )));
+                }
+                Err(error) => {
+                    status_message.set(Some(format!("JSON export failed: {error}")));
+                }
+            }
+            export_busy.set(false);
+        });
+    };
+
+    let on_export_markdown = move |_| {
+        if export_busy() {
+            return;
+        }
+        let Some(note_store) = store.read().clone() else {
+            status_message.set(Some("Database is not ready yet.".to_string()));
+            return;
+        };
+
+        export_busy.set(true);
+        status_message.set(Some("Exporting notes as Markdown...".to_string()));
+
+        let output_path = default_export_directory().join(suggested_export_file_name(
+            MobileExportFormat::Markdown,
+            chrono::Utc::now().timestamp_millis(),
+        ));
+
+        spawn(async move {
+            match export_notes_to_path(note_store, MobileExportFormat::Markdown, &output_path).await
+            {
+                Ok(note_count) => {
+                    status_message.set(Some(format!(
+                        "Exported {note_count} notes to {}",
+                        output_path.display()
+                    )));
+                }
+                Err(error) => {
+                    status_message.set(Some(format!("Markdown export failed: {error}")));
+                }
+            }
+            export_busy.set(false);
+        });
+    };
+
     let on_save_note = move |_| {
         if saving() {
             return;
@@ -960,6 +1031,8 @@ fn AppShell() -> Element {
     let filtered_note_count = filtered_notes.len();
     let has_active_note_filters =
         !search_query_value.trim().is_empty() || active_tag_filter_value.is_some();
+    let export_directory = default_export_directory();
+    let export_directory_text = export_directory.display().to_string();
     let app_version = env!("CARGO_PKG_VERSION");
     let package_name = env!("CARGO_PKG_NAME");
 
@@ -1417,6 +1490,53 @@ fn AppShell() -> Element {
                                 disabled: auth_loading() || auth_session().is_none(),
                                 onclick: on_auth_sign_out,
                                 "Sign out"
+                            }
+                        }
+                    }
+
+                    div {
+                        style: "
+                            padding: 12px;
+                            border: 1px solid #e5e7eb;
+                            border-radius: 12px;
+                            background: #ffffff;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 8px;
+                            margin-bottom: 10px;
+                        ",
+                        p {
+                            style: "
+                                margin: 0;
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: #6b7280;
+                                text-transform: uppercase;
+                                letter-spacing: 0.04em;
+                            ",
+                            "Export"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Destination: {export_directory_text}"
+                        }
+                        div {
+                            style: "display: flex; gap: 8px;",
+                            UiButton {
+                                type: "button",
+                                block: true,
+                                variant: ButtonVariant::Outline,
+                                disabled: export_busy(),
+                                onclick: on_export_json,
+                                if export_busy() { "Exporting..." } else { "Export JSON" }
+                            }
+                            UiButton {
+                                type: "button",
+                                block: true,
+                                variant: ButtonVariant::Outline,
+                                disabled: export_busy(),
+                                onclick: on_export_markdown,
+                                "Export Markdown"
                             }
                         }
                     }

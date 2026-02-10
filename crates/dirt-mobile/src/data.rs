@@ -17,6 +17,7 @@ use tokio::sync::Mutex;
 use crate::config::resolve_sync_config;
 
 const DEFAULT_NOTES_LIMIT: usize = 100;
+const EXPORT_NOTES_PAGE_SIZE: usize = 500;
 
 /// Thin async wrapper around `dirt-core` note repository APIs.
 #[derive(Clone)]
@@ -63,6 +64,27 @@ impl MobileNoteStore {
         let db = self.db.lock().await;
         let repo = LibSqlNoteRepository::new(db.connection());
         repo.list(DEFAULT_NOTES_LIMIT, 0).await
+    }
+
+    /// List all notes for full export operations.
+    pub async fn list_all_notes(&self) -> Result<Vec<Note>> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        let mut notes = Vec::new();
+        let mut offset = 0usize;
+
+        loop {
+            let batch = repo.list(EXPORT_NOTES_PAGE_SIZE, offset).await?;
+            let count = batch.len();
+            notes.extend(batch);
+
+            if count < EXPORT_NOTES_PAGE_SIZE {
+                break;
+            }
+            offset += count;
+        }
+
+        Ok(notes)
     }
 
     /// Create a note.
@@ -251,6 +273,17 @@ mod tests {
             Error::InvalidInput(msg) => assert!(msg.contains("cannot be empty")),
             other => panic!("expected invalid input error, got {other:?}"),
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_all_notes_returns_full_collection() {
+        let store = MobileNoteStore::open_in_memory().await.unwrap();
+        store.create_note("One").await.unwrap();
+        store.create_note("Two").await.unwrap();
+        store.create_note("Three").await.unwrap();
+
+        let notes = store.list_all_notes().await.unwrap();
+        assert_eq!(notes.len(), 3);
     }
 
     #[tokio::test(flavor = "multi_thread")]
