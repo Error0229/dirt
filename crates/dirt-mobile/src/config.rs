@@ -167,7 +167,7 @@ fn resolve_sync_config_from_sources(
     let warning = if runtime_url_was_set {
         match runtime_secret {
             Ok(None) => Some(
-                "Turso URL is configured but secure auth token is missing. Save token in Settings."
+                "Turso URL is configured but sync auth token is missing. Sign in and refresh sync settings."
                     .to_string(),
             ),
             Err(error) => Some(format!(

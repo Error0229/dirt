@@ -15,6 +15,7 @@ use crate::config::{
 use crate::data::MobileNoteStore;
 use crate::launch::LaunchIntent;
 use crate::secret_store;
+use crate::sync_auth::{SyncToken, TursoSyncAuthClient};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MobileView {
@@ -34,6 +35,7 @@ enum MobileSyncState {
 struct MobileConfigDiagnostics {
     turso_sync_configured: bool,
     turso_active_source: String,
+    turso_managed_auth_endpoint: String,
     turso_runtime_endpoint: String,
     turso_runtime_token_status: String,
     turso_env_endpoint: String,
@@ -125,10 +127,11 @@ fn AppShell() -> Element {
     let attachment_refresh_version = use_signal(|| 0u64);
     let mut db_init_retry_version = use_signal(|| 0u64);
     let mut turso_database_url_input = use_signal(String::new);
-    let mut turso_auth_token_input = use_signal(String::new);
     let mut active_sync_source = use_signal(|| SyncConfigSource::None);
     let mut auth_service = use_signal(|| None::<Arc<SupabaseAuthService>>);
     let mut auth_session = use_signal(|| None::<AuthSession>);
+    let mut sync_auth_client = use_signal(|| None::<Arc<TursoSyncAuthClient>>);
+    let mut sync_token_expires_at = use_signal(|| None::<i64>);
     let mut auth_email_input = use_signal(String::new);
     let mut auth_password_input = use_signal(String::new);
     let mut auth_config_status = use_signal(|| None::<AuthConfigStatus>);
@@ -140,19 +143,36 @@ fn AppShell() -> Element {
     use_future(move || async move {
         let _db_init_retry_version = db_init_retry_version();
         let runtime_config = load_runtime_config();
-        turso_database_url_input.set(runtime_config.turso_database_url.unwrap_or_default());
-        turso_auth_token_input.set(String::new());
-        let resolved_sync_config = resolve_sync_config();
+        let runtime_has_sync_url = runtime_config.has_sync_url();
+        turso_database_url_input.set(
+            runtime_config
+                .turso_database_url
+                .clone()
+                .unwrap_or_default(),
+        );
+        let mut resolved_sync_config = resolve_sync_config();
         active_sync_source.set(resolved_sync_config.source);
         auth_service.set(None);
         auth_session.set(None);
         auth_config_status.set(None);
+        sync_auth_client.set(None);
+        sync_token_expires_at.set(None);
+
+        match TursoSyncAuthClient::new_from_env() {
+            Ok(Some(client)) => {
+                sync_auth_client.set(Some(Arc::new(client)));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                status_message.set(Some(format!("Managed sync auth is misconfigured: {error}")));
+            }
+        }
 
         match SupabaseAuthService::new_from_env() {
             Ok(Some(service)) => {
                 let service = Arc::new(service);
                 match service.restore_session().await {
-                    Ok(session) => auth_session.set(session),
+                    Ok(session) => auth_session.set(session.clone()),
                     Err(error) => {
                         tracing::warn!("Failed to restore mobile auth session: {}", error);
                         status_message.set(Some(format!("Auth session restore failed: {error}")));
@@ -171,6 +191,37 @@ fn AppShell() -> Element {
             Ok(None) => {}
             Err(error) => {
                 status_message.set(Some(format!("Auth is not configured: {error}")));
+            }
+        }
+
+        if runtime_has_sync_url {
+            if sync_auth_client.read().is_some() && auth_session().is_none() {
+                if let Err(error) =
+                    secret_store::delete_secret(secret_store::SECRET_TURSO_AUTH_TOKEN)
+                {
+                    tracing::warn!(
+                        "Failed to clear stale managed sync token without active session: {}",
+                        error
+                    );
+                }
+            }
+            match refresh_managed_sync_token(
+                sync_auth_client.read().clone(),
+                auth_session(),
+                &mut status_message,
+            )
+            .await
+            {
+                Ok(Some(token)) => {
+                    sync_token_expires_at.set(Some(token.expires_at));
+                    resolved_sync_config = resolve_sync_config();
+                    active_sync_source.set(resolved_sync_config.source);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    status_message
+                        .set(Some(format!("Managed sync token exchange failed: {error}")));
+                }
             }
         }
 
@@ -225,7 +276,7 @@ fn AppShell() -> Element {
                     sync_scheduler_active.set(false);
                     sync_state.set(MobileSyncState::Offline);
                     let offline_message = resolved_sync_config.warning.clone().unwrap_or_else(|| {
-                        "Running in local-only mode (set Turso URL + auth token in Settings to enable auto-sync)"
+                        "Running in local-only mode (set Turso URL and sign in to enable auto-sync)"
                             .to_string()
                     });
                     status_message.set(Some(offline_message));
@@ -272,6 +323,37 @@ fn AppShell() -> Element {
         loop {
             tokio::time::sleep(Duration::from_secs(SYNC_INTERVAL_SECS)).await;
 
+            let managed_sync_enabled =
+                sync_auth_client.read().is_some() && load_runtime_config().has_sync_url();
+            if managed_sync_enabled
+                && sync_token_expires_at()
+                    .map(|expires_at| expires_at <= chrono::Utc::now().timestamp() + 60)
+                    .unwrap_or(true)
+            {
+                match refresh_managed_sync_token(
+                    sync_auth_client.read().clone(),
+                    auth_session(),
+                    &mut status_message,
+                )
+                .await
+                {
+                    Ok(Some(token)) => {
+                        sync_token_expires_at.set(Some(token.expires_at));
+                        status_message.set(Some(
+                            "Refreshed sync credentials. Reinitializing database connection..."
+                                .to_string(),
+                        ));
+                        db_init_retry_version.set(db_init_retry_version() + 1);
+                        continue;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        status_message
+                            .set(Some(format!("Managed sync token refresh failed: {error}")));
+                    }
+                }
+            }
+
             let Some(note_store) = store.read().clone() else {
                 sync_scheduler_active.set(false);
                 continue;
@@ -316,6 +398,33 @@ fn AppShell() -> Element {
                     tracing::error!("Periodic mobile sync failed: {}", error);
                     sync_state.set(MobileSyncState::Error);
                     consecutive_sync_failures.set(consecutive_sync_failures().saturating_add(1));
+
+                    if managed_sync_enabled && should_refresh_managed_token_after_sync_error(&error)
+                    {
+                        match refresh_managed_sync_token(
+                            sync_auth_client.read().clone(),
+                            auth_session(),
+                            &mut status_message,
+                        )
+                        .await
+                        {
+                            Ok(Some(token)) => {
+                                sync_token_expires_at.set(Some(token.expires_at));
+                                status_message.set(Some(
+                                    "Recovered sync credentials after auth error. Reinitializing database connection..."
+                                        .to_string(),
+                                ));
+                                db_init_retry_version.set(db_init_retry_version() + 1);
+                                continue;
+                            }
+                            Ok(None) => {}
+                            Err(refresh_error) => {
+                                status_message.set(Some(format!(
+                                    "Sync auth refresh failed after error: {refresh_error}"
+                                )));
+                            }
+                        }
+                    }
 
                     if previous_sync_state != MobileSyncState::Error {
                         toasts.error(
@@ -400,39 +509,12 @@ fn AppShell() -> Element {
             return;
         }
 
-        let entered_token = turso_auth_token_input().trim().to_string();
-        if entered_token.is_empty() {
-            match secret_store::has_secret(secret_store::SECRET_TURSO_AUTH_TOKEN) {
-                Ok(true) => {}
-                Ok(false) => {
-                    status_message.set(Some(
-                        "Turso auth token is required. Enter it once to store it securely."
-                            .to_string(),
-                    ));
-                    return;
-                }
-                Err(error) => {
-                    status_message.set(Some(format!(
-                        "Secure storage is unavailable; cannot read existing token: {error}"
-                    )));
-                    return;
-                }
-            }
-        } else if let Err(error) =
-            secret_store::write_secret(secret_store::SECRET_TURSO_AUTH_TOKEN, &entered_token)
-        {
-            status_message.set(Some(format!(
-                "Failed to save Turso auth token to secure storage: {error}"
-            )));
-            return;
-        }
-
         match save_runtime_config(&runtime_config) {
             Ok(()) => {
-                turso_auth_token_input.set(String::new());
                 active_sync_source.set(SyncConfigSource::RuntimeSettings);
                 status_message.set(Some(
-                    "Saved sync settings. Reinitializing database connection...".to_string(),
+                    "Saved sync settings. Sign in to fetch managed sync credentials, then retry initialization."
+                        .to_string(),
                 ));
                 db_init_retry_version.set(db_init_retry_version() + 1);
             }
@@ -456,8 +538,8 @@ fn AppShell() -> Element {
         }
 
         turso_database_url_input.set(String::new());
-        turso_auth_token_input.set(String::new());
         active_sync_source.set(SyncConfigSource::None);
+        sync_token_expires_at.set(None);
         status_message.set(Some(
             "Cleared runtime sync settings. Reinitializing database connection...".to_string(),
         ));
@@ -494,9 +576,32 @@ fn AppShell() -> Element {
                         .email
                         .clone()
                         .unwrap_or_else(|| "unknown user".to_string());
-                    auth_session.set(Some(session));
+                    auth_session.set(Some(session.clone()));
                     auth_password_input.set(String::new());
                     status_message.set(Some(format!("Signed in as {session_email}")));
+
+                    match refresh_managed_sync_token(
+                        sync_auth_client.read().clone(),
+                        Some(session),
+                        &mut status_message,
+                    )
+                    .await
+                    {
+                        Ok(Some(token)) => {
+                            sync_token_expires_at.set(Some(token.expires_at));
+                            status_message.set(Some(
+                                "Signed in and refreshed sync credentials.".to_string(),
+                            ));
+                            db_init_retry_version.set(db_init_retry_version() + 1);
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            status_message.set(Some(format!(
+                                "Signed in, but sync token refresh failed: {error}"
+                            )));
+                        }
+                    }
+
                     if let Ok(config) = service.verify_configuration().await {
                         auth_config_status.set(Some(config));
                     }
@@ -539,9 +644,31 @@ fn AppShell() -> Element {
                         .email
                         .clone()
                         .unwrap_or_else(|| "unknown user".to_string());
-                    auth_session.set(Some(session));
+                    auth_session.set(Some(session.clone()));
                     auth_password_input.set(String::new());
                     status_message.set(Some(format!("Signed up and signed in as {session_email}")));
+
+                    match refresh_managed_sync_token(
+                        sync_auth_client.read().clone(),
+                        Some(session),
+                        &mut status_message,
+                    )
+                    .await
+                    {
+                        Ok(Some(token)) => {
+                            sync_token_expires_at.set(Some(token.expires_at));
+                            status_message.set(Some(
+                                "Signed up and refreshed sync credentials.".to_string(),
+                            ));
+                            db_init_retry_version.set(db_init_retry_version() + 1);
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            status_message.set(Some(format!(
+                                "Signed up, but sync token refresh failed: {error}"
+                            )));
+                        }
+                    }
                 }
                 Ok(SignUpOutcome::ConfirmationRequired) => {
                     status_message.set(Some(
@@ -577,7 +704,17 @@ fn AppShell() -> Element {
                 Ok(()) => {
                     auth_session.set(None);
                     auth_password_input.set(String::new());
-                    status_message.set(Some("Signed out".to_string()));
+                    sync_token_expires_at.set(None);
+                    if let Err(error) =
+                        secret_store::delete_secret(secret_store::SECRET_TURSO_AUTH_TOKEN)
+                    {
+                        status_message.set(Some(format!(
+                            "Signed out, but failed to clear cached sync token: {error}"
+                        )));
+                    } else {
+                        status_message.set(Some("Signed out".to_string()));
+                    }
+                    db_init_retry_version.set(db_init_retry_version() + 1);
                 }
                 Err(error) => {
                     status_message.set(Some(format!("Sign-out failed: {error}")));
@@ -1173,19 +1310,9 @@ fn AppShell() -> Element {
                                 turso_database_url_input.set(event.value());
                             },
                         }
-                        input {
-                            r#type: "password",
-                            placeholder: "Turso auth token",
-                            value: "{turso_auth_token_input}",
-                            style: "
-                                border: 1px solid #d1d5db;
-                                border-radius: 8px;
-                                padding: 10px;
-                                font-size: 13px;
-                            ",
-                            oninput: move |event: Event<FormData>| {
-                                turso_auth_token_input.set(event.value());
-                            },
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "Managed mode uses signed-in Supabase session + TURSO_SYNC_TOKEN_ENDPOINT to fetch short-lived sync credentials."
                         }
                         div {
                             style: "display: flex; gap: 8px;",
@@ -1282,6 +1409,10 @@ fn AppShell() -> Element {
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
                             "Turso runtime token: {diagnostics.turso_runtime_token_status}"
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #374151;",
+                            "Managed token endpoint: {diagnostics.turso_managed_auth_endpoint}"
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
@@ -1517,6 +1648,7 @@ fn mobile_config_diagnostics(
     let runtime_config = load_runtime_config();
     let turso_runtime_url = runtime_config.turso_database_url;
     let turso_runtime_token_status = runtime_turso_token_status();
+    let managed_sync_endpoint = env_var_trimmed("TURSO_SYNC_TOKEN_ENDPOINT");
 
     let turso_env_url = env_var_trimmed("TURSO_DATABASE_URL");
     let turso_env_token_set = env_var_trimmed("TURSO_AUTH_TOKEN").is_some();
@@ -1535,6 +1667,10 @@ fn mobile_config_diagnostics(
     MobileConfigDiagnostics {
         turso_sync_configured: !matches!(active_sync_source, SyncConfigSource::None),
         turso_active_source: sync_config_source_label(active_sync_source).to_string(),
+        turso_managed_auth_endpoint: managed_sync_endpoint
+            .as_deref()
+            .map(mask_endpoint_value)
+            .unwrap_or_else(|| "not set".to_string()),
         turso_runtime_endpoint: turso_runtime_url
             .as_deref()
             .map(mask_endpoint_value)
@@ -1585,6 +1721,39 @@ fn auth_config_summary(status: AuthConfigStatus) -> String {
         "autoconfirm:off"
     };
     format!("{email}, {signup}, {confirm}")
+}
+
+async fn refresh_managed_sync_token(
+    sync_auth_client: Option<Arc<TursoSyncAuthClient>>,
+    auth_session: Option<AuthSession>,
+    _status_message: &mut Signal<Option<String>>,
+) -> Result<Option<SyncToken>, String> {
+    let Some(client) = sync_auth_client else {
+        return Ok(None);
+    };
+    if !load_runtime_config().has_sync_url() {
+        return Ok(None);
+    }
+    let Some(session) = auth_session else {
+        return Ok(None);
+    };
+
+    let token = client
+        .exchange_token(&session.access_token)
+        .await
+        .map_err(|error| error.to_string())?;
+    secret_store::write_secret(secret_store::SECRET_TURSO_AUTH_TOKEN, &token.token)
+        .map_err(|error| format!("Failed to persist managed sync token: {error}"))?;
+    Ok(Some(token))
+}
+
+fn should_refresh_managed_token_after_sync_error(error: &dirt_core::Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("auth")
+        || message.contains("token")
+        || message.contains("unauthorized")
+        || message.contains("forbidden")
+        || message.contains("permission denied")
 }
 
 fn env_var_trimmed(name: &str) -> Option<String> {
@@ -1744,5 +1913,18 @@ mod tests {
             mask_endpoint_value("project.supabase.co/path"),
             "project.supabase.co"
         );
+    }
+
+    #[test]
+    fn detects_sync_errors_that_should_trigger_managed_token_refresh() {
+        assert!(should_refresh_managed_token_after_sync_error(
+            &dirt_core::Error::Database("auth token expired".to_string())
+        ));
+        assert!(should_refresh_managed_token_after_sync_error(
+            &dirt_core::Error::Database("unauthorized".to_string())
+        ));
+        assert!(!should_refresh_managed_token_after_sync_error(
+            &dirt_core::Error::Database("disk I/O error".to_string())
+        ));
     }
 }
