@@ -13,6 +13,8 @@ mod config;
 #[cfg(any(target_os = "android", test))]
 mod data;
 #[cfg(any(target_os = "android", test))]
+mod export;
+#[cfg(any(target_os = "android", test))]
 mod filters;
 #[cfg(any(target_os = "android", test))]
 mod launch;
