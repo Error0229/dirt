@@ -49,8 +49,6 @@ struct MobileConfigDiagnostics {
     turso_managed_auth_endpoint: String,
     turso_runtime_endpoint: String,
     turso_runtime_token_status: String,
-    turso_bootstrap_endpoint: String,
-    turso_bootstrap_token_status: String,
     supabase_url: String,
     supabase_anon_key_status: String,
     supabase_auth_status: String,
@@ -1824,14 +1822,6 @@ fn AppShell() -> Element {
                         }
                         p {
                             style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Turso bootstrap endpoint: {diagnostics.turso_bootstrap_endpoint}"
-                        }
-                        p {
-                            style: "margin: 0; font-size: 12px; color: #374151;",
-                            "Turso bootstrap token: {diagnostics.turso_bootstrap_token_status}"
-                        }
-                        p {
-                            style: "margin: 0; font-size: 12px; color: #374151;",
                             "Supabase URL: {diagnostics.supabase_url}"
                         }
                         p {
@@ -2373,9 +2363,6 @@ fn mobile_config_diagnostics(
     let turso_runtime_url = runtime_config.turso_database_url;
     let turso_runtime_token_status = runtime_turso_token_status();
     let managed_sync_endpoint = bootstrap_config.turso_sync_token_endpoint.clone();
-
-    let turso_bootstrap_url = bootstrap_config.turso_sync_token_endpoint.clone();
-    let turso_bootstrap_token_set = bootstrap_config.turso_sync_token_endpoint.is_some();
     let supabase_url = bootstrap_config.supabase_url.clone();
     let supabase_anon_key_set = bootstrap_config.supabase_anon_key.is_some();
 
@@ -2400,12 +2387,6 @@ fn mobile_config_diagnostics(
             .map(mask_endpoint_value)
             .unwrap_or_else(|| "not set".to_string()),
         turso_runtime_token_status: secure_status_label(&turso_runtime_token_status),
-        turso_bootstrap_endpoint: turso_bootstrap_url
-            .as_deref()
-            .map(mask_endpoint_value)
-            .unwrap_or_else(|| "not set".to_string()),
-        turso_bootstrap_token_status: configured_status_label(turso_bootstrap_token_set)
-            .to_string(),
         supabase_url: supabase_url
             .as_deref()
             .map(mask_endpoint_value)
