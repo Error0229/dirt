@@ -890,7 +890,7 @@ fn build_media_object_key(note_id: &NoteId, file_name: &str) -> String {
     let stem = file_name
         .trim()
         .rsplit_once('.')
-        .map_or(file_name.trim(), |(left, _)| left);
+        .map_or_else(|| file_name.trim(), |(left, _)| left);
     let ext = file_name
         .trim()
         .rsplit_once('.')
