@@ -9,7 +9,7 @@ use std::sync::Arc;
 #[cfg(target_os = "android")]
 use dirt_core::db::SyncConfig;
 use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository};
-use dirt_core::models::{Attachment, Note, NoteId};
+use dirt_core::models::{Attachment, AttachmentId, Note, NoteId};
 use dirt_core::{Error, Result};
 use tokio::sync::Mutex;
 
@@ -108,6 +108,13 @@ impl MobileNoteStore {
         let db = self.db.lock().await;
         let repo = LibSqlNoteRepository::new(db.connection());
         repo.list_attachments(note_id).await
+    }
+
+    /// Soft delete attachment metadata by id.
+    pub async fn delete_attachment(&self, attachment_id: &AttachmentId) -> Result<()> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.delete_attachment(attachment_id).await
     }
 
     /// Sync with remote database (if configured).
@@ -278,6 +285,10 @@ mod tests {
         assert_eq!(attachments.len(), 1);
         assert_eq!(attachments[0].id, created.id);
         assert_eq!(attachments[0].r2_key, "notes/mobile/mobile-photo.jpg");
+
+        store.delete_attachment(&created.id).await.unwrap();
+        let attachments = store.list_attachments(&note.id).await.unwrap();
+        assert!(attachments.is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread")]
