@@ -1,6 +1,6 @@
 # Dirt Security Baseline
 
-Last updated: 2026-02-10 (ops playbook aligned)
+Last updated: 2026-02-11 (ops playbook aligned)
 
 This document defines minimum security requirements for authentication, sync, and media flows.
 
@@ -33,8 +33,10 @@ This document defines minimum security requirements for authentication, sync, an
 
 - Backend must verify Supabase JWT on protected API routes.
 - Backend must mint short-lived Turso tokens and presigned media URLs.
+- Backend bootstrap manifest must expose only public values and support cache/version semantics.
 - Backend must enforce expiration and least privilege on issued credentials.
 - Clients must store runtime secrets in OS-provided secure storage.
+- Clients must reject malformed bootstrap manifests (unknown fields, unsupported schema versions).
 - Sync/media flows must work without user-managed environment variables.
 
 ## Logging and Redaction Policy

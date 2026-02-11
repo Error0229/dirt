@@ -3,6 +3,7 @@
 //! Quick capture from the terminal with minimal friction.
 
 mod auth;
+mod bootstrap_manifest;
 mod config_profiles;
 mod managed_sync;
 
@@ -23,6 +24,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::auth::{clear_stored_session, load_stored_session, SupabaseAuthService};
+use crate::bootstrap_manifest::fetch_bootstrap_manifest;
 use crate::config_profiles::{
     is_http_url, normalize_profile_name, normalize_text_option, CliProfilesConfig,
 };
@@ -210,6 +212,9 @@ enum ConfigCommands {
         /// Optional managed API base URL
         #[arg(long, value_name = "URL")]
         api_base_url: Option<String>,
+        /// Optional bootstrap manifest URL (e.g. <https://api.example.com/v1/bootstrap>)
+        #[arg(long, value_name = "URL")]
+        bootstrap_url: Option<String>,
         /// Keep current active profile instead of activating this one
         #[arg(long)]
         no_activate: bool,
@@ -292,7 +297,7 @@ async fn run() -> Result<(), CliError> {
             None => run_sync(&db_path).await?,
         },
         Some(Commands::Config { command }) => {
-            run_config(command, global_profile.as_deref())?;
+            run_config(command, global_profile.as_deref()).await?;
         }
         Some(Commands::Auth { command }) => {
             run_auth(command, global_profile.as_deref()).await?;
@@ -315,7 +320,7 @@ async fn run() -> Result<(), CliError> {
     Ok(())
 }
 
-fn run_config(command: ConfigCommands, global_profile: Option<&str>) -> Result<(), CliError> {
+async fn run_config(command: ConfigCommands, global_profile: Option<&str>) -> Result<(), CliError> {
     match command {
         ConfigCommands::Init {
             profile,
@@ -323,38 +328,114 @@ fn run_config(command: ConfigCommands, global_profile: Option<&str>) -> Result<(
             supabase_anon_key,
             sync_token_endpoint,
             api_base_url,
+            bootstrap_url,
             no_activate,
-        } => run_config_init(
-            profile.as_deref().or(global_profile),
-            supabase_url,
-            supabase_anon_key,
-            sync_token_endpoint,
-            api_base_url,
-            no_activate,
-        ),
+        } => {
+            run_config_init(
+                profile.as_deref().or(global_profile),
+                supabase_url,
+                supabase_anon_key,
+                sync_token_endpoint,
+                api_base_url,
+                bootstrap_url,
+                no_activate,
+            )
+            .await
+        }
     }
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn run_config_init(
+async fn run_config_init(
     profile_name: Option<&str>,
     supabase_url: Option<String>,
     supabase_anon_key: Option<String>,
     sync_token_endpoint: Option<String>,
     api_base_url: Option<String>,
+    bootstrap_url: Option<String>,
     no_activate: bool,
 ) -> Result<(), CliError> {
     let mut config = CliProfilesConfig::load().map_err(CliError::Config)?;
     let profile_name = config.resolve_profile_name(profile_name);
+    let existing_profile = config.profile(&profile_name).cloned().unwrap_or_default();
 
-    let merged_supabase_url = normalize_text_option(supabase_url)
-        .or_else(|| normalize_text_option(env::var("SUPABASE_URL").ok()));
-    let merged_supabase_anon_key = normalize_text_option(supabase_anon_key)
-        .or_else(|| normalize_text_option(env::var("SUPABASE_ANON_KEY").ok()));
-    let merged_sync_token_endpoint = normalize_text_option(sync_token_endpoint)
-        .or_else(|| normalize_text_option(env::var("TURSO_SYNC_TOKEN_ENDPOINT").ok()));
-    let merged_api_base_url = normalize_text_option(api_base_url)
-        .or_else(|| normalize_text_option(env::var("DIRT_API_BASE_URL").ok()));
+    let explicit_supabase_url = normalize_text_option(supabase_url);
+    let explicit_supabase_anon_key = normalize_text_option(supabase_anon_key);
+    let explicit_sync_token_endpoint = normalize_text_option(sync_token_endpoint);
+    let explicit_api_base_url = normalize_text_option(api_base_url);
+    let explicit_bootstrap_url = normalize_text_option(bootstrap_url);
+
+    let bootstrap_url = resolve_bootstrap_url(
+        explicit_bootstrap_url.clone(),
+        explicit_api_base_url.clone(),
+        existing_profile.dirt_api_base_url.clone(),
+    )?;
+
+    let should_fetch_bootstrap = explicit_bootstrap_url.is_some()
+        || explicit_supabase_url.is_none()
+        || explicit_supabase_anon_key.is_none()
+        || explicit_sync_token_endpoint.is_none()
+        || explicit_api_base_url.is_none();
+    let bootstrap_profile = if should_fetch_bootstrap {
+        if let Some(url) = bootstrap_url.clone() {
+            match fetch_bootstrap_manifest(&url).await {
+                Ok(profile) => {
+                    println!("Loaded managed bootstrap manifest from {url}");
+                    Some(profile)
+                }
+                Err(error) if explicit_bootstrap_url.is_some() => {
+                    return Err(CliError::Config(format!(
+                        "Failed to load bootstrap manifest from {url}: {error}"
+                    )));
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "Bootstrap manifest fetch failed from {}: {}. Falling back to existing/env values.",
+                        url,
+                        error
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let merged_supabase_url = explicit_supabase_url
+        .or_else(|| {
+            bootstrap_profile
+                .as_ref()
+                .map(|manifest| manifest.supabase_url.clone())
+        })
+        .or_else(|| normalize_text_option(env::var("SUPABASE_URL").ok()))
+        .or_else(|| existing_profile.supabase_url());
+    let merged_supabase_anon_key = explicit_supabase_anon_key
+        .or_else(|| {
+            bootstrap_profile
+                .as_ref()
+                .map(|manifest| manifest.supabase_anon_key.clone())
+        })
+        .or_else(|| normalize_text_option(env::var("SUPABASE_ANON_KEY").ok()))
+        .or_else(|| existing_profile.supabase_anon_key());
+    let merged_sync_token_endpoint = explicit_sync_token_endpoint
+        .or_else(|| {
+            bootstrap_profile
+                .as_ref()
+                .and_then(|manifest| manifest.sync_token_endpoint.clone())
+        })
+        .or_else(|| normalize_text_option(env::var("TURSO_SYNC_TOKEN_ENDPOINT").ok()))
+        .or_else(|| existing_profile.managed_sync_endpoint());
+    let merged_api_base_url = explicit_api_base_url
+        .or_else(|| {
+            bootstrap_profile
+                .as_ref()
+                .map(|manifest| manifest.api_base_url.clone())
+        })
+        .or_else(|| normalize_text_option(env::var("DIRT_API_BASE_URL").ok()))
+        .or_else(|| normalize_text_option(existing_profile.dirt_api_base_url.clone()));
 
     let profile = config.profile_mut_or_default(&profile_name);
     if let Some(value) = merged_supabase_url {
@@ -504,6 +585,36 @@ async fn run_auth(command: AuthCommands, global_profile: Option<&str>) -> Result
             Ok(())
         }
     }
+}
+
+fn resolve_bootstrap_url(
+    explicit_bootstrap_url: Option<String>,
+    explicit_api_base_url: Option<String>,
+    existing_api_base_url: Option<String>,
+) -> Result<Option<String>, CliError> {
+    if let Some(url) = explicit_bootstrap_url {
+        return normalize_bootstrap_url(url).map(Some);
+    }
+
+    if let Some(url) = normalize_text_option(env::var("DIRT_BOOTSTRAP_URL").ok()) {
+        return normalize_bootstrap_url(url).map(Some);
+    }
+
+    let api_base_url = explicit_api_base_url
+        .or_else(|| normalize_text_option(env::var("DIRT_API_BASE_URL").ok()))
+        .or_else(|| normalize_text_option(existing_api_base_url));
+    Ok(api_base_url.map(|base| format!("{}/v1/bootstrap", base.trim_end_matches('/'))))
+}
+
+fn normalize_bootstrap_url(url: String) -> Result<String, CliError> {
+    let normalized = normalize_text_option(Some(url))
+        .ok_or_else(|| CliError::Config("bootstrap_url must not be empty".to_string()))?;
+    if !is_http_url(&normalized) {
+        return Err(CliError::Config(
+            "bootstrap_url must include http:// or https://".to_string(),
+        ));
+    }
+    Ok(normalized.trim_end_matches('/').to_string())
 }
 
 fn validate_profile_urls(profile: &crate::config_profiles::CliProfile) -> Result<(), CliError> {
@@ -1225,9 +1336,10 @@ mod tests {
 
     use super::{
         default_editor, format_relative_time, format_sync_conflict_lines, format_sync_timestamp,
-        list_notes, normalize_content, normalize_note_identifier, normalize_search_query,
-        note_preview, render_markdown_export, resolve_note_for_edit, run_completions, run_delete,
-        run_export, run_sync, search_notes, CliError, CompletionShell, ExportFormat,
+        list_notes, normalize_bootstrap_url, normalize_content, normalize_note_identifier,
+        normalize_search_query, note_preview, render_markdown_export, resolve_bootstrap_url,
+        resolve_note_for_edit, run_completions, run_delete, run_export, run_sync, search_notes,
+        CliError, CompletionShell, ExportFormat,
     };
 
     #[test]
@@ -1247,6 +1359,39 @@ mod tests {
     #[test]
     fn default_editor_is_defined() {
         assert!(!default_editor().is_empty());
+    }
+
+    #[test]
+    fn normalize_bootstrap_url_requires_http_scheme() {
+        assert!(
+            normalize_bootstrap_url("https://api.example.com/v1/bootstrap".to_string()).is_ok()
+        );
+        assert!(normalize_bootstrap_url("api.example.com/v1/bootstrap".to_string()).is_err());
+    }
+
+    #[test]
+    fn resolve_bootstrap_url_prefers_explicit_manifest_url() {
+        let resolved = resolve_bootstrap_url(
+            Some("https://api.example.com/v1/bootstrap".to_string()),
+            Some("https://ignored.example.com".to_string()),
+            Some("https://also-ignored.example.com".to_string()),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.as_deref(),
+            Some("https://api.example.com/v1/bootstrap")
+        );
+    }
+
+    #[test]
+    fn resolve_bootstrap_url_derives_from_api_base() {
+        let resolved =
+            resolve_bootstrap_url(None, Some("https://api.example.com/".to_string()), None)
+                .unwrap();
+        assert_eq!(
+            resolved.as_deref(),
+            Some("https://api.example.com/v1/bootstrap")
+        );
     }
 
     #[test]

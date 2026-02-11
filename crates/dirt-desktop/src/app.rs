@@ -9,7 +9,7 @@ use dioxus::prelude::*;
 use dirt_core::db::SyncConfig;
 use dirt_core::models::Note;
 
-use crate::bootstrap_config::load_bootstrap_config;
+use crate::bootstrap_config::{load_bootstrap_config, resolve_bootstrap_config};
 use crate::components::{QuickCapture, SettingsPanel};
 use crate::queries::use_notes_query;
 use crate::services::{
@@ -46,7 +46,7 @@ pub fn App() -> Element {
     let mut last_sync_at = use_signal(|| None::<i64>);
     let mut pending_sync_count = use_signal(|| 0usize);
     let mut pending_sync_note_ids = use_signal(Vec::new);
-    let bootstrap_config = load_bootstrap_config();
+    let embedded_bootstrap_config = load_bootstrap_config();
 
     // Initialize authentication service and restore persisted session.
     use_effect(move || {
@@ -54,9 +54,11 @@ pub fn App() -> Element {
             return;
         }
         auth_initialized.set(true);
-        let bootstrap = bootstrap_config.clone();
+        let fallback_bootstrap = embedded_bootstrap_config.clone();
 
         spawn(async move {
+            let bootstrap = resolve_bootstrap_config(fallback_bootstrap).await;
+
             match TursoSyncAuthClient::new_from_bootstrap(&bootstrap) {
                 Ok(Some(client)) => sync_auth_client.set(Some(Arc::new(client))),
                 Ok(None) => sync_auth_client.set(None),

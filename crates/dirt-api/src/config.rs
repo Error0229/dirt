@@ -17,10 +17,14 @@ pub enum ConfigError {
 pub struct AppConfig {
     pub bind_addr: String,
     pub supabase_url: String,
+    pub supabase_anon_key: String,
     pub supabase_jwks_url: String,
     pub supabase_jwt_issuer: String,
     pub supabase_jwt_audience: String,
     pub jwks_cache_ttl: Duration,
+    pub bootstrap_manifest_version: String,
+    pub bootstrap_cache_max_age_secs: u64,
+    pub bootstrap_public_api_base_url: Option<String>,
     pub turso_api_url: String,
     pub turso_organization_slug: String,
     pub turso_database_name: String,
@@ -61,10 +65,23 @@ impl fmt::Debug for AppConfig {
             .debug_struct("AppConfig")
             .field("bind_addr", &self.bind_addr)
             .field("supabase_url", &self.supabase_url)
+            .field("supabase_anon_key", &self.supabase_anon_key)
             .field("supabase_jwks_url", &self.supabase_jwks_url)
             .field("supabase_jwt_issuer", &self.supabase_jwt_issuer)
             .field("supabase_jwt_audience", &self.supabase_jwt_audience)
             .field("jwks_cache_ttl", &self.jwks_cache_ttl)
+            .field(
+                "bootstrap_manifest_version",
+                &self.bootstrap_manifest_version,
+            )
+            .field(
+                "bootstrap_cache_max_age_secs",
+                &self.bootstrap_cache_max_age_secs,
+            )
+            .field(
+                "bootstrap_public_api_base_url",
+                &self.bootstrap_public_api_base_url,
+            )
             .field("turso_api_url", &self.turso_api_url)
             .field("turso_organization_slug", &self.turso_organization_slug)
             .field("turso_database_name", &self.turso_database_name)
@@ -97,6 +114,7 @@ impl AppConfig {
         let bind_addr = value_or_default(&lookup, "DIRT_API_BIND_ADDR", "127.0.0.1:8080");
 
         let supabase_url = required_trimmed(&lookup, "SUPABASE_URL")?;
+        let supabase_anon_key = required_trimmed(&lookup, "SUPABASE_ANON_KEY")?;
         if !is_http_url(&supabase_url) {
             return Err(ConfigError::Invalid(
                 "SUPABASE_URL must start with http:// or https://".to_string(),
@@ -130,6 +148,34 @@ impl AppConfig {
             return Err(ConfigError::Invalid(
                 "SUPABASE_JWKS_CACHE_TTL_SECS must be >= 30".to_string(),
             ));
+        }
+
+        let bootstrap_manifest_version =
+            value_or_default(&lookup, "BOOTSTRAP_MANIFEST_VERSION", "1");
+
+        let bootstrap_cache_max_age_secs =
+            value_or_default(&lookup, "BOOTSTRAP_CACHE_MAX_AGE_SECS", "300")
+                .parse::<u64>()
+                .map_err(|_| {
+                    ConfigError::Invalid(
+                        "BOOTSTRAP_CACHE_MAX_AGE_SECS must be an integer in [0, 86400]".to_string(),
+                    )
+                })?;
+        if bootstrap_cache_max_age_secs > 86_400 {
+            return Err(ConfigError::Invalid(
+                "BOOTSTRAP_CACHE_MAX_AGE_SECS must be in [0, 86400]".to_string(),
+            ));
+        }
+
+        let bootstrap_public_api_base_url =
+            optional_trimmed(&lookup, "BOOTSTRAP_PUBLIC_API_BASE_URL")
+                .map(|value| trim_trailing(&value).to_string());
+        if let Some(url) = bootstrap_public_api_base_url.as_deref() {
+            if !is_http_url(url) {
+                return Err(ConfigError::Invalid(
+                    "BOOTSTRAP_PUBLIC_API_BASE_URL must start with http:// or https://".to_string(),
+                ));
+            }
         }
 
         let turso_api_url = value_or_default(&lookup, "TURSO_API_URL", "https://api.turso.tech");
@@ -231,10 +277,14 @@ impl AppConfig {
         Ok(Self {
             bind_addr,
             supabase_url,
+            supabase_anon_key,
             supabase_jwks_url,
             supabase_jwt_issuer,
             supabase_jwt_audience,
             jwks_cache_ttl: Duration::from_secs(jwks_cache_ttl_secs),
+            bootstrap_manifest_version,
+            bootstrap_cache_max_age_secs,
+            bootstrap_public_api_base_url,
             turso_api_url,
             turso_organization_slug,
             turso_database_name,
@@ -329,6 +379,7 @@ mod tests {
     fn config_redacts_sensitive_debug_fields() {
         let mut map = HashMap::new();
         map.insert("SUPABASE_URL", "https://project.supabase.co");
+        map.insert("SUPABASE_ANON_KEY", "public-anon-key");
         map.insert("TURSO_ORGANIZATION_SLUG", "org");
         map.insert("TURSO_DATABASE_NAME", "db");
         map.insert("TURSO_DATABASE_URL", "libsql://db.turso.io");

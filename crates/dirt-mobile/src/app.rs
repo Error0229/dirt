@@ -12,7 +12,9 @@ use crate::attachments::{
     attachment_kind_label, build_attachment_preview, infer_attachment_mime_type, AttachmentPreview,
 };
 use crate::auth::{AuthConfigStatus, AuthSession, SignUpOutcome, SupabaseAuthService};
-use crate::bootstrap_config::{load_bootstrap_config, MobileBootstrapConfig};
+use crate::bootstrap_config::{
+    load_bootstrap_config, resolve_bootstrap_config, MobileBootstrapConfig,
+};
 use crate::config::{
     load_runtime_config, resolve_sync_config, runtime_turso_token_status, save_runtime_config,
     MobileRuntimeConfig, SecretStatus, SyncConfigSource,
@@ -187,6 +189,7 @@ fn AppShell() -> Element {
     use_future(move || {
         let bootstrap_config = bootstrap_config_for_init.clone();
         async move {
+            let bootstrap_config = resolve_bootstrap_config(bootstrap_config).await;
             let _db_init_retry_version = db_init_retry_version();
             let runtime_config = load_runtime_config();
             let runtime_has_sync_url = runtime_config.has_sync_url();
