@@ -1,6 +1,6 @@
 # Dirt API (Managed Credential Backend)
 
-Last updated: 2026-02-10
+Last updated: 2026-02-11
 
 `dirt-api` is the backend service for secure credential brokering.
 
@@ -24,6 +24,21 @@ Last updated: 2026-02-10
 
 - `GET /healthz`
   - Liveness probe.
+- `GET /v1/bootstrap`
+  - Public managed bootstrap manifest for desktop/mobile/CLI initialization.
+  - Returns only public values:
+    - `schema_version`
+    - `manifest_version`
+    - `supabase_url`
+    - `supabase_anon_key`
+    - `api_base_url`
+    - `turso_sync_token_endpoint`
+    - `feature_flags.managed_sync`
+    - `feature_flags.managed_media`
+  - Cache semantics:
+    - `Cache-Control: public, max-age=<BOOTSTRAP_CACHE_MAX_AGE_SECS>, must-revalidate`
+    - `ETag` for conditional requests
+    - Honors `If-None-Match` and returns `304 Not Modified` when unchanged.
 - `POST /v1/sync/token` (auth required)
   - Exchanges authenticated user context for short-lived Turso token.
   - Response shape:
@@ -46,9 +61,14 @@ Use server environment variables (see `.env.example` backend section):
 
 - Supabase verification:
   - `SUPABASE_URL`
+  - `SUPABASE_ANON_KEY` (public key included in bootstrap manifest)
   - `SUPABASE_JWKS_URL` (optional override)
   - `SUPABASE_JWT_ISSUER` (optional override)
   - `SUPABASE_JWT_AUDIENCE`
+- Bootstrap manifest:
+  - `BOOTSTRAP_MANIFEST_VERSION` (default `1`)
+  - `BOOTSTRAP_CACHE_MAX_AGE_SECS` (default `300`)
+  - `BOOTSTRAP_PUBLIC_API_BASE_URL` (optional public URL override used in manifest)
 - Turso token broker:
   - `TURSO_API_URL`
   - `TURSO_ORGANIZATION_SLUG`
