@@ -232,7 +232,7 @@ dirt/
 | F5.18 | Security operations lifecycle (inventory, rotation, revocation, IR drills) | P0 | Done (`#171`) | F5.16 |
 | F5.19 | Backend auth gateway abuse protections + auditability | P0 | Done (`#169`) | F5.18 |
 | F5.20 | Zero-config managed bootstrap delivery for desktop/mobile/CLI | P0 | Done (`#168`) | F5.19 |
-| F5.21 | Managed-mode cross-client security E2E gates | P0 | Todo (`#170`) | F5.20 |
+| F5.21 | Managed-mode cross-client security E2E gates | P0 | Done (`#170`) | F5.20 |
 | F5.22 | Ordered rollout tracker for Phase 5.6 | P1 | In Progress (`#172`) | F5.18 |
 
 ### Mobile and managed-architecture issues currently open
@@ -241,7 +241,6 @@ dirt/
 - `#118` Mobile attachment UX parity (add/open/delete)
 - `#119` Android-native share-intent and quick-capture widget launch wiring
 - `#120` Mobile JSON/Markdown export parity
-- `#170` Managed mode E2E security validation across desktop/mobile/CLI
 - `#172` Execution plan: zero-key managed architecture and security rollout
 
 ### Phase 6: Polish & Distribution
