@@ -150,10 +150,7 @@ fn resolve_public_api_base_url(config: &AppConfig, request_headers: &HeaderMap) 
         .filter(|value| !value.is_empty())
         .map(|value| value.trim_end_matches('/').to_string())
         .or_else(|| resolve_public_url_from_request_headers(request_headers))
-        .map_or_else(
-            || format!("http://{}", config.bind_addr.trim_end_matches('/')),
-            |value| value,
-        )
+        .unwrap_or_else(|| format!("http://{}", config.bind_addr.trim_end_matches('/')))
 }
 
 fn resolve_public_url_from_request_headers(headers: &HeaderMap) -> Option<String> {
