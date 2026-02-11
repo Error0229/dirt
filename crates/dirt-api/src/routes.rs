@@ -101,7 +101,7 @@ async fn bootstrap_manifest(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let api_base_url = resolve_public_api_base_url(state.config.as_ref());
+    let api_base_url = resolve_public_api_base_url(state.config.as_ref(), &headers);
     let manifest = BootstrapManifest {
         schema_version: BOOTSTRAP_SCHEMA_VERSION,
         manifest_version: state.config.bootstrap_manifest_version.clone(),
@@ -142,16 +142,38 @@ async fn bootstrap_manifest(
     Ok(response)
 }
 
-fn resolve_public_api_base_url(config: &AppConfig) -> String {
+fn resolve_public_api_base_url(config: &AppConfig, request_headers: &HeaderMap) -> String {
     config
         .bootstrap_public_api_base_url
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .map(|value| value.trim_end_matches('/').to_string())
+        .or_else(|| resolve_public_url_from_request_headers(request_headers))
         .map_or_else(
             || format!("http://{}", config.bind_addr.trim_end_matches('/')),
-            |value| value.trim_end_matches('/').to_string(),
+            |value| value,
         )
+}
+
+fn resolve_public_url_from_request_headers(headers: &HeaderMap) -> Option<String> {
+    let host = extract_first_header_value(headers, "x-forwarded-host")
+        .or_else(|| extract_first_header_value(headers, header::HOST.as_str()))?;
+    let proto = extract_first_header_value(headers, "x-forwarded-proto")
+        .unwrap_or_else(|| "http".to_string());
+    Some(
+        format!("{}://{}", proto.trim(), host.trim())
+            .trim_end_matches('/')
+            .to_string(),
+    )
+}
+
+fn extract_first_header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    let raw = headers.get(name)?.to_str().ok()?;
+    raw.split(',')
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(std::string::ToString::to_string)
 }
 
 fn build_etag(payload: &[u8]) -> String {
@@ -422,8 +444,42 @@ mod tests {
         config.bootstrap_public_api_base_url = None;
         config.bind_addr = "0.0.0.0:9999".to_string();
         assert_eq!(
-            resolve_public_api_base_url(&config),
+            resolve_public_api_base_url(&config, &HeaderMap::new()),
             "http://0.0.0.0:9999".to_string()
+        );
+    }
+
+    #[test]
+    fn resolve_public_api_base_url_uses_forwarded_headers_when_available() {
+        let mut config = test_config();
+        config.bootstrap_public_api_base_url = None;
+        config.bind_addr = "0.0.0.0:9999".to_string();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-host",
+            HeaderValue::from_static("api.example.com"),
+        );
+        headers.insert("x-forwarded-proto", HeaderValue::from_static("https"));
+
+        assert_eq!(
+            resolve_public_api_base_url(&config, &headers),
+            "https://api.example.com".to_string()
+        );
+    }
+
+    #[test]
+    fn resolve_public_api_base_url_uses_host_header_when_forwarded_host_missing() {
+        let mut config = test_config();
+        config.bootstrap_public_api_base_url = None;
+        config.bind_addr = "0.0.0.0:9999".to_string();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("localhost:8080"));
+
+        assert_eq!(
+            resolve_public_api_base_url(&config, &headers),
+            "http://localhost:8080".to_string()
         );
     }
 

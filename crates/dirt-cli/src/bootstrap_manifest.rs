@@ -10,16 +10,27 @@ use crate::config_profiles::is_http_url;
 const BOOTSTRAP_SCHEMA_VERSION: u32 = 1;
 const BOOTSTRAP_HTTP_TIMEOUT_SECS: u64 = 5;
 
+/// Managed runtime configuration loaded from the backend bootstrap endpoint.
+///
+/// These values are public bootstrap fields that allow the CLI to initialize
+/// profile auth/sync configuration without user-provided infra secrets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedBootstrapConfig {
+    /// Supabase project URL used for auth flows.
     pub supabase_url: String,
+    /// Supabase anon/public key used by client auth requests.
     pub supabase_anon_key: String,
+    /// Public Dirt API base URL used for managed backend operations.
     pub api_base_url: String,
+    /// Optional explicit managed sync token endpoint.
     pub sync_token_endpoint: Option<String>,
+    /// Whether managed sync token exchange is enabled.
     pub managed_sync: bool,
+    /// Whether managed media presign flows are enabled.
     pub managed_media: bool,
 }
 
+/// Errors returned while fetching or parsing managed bootstrap manifests.
 #[derive(Debug, Error)]
 pub enum ManagedBootstrapError {
     #[error("Invalid bootstrap URL: {0}")]
@@ -52,6 +63,10 @@ struct ManagedFeatureFlags {
     managed_media: bool,
 }
 
+/// Fetches and validates a managed bootstrap manifest from the given URL.
+///
+/// This call enforces schema validation and URL normalization before returning
+/// runtime client configuration.
 pub async fn fetch_bootstrap_manifest(
     bootstrap_url: &str,
 ) -> Result<ManagedBootstrapConfig, ManagedBootstrapError> {
@@ -80,6 +95,9 @@ pub async fn fetch_bootstrap_manifest(
     parse_bootstrap_manifest(&body)
 }
 
+/// Parses a bootstrap manifest JSON payload into runtime configuration.
+///
+/// Parsing rejects unknown fields and unsupported schema versions.
 pub fn parse_bootstrap_manifest(
     payload: &str,
 ) -> Result<ManagedBootstrapConfig, ManagedBootstrapError> {
