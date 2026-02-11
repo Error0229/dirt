@@ -1,6 +1,6 @@
 # Dirt Security Operations
 
-Last updated: 2026-02-10
+Last updated: 2026-02-11
 
 This document defines operational controls for managed credentials and backend secret handling.
 
@@ -73,4 +73,6 @@ Operational metrics to keep:
 
 - Security guard CI passes (including client secret-identifier scan).
 - Secret redaction tests pass.
+- Managed mode security E2E workflow passes for release candidate commit.
+- `docs/RELEASE_CHECKLIST.md` is completed before merge to `release/*`.
 - Latest rotation/revocation runbook remains valid and reviewed.

@@ -65,3 +65,4 @@ This document defines minimum security requirements for authentication, sync, an
 - Security CI must fail on likely secret literals in source.
 - Security CI must fail on tracing calls that interpolate secret-like variables.
 - Unit tests must verify `Debug` redaction for security-sensitive structs.
+- Managed mode E2E workflow must pass before merge to `release/*` branches.
