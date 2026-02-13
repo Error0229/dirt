@@ -191,8 +191,8 @@ dirt/
 |----|---------|----------|--------|--------|
 | F4.1 | Dioxus Android app shell | P0 | Done | F1.4 |
 | F4.2 | Note list + editor (mobile UI) | P0 | Done | F4.1 |
-| F4.3 | Quick capture widget | P1 | In Progress (`#119`) | F4.2 |
-| F4.4 | Share intent receiver | P1 | In Progress (`#119`) | F4.2 |
+| F4.3 | Quick capture widget | P1 | Done (`#119`) | F4.2 |
+| F4.4 | Share intent receiver | P1 | Done (`#119`) | F4.2 |
 | F4.5 | Push notifications for sync | P2 | Done | F2.4, F4.1 |
 
 ### Phase 5: Media Support
@@ -202,11 +202,11 @@ dirt/
 |----|---------|----------|--------|--------|
 | F5.1 | Cloudflare R2 integration | P0 | Done | F2.3 |
 | F5.2 | Image paste/drop (desktop) | P0 | Done | F5.1, F1.4 |
-| F5.3 | Image picker (mobile) | P0 | In Progress (`#118`) | F5.1, F4.2 |
+| F5.3 | Image picker (mobile) | P0 | Done (`#118`) | F5.1, F4.2 |
 | F5.4 | Image thumbnail generation | P1 | Done | F5.2 |
-| F5.5 | Voice memo recording | P1 | In Progress | F5.1 |
+| F5.5 | Voice memo recording | P1 | In Progress (`#177`) | F5.1 |
 | F5.6 | Voice transcription (optional) | P2 | In Progress | F5.5 |
-| F5.7 | File attachments | P2 | In Progress (`#118`) | F5.1 |
+| F5.7 | File attachments | P2 | Done (`#118`) | F5.1 |
 
 ### Phase 5.5: Backend Credential Architecture
 **Goal**: Install-and-use clients without user-managed keys/env vars
@@ -233,15 +233,11 @@ dirt/
 | F5.19 | Backend auth gateway abuse protections + auditability | P0 | Done (`#169`) | F5.18 |
 | F5.20 | Zero-config managed bootstrap delivery for desktop/mobile/CLI | P0 | Done (`#168`) | F5.19 |
 | F5.21 | Managed-mode cross-client security E2E gates | P0 | Done (`#170`) | F5.20 |
-| F5.22 | Ordered rollout tracker for Phase 5.6 | P1 | In Progress (`#172`) | F5.18 |
+| F5.22 | Ordered rollout tracker for Phase 5.6 | P1 | Done (`#172`) | F5.18 |
 
 ### Mobile and managed-architecture issues currently open
 
-- `#117` Mobile search and tag-filter parity
-- `#118` Mobile attachment UX parity (add/open/delete)
-- `#119` Android-native share-intent and quick-capture widget launch wiring
-- `#120` Mobile JSON/Markdown export parity
-- `#172` Execution plan: zero-key managed architecture and security rollout
+- `#177` Voice memo recording: first-class in-app capture and attachment flow
 
 ### Phase 6: Polish & Distribution
 **Goal**: Production-ready release

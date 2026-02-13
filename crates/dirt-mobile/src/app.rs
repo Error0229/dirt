@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dioxus::prelude::*;
 use dioxus_primitives::label::Label;
@@ -29,6 +29,11 @@ use crate::media_api::MediaApiClient;
 use crate::secret_store;
 use crate::sync_auth::{SyncToken, TursoSyncAuthClient};
 use crate::ui::{ButtonVariant, UiButton, UiInput, UiTextarea, MOBILE_UI_STYLES};
+use crate::voice_memo::{
+    cleanup_temp_voice_memo, discard_voice_memo_recording, start_voice_memo_recording,
+    stop_voice_memo_recording, transition_voice_memo_state, VoiceMemoRecorderEvent,
+    VoiceMemoRecorderState,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MobileView {
@@ -167,6 +172,8 @@ fn AppShell() -> Element {
     let mut attachment_preview_content = use_signal(AttachmentPreview::default);
     let mut attachment_preview_error = use_signal(|| None::<String>);
     let mut attachment_refresh_version = use_signal(|| 0u64);
+    let mut voice_memo_state = use_signal(VoiceMemoRecorderState::default);
+    let mut voice_memo_started_at = use_signal(|| None::<Instant>);
     let mut db_init_retry_version = use_signal(|| 0u64);
     let mut turso_database_url_input = use_signal(String::new);
     let mut active_sync_source = use_signal(|| SyncConfigSource::None);
@@ -546,6 +553,32 @@ fn AppShell() -> Element {
         }
 
         attachments_loading.set(false);
+    });
+
+    use_future(move || async move {
+        let current_view = view();
+        let current_note_id = selected_note_id();
+        let current_voice_state = voice_memo_state();
+
+        if current_voice_state == VoiceMemoRecorderState::Idle {
+            return;
+        }
+
+        if current_view == MobileView::Editor && current_note_id.is_some() {
+            return;
+        }
+
+        if current_voice_state == VoiceMemoRecorderState::Stopping {
+            return;
+        }
+
+        voice_memo_state.set(VoiceMemoRecorderState::Idle);
+        voice_memo_started_at.set(None);
+        if let Err(error) = discard_voice_memo_recording().await {
+            attachment_upload_error.set(Some(format!(
+                "Failed to stop voice memo recorder while changing view: {error}"
+            )));
+        }
     });
 
     use_future(move || async move {
@@ -1105,6 +1138,155 @@ fn AppShell() -> Element {
         });
     };
 
+    let on_start_voice_memo = move |_| {
+        attachment_upload_error.set(None);
+
+        if attachment_uploading() || voice_memo_state() != VoiceMemoRecorderState::Idle {
+            return;
+        }
+
+        let Some(_note_id) = selected_note_id() else {
+            attachment_upload_error.set(Some(
+                "Save this note before recording a voice memo.".to_string(),
+            ));
+            return;
+        };
+
+        voice_memo_state.set(transition_voice_memo_state(
+            voice_memo_state(),
+            VoiceMemoRecorderEvent::StartRequested,
+        ));
+
+        spawn(async move {
+            match start_voice_memo_recording().await {
+                Ok(()) => {
+                    voice_memo_state.set(transition_voice_memo_state(
+                        voice_memo_state(),
+                        VoiceMemoRecorderEvent::StartSucceeded,
+                    ));
+                    voice_memo_started_at.set(Some(Instant::now()));
+                }
+                Err(error) => {
+                    voice_memo_state.set(transition_voice_memo_state(
+                        voice_memo_state(),
+                        VoiceMemoRecorderEvent::StartFailed,
+                    ));
+                    voice_memo_started_at.set(None);
+                    attachment_upload_error.set(Some(format!(
+                        "Voice memo recording failed to start: {error}"
+                    )));
+                }
+            }
+        });
+    };
+
+    let on_stop_voice_memo = move |_| {
+        attachment_upload_error.set(None);
+
+        if attachment_uploading() || voice_memo_state() != VoiceMemoRecorderState::Recording {
+            return;
+        }
+
+        let Some(note_id) = selected_note_id() else {
+            attachment_upload_error.set(Some(
+                "Save this note before attaching a voice memo.".to_string(),
+            ));
+            return;
+        };
+
+        let Some(note_store) = store.read().clone() else {
+            attachment_upload_error.set(Some(
+                "Still initializing your notes. Please try again in a moment.".to_string(),
+            ));
+            return;
+        };
+
+        voice_memo_state.set(transition_voice_memo_state(
+            voice_memo_state(),
+            VoiceMemoRecorderEvent::StopRequested,
+        ));
+
+        let media_api = media_api_client.read().clone();
+        let auth_session_value = auth_session();
+        spawn(async move {
+            match stop_voice_memo_recording().await {
+                Ok(recorded) => {
+                    let upload_result = upload_attachment_to_r2(
+                        note_store,
+                        note_id,
+                        recorded.file_name.clone(),
+                        Some(recorded.mime_type.clone()),
+                        recorded.bytes,
+                        media_api,
+                        auth_session_value,
+                    )
+                    .await;
+
+                    cleanup_temp_voice_memo(recorded.temp_path.as_path());
+                    match upload_result {
+                        Ok(()) => {
+                            enqueue_pending_sync_change(
+                                note_id,
+                                &mut pending_sync_note_ids,
+                                &mut pending_sync_count,
+                            );
+                            attachment_refresh_version
+                                .set(attachment_refresh_version().saturating_add(1));
+                            status_message.set(Some("Voice memo attached.".to_string()));
+                            voice_memo_state.set(transition_voice_memo_state(
+                                voice_memo_state(),
+                                VoiceMemoRecorderEvent::StopSucceeded,
+                            ));
+                            voice_memo_started_at.set(None);
+                        }
+                        Err(error) => {
+                            attachment_upload_error.set(Some(error.clone()));
+                            status_message.set(Some(error));
+                            voice_memo_state.set(transition_voice_memo_state(
+                                voice_memo_state(),
+                                VoiceMemoRecorderEvent::StopFailed,
+                            ));
+                            voice_memo_started_at.set(None);
+                        }
+                    }
+                }
+                Err(error) => {
+                    voice_memo_state.set(transition_voice_memo_state(
+                        voice_memo_state(),
+                        VoiceMemoRecorderEvent::StopFailed,
+                    ));
+                    voice_memo_started_at.set(None);
+                    attachment_upload_error
+                        .set(Some(format!("Failed to finalize voice memo: {error}")));
+                }
+            }
+        });
+    };
+
+    let on_discard_voice_memo = move |_| {
+        attachment_upload_error.set(None);
+
+        if voice_memo_state() == VoiceMemoRecorderState::Idle {
+            return;
+        }
+
+        voice_memo_state.set(transition_voice_memo_state(
+            voice_memo_state(),
+            VoiceMemoRecorderEvent::DiscardRequested,
+        ));
+        voice_memo_started_at.set(None);
+
+        spawn(async move {
+            if let Err(error) = discard_voice_memo_recording().await {
+                attachment_upload_error.set(Some(format!(
+                    "Failed to discard voice memo recording: {error}"
+                )));
+            } else {
+                status_message.set(Some("Voice memo recording discarded.".to_string()));
+            }
+        });
+    };
+
     let on_close_attachment_preview = move |_| {
         attachment_preview_open.set(false);
         attachment_preview_loading.set(false);
@@ -1173,6 +1355,19 @@ fn AppShell() -> Element {
     let export_directory_text = export_directory.display().to_string();
     let app_version = env!("CARGO_PKG_VERSION");
     let package_name = env!("CARGO_PKG_NAME");
+    let voice_memo_state_value = voice_memo_state();
+    let voice_memo_status = match voice_memo_state_value {
+        VoiceMemoRecorderState::Idle => None,
+        VoiceMemoRecorderState::Starting => Some("Requesting microphone access...".to_string()),
+        VoiceMemoRecorderState::Recording => {
+            let elapsed = voice_memo_started_at().map_or(0_u64, elapsed_millis_u64);
+            Some(format!(
+                "Recording voice memo... {}",
+                format_recording_duration(elapsed)
+            ))
+        }
+        VoiceMemoRecorderState::Stopping => Some("Finalizing voice memo...".to_string()),
+    };
 
     rsx! {
         style {
@@ -2033,11 +2228,68 @@ fn AppShell() -> Element {
                         "Attachments"
                     }
                     if selected_note_id().is_some() {
-                        UiInput {
-                            id: "attachment-file-input",
-                            r#type: "file",
-                            disabled: attachment_uploading(),
-                            onchange: on_pick_attachment,
+                        div {
+                            style: "display: flex; flex-direction: column; gap: 8px;",
+                            UiInput {
+                                id: "attachment-file-input",
+                                r#type: "file",
+                                disabled: attachment_uploading()
+                                    || voice_memo_state_value == VoiceMemoRecorderState::Stopping,
+                                onchange: on_pick_attachment,
+                            }
+                            div {
+                                style: "display: flex; gap: 8px; flex-wrap: wrap;",
+                                if voice_memo_state_value == VoiceMemoRecorderState::Idle {
+                                    UiButton {
+                                        type: "button",
+                                        variant: ButtonVariant::Outline,
+                                        style: "padding: 6px 10px; font-size: 12px;",
+                                        onclick: on_start_voice_memo,
+                                        disabled: attachment_uploading(),
+                                        "Record voice memo"
+                                    }
+                                } else if voice_memo_state_value == VoiceMemoRecorderState::Starting {
+                                    UiButton {
+                                        type: "button",
+                                        variant: ButtonVariant::Outline,
+                                        style: "padding: 6px 10px; font-size: 12px;",
+                                        disabled: true,
+                                        "Starting..."
+                                    }
+                                } else if voice_memo_state_value == VoiceMemoRecorderState::Recording {
+                                    UiButton {
+                                        type: "button",
+                                        variant: ButtonVariant::Secondary,
+                                        style: "padding: 6px 10px; font-size: 12px;",
+                                        onclick: on_stop_voice_memo,
+                                        disabled: attachment_uploading(),
+                                        "Stop & attach"
+                                    }
+                                    UiButton {
+                                        type: "button",
+                                        variant: ButtonVariant::Outline,
+                                        style: "padding: 6px 10px; font-size: 12px;",
+                                        onclick: on_discard_voice_memo,
+                                        disabled: attachment_uploading(),
+                                        "Discard"
+                                    }
+                                } else {
+                                    UiButton {
+                                        type: "button",
+                                        variant: ButtonVariant::Outline,
+                                        style: "padding: 6px 10px; font-size: 12px;",
+                                        disabled: true,
+                                        "Attaching..."
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(status) = &voice_memo_status {
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "{status}"
                         }
                     }
 
@@ -2830,6 +3082,17 @@ fn format_scaled_one_decimal(bytes: u64, unit: u64, suffix: &str) -> String {
     format!("{whole}.{tenth} {suffix}")
 }
 
+fn format_recording_duration(duration_ms: u64) -> String {
+    let total_seconds = duration_ms / 1_000;
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    format!("{minutes:02}:{seconds:02}")
+}
+
+fn elapsed_millis_u64(started_at: Instant) -> u64 {
+    u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
 fn file_size_i64(len: usize) -> i64 {
     i64::try_from(len).map_or(i64::MAX, |size| size)
 }
@@ -2890,6 +3153,13 @@ mod tests {
         assert_eq!(format_attachment_size(1_536), "1.5 KB");
         assert_eq!(format_attachment_size(3_145_728), "3.0 MB");
         assert_eq!(format_attachment_size(-1), "0 B");
+    }
+
+    #[test]
+    fn formats_recording_duration_for_mobile_ui() {
+        assert_eq!(format_recording_duration(0), "00:00");
+        assert_eq!(format_recording_duration(59_999), "00:59");
+        assert_eq!(format_recording_duration(125_001), "02:05");
     }
 
     #[test]

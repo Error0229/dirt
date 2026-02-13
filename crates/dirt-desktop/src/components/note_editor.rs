@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
@@ -16,7 +16,11 @@ use dirt_core::NoteId;
 use super::button::{Button, ButtonVariant};
 use super::dialog::{DialogContent, DialogDescription, DialogRoot, DialogTitle};
 use crate::queries::invalidate_notes_query;
-use crate::services::{AuthSession, DatabaseService, MediaApiClient};
+use crate::services::{
+    cleanup_temp_voice_memo, discard_voice_memo_recording, start_voice_memo_recording,
+    stop_voice_memo_recording, transition_voice_memo_state, AuthSession, DatabaseService,
+    MediaApiClient, VoiceMemoRecorderEvent, VoiceMemoRecorderState,
+};
 use crate::state::AppState;
 
 /// Idle save delay - save after 2 seconds of no typing
@@ -99,6 +103,8 @@ pub fn NoteEditor() -> Element {
     let mut preview_title = use_signal(String::new);
     let mut preview_error = use_signal(|| None::<String>);
     let mut preview_content = use_signal(AttachmentPreview::default);
+    let mut voice_memo_state = use_signal(VoiceMemoRecorderState::default);
+    let mut voice_memo_started_at = use_signal(|| None::<Instant>);
 
     // Sync content when selected note changes
     use_effect(move || {
@@ -116,6 +122,20 @@ pub fn NoteEditor() -> Element {
             save_version.set(0);
             last_saved_version.set(0);
             deleting_attachment_id.set(None);
+            let recorder_state = voice_memo_state();
+            let should_discard = matches!(
+                recorder_state,
+                VoiceMemoRecorderState::Starting | VoiceMemoRecorderState::Recording
+            );
+            if recorder_state != VoiceMemoRecorderState::Stopping {
+                voice_memo_state.set(VoiceMemoRecorderState::Idle);
+                voice_memo_started_at.set(None);
+            }
+            if should_discard {
+                spawn(async move {
+                    let _ = discard_voice_memo_recording().await;
+                });
+            }
         }
     });
 
@@ -403,6 +423,132 @@ pub fn NoteEditor() -> Element {
         });
     };
 
+    let on_start_voice_memo = move |_| {
+        attachment_upload_error.set(None);
+
+        if attachment_uploading() || voice_memo_state() != VoiceMemoRecorderState::Idle {
+            return;
+        }
+
+        let Some(_note_id) = *last_note_id.read() else {
+            attachment_upload_error.set(Some(
+                "Select a note before recording a voice memo.".to_string(),
+            ));
+            return;
+        };
+
+        voice_memo_state.set(transition_voice_memo_state(
+            voice_memo_state(),
+            VoiceMemoRecorderEvent::StartRequested,
+        ));
+
+        spawn(async move {
+            match start_voice_memo_recording().await {
+                Ok(()) => {
+                    voice_memo_state.set(transition_voice_memo_state(
+                        voice_memo_state(),
+                        VoiceMemoRecorderEvent::StartSucceeded,
+                    ));
+                    voice_memo_started_at.set(Some(Instant::now()));
+                }
+                Err(error) => {
+                    voice_memo_state.set(transition_voice_memo_state(
+                        voice_memo_state(),
+                        VoiceMemoRecorderEvent::StartFailed,
+                    ));
+                    voice_memo_started_at.set(None);
+                    attachment_upload_error.set(Some(format!(
+                        "Voice memo recording failed to start: {error}"
+                    )));
+                }
+            }
+        });
+    };
+
+    let on_stop_voice_memo = move |_| {
+        attachment_upload_error.set(None);
+
+        if attachment_uploading() || voice_memo_state() != VoiceMemoRecorderState::Recording {
+            return;
+        }
+
+        let Some(note_id) = *last_note_id.read() else {
+            attachment_upload_error.set(Some(
+                "Select a note before attaching a voice memo.".to_string(),
+            ));
+            return;
+        };
+
+        voice_memo_state.set(transition_voice_memo_state(
+            voice_memo_state(),
+            VoiceMemoRecorderEvent::StopRequested,
+        ));
+
+        let signals = UploadSignals {
+            uploading: attachment_uploading,
+            upload_error: attachment_upload_error,
+            attachment_refresh_signal: attachment_refresh_version,
+        };
+        let upload_context = UploadContext {
+            db: state.db_service.read().clone(),
+            media_api: state.media_api_client.read().clone(),
+            auth_session: (state.auth_session)(),
+            signals,
+        };
+
+        spawn(async move {
+            match stop_voice_memo_recording().await {
+                Ok(recorded) => {
+                    upload_attachment(
+                        note_id,
+                        recorded.file_name.clone(),
+                        Some(recorded.mime_type.clone()),
+                        recorded.bytes,
+                        upload_context,
+                    )
+                    .await;
+                    cleanup_temp_voice_memo(recorded.temp_path.as_path());
+                    voice_memo_state.set(transition_voice_memo_state(
+                        voice_memo_state(),
+                        VoiceMemoRecorderEvent::StopSucceeded,
+                    ));
+                    voice_memo_started_at.set(None);
+                }
+                Err(error) => {
+                    voice_memo_state.set(transition_voice_memo_state(
+                        voice_memo_state(),
+                        VoiceMemoRecorderEvent::StopFailed,
+                    ));
+                    voice_memo_started_at.set(None);
+                    attachment_upload_error
+                        .set(Some(format!("Failed to finalize voice memo: {error}")));
+                }
+            }
+        });
+    };
+
+    let on_discard_voice_memo = move |_| {
+        attachment_upload_error.set(None);
+
+        if voice_memo_state() == VoiceMemoRecorderState::Idle {
+            return;
+        }
+
+        voice_memo_state.set(transition_voice_memo_state(
+            voice_memo_state(),
+            VoiceMemoRecorderEvent::DiscardRequested,
+        ));
+        voice_memo_started_at.set(None);
+
+        spawn(async move {
+            if let Err(error) = discard_voice_memo_recording().await {
+                attachment_upload_error.set(Some(format!(
+                    "Failed to discard voice memo recording: {error}"
+                )));
+            }
+        });
+    };
+
     let border_color = if drag_over() {
         colors.accent
     } else {
@@ -410,6 +556,19 @@ pub fn NoteEditor() -> Element {
     };
     let attachment_items = attachments();
     let active_deleting_attachment = deleting_attachment_id();
+    let voice_memo_state_value = voice_memo_state();
+    let voice_memo_status = match voice_memo_state_value {
+        VoiceMemoRecorderState::Idle => None,
+        VoiceMemoRecorderState::Starting => Some("Requesting microphone access...".to_string()),
+        VoiceMemoRecorderState::Recording => {
+            let elapsed = voice_memo_started_at().map_or(0_u64, elapsed_millis_u64);
+            Some(format!(
+                "Recording voice memo... {}",
+                format_recording_duration(elapsed)
+            ))
+        }
+        VoiceMemoRecorderState::Stopping => Some("Finalizing voice memo...".to_string()),
+    };
 
     rsx! {
         div {
@@ -431,6 +590,17 @@ pub fn NoteEditor() -> Element {
                             font-size: 12px;
                         ",
                         "Uploading attachment..."
+                    }
+                }
+
+                if let Some(status) = &voice_memo_status {
+                    div {
+                        style: "
+                            margin-bottom: 8px;
+                            color: {colors.text_muted};
+                            font-size: 12px;
+                        ",
+                        "{status}"
                     }
                 }
 
@@ -509,12 +679,58 @@ pub fn NoteEditor() -> Element {
                             "Attachments"
                         }
 
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            onclick: on_pick_attachment,
-                            disabled: attachment_uploading(),
-                            style: "padding: 3px 10px; font-size: 12px;",
-                            "+ Upload"
+                        div {
+                            style: "
+                                display: flex;
+                                align-items: center;
+                                gap: 8px;
+                            ",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                onclick: on_pick_attachment,
+                                disabled: attachment_uploading()
+                                    || voice_memo_state_value == VoiceMemoRecorderState::Stopping,
+                                style: "padding: 3px 10px; font-size: 12px;",
+                                "+ Upload"
+                            }
+                            if voice_memo_state_value == VoiceMemoRecorderState::Idle {
+                                Button {
+                                    variant: ButtonVariant::Ghost,
+                                    onclick: on_start_voice_memo,
+                                    disabled: attachment_uploading(),
+                                    style: "padding: 3px 10px; font-size: 12px;",
+                                    "Record"
+                                }
+                            } else if voice_memo_state_value == VoiceMemoRecorderState::Starting {
+                                Button {
+                                    variant: ButtonVariant::Ghost,
+                                    disabled: true,
+                                    style: "padding: 3px 10px; font-size: 12px;",
+                                    "Starting..."
+                                }
+                            } else if voice_memo_state_value == VoiceMemoRecorderState::Recording {
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    onclick: on_stop_voice_memo,
+                                    disabled: attachment_uploading(),
+                                    style: "padding: 3px 10px; font-size: 12px;",
+                                    "Stop & attach"
+                                }
+                                Button {
+                                    variant: ButtonVariant::Ghost,
+                                    onclick: on_discard_voice_memo,
+                                    disabled: attachment_uploading(),
+                                    style: "padding: 3px 10px; font-size: 12px;",
+                                    "Discard"
+                                }
+                            } else {
+                                Button {
+                                    variant: ButtonVariant::Ghost,
+                                    disabled: true,
+                                    style: "padding: 3px 10px; font-size: 12px;",
+                                    "Attaching..."
+                                }
+                            }
                         }
                     }
 
@@ -1151,6 +1367,17 @@ fn format_scaled_one_decimal(bytes: u64, unit: u64, suffix: &str) -> String {
     format!("{whole}.{tenth} {suffix}")
 }
 
+fn format_recording_duration(duration_ms: u64) -> String {
+    let total_seconds = duration_ms / 1_000;
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    format!("{minutes:02}:{seconds:02}")
+}
+
+fn elapsed_millis_u64(started_at: Instant) -> u64 {
+    u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
 fn file_size_i64(len: usize) -> i64 {
     i64::try_from(len).map_or(i64::MAX, |size| size)
 }
@@ -1232,5 +1459,12 @@ mod tests {
         assert_eq!(format_attachment_size(1_536), "1.5 KB");
         assert_eq!(format_attachment_size(2_097_152), "2.0 MB");
         assert_eq!(format_attachment_size(-64), "0 B");
+    }
+
+    #[test]
+    fn formats_recording_duration_as_minutes_and_seconds() {
+        assert_eq!(format_recording_duration(0), "00:00");
+        assert_eq!(format_recording_duration(12_345), "00:12");
+        assert_eq!(format_recording_duration(120_000), "02:00");
     }
 }
