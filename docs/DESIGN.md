@@ -205,7 +205,7 @@ dirt/
 | F5.3 | Image picker (mobile) | P0 | Done (`#118`) | F5.1, F4.2 |
 | F5.4 | Image thumbnail generation | P1 | Done | F5.2 |
 | F5.5 | Voice memo recording | P1 | Done (`#177`) | F5.1 |
-| F5.6 | Voice transcription (optional) | P2 | In Progress (`#179`) | F5.5 |
+| F5.6 | Voice transcription (optional) | P2 | Done (`#179`) | F5.5 |
 | F5.7 | File attachments | P2 | Done (`#118`) | F5.1 |
 
 ### Phase 5.5: Backend Credential Architecture
@@ -237,7 +237,7 @@ dirt/
 
 ### Mobile and managed-architecture issues currently open
 
-- `#179` Voice transcription (optional) for recorded memos
+- None
 
 ### Phase 6: Polish & Distribution
 **Goal**: Production-ready release
