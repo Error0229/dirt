@@ -28,6 +28,8 @@ mod secret_store;
 mod sync_auth;
 #[cfg(target_os = "android")]
 mod ui;
+#[cfg(any(target_os = "android", test))]
+mod voice_memo;
 
 #[cfg(target_os = "android")]
 fn main() {
