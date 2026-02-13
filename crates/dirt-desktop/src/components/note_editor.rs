@@ -122,10 +122,16 @@ pub fn NoteEditor() -> Element {
             save_version.set(0);
             last_saved_version.set(0);
             deleting_attachment_id.set(None);
-            let was_recording = voice_memo_state() != VoiceMemoRecorderState::Idle;
-            voice_memo_state.set(VoiceMemoRecorderState::Idle);
-            voice_memo_started_at.set(None);
-            if was_recording {
+            let recorder_state = voice_memo_state();
+            let should_discard = matches!(
+                recorder_state,
+                VoiceMemoRecorderState::Starting | VoiceMemoRecorderState::Recording
+            );
+            if recorder_state != VoiceMemoRecorderState::Stopping {
+                voice_memo_state.set(VoiceMemoRecorderState::Idle);
+                voice_memo_started_at.set(None);
+            }
+            if should_discard {
                 spawn(async move {
                     let _ = discard_voice_memo_recording().await;
                 });

@@ -568,6 +568,10 @@ fn AppShell() -> Element {
             return;
         }
 
+        if current_voice_state == VoiceMemoRecorderState::Stopping {
+            return;
+        }
+
         voice_memo_state.set(VoiceMemoRecorderState::Idle);
         voice_memo_started_at.set(None);
         if let Err(error) = discard_voice_memo_recording().await {
