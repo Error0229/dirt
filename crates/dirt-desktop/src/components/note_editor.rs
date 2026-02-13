@@ -1121,8 +1121,20 @@ async fn apply_voice_memo_transcription_if_enabled(
         }
     };
 
-    match append_voice_memo_transcription_to_note(db.as_ref(), &note_id, file_name, &transcript)
-        .await
+    let latest_editor_content = if (ui.current_note_id)() == Some(note_id) {
+        Some((ui.content)())
+    } else {
+        None
+    };
+
+    match append_voice_memo_transcription_to_note(
+        db.as_ref(),
+        &note_id,
+        file_name,
+        &transcript,
+        latest_editor_content,
+    )
+    .await
     {
         Ok(Some(updated_content)) => {
             if (ui.current_note_id)() == Some(note_id) {
@@ -1159,6 +1171,7 @@ async fn append_voice_memo_transcription_to_note(
     note_id: &NoteId,
     file_name: &str,
     transcript: &str,
+    latest_editor_content: Option<String>,
 ) -> Result<Option<String>, String> {
     let existing_note = db
         .get_note(note_id)
@@ -1169,8 +1182,9 @@ async fn append_voice_memo_transcription_to_note(
         })?
         .ok_or_else(|| "Voice memo uploaded, but note was no longer available.".to_string())?;
 
+    let base_content = latest_editor_content.unwrap_or(existing_note.content);
     let Some(updated_content) =
-        append_voice_memo_transcription(&existing_note.content, file_name, transcript)
+        append_voice_memo_transcription(&base_content, file_name, transcript)
     else {
         return Ok(None);
     };

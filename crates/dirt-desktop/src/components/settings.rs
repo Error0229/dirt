@@ -82,6 +82,8 @@ pub fn SettingsPanel() -> Element {
         transcription_config_status.as_ref(),
         current_settings.voice_memo_transcription_enabled,
     );
+    let transcription_toggle_disabled =
+        !transcription_available && !current_settings.voice_memo_transcription_enabled;
     let active_session = (state.auth_session)();
     let pending_sync_count = (state.pending_sync_count)();
     let pending_sync_note_ids = (state.pending_sync_note_ids)();
@@ -639,7 +641,7 @@ pub fn SettingsPanel() -> Element {
                             } else {
                                 ButtonVariant::Ghost
                             },
-                            disabled: !transcription_available,
+                            disabled: transcription_toggle_disabled,
                             onclick: {
                                 let mut save = save_settings;
                                 move |_| {
