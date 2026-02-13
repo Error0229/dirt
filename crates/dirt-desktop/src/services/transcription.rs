@@ -115,18 +115,39 @@ impl TranscriptionService {
         file_name: &str,
         wav_bytes: Vec<u8>,
     ) -> TranscriptionResult<String> {
+        self.transcribe_audio_bytes(file_name, "audio/wav", wav_bytes)
+            .await
+    }
+
+    /// Transcribe arbitrary audio bytes into text (when configured).
+    pub async fn transcribe_audio_bytes(
+        &self,
+        file_name: &str,
+        mime_type: &str,
+        audio_bytes: Vec<u8>,
+    ) -> TranscriptionResult<String> {
         if file_name.trim().is_empty() {
             return Err(TranscriptionError::InvalidConfiguration(
                 "file_name must not be empty",
             ));
         }
-        if wav_bytes.is_empty() {
+        if mime_type.trim().is_empty() {
+            return Err(TranscriptionError::InvalidConfiguration(
+                "mime_type must not be empty",
+            ));
+        }
+        if !mime_type.trim().to_ascii_lowercase().starts_with("audio/") {
+            return Err(TranscriptionError::InvalidConfiguration(
+                "mime_type must start with audio/",
+            ));
+        }
+        if audio_bytes.is_empty() {
             return Err(TranscriptionError::InvalidConfiguration(
                 "audio payload must not be empty",
             ));
         }
 
-        let request = self.build_transcription_request(file_name, wav_bytes)?;
+        let request = self.build_transcription_request(file_name, mime_type, audio_bytes)?;
         let response = self.client.execute(request).await?;
 
         if response.status() == StatusCode::UNAUTHORIZED {
@@ -150,7 +171,8 @@ impl TranscriptionService {
     fn build_transcription_request(
         &self,
         file_name: &str,
-        wav_bytes: Vec<u8>,
+        mime_type: &str,
+        audio_bytes: Vec<u8>,
     ) -> TranscriptionResult<Request> {
         let (base_url, api_key, model) = match &self.mode {
             TranscriptionMode::Disabled => return Err(TranscriptionError::NotConfigured),
@@ -162,9 +184,9 @@ impl TranscriptionService {
         };
 
         let endpoint = format!("{base_url}/v1/audio/transcriptions");
-        let file_part = multipart::Part::bytes(wav_bytes)
+        let file_part = multipart::Part::bytes(audio_bytes)
             .file_name(file_name.to_string())
-            .mime_str("audio/wav")
+            .mime_str(mime_type)
             .map_err(TranscriptionError::Http)?;
 
         let form = multipart::Form::new()
@@ -217,7 +239,7 @@ mod tests {
     fn openai_request_shape_is_correct() {
         let service = configured_service();
         let request = service
-            .build_transcription_request("memo.wav", vec![0, 1, 2, 3])
+            .build_transcription_request("memo.wav", "audio/wav", vec![0, 1, 2, 3])
             .unwrap();
 
         assert_eq!(request.method(), reqwest::Method::POST);
@@ -242,9 +264,23 @@ mod tests {
             mode: TranscriptionMode::Disabled,
         };
         let err = service
-            .build_transcription_request("memo.wav", vec![1, 2, 3])
+            .build_transcription_request("memo.wav", "audio/wav", vec![1, 2, 3])
             .unwrap_err();
         assert!(matches!(err, TranscriptionError::NotConfigured));
+    }
+
+    #[test]
+    fn request_supports_non_wav_audio_mime() {
+        let service = configured_service();
+        let request = service
+            .build_transcription_request("memo.webm", "audio/webm", vec![0, 1, 2, 3])
+            .unwrap();
+
+        assert_eq!(request.method(), reqwest::Method::POST);
+        assert_eq!(
+            request.url().as_str(),
+            "https://api.openai.com/v1/audio/transcriptions"
+        );
     }
 
     #[test]

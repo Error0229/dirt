@@ -13,7 +13,8 @@ use crate::bootstrap_config::{load_bootstrap_config, resolve_bootstrap_config};
 use crate::components::{QuickCapture, SettingsPanel};
 use crate::queries::use_notes_query;
 use crate::services::{
-    AuthSession, DatabaseService, MediaApiClient, SupabaseAuthService, TursoSyncAuthClient,
+    AuthSession, DatabaseService, MediaApiClient, SupabaseAuthService, TranscriptionService,
+    TursoSyncAuthClient,
 };
 use crate::state::{AppState, SyncStatus};
 use crate::theme::{resolve_theme, ResolvedTheme};
@@ -38,6 +39,14 @@ pub fn App() -> Element {
     let mut auth_service: Signal<Option<Arc<SupabaseAuthService>>> = use_signal(|| None);
     let mut sync_auth_client: Signal<Option<Arc<TursoSyncAuthClient>>> = use_signal(|| None);
     let mut media_api_client: Signal<Option<Arc<MediaApiClient>>> = use_signal(|| None);
+    let transcription_service: Signal<Option<Arc<TranscriptionService>>> =
+        use_signal(|| match TranscriptionService::new_from_env() {
+            Ok(service) => Some(Arc::new(service)),
+            Err(error) => {
+                tracing::warn!("Voice transcription service unavailable: {}", error);
+                None
+            }
+        });
     let mut auth_session: Signal<Option<AuthSession>> = use_signal(|| None);
     let mut auth_error: Signal<Option<String>> = use_signal(|| None);
     let mut db_reconnect_version = use_signal(|| 0u64);
@@ -320,6 +329,7 @@ pub fn App() -> Element {
         db_service,
         auth_service,
         media_api_client,
+        transcription_service,
         auth_session,
         auth_error,
         db_reconnect_version,

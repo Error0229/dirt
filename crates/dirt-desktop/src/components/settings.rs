@@ -15,7 +15,7 @@ use super::select::{
 use super::slider::{Slider, SliderRange, SliderThumb, SliderTrack};
 use crate::services::{
     export_notes_to_path, suggested_export_file_name, AuthConfigStatus, NotesExportFormat,
-    SignUpOutcome,
+    SignUpOutcome, TranscriptionConfigStatus,
 };
 use crate::state::AppState;
 use crate::theme::resolve_theme;
@@ -71,6 +71,17 @@ pub fn SettingsPanel() -> Element {
         ThemeMode::System => "system",
     };
     let auth_service = state.auth_service.read().clone();
+    let transcription_service = state.transcription_service.read().clone();
+    let transcription_config_status = transcription_service
+        .as_ref()
+        .map(|service| service.config_status());
+    let transcription_available = transcription_config_status
+        .as_ref()
+        .is_some_and(|status| status.enabled);
+    let transcription_status_text = transcription_status_text(
+        transcription_config_status.as_ref(),
+        current_settings.voice_memo_transcription_enabled,
+    );
     let active_session = (state.auth_session)();
     let pending_sync_count = (state.pending_sync_count)();
     let pending_sync_note_ids = (state.pending_sync_note_ids)();
@@ -617,6 +628,37 @@ pub fn SettingsPanel() -> Element {
                 }
 
                 SettingRow {
+                    label: "Voice Transcription",
+                    description: "{transcription_status_text}",
+
+                    div {
+                        class: "auth-actions",
+                        Button {
+                            variant: if current_settings.voice_memo_transcription_enabled {
+                                ButtonVariant::Secondary
+                            } else {
+                                ButtonVariant::Ghost
+                            },
+                            disabled: !transcription_available,
+                            onclick: {
+                                let mut save = save_settings;
+                                move |_| {
+                                    let mut new_settings = settings();
+                                    new_settings.voice_memo_transcription_enabled =
+                                        !new_settings.voice_memo_transcription_enabled;
+                                    save(new_settings);
+                                }
+                            },
+                            if current_settings.voice_memo_transcription_enabled {
+                                "Enabled"
+                            } else {
+                                "Disabled"
+                            }
+                        }
+                    }
+                }
+
+                SettingRow {
                     label: "Export",
                     description: "Export all notes as JSON or Markdown",
 
@@ -844,7 +886,11 @@ pub fn SettingsPanel() -> Element {
 
 /// Individual setting row
 #[component]
-fn SettingRow(label: &'static str, description: &'static str, children: Element) -> Element {
+fn SettingRow(
+    #[props(into)] label: String,
+    #[props(into)] description: String,
+    children: Element,
+) -> Element {
     rsx! {
         div {
             class: "settings-row",
@@ -864,6 +910,26 @@ fn SettingRow(label: &'static str, description: &'static str, children: Element)
                 class: "settings-row-control",
                 {children}
             }
+        }
+    }
+}
+
+fn transcription_status_text(status: Option<&TranscriptionConfigStatus>, enabled: bool) -> String {
+    let toggle = if enabled { "enabled" } else { "disabled" };
+
+    match status {
+        Some(status) if status.enabled => {
+            let model = status.model.as_deref().unwrap_or("default");
+            format!(
+                "Optional transcription is {toggle}. Provider: {} ({model}).",
+                status.provider
+            )
+        }
+        Some(_) => {
+            format!("Optional transcription is {toggle}. Set OPENAI_API_KEY to enable it.")
+        }
+        None => {
+            format!("Optional transcription is {toggle}. Service failed to initialize.")
         }
     }
 }
