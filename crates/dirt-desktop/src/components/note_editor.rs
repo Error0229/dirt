@@ -19,7 +19,7 @@ use crate::queries::invalidate_notes_query;
 use crate::services::{
     cleanup_temp_voice_memo, discard_voice_memo_recording, start_voice_memo_recording,
     stop_voice_memo_recording, transition_voice_memo_state, AuthSession, DatabaseService,
-    MediaApiClient, VoiceMemoRecorderEvent, VoiceMemoRecorderState,
+    MediaApiClient, TranscriptionService, VoiceMemoRecorderEvent, VoiceMemoRecorderState,
 };
 use crate::state::AppState;
 
@@ -73,6 +73,13 @@ struct UploadContext {
     media_api: Option<Arc<MediaApiClient>>,
     auth_session: Option<AuthSession>,
     signals: UploadSignals,
+}
+
+#[derive(Clone, Copy)]
+struct VoiceMemoTranscriptionContext {
+    current_note_id: Signal<Option<NoteId>>,
+    content: Signal<String>,
+    upload_error: Signal<Option<String>>,
 }
 
 /// Plain text note editor with auto-save
@@ -358,7 +365,7 @@ pub fn NoteEditor() -> Element {
                 }
             };
 
-            upload_attachment(
+            let _ = upload_attachment(
                 note_id,
                 file_name,
                 file_content_type,
@@ -412,7 +419,7 @@ pub fn NoteEditor() -> Element {
                 .first_raw()
                 .map(str::to_string);
 
-            upload_attachment(
+            let _ = upload_attachment(
                 note_id,
                 file_name,
                 file_content_type,
@@ -495,24 +502,49 @@ pub fn NoteEditor() -> Element {
             auth_session: (state.auth_session)(),
             signals,
         };
+        let transcription_enabled = (state.settings)().voice_memo_transcription_enabled;
+        let transcription_service = state.transcription_service.read().clone();
+        let db_for_transcription = state.db_service.read().clone();
+        let current_note_id_signal = state.current_note_id;
 
         spawn(async move {
             match stop_voice_memo_recording().await {
                 Ok(recorded) => {
-                    upload_attachment(
+                    let file_name = recorded.file_name.clone();
+                    let mime_type = recorded.mime_type.clone();
+                    let audio_bytes = recorded.bytes.clone();
+                    let upload_succeeded = upload_attachment(
                         note_id,
-                        recorded.file_name.clone(),
-                        Some(recorded.mime_type.clone()),
+                        file_name.clone(),
+                        Some(mime_type.clone()),
                         recorded.bytes,
                         upload_context,
                     )
                     .await;
                     cleanup_temp_voice_memo(recorded.temp_path.as_path());
+
                     voice_memo_state.set(transition_voice_memo_state(
                         voice_memo_state(),
                         VoiceMemoRecorderEvent::StopSucceeded,
                     ));
                     voice_memo_started_at.set(None);
+
+                    if transcription_enabled && upload_succeeded {
+                        apply_voice_memo_transcription_if_enabled(
+                            note_id,
+                            file_name.as_str(),
+                            mime_type.as_str(),
+                            audio_bytes,
+                            transcription_service,
+                            db_for_transcription,
+                            VoiceMemoTranscriptionContext {
+                                current_note_id: current_note_id_signal,
+                                content,
+                                upload_error: attachment_upload_error,
+                            },
+                        )
+                        .await;
+                    }
                 }
                 Err(error) => {
                     voice_memo_state.set(transition_voice_memo_state(
@@ -996,7 +1028,7 @@ async fn upload_attachment(
     file_content_type: Option<String>,
     file_bytes: Vec<u8>,
     context: UploadContext,
-) {
+) -> bool {
     let mut uploading = context.signals.uploading;
     let mut upload_error = context.signals.upload_error;
     let mut attachment_refresh_signal = context.signals.attachment_refresh_signal;
@@ -1006,7 +1038,7 @@ async fn upload_attachment(
     let Some(db) = context.db else {
         upload_error.set(Some("Database service is not available.".to_string()));
         uploading.set(false);
-        return;
+        return false;
     };
 
     let Some(media_api) = context.media_api else {
@@ -1014,14 +1046,14 @@ async fn upload_attachment(
             "Cloud media is not configured for this build.".to_string(),
         ));
         uploading.set(false);
-        return;
+        return false;
     };
     let access_token = match require_media_access_token(context.auth_session) {
         Ok(token) => token,
         Err(error) => {
             upload_error.set(Some(error));
             uploading.set(false);
-            return;
+            return false;
         }
     };
 
@@ -1035,7 +1067,7 @@ async fn upload_attachment(
     {
         upload_error.set(Some(format!("Failed to upload attachment: {error}")));
         uploading.set(false);
-        return;
+        return false;
     }
 
     if let Err(error) = db
@@ -1050,11 +1082,151 @@ async fn upload_attachment(
     {
         upload_error.set(Some(format!("Failed to save attachment metadata: {error}")));
         uploading.set(false);
-        return;
+        return false;
     }
 
     attachment_refresh_signal.set(attachment_refresh_signal() + 1);
     uploading.set(false);
+    true
+}
+
+async fn apply_voice_memo_transcription_if_enabled(
+    note_id: NoteId,
+    file_name: &str,
+    mime_type: &str,
+    audio_bytes: Vec<u8>,
+    transcription_service: Option<Arc<TranscriptionService>>,
+    db: Option<Arc<DatabaseService>>,
+    mut ui: VoiceMemoTranscriptionContext,
+) {
+    let Some(transcription_service) = transcription_service else {
+        return;
+    };
+    let Some(db) = db else {
+        return;
+    };
+
+    let transcript = match transcribe_voice_memo(
+        transcription_service.as_ref(),
+        file_name,
+        mime_type,
+        audio_bytes,
+    )
+    .await
+    {
+        Ok(transcript) => transcript,
+        Err(error) => {
+            ui.upload_error.set(Some(error));
+            return;
+        }
+    };
+
+    let latest_editor_content = if (ui.current_note_id)() == Some(note_id) {
+        Some((ui.content)())
+    } else {
+        None
+    };
+
+    match append_voice_memo_transcription_to_note(
+        db.as_ref(),
+        &note_id,
+        file_name,
+        &transcript,
+        latest_editor_content,
+    )
+    .await
+    {
+        Ok(Some(updated_content)) => {
+            if (ui.current_note_id)() == Some(note_id) {
+                ui.content.set(updated_content);
+            }
+            invalidate_notes_query().await;
+        }
+        Ok(None) => {
+            tracing::debug!("Voice memo transcription returned no content; skipping note update");
+        }
+        Err(error) => {
+            ui.upload_error.set(Some(error));
+        }
+    }
+}
+
+async fn transcribe_voice_memo(
+    transcription_service: &TranscriptionService,
+    file_name: &str,
+    mime_type: &str,
+    audio_bytes: Vec<u8>,
+) -> Result<String, String> {
+    transcription_service
+        .transcribe_audio_bytes(file_name, mime_type, audio_bytes)
+        .await
+        .map_err(|error| {
+            tracing::warn!("Voice memo transcription failed: {}", error);
+            format!("Voice memo uploaded, but transcription failed: {error}")
+        })
+}
+
+async fn append_voice_memo_transcription_to_note(
+    db: &DatabaseService,
+    note_id: &NoteId,
+    file_name: &str,
+    transcript: &str,
+    latest_editor_content: Option<String>,
+) -> Result<Option<String>, String> {
+    let existing_note = db
+        .get_note(note_id)
+        .await
+        .map_err(|error| {
+            tracing::warn!("Failed to load note for transcription append: {}", error);
+            format!("Voice memo uploaded, but transcription could not update the note: {error}")
+        })?
+        .ok_or_else(|| "Voice memo uploaded, but note was no longer available.".to_string())?;
+
+    let base_content = latest_editor_content.unwrap_or(existing_note.content);
+    let Some(updated_content) =
+        append_voice_memo_transcription(&base_content, file_name, transcript)
+    else {
+        return Ok(None);
+    };
+
+    let updated_note = db
+        .update_note(note_id, &updated_content)
+        .await
+        .map_err(|error| {
+            tracing::warn!(
+                "Failed to save voice memo transcription into note: {}",
+                error
+            );
+            format!("Voice memo uploaded, but transcription could not be saved: {error}")
+        })?;
+
+    Ok(Some(updated_note.content))
+}
+
+fn append_voice_memo_transcription(
+    existing_content: &str,
+    file_name: &str,
+    transcription: &str,
+) -> Option<String> {
+    let normalized_transcription = transcription.trim();
+    if normalized_transcription.is_empty() {
+        return None;
+    }
+
+    let normalized_file_name = if file_name.trim().is_empty() {
+        "voice memo"
+    } else {
+        file_name.trim()
+    };
+    let transcription_block =
+        format!("[Voice memo transcript: {normalized_file_name}]\n{normalized_transcription}");
+    let normalized_existing = existing_content.trim_end();
+
+    if normalized_existing.is_empty() {
+        Some(transcription_block)
+    } else {
+        Some(format!("{normalized_existing}\n\n{transcription_block}"))
+    }
 }
 
 async fn load_attachment_preview(
@@ -1466,5 +1638,27 @@ mod tests {
         assert_eq!(format_recording_duration(0), "00:00");
         assert_eq!(format_recording_duration(12_345), "00:12");
         assert_eq!(format_recording_duration(120_000), "02:00");
+    }
+
+    #[test]
+    fn appends_voice_memo_transcription_with_separator() {
+        let updated = append_voice_memo_transcription(
+            "Existing note body",
+            "memo.webm",
+            "  Hello from transcript.  ",
+        )
+        .unwrap();
+
+        assert_eq!(
+            updated,
+            "Existing note body\n\n[Voice memo transcript: memo.webm]\nHello from transcript."
+        );
+    }
+
+    #[test]
+    fn ignores_empty_voice_memo_transcription() {
+        assert!(
+            append_voice_memo_transcription("Existing note body", "memo.webm", "   ").is_none()
+        );
     }
 }

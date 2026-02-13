@@ -49,6 +49,13 @@ impl SettingsRepository for LibSqlSettingsRepository<'_> {
             settings.capture_hotkey = value;
         }
 
+        if let Ok(value) = self.get_setting("voice_memo_transcription_enabled").await {
+            settings.voice_memo_transcription_enabled = matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            );
+        }
+
         Ok(settings)
     }
 
@@ -64,6 +71,15 @@ impl SettingsRepository for LibSqlSettingsRepository<'_> {
         self.set_setting("theme", &theme_str).await?;
         self.set_setting("capture_hotkey", &settings.capture_hotkey)
             .await?;
+        self.set_setting(
+            "voice_memo_transcription_enabled",
+            if settings.voice_memo_transcription_enabled {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
         Ok(())
     }
 }
@@ -112,6 +128,7 @@ mod tests {
         let settings = repo.load().await.unwrap();
         assert_eq!(settings.font_size, 14);
         assert_eq!(settings.theme, ThemeMode::System);
+        assert!(!settings.voice_memo_transcription_enabled);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -123,6 +140,7 @@ mod tests {
             font_size: 18,
             theme: ThemeMode::Dark,
             font_family: "JetBrains Mono".to_string(),
+            voice_memo_transcription_enabled: true,
             ..Settings::default()
         };
 
@@ -132,5 +150,6 @@ mod tests {
         assert_eq!(loaded.font_size, 18);
         assert_eq!(loaded.theme, ThemeMode::Dark);
         assert_eq!(loaded.font_family, "JetBrains Mono");
+        assert!(loaded.voice_memo_transcription_enabled);
     }
 }
