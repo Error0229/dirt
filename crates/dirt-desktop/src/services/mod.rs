@@ -12,8 +12,7 @@ mod voice_memo;
 
 // Re-export shared types from dirt-core
 pub use dirt_core::auth::{
-    AuthConfigStatus, AuthError, AuthResult, AuthSession, SignUpOutcome,
-    SupabaseAuthService,
+    AuthConfigStatus, AuthError, AuthResult, AuthSession, SignUpOutcome, SupabaseAuthService,
 };
 pub use dirt_core::config::BootstrapConfig;
 pub use dirt_core::media::MediaApiClient;
@@ -33,8 +32,11 @@ pub fn auth_service_from_bootstrap(
     match (url, anon_key) {
         (None, None) => Ok(None),
         (Some(url), Some(anon_key)) => {
-            let service =
-                SupabaseAuthService::with_session_store(url, anon_key, KeyringSessionStore::default())?;
+            let service = SupabaseAuthService::with_session_store(
+                url,
+                anon_key,
+                KeyringSessionStore::default(),
+            )?;
             Ok(Some(service))
         }
         _ => Err(AuthError::NotConfigured),

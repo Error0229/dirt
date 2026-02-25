@@ -175,10 +175,7 @@ mod tests {
     #[test]
     fn normalize_endpoint_trims_trailing_slash() {
         let result = normalize_endpoint("https://api.example.com/v1/sync/token/".to_string());
-        assert_eq!(
-            result.unwrap(),
-            "https://api.example.com/v1/sync/token"
-        );
+        assert_eq!(result.unwrap(), "https://api.example.com/v1/sync/token");
     }
 
     #[test]
