@@ -1,18 +1,19 @@
-//! Supabase authentication service with secure session storage.
+//! Supabase authentication service with pluggable session persistence.
+//!
+//! Contains all shared auth types, HTTP logic, and response parsing.
+//! Platform-specific session storage is provided via the [`SessionPersistence`] trait.
 
-use std::fmt;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use keyring::Entry;
 use reqwest::{Client, RequestBuilder, StatusCode};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::bootstrap_config::{normalize_text_option, DesktopBootstrapConfig};
+use crate::util::unix_timestamp_now;
 
-const KEYRING_SERVICE_NAME: &str = "dirt";
-const KEYRING_SESSION_USERNAME: &str = "supabase_session";
 const EXPIRY_SKEW_SECONDS: i64 = 60;
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
 
 /// Authenticated user metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,13 +44,13 @@ impl AuthSession {
     }
 
     #[must_use]
-    const fn is_expired_at(&self, now_secs: i64) -> bool {
+    pub const fn is_expired_at(&self, now_secs: i64) -> bool {
         self.expires_at <= now_secs + EXPIRY_SKEW_SECONDS
     }
 }
 
-impl fmt::Debug for AuthSession {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Debug for AuthSession {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("AuthSession")
             .field("access_token", &"[REDACTED]")
@@ -88,7 +89,7 @@ pub struct AuthConfigStatus {
 /// Errors from authentication and secure storage flows.
 #[derive(Debug, Error)]
 pub enum AuthError {
-    #[error("Supabase auth is not configured for this build.")]
+    #[error("Supabase auth is not configured.")]
     NotConfigured,
     #[error("Invalid auth configuration: {0}")]
     InvalidConfiguration(&'static str),
@@ -102,96 +103,65 @@ pub enum AuthError {
     SecureStorage(String),
 }
 
-type AuthResult<T> = Result<T, AuthError>;
+pub type AuthResult<T> = Result<T, AuthError>;
 
-#[derive(Debug, Clone)]
-struct SessionStore {
-    service_name: String,
-    username: String,
+// ---------------------------------------------------------------------------
+// Session persistence trait
+// ---------------------------------------------------------------------------
+
+/// Pluggable session persistence backend.
+///
+/// Implemented per-platform:
+/// - Desktop: OS keychain via `keyring` crate
+/// - Mobile: Android Keystore via `secret_store`
+/// - CLI: OS keychain with per-profile namespacing
+pub trait SessionPersistence: Send + Sync {
+    fn load(&self) -> AuthResult<Option<AuthSession>>;
+    fn save(&self, session: &AuthSession) -> AuthResult<()>;
+    fn clear(&self) -> AuthResult<()>;
 }
 
-impl Default for SessionStore {
-    fn default() -> Self {
-        Self {
-            service_name: KEYRING_SERVICE_NAME.to_string(),
-            username: KEYRING_SESSION_USERNAME.to_string(),
-        }
-    }
-}
+/// No-op session persistence for clients that don't need persistence.
+pub struct NoopSessionStore;
 
-impl SessionStore {
-    fn entry(&self) -> AuthResult<Entry> {
-        Entry::new(&self.service_name, &self.username)
-            .map_err(|error| AuthError::SecureStorage(error.to_string()))
+impl SessionPersistence for NoopSessionStore {
+    fn load(&self) -> AuthResult<Option<AuthSession>> {
+        Ok(None)
     }
-
-    fn load_session(&self) -> AuthResult<Option<AuthSession>> {
-        let entry = self.entry()?;
-        match entry.get_password() {
-            Ok(raw) => Ok(Some(serde_json::from_str(&raw)?)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(AuthError::SecureStorage(error.to_string())),
-        }
+    fn save(&self, _session: &AuthSession) -> AuthResult<()> {
+        Ok(())
     }
-
-    fn save_session(&self, session: &AuthSession) -> AuthResult<()> {
-        let serialized = serde_json::to_string(session)?;
-        self.entry()?
-            .set_password(&serialized)
-            .map_err(|error| AuthError::SecureStorage(error.to_string()))
-    }
-
-    fn clear_session(&self) -> AuthResult<()> {
-        let entry = self.entry()?;
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(AuthError::SecureStorage(error.to_string())),
-        }
+    fn clear(&self) -> AuthResult<()> {
+        Ok(())
     }
 }
 
-/// Supabase auth API client.
-#[derive(Clone)]
-pub struct SupabaseAuthService {
+// ---------------------------------------------------------------------------
+// Supabase auth service
+// ---------------------------------------------------------------------------
+
+/// Supabase auth API client with pluggable session storage.
+pub struct SupabaseAuthService<S: SessionPersistence = NoopSessionStore> {
     auth_url: String,
     anon_key: String,
     client: Client,
-    session_store: SessionStore,
+    session_store: S,
 }
 
-impl SupabaseAuthService {
-    /// Create a service from desktop bootstrap config.
-    pub fn new_from_bootstrap(config: &DesktopBootstrapConfig) -> AuthResult<Option<Self>> {
-        let url = normalize_text_option(config.supabase_url.clone());
-        let anon_key = normalize_text_option(config.supabase_anon_key.clone());
-
-        match (url, anon_key) {
-            (None, None) => Ok(None),
-            (Some(url), Some(anon_key)) => {
-                let service = Self::new(url, anon_key)?;
-                Ok(Some(service))
-            }
-            _ => Err(AuthError::NotConfigured),
-        }
-    }
-
-    /// Create a service from `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
-    pub fn new_from_env() -> AuthResult<Option<Self>> {
-        let url = std::env::var("SUPABASE_URL").ok();
-        let anon_key = std::env::var("SUPABASE_ANON_KEY").ok();
-
-        match (url, anon_key) {
-            (None, None) => Ok(None),
-            (Some(url), Some(anon_key)) => {
-                let service = Self::new(url, anon_key)?;
-                Ok(Some(service))
-            }
-            _ => Err(AuthError::NotConfigured),
-        }
-    }
-
-    /// Create a service with explicit Supabase project URL and anon key.
+impl SupabaseAuthService<NoopSessionStore> {
+    /// Create a service without session persistence.
     pub fn new(url: impl AsRef<str>, anon_key: impl Into<String>) -> AuthResult<Self> {
+        Self::with_session_store(url, anon_key, NoopSessionStore)
+    }
+}
+
+impl<S: SessionPersistence> SupabaseAuthService<S> {
+    /// Create a service with a custom session store.
+    pub fn with_session_store(
+        url: impl AsRef<str>,
+        anon_key: impl Into<String>,
+        session_store: S,
+    ) -> AuthResult<Self> {
         let auth_url = normalize_auth_url(url.as_ref())?;
         let anon_key = anon_key.into().trim().to_string();
         if anon_key.is_empty() {
@@ -206,13 +176,13 @@ impl SupabaseAuthService {
             auth_url,
             anon_key,
             client,
-            session_store: SessionStore::default(),
+            session_store,
         })
     }
 
     /// Restore session from secure storage. If expired, refresh automatically.
     pub async fn restore_session(&self) -> AuthResult<Option<AuthSession>> {
-        let Some(stored_session) = self.session_store.load_session()? else {
+        let Some(stored_session) = self.session_store.load()? else {
             return Ok(None);
         };
 
@@ -222,12 +192,12 @@ impl SupabaseAuthService {
 
         match self.refresh_session(&stored_session.refresh_token).await {
             Ok(refreshed) => {
-                self.session_store.save_session(&refreshed)?;
+                self.session_store.save(&refreshed)?;
                 Ok(Some(refreshed))
             }
             Err(error) => {
                 tracing::warn!("Failed to refresh persisted session: {}", error);
-                self.session_store.clear_session()?;
+                self.session_store.clear()?;
                 Ok(None)
             }
         }
@@ -249,7 +219,7 @@ impl SupabaseAuthService {
         let response = self.send_auth_request(request).await?;
         match response.into_session()? {
             Some(session) => {
-                self.session_store.save_session(&session)?;
+                self.session_store.save(&session)?;
                 Ok(SignUpOutcome::SignedIn(session))
             }
             None => Ok(SignUpOutcome::ConfirmationRequired),
@@ -274,7 +244,7 @@ impl SupabaseAuthService {
         let session = response.into_session()?.ok_or_else(|| {
             AuthError::Api("Sign-in response did not include an active session".to_string())
         })?;
-        self.session_store.save_session(&session)?;
+        self.session_store.save(&session)?;
         Ok(session)
     }
 
@@ -299,11 +269,13 @@ impl SupabaseAuthService {
         let session = response.into_session()?.ok_or_else(|| {
             AuthError::Api("Refresh response did not include an active session".to_string())
         })?;
-        self.session_store.save_session(&session)?;
+        self.session_store.save(&session)?;
         Ok(session)
     }
 
     /// Sign out and clear local session storage.
+    ///
+    /// Always clears local credentials, even if the server logout fails.
     pub async fn sign_out(&self, access_token: &str) -> AuthResult<()> {
         let server_logout = async {
             let request = self
@@ -323,7 +295,7 @@ impl SupabaseAuthService {
         .await;
 
         // Always clear local credentials when user requests sign-out.
-        self.session_store.clear_session()?;
+        self.session_store.clear()?;
 
         if let Err(error) = server_logout {
             tracing::warn!(
@@ -354,7 +326,28 @@ impl SupabaseAuthService {
             rate_limit_email_sent: payload.rate_limit_email_sent,
         })
     }
+
+    fn public_request(&self, request: RequestBuilder) -> RequestBuilder {
+        request
+            .header("apikey", &self.anon_key)
+            .header("Authorization", format!("Bearer {}", self.anon_key))
+    }
+
+    async fn send_auth_request(&self, request: RequestBuilder) -> AuthResult<SupabaseAuthResponse> {
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AuthError::Api(parse_api_error(status, &body)));
+        }
+
+        Ok(response.json::<SupabaseAuthResponse>().await?)
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Private types and helpers
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
 struct SupabaseAuthResponse {
@@ -499,33 +492,6 @@ fn validate_credentials(email: &str, password: &str) -> AuthResult<()> {
         return Err(AuthError::Api("Password is required".to_string()));
     }
     Ok(())
-}
-
-fn unix_timestamp_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| {
-            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
-        })
-}
-
-impl SupabaseAuthService {
-    fn public_request(&self, request: RequestBuilder) -> RequestBuilder {
-        request
-            .header("apikey", &self.anon_key)
-            .header("Authorization", format!("Bearer {}", self.anon_key))
-    }
-
-    async fn send_auth_request(&self, request: RequestBuilder) -> AuthResult<SupabaseAuthResponse> {
-        let response = request.send().await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(AuthError::Api(parse_api_error(status, &body)));
-        }
-
-        Ok(response.json::<SupabaseAuthResponse>().await?)
-    }
 }
 
 #[cfg(test)]
