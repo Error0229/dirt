@@ -158,7 +158,7 @@ impl TranscriptionService {
         })
     }
 
-    /// Persist OpenAI API key into secure storage.
+    /// Persist `OpenAI` API key into secure storage.
     pub fn store_api_key(raw_api_key: &str) -> TranscriptionResult<()> {
         let api_key = raw_api_key.trim();
         if api_key.is_empty() {
@@ -169,12 +169,12 @@ impl TranscriptionService {
         OpenAiApiKeyStore::default().save(api_key)
     }
 
-    /// Remove OpenAI API key from secure storage.
+    /// Remove `OpenAI` API key from secure storage.
     pub fn clear_api_key() -> TranscriptionResult<()> {
         OpenAiApiKeyStore::default().clear()
     }
 
-    /// Returns whether a secure OpenAI API key is currently stored.
+    /// Returns whether a secure `OpenAI` API key is currently stored.
     pub fn has_stored_api_key() -> TranscriptionResult<bool> {
         Ok(OpenAiApiKeyStore::default().load()?.is_some())
     }
