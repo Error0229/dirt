@@ -6,7 +6,7 @@ use dioxus_primitives::label::Label;
 use dioxus_primitives::scroll_area::{ScrollArea, ScrollDirection, ScrollType};
 use dioxus_primitives::separator::Separator;
 use dioxus_primitives::toast::{use_toast, ToastOptions, ToastProvider};
-use dirt_core::{Attachment, AttachmentId, Note, NoteId, SyncConflict};
+use dirt_core::{Attachment, AttachmentId, Note, NoteId, SyncConflict, SyncState};
 
 use crate::attachments::{
     attachment_kind_label, build_attachment_preview, infer_attachment_mime_type, AttachmentPreview,
@@ -42,13 +42,7 @@ enum MobileView {
     Settings,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum MobileSyncState {
-    Offline,
-    Syncing,
-    Synced,
-    Error,
-}
+type MobileSyncState = SyncState;
 
 struct MobileConfigDiagnostics {
     auth_bootstrap_configured: bool,

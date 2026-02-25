@@ -7,20 +7,12 @@ use std::sync::Arc;
 use dioxus::prelude::*;
 
 use dirt_core::models::{Note, NoteId, Settings};
+pub use dirt_core::state::SyncState as SyncStatus;
 
 use crate::services::{
     AuthSession, DatabaseService, DesktopAuthService, MediaApiClient, TranscriptionService,
 };
 use crate::theme::ResolvedTheme;
-
-/// Current sync status for the app
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SyncStatus {
-    Synced,
-    Syncing,
-    Offline,
-    Error,
-}
 
 /// Global application state
 #[derive(Clone, Copy)]
