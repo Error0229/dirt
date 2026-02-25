@@ -106,9 +106,16 @@ fn write_mobile_bootstrap_config() -> io::Result<()> {
 fn load_workspace_dotenv() {
     let manifest_dir =
         env::var_os("CARGO_MANIFEST_DIR").map_or_else(|| PathBuf::from("."), PathBuf::from);
-    let candidate = manifest_dir.join("..").join("..").join(".env");
-    if candidate.exists() {
-        let _ = dotenvy::from_path(candidate);
+    let workspace_root = manifest_dir.join("..").join("..");
+
+    // Prefer .env.client (role-separated) over legacy .env
+    let client_env = workspace_root.join(".env.client");
+    let legacy_env = workspace_root.join(".env");
+
+    if client_env.exists() {
+        let _ = dotenvy::from_path(client_env);
+    } else if legacy_env.exists() {
+        let _ = dotenvy::from_path(legacy_env);
     }
 }
 
