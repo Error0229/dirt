@@ -1,6 +1,7 @@
 //! Optional audio transcription service foundation.
 #![allow(dead_code)] // Foundation module; full wiring lands in follow-up issue.
 
+use keyring::Entry;
 use reqwest::{multipart, Client, Request, StatusCode};
 use serde::Deserialize;
 use thiserror::Error;
@@ -11,6 +12,8 @@ const ENV_OPENAI_BASE_URL: &str = "OPENAI_BASE_URL";
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini-transcribe";
 const DEFAULT_BASE_URL: &str = "https://api.openai.com";
+const KEYRING_SERVICE_NAME: &str = "dirt";
+const KEYRING_OPENAI_API_KEY_USERNAME: &str = "openai_api_key";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TranscriptionMode {
@@ -33,10 +36,12 @@ pub struct TranscriptionConfigStatus {
 /// Errors from transcription service setup and requests.
 #[derive(Debug, Error)]
 pub enum TranscriptionError {
-    #[error("Transcription is not configured. Set OPENAI_API_KEY to enable it.")]
+    #[error("Transcription is not configured. Add an OpenAI API key in Settings.")]
     NotConfigured,
     #[error("Invalid transcription configuration: {0}")]
     InvalidConfiguration(&'static str),
+    #[error("Secure storage error: {0}")]
+    SecureStorage(String),
     #[error("HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
     #[error("Transcription API error: {0}")]
@@ -51,13 +56,73 @@ pub struct TranscriptionService {
     mode: TranscriptionMode,
 }
 
+#[derive(Debug, Clone)]
+struct OpenAiApiKeyStore {
+    service_name: String,
+    username: String,
+}
+
+impl Default for OpenAiApiKeyStore {
+    fn default() -> Self {
+        Self {
+            service_name: KEYRING_SERVICE_NAME.to_string(),
+            username: KEYRING_OPENAI_API_KEY_USERNAME.to_string(),
+        }
+    }
+}
+
+impl OpenAiApiKeyStore {
+    fn entry(&self) -> TranscriptionResult<Entry> {
+        Entry::new(&self.service_name, &self.username)
+            .map_err(|error| TranscriptionError::SecureStorage(error.to_string()))
+    }
+
+    fn load(&self) -> TranscriptionResult<Option<String>> {
+        let entry = self.entry()?;
+        match entry.get_password() {
+            Ok(value) => {
+                let normalized = value.trim();
+                if normalized.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(normalized.to_string()))
+                }
+            }
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(TranscriptionError::SecureStorage(error.to_string())),
+        }
+    }
+
+    fn save(&self, api_key: &str) -> TranscriptionResult<()> {
+        self.entry()?
+            .set_password(api_key)
+            .map_err(|error| TranscriptionError::SecureStorage(error.to_string()))
+    }
+
+    fn clear(&self) -> TranscriptionResult<()> {
+        let entry = self.entry()?;
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(TranscriptionError::SecureStorage(error.to_string())),
+        }
+    }
+}
+
 impl TranscriptionService {
-    /// Build transcription service from environment.
-    pub fn new_from_env() -> TranscriptionResult<Self> {
-        let api_key = std::env::var(ENV_OPENAI_API_KEY)
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
+    /// Build transcription service from secure storage.
+    ///
+    /// In debug builds, `OPENAI_API_KEY` is allowed as a local fallback.
+    pub fn new() -> TranscriptionResult<Self> {
+        let key_store = OpenAiApiKeyStore::default();
+        let mut api_key = key_store.load()?;
+
+        #[cfg(debug_assertions)]
+        if api_key.is_none() {
+            api_key = std::env::var(ENV_OPENAI_API_KEY)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+        }
 
         let mode = if let Some(api_key) = api_key {
             let base_url = std::env::var(ENV_OPENAI_BASE_URL)
@@ -91,6 +156,27 @@ impl TranscriptionService {
             client: Client::builder().build()?,
             mode,
         })
+    }
+
+    /// Persist `OpenAI` API key into secure storage.
+    pub fn store_api_key(raw_api_key: &str) -> TranscriptionResult<()> {
+        let api_key = raw_api_key.trim();
+        if api_key.is_empty() {
+            return Err(TranscriptionError::InvalidConfiguration(
+                "OpenAI API key must not be empty",
+            ));
+        }
+        OpenAiApiKeyStore::default().save(api_key)
+    }
+
+    /// Remove `OpenAI` API key from secure storage.
+    pub fn clear_api_key() -> TranscriptionResult<()> {
+        OpenAiApiKeyStore::default().clear()
+    }
+
+    /// Returns whether a secure `OpenAI` API key is currently stored.
+    pub fn has_stored_api_key() -> TranscriptionResult<bool> {
+        Ok(OpenAiApiKeyStore::default().load()?.is_some())
     }
 
     #[must_use]
@@ -152,7 +238,7 @@ impl TranscriptionService {
 
         if response.status() == StatusCode::UNAUTHORIZED {
             return Err(TranscriptionError::Api(
-                "Unauthorized transcription request (check OPENAI_API_KEY)".to_string(),
+                "Unauthorized transcription request (check configured OpenAI API key)".to_string(),
             ));
         }
 

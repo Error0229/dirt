@@ -1,5 +1,7 @@
 //! Settings panel component
 
+use std::sync::Arc;
+
 use dioxus::prelude::*;
 use dioxus_primitives::slider::SliderValue;
 use rfd::AsyncFileDialog;
@@ -15,7 +17,7 @@ use super::select::{
 use super::slider::{Slider, SliderRange, SliderThumb, SliderTrack};
 use crate::services::{
     export_notes_to_path, suggested_export_file_name, AuthConfigStatus, NotesExportFormat,
-    SignUpOutcome, TranscriptionConfigStatus,
+    SignUpOutcome, TranscriptionConfigStatus, TranscriptionService,
 };
 use crate::state::AppState;
 use crate::theme::resolve_theme;
@@ -71,7 +73,8 @@ pub fn SettingsPanel() -> Element {
         ThemeMode::System => "system",
     };
     let auth_service = state.auth_service.read().clone();
-    let transcription_service = state.transcription_service.read().clone();
+    let mut transcription_service_signal = state.transcription_service;
+    let transcription_service = transcription_service_signal.read().clone();
     let transcription_config_status = transcription_service
         .as_ref()
         .map(|service| service.config_status());
@@ -84,6 +87,14 @@ pub fn SettingsPanel() -> Element {
     );
     let transcription_toggle_disabled =
         !transcription_available && !current_settings.voice_memo_transcription_enabled;
+    let mut openai_api_key_input = use_signal(String::new);
+    let mut openai_api_key_message = use_signal(|| None::<String>);
+    let mut openai_api_key_configured = use_signal(|| {
+        TranscriptionService::has_stored_api_key().unwrap_or_else(|error| {
+            tracing::warn!("Failed to check stored OpenAI API key: {}", error);
+            false
+        })
+    });
     let active_session = (state.auth_session)();
     let pending_sync_count = (state.pending_sync_count)();
     let pending_sync_note_ids = (state.pending_sync_note_ids)();
@@ -451,6 +462,56 @@ pub fn SettingsPanel() -> Element {
         sync_conflicts_refresh_version.set(sync_conflicts_refresh_version().saturating_add(1));
     };
 
+    let save_openai_api_key = move |_: MouseEvent| {
+        let api_key = openai_api_key_input().trim().to_string();
+        if api_key.is_empty() {
+            openai_api_key_message.set(Some("Enter an OpenAI API key.".to_string()));
+            return;
+        }
+
+        match TranscriptionService::store_api_key(&api_key) {
+            Ok(()) => {
+                openai_api_key_input.set(String::new());
+                openai_api_key_configured.set(true);
+                openai_api_key_message.set(Some(
+                    "OpenAI API key saved to secure OS storage.".to_string(),
+                ));
+            }
+            Err(error) => {
+                openai_api_key_message.set(Some(format!("Failed to save API key: {error}")));
+            }
+        }
+
+        match TranscriptionService::new() {
+            Ok(service) => transcription_service_signal.set(Some(Arc::new(service))),
+            Err(error) => {
+                tracing::warn!("Voice transcription service unavailable: {}", error);
+                transcription_service_signal.set(None);
+            }
+        }
+    };
+
+    let clear_openai_api_key = move |_: MouseEvent| {
+        match TranscriptionService::clear_api_key() {
+            Ok(()) => {
+                openai_api_key_input.set(String::new());
+                openai_api_key_configured.set(false);
+                openai_api_key_message.set(Some("OpenAI API key cleared.".to_string()));
+            }
+            Err(error) => {
+                openai_api_key_message.set(Some(format!("Failed to clear API key: {error}")));
+            }
+        }
+
+        match TranscriptionService::new() {
+            Ok(service) => transcription_service_signal.set(Some(Arc::new(service))),
+            Err(error) => {
+                tracing::warn!("Voice transcription service unavailable: {}", error);
+                transcription_service_signal.set(None);
+            }
+        }
+    };
+
     let auth_working = auth_busy() || auth_verifying();
     let sign_up_blocked_reason = sign_up_block_reason(auth_config_status());
     let sign_up_blocked = sign_up_blocked_reason.is_some();
@@ -655,6 +716,55 @@ pub fn SettingsPanel() -> Element {
                                 "Enabled"
                             } else {
                                 "Disabled"
+                            }
+                        }
+                    }
+                }
+
+                SettingRow {
+                    label: "API Keys",
+                    description: "Store user-provided API keys in the OS keychain.",
+
+                    div {
+                        class: "auth-panel",
+
+                        Input {
+                            class: "auth-input",
+                            r#type: "password",
+                            placeholder: "OpenAI API key",
+                            value: "{openai_api_key_input}",
+                            oninput: move |event: FormEvent| {
+                                openai_api_key_input.set(event.value());
+                            },
+                        }
+
+                        div {
+                            class: "auth-actions",
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                onclick: save_openai_api_key,
+                                "Save Key"
+                            }
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                onclick: clear_openai_api_key,
+                                "Clear Key"
+                            }
+                        }
+
+                        div {
+                            class: "auth-hint",
+                            if openai_api_key_configured() {
+                                "OpenAI API key is stored securely."
+                            } else {
+                                "No secure OpenAI API key is currently stored."
+                            }
+                        }
+
+                        if let Some(message) = openai_api_key_message() {
+                            div {
+                                class: "auth-message",
+                                "{message}"
                             }
                         }
                     }
@@ -928,7 +1038,7 @@ fn transcription_status_text(status: Option<&TranscriptionConfigStatus>, enabled
             )
         }
         Some(_) => {
-            format!("Optional transcription is {toggle}. Set OPENAI_API_KEY to enable it.")
+            format!("Optional transcription is {toggle}. Add an OpenAI API key in API Keys.")
         }
         None => {
             format!("Optional transcription is {toggle}. Service failed to initialize.")

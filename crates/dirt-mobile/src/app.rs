@@ -176,6 +176,8 @@ fn AppShell() -> Element {
     let mut voice_memo_started_at = use_signal(|| None::<Instant>);
     let mut db_init_retry_version = use_signal(|| 0u64);
     let mut turso_database_url_input = use_signal(String::new);
+    let mut openai_api_key_input = use_signal(String::new);
+    let mut openai_api_key_configured = use_signal(|| false);
     let mut active_sync_source = use_signal(|| SyncConfigSource::None);
     let mut auth_service = use_signal(|| None::<Arc<SupabaseAuthService>>);
     let mut auth_session = use_signal(|| None::<AuthSession>);
@@ -206,6 +208,16 @@ fn AppShell() -> Element {
                     .clone()
                     .unwrap_or_default(),
             );
+            match secret_store::read_secret(secret_store::SECRET_OPENAI_API_KEY) {
+                Ok(secret) => openai_api_key_configured.set(secret.is_some()),
+                Err(error) => {
+                    tracing::warn!(
+                        "Failed to read OpenAI API key from secure storage: {}",
+                        error
+                    );
+                    openai_api_key_configured.set(false);
+                }
+            }
             let mut resolved_sync_config = resolve_sync_config();
             active_sync_source.set(resolved_sync_config.source);
             auth_service.set(None);
@@ -699,6 +711,39 @@ fn AppShell() -> Element {
         ));
         db_init_retry_version.set(db_init_retry_version() + 1);
     };
+
+    let on_save_openai_api_key = move |_| {
+        let api_key = openai_api_key_input().trim().to_string();
+        if api_key.is_empty() {
+            status_message.set(Some("OpenAI API key is required.".to_string()));
+            return;
+        }
+
+        match secret_store::write_secret(secret_store::SECRET_OPENAI_API_KEY, &api_key) {
+            Ok(()) => {
+                openai_api_key_input.set(String::new());
+                openai_api_key_configured.set(true);
+                status_message.set(Some(
+                    "OpenAI API key saved to secure device storage.".to_string(),
+                ));
+            }
+            Err(error) => {
+                status_message.set(Some(format!("Failed to save OpenAI API key: {error}")));
+            }
+        }
+    };
+
+    let on_clear_openai_api_key =
+        move |_| match secret_store::delete_secret(secret_store::SECRET_OPENAI_API_KEY) {
+            Ok(()) => {
+                openai_api_key_input.set(String::new());
+                openai_api_key_configured.set(false);
+                status_message.set(Some("OpenAI API key cleared.".to_string()));
+            }
+            Err(error) => {
+                status_message.set(Some(format!("Failed to clear OpenAI API key: {error}")));
+            }
+        };
 
     let on_auth_sign_in = move |_| {
         if auth_loading() {
@@ -1745,6 +1790,69 @@ fn AppShell() -> Element {
                             p {
                                 style: "margin: 0; font-size: 12px; color: #6b7280;",
                                 "{sync_action}"
+                            }
+                        }
+                    }
+
+                    div {
+                        style: "
+                            padding: 12px;
+                            border: 1px solid #e5e7eb;
+                            border-radius: 12px;
+                            background: #ffffff;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 8px;
+                            margin-bottom: 10px;
+                        ",
+                        p {
+                            style: "
+                                margin: 0;
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: #6b7280;
+                                text-transform: uppercase;
+                                letter-spacing: 0.04em;
+                            ",
+                            "API keys"
+                        }
+                        Label {
+                            html_for: "openai-api-key",
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            "OpenAI API key"
+                        }
+                        UiInput {
+                            id: "openai-api-key",
+                            r#type: "password",
+                            placeholder: "sk-...",
+                            value: "{openai_api_key_input}",
+                            oninput: move |event: Event<FormData>| {
+                                openai_api_key_input.set(event.value());
+                            },
+                        }
+                        p {
+                            style: "margin: 0; font-size: 12px; color: #6b7280;",
+                            if openai_api_key_configured() {
+                                "OpenAI API key is stored securely on this device."
+                            } else {
+                                "No OpenAI API key is currently stored."
+                            }
+                        }
+                        div {
+                            style: "display: flex; gap: 8px;",
+                            UiButton {
+                                type: "button",
+                                block: true,
+                                variant: ButtonVariant::Primary,
+                                onclick: on_save_openai_api_key,
+                                "Save key"
+                            }
+                            UiButton {
+                                type: "button",
+                                block: true,
+                                variant: ButtonVariant::Outline,
+                                onclick: on_clear_openai_api_key,
+                                "Clear key"
                             }
                         }
                     }
