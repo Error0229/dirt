@@ -112,10 +112,7 @@ pub fn save_runtime_config_to_path(config: &MobileRuntimeConfig, path: &Path) ->
 pub fn resolve_sync_config() -> ResolvedSyncConfig {
     let runtime_config = load_runtime_config();
     let runtime_secret = secret_store::read_secret(secret_store::SECRET_TURSO_AUTH_TOKEN);
-    resolve_sync_config_from_sources(
-        runtime_config.turso_database_url,
-        runtime_secret,
-    )
+    resolve_sync_config_from_sources(runtime_config.turso_database_url, runtime_secret)
 }
 
 /// Report secure-storage status for the runtime Turso auth token.
@@ -250,5 +247,4 @@ mod tests {
             .as_deref()
             .is_some_and(|warning| warning.contains("auth token")));
     }
-
 }
