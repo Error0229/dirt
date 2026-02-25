@@ -24,10 +24,12 @@ Thumbs.db
 *.wasm
 dx.lock
 
-# Environment
+# Environment (all .env files except examples are gitignored)
 .env
 .env.local
 .env.*.local
+.env.client
+.env.server
 
 # Database
 *.db

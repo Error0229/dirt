@@ -11,11 +11,21 @@ use std::sync::Arc;
 use config::AppConfig;
 use routes::{app_router, AppState};
 
+/// Load .env.server (preferred) or legacy .env for local development only.
+#[cfg(debug_assertions)]
+fn load_dev_dotenv() {
+    let server_env = std::path::Path::new(".env.server");
+    if server_env.exists() {
+        let _ = dotenvy::from_path(server_env);
+    } else {
+        dotenvy::dotenv().ok();
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Only load .env in development; production uses platform-native env injection.
     #[cfg(debug_assertions)]
-    dotenvy::dotenv().ok();
+    load_dev_dotenv();
 
     tracing_subscriber::fmt()
         .with_env_filter(

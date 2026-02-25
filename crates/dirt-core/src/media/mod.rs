@@ -1,9 +1,12 @@
-//! Backend media signing client for desktop attachment operations.
+//! Backend media signing client for attachment operations.
+//!
+//! Platform-agnostic HTTP client that uses backend-issued presigned URLs
+//! to upload, download, and delete attachments from cloud storage.
 
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::bootstrap_config::DesktopBootstrapConfig;
+use crate::util::compact_text;
 
 /// HTTP client for managed media operations backed by the Dirt API service.
 #[derive(Debug, Clone)]
@@ -13,16 +16,6 @@ pub struct MediaApiClient {
 }
 
 impl MediaApiClient {
-    /// Builds a client from desktop bootstrap configuration.
-    ///
-    /// Returns `Ok(None)` when managed media is not configured.
-    pub fn new_from_bootstrap(config: &DesktopBootstrapConfig) -> Result<Option<Self>, String> {
-        let Some(base_url) = config.managed_api_base_url() else {
-            return Ok(None);
-        };
-        Ok(Some(Self::new(base_url)?))
-    }
-
     /// Builds a client for an explicit API base URL.
     pub fn new(base_url: impl Into<String>) -> Result<Self, String> {
         let base_url = normalize_base_url(base_url.into().as_str())?;
@@ -30,6 +23,11 @@ impl MediaApiClient {
             .build()
             .map_err(|error| format!("Failed to construct HTTP client: {error}"))?;
         Ok(Self { base_url, client })
+    }
+
+    /// Returns the base URL this client was configured with.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 
     /// Uploads attachment bytes using a backend-issued presigned operation.
@@ -69,7 +67,7 @@ impl MediaApiClient {
             let body = response.text().await.unwrap_or_default();
             return Err(format!(
                 "Upload request failed with HTTP {status}: {}",
-                compact_body(&body)
+                compact_text(&body)
             ));
         }
         Ok(())
@@ -102,7 +100,7 @@ impl MediaApiClient {
             let body = response.text().await.unwrap_or_default();
             return Err(format!(
                 "Download URL request failed with HTTP {status}: {}",
-                compact_body(&body)
+                compact_text(&body)
             ));
         }
         let payload = response
@@ -128,7 +126,7 @@ impl MediaApiClient {
             let body = response.text().await.unwrap_or_default();
             return Err(format!(
                 "Download request failed with HTTP {status}: {}",
-                compact_body(&body)
+                compact_text(&body)
             ));
         }
         let content_type = response
@@ -172,7 +170,7 @@ impl MediaApiClient {
             let body = response.text().await.unwrap_or_default();
             return Err(format!(
                 "Delete request failed with HTTP {status}: {}",
-                compact_body(&body)
+                compact_text(&body)
             ));
         }
         Ok(())
@@ -198,7 +196,7 @@ impl MediaApiClient {
             let body = response.text().await.unwrap_or_default();
             return Err(format!(
                 "Signed URL request failed with HTTP {status}: {}",
-                compact_body(&body)
+                compact_text(&body)
             ));
         }
         let payload = response
@@ -224,20 +222,16 @@ struct PresignedOperation {
 fn normalize_base_url(raw: &str) -> Result<String, String> {
     let base = raw.trim().trim_end_matches('/').to_string();
     if base.is_empty() {
-        return Err("DIRT_API_BASE_URL must not be empty".to_string());
+        return Err("API base URL must not be empty".to_string());
     }
     if !(base.starts_with("https://") || base.starts_with("http://")) {
-        return Err("DIRT_API_BASE_URL must include http:// or https://".to_string());
+        return Err("API base URL must include http:// or https://".to_string());
     }
     Ok(base)
 }
 
 fn parse_method(raw: &str) -> Result<Method, String> {
     Method::from_bytes(raw.as_bytes()).map_err(|error| format!("Unsupported HTTP method: {error}"))
-}
-
-fn compact_body(body: &str) -> String {
-    body.trim().chars().take(180).collect()
 }
 
 #[cfg(test)]

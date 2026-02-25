@@ -13,7 +13,8 @@ use crate::bootstrap_config::{load_bootstrap_config, resolve_bootstrap_config};
 use crate::components::{QuickCapture, SettingsPanel};
 use crate::queries::use_notes_query;
 use crate::services::{
-    AuthSession, DatabaseService, MediaApiClient, SupabaseAuthService, TranscriptionService,
+    auth_service_from_bootstrap, media_client_from_bootstrap, sync_auth_from_bootstrap,
+    AuthSession, DatabaseService, DesktopAuthService, MediaApiClient, TranscriptionService,
     TursoSyncAuthClient,
 };
 use crate::state::{AppState, SyncStatus};
@@ -36,7 +37,7 @@ pub fn App() -> Element {
     let mut quick_capture_open = use_signal(|| false);
     let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
     let mut db_service: Signal<Option<Arc<DatabaseService>>> = use_signal(|| None);
-    let mut auth_service: Signal<Option<Arc<SupabaseAuthService>>> = use_signal(|| None);
+    let mut auth_service: Signal<Option<Arc<DesktopAuthService>>> = use_signal(|| None);
     let mut sync_auth_client: Signal<Option<Arc<TursoSyncAuthClient>>> = use_signal(|| None);
     let mut media_api_client: Signal<Option<Arc<MediaApiClient>>> = use_signal(|| None);
     let transcription_service: Signal<Option<Arc<TranscriptionService>>> =
@@ -68,7 +69,7 @@ pub fn App() -> Element {
         spawn(async move {
             let bootstrap = resolve_bootstrap_config(fallback_bootstrap).await;
 
-            match TursoSyncAuthClient::new_from_bootstrap(&bootstrap) {
+            match sync_auth_from_bootstrap(&bootstrap) {
                 Ok(Some(client)) => sync_auth_client.set(Some(Arc::new(client))),
                 Ok(None) => sync_auth_client.set(None),
                 Err(error) => {
@@ -77,7 +78,7 @@ pub fn App() -> Element {
                 }
             }
 
-            match MediaApiClient::new_from_bootstrap(&bootstrap) {
+            match media_client_from_bootstrap(&bootstrap) {
                 Ok(Some(client)) => media_api_client.set(Some(Arc::new(client))),
                 Ok(None) => media_api_client.set(None),
                 Err(error) => {
@@ -86,7 +87,7 @@ pub fn App() -> Element {
                 }
             }
 
-            let service_result = SupabaseAuthService::new_from_bootstrap(&bootstrap);
+            let service_result = auth_service_from_bootstrap(&bootstrap);
 
             match service_result {
                 Ok(Some(service)) => {

@@ -1,10 +1,13 @@
-//! Managed Turso sync token exchange client for desktop.
+//! Managed Turso sync token exchange client.
+//!
+//! Exchanges a Supabase access token for short-lived Turso database
+//! credentials via the Dirt API backend.
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::bootstrap_config::{normalize_text_option, DesktopBootstrapConfig};
+use crate::util::{compact_text, is_http_url, normalize_text_option, unix_timestamp_now};
 
 /// Short-lived Turso sync credentials minted by backend auth exchange.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,14 +37,14 @@ pub enum SyncAuthError {
     #[error("Invalid sync auth configuration: {0}")]
     InvalidConfiguration(String),
     #[error("HTTP request failed: {0}")]
-    Request(#[from] reqwest::Error),
+    Http(#[from] reqwest::Error),
     #[error("Sync API error: {0}")]
     Api(String),
     #[error("Invalid sync token payload: {0}")]
     InvalidPayload(String),
 }
 
-type SyncAuthResult<T> = Result<T, SyncAuthError>;
+pub type SyncAuthResult<T> = Result<T, SyncAuthError>;
 
 /// Backend token exchange client.
 #[derive(Clone)]
@@ -51,14 +54,6 @@ pub struct TursoSyncAuthClient {
 }
 
 impl TursoSyncAuthClient {
-    /// Creates a client from desktop bootstrap configuration.
-    pub fn new_from_bootstrap(config: &DesktopBootstrapConfig) -> SyncAuthResult<Option<Self>> {
-        let Some(endpoint) = config.turso_sync_token_endpoint.clone() else {
-            return Ok(None);
-        };
-        Ok(Some(Self::new(endpoint)?))
-    }
-
     /// Creates a client with explicit endpoint URL.
     pub fn new(endpoint: impl Into<String>) -> SyncAuthResult<Self> {
         let endpoint = normalize_endpoint(endpoint.into())?;
@@ -66,6 +61,11 @@ impl TursoSyncAuthClient {
             endpoint,
             client: Client::new(),
         })
+    }
+
+    /// Returns the endpoint URL this client was configured with.
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
     }
 
     /// Exchanges Supabase access token for short-lived Turso credentials.
@@ -90,7 +90,7 @@ impl TursoSyncAuthClient {
             let body = response.text().await.unwrap_or_default();
             return Err(SyncAuthError::Api(format!(
                 "HTTP {status}: {}",
-                compact_body(&body)
+                compact_text(&body)
             )));
         }
 
@@ -104,6 +104,8 @@ struct SyncTokenResponse {
     auth_token: Option<String>,
     token: Option<String>,
     expires_at: Option<i64>,
+    /// Relative expiry in seconds — used as fallback when `expires_at` is absent.
+    expires_in: Option<i64>,
     database_url: Option<String>,
 }
 
@@ -122,9 +124,14 @@ impl TryFrom<SyncTokenResponse> for SyncToken {
                 )
             })?;
 
-        let expires_at = value.expires_at.ok_or_else(|| {
-            SyncAuthError::InvalidPayload("response did not include expires_at".to_string())
-        })?;
+        let expires_at = value
+            .expires_at
+            .or_else(|| value.expires_in.map(|secs| unix_timestamp_now() + secs))
+            .ok_or_else(|| {
+                SyncAuthError::InvalidPayload(
+                    "response did not include expires_at or expires_in".to_string(),
+                )
+            })?;
 
         let database_url = normalize_text_option(value.database_url).ok_or_else(|| {
             SyncAuthError::InvalidPayload("response did not include database_url".to_string())
@@ -142,7 +149,7 @@ fn normalize_endpoint(raw: String) -> SyncAuthResult<String> {
     let normalized = normalize_text_option(Some(raw)).ok_or_else(|| {
         SyncAuthError::InvalidConfiguration("endpoint must not be empty".to_string())
     })?;
-    if normalized.starts_with("http://") || normalized.starts_with("https://") {
+    if is_http_url(&normalized) {
         Ok(normalized.trim_end_matches('/').to_string())
     } else {
         Err(SyncAuthError::InvalidConfiguration(
@@ -151,18 +158,24 @@ fn normalize_endpoint(raw: String) -> SyncAuthResult<String> {
     }
 }
 
-fn compact_body(body: &str) -> String {
-    body.trim().chars().take(180).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn normalize_endpoint_rejects_invalid_values() {
+    fn normalize_endpoint_rejects_empty() {
         assert!(normalize_endpoint(String::new()).is_err());
+    }
+
+    #[test]
+    fn normalize_endpoint_rejects_missing_scheme() {
         assert!(normalize_endpoint("api.example.com".to_string()).is_err());
+    }
+
+    #[test]
+    fn normalize_endpoint_trims_trailing_slash() {
+        let result = normalize_endpoint("https://api.example.com/v1/sync/token/".to_string());
+        assert_eq!(result.unwrap(), "https://api.example.com/v1/sync/token");
     }
 
     #[test]
