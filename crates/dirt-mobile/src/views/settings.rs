@@ -1,3 +1,4 @@
+rsx! {
                 ScrollArea {
                     direction: ScrollDirection::Vertical,
                     scroll_type: ScrollType::Auto,
@@ -532,3 +533,6 @@
                         }
                     }
                 }
+
+}
+

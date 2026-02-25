@@ -1,3 +1,4 @@
+rsx! {
                 if store.read().is_none() {
                     div {
                         style: "
@@ -224,3 +225,6 @@
                         }
                     }
                 }
+
+}
+

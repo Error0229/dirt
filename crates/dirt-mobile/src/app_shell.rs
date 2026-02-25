@@ -1482,11 +1482,11 @@ pub(crate) fn AppShell() -> Element {
                     "Loading notes..."
                 }
             } else if view() == MobileView::List {
-                include!("views/list.rs");
+                {include!("views/list.rs")}
             } else if view() == MobileView::Settings {
-                include!("views/settings.rs");
+                {include!("views/settings.rs")}
             } else {
-                include!("views/editor.rs");
+                {include!("views/editor.rs")}
             }
         }
     }

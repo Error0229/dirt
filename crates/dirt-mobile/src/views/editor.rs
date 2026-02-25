@@ -1,3 +1,4 @@
+rsx! {
                 div {
                     style: "
                         padding: 10px 12px;
@@ -366,3 +367,6 @@
                         }
                     }
                 }
+
+}
+
