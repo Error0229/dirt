@@ -41,7 +41,7 @@ pub fn App() -> Element {
     let mut sync_auth_client: Signal<Option<Arc<TursoSyncAuthClient>>> = use_signal(|| None);
     let mut media_api_client: Signal<Option<Arc<MediaApiClient>>> = use_signal(|| None);
     let transcription_service: Signal<Option<Arc<TranscriptionService>>> =
-        use_signal(|| match TranscriptionService::new_from_env() {
+        use_signal(|| match TranscriptionService::new() {
             Ok(service) => Some(Arc::new(service)),
             Err(error) => {
                 tracing::warn!("Voice transcription service unavailable: {}", error);

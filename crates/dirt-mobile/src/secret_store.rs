@@ -10,6 +10,8 @@ pub const SECRET_TURSO_AUTH_TOKEN: &str = "turso_auth_token";
 /// Secret key used for the serialized Supabase session payload.
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 pub const SECRET_SUPABASE_SESSION: &str = "supabase_session";
+/// Secret key used for user-provided OpenAI API key.
+pub const SECRET_OPENAI_API_KEY: &str = "openai_api_key";
 
 type SecretResult<T> = Result<T, String>;
 
