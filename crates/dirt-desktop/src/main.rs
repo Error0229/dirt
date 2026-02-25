@@ -33,9 +33,6 @@ pub static TRAY_ENABLED: AtomicBool = AtomicBool::new(false);
 
 #[allow(clippy::cognitive_complexity)]
 fn main() {
-    // Load environment variables from .env file
-    dotenvy::dotenv().ok();
-
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(

@@ -14,7 +14,6 @@ const RUNTIME_CONFIG_FILE: &str = "mobile-config.json";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncConfigSource {
     RuntimeSettings,
-    EnvironmentFallback,
     None,
 }
 
@@ -113,12 +112,7 @@ pub fn save_runtime_config_to_path(config: &MobileRuntimeConfig, path: &Path) ->
 pub fn resolve_sync_config() -> ResolvedSyncConfig {
     let runtime_config = load_runtime_config();
     let runtime_secret = secret_store::read_secret(secret_store::SECRET_TURSO_AUTH_TOKEN);
-    resolve_sync_config_from_sources(
-        runtime_config.turso_database_url,
-        runtime_secret,
-        std::env::var("TURSO_DATABASE_URL").ok(),
-        std::env::var("TURSO_AUTH_TOKEN").ok(),
-    )
+    resolve_sync_config_from_sources(runtime_config.turso_database_url, runtime_secret)
 }
 
 /// Report secure-storage status for the runtime Turso auth token.
@@ -133,8 +127,6 @@ pub fn runtime_turso_token_status() -> SecretStatus {
 fn resolve_sync_config_from_sources(
     runtime_url: Option<String>,
     runtime_secret: std::result::Result<Option<String>, String>,
-    env_url: Option<String>,
-    env_token: Option<String>,
 ) -> ResolvedSyncConfig {
     let runtime_url_was_set = runtime_url.is_some();
     let runtime_sync_config = parse_sync_config(
@@ -146,21 +138,6 @@ fn resolve_sync_config_from_sources(
             sync_config: Some(sync_config),
             source: SyncConfigSource::RuntimeSettings,
             warning: None,
-        };
-    }
-
-    if let Some(sync_config) = parse_sync_config(env_url, env_token) {
-        return ResolvedSyncConfig {
-            sync_config: Some(sync_config),
-            source: SyncConfigSource::EnvironmentFallback,
-            warning: if runtime_url_was_set {
-                Some(
-                    "Using environment sync fallback; save Turso settings in-app for persistence."
-                        .to_string(),
-                )
-            } else {
-                None
-            },
         };
     }
 
@@ -261,8 +238,6 @@ mod tests {
         let resolved = resolve_sync_config_from_sources(
             Some("libsql://runtime.turso.io".to_string()),
             Ok(None),
-            None,
-            None,
         );
 
         assert_eq!(resolved.source, SyncConfigSource::None);
@@ -271,22 +246,5 @@ mod tests {
             .warning
             .as_deref()
             .is_some_and(|warning| warning.contains("auth token")));
-    }
-
-    #[test]
-    fn env_fallback_is_used_when_runtime_is_incomplete() {
-        let resolved = resolve_sync_config_from_sources(
-            Some("libsql://runtime.turso.io".to_string()),
-            Ok(None),
-            Some("libsql://env.turso.io".to_string()),
-            Some("env-token".to_string()),
-        );
-
-        assert_eq!(resolved.source, SyncConfigSource::EnvironmentFallback);
-        assert!(resolved.sync_config.is_some());
-        assert!(resolved
-            .warning
-            .as_deref()
-            .is_some_and(|warning| warning.contains("fallback")));
     }
 }

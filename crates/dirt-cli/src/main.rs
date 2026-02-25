@@ -258,8 +258,6 @@ async fn main() {
 }
 
 async fn run() -> Result<(), CliError> {
-    dotenvy::dotenv().ok();
-
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -1193,17 +1191,6 @@ fn default_db_path() -> PathBuf {
         .join("dirt.db")
 }
 
-fn sync_config_from_env() -> Option<SyncConfig> {
-    let url = env::var("TURSO_DATABASE_URL").ok()?;
-    let auth_token = env::var("TURSO_AUTH_TOKEN").ok()?;
-
-    if url.is_empty() || auth_token.is_empty() {
-        return None;
-    }
-
-    Some(SyncConfig::new(url, auth_token))
-}
-
 #[derive(Clone, Copy)]
 enum OpenDatabaseMode {
     Standard,
@@ -1228,12 +1215,7 @@ async fn open_database_with_mode(
         std::fs::create_dir_all(parent)?;
     }
 
-    let sync_config = if let Some(env_sync_config) = sync_config_from_env() {
-        tracing::info!("Sync enabled with Turso");
-        Some(env_sync_config)
-    } else {
-        sync_config_from_profile(mode).await?
-    };
+    let sync_config = sync_config_from_profile(mode).await?;
 
     if let Some(sync_config) = sync_config {
         let path_buf = path.to_path_buf();

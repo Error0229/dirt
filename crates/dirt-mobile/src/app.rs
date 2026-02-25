@@ -2942,7 +2942,6 @@ fn mobile_provisioning_status(
 fn sync_config_source_label(source: SyncConfigSource) -> &'static str {
     match source {
         SyncConfigSource::RuntimeSettings => "runtime settings",
-        SyncConfigSource::EnvironmentFallback => "env fallback",
         SyncConfigSource::None => "none",
     }
 }

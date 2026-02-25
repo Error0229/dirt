@@ -14,7 +14,6 @@ path = "src/main.rs"
 dirt-core = { path = "../dirt-core" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
-dotenvy = "0.15"
 tokio.workspace = true
 chrono.workspace = true
 serde.workspace = true
