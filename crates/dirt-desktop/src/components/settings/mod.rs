@@ -3,35 +3,38 @@
 use std::sync::Arc;
 
 use dioxus::prelude::*;
-use dioxus_primitives::slider::SliderValue;
 use rfd::AsyncFileDialog;
 
 use dirt_core::models::{NoteId, Settings, SyncConflict, ThemeMode};
 
 use super::button::{Button, ButtonVariant};
 use super::dialog::{DialogContent, DialogRoot, DialogTitle};
-use super::input::Input;
-use super::select::{
-    Select, SelectItemIndicator, SelectList, SelectOption, SelectTrigger, SelectValue,
-};
-use super::slider::{Slider, SliderRange, SliderThumb, SliderTrack};
 use crate::services::{
     export_notes_to_path, suggested_export_file_name, AuthConfigStatus, NotesExportFormat,
     SignUpOutcome, TranscriptionConfigStatus, TranscriptionService,
 };
 use crate::state::AppState;
 use crate::theme::resolve_theme;
+use auth_settings::AuthSettingsTab;
+use media_settings::MediaSettingsTab;
+use sync_settings::{SyncConflictView, SyncSettingsTab};
+use theme_settings::ThemeSettingsTab;
 
-/// Font family options
-const FONT_FAMILIES: &[(&str, &str)] = &[
-    ("system-ui", "System Default"),
-    ("JetBrains Mono", "JetBrains Mono"),
-    ("Fira Code", "Fira Code"),
-    ("Consolas", "Consolas"),
-    ("Monaco", "Monaco"),
-    ("Menlo", "Menlo"),
-];
+mod auth_settings;
+mod media_settings;
+mod row;
+mod sync_settings;
+mod theme_settings;
+
 const SYNC_CONFLICT_LIMIT: usize = 10;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsTab {
+    Appearance,
+    Media,
+    Sync,
+    Auth,
+}
 
 /// Settings panel component
 #[component]
@@ -515,6 +518,53 @@ pub fn SettingsPanel() -> Element {
     let auth_working = auth_busy() || auth_verifying();
     let sign_up_blocked_reason = sign_up_block_reason(auth_config_status());
     let sign_up_blocked = sign_up_blocked_reason.is_some();
+    let auth_config_status_message = auth_config_status().map(format_auth_config_status);
+    let sync_conflict_items = sync_conflicts()
+        .into_iter()
+        .map(|conflict| SyncConflictView {
+            id: conflict.id,
+            note_id: conflict.note_id.clone(),
+            resolved_at: format_sync_conflict_timestamp(conflict.resolved_at),
+            details: format!(
+                "Local ts: {}, incoming ts: {}, strategy: {}",
+                conflict.local_updated_at, conflict.incoming_updated_at, conflict.strategy
+            ),
+        })
+        .collect::<Vec<_>>();
+
+    let mut active_tab = use_signal(|| SettingsTab::Appearance);
+
+    let on_theme_change = {
+        let mut save = save_settings;
+        move |value: String| {
+            let new_theme = match value.as_str() {
+                "light" => ThemeMode::Light,
+                "dark" => ThemeMode::Dark,
+                _ => ThemeMode::System,
+            };
+            let mut new_settings = settings();
+            new_settings.theme = new_theme;
+            save(new_settings);
+        }
+    };
+
+    let on_font_family_change = {
+        let mut save = save_settings;
+        move |value: String| {
+            let mut new_settings = settings();
+            new_settings.font_family = value;
+            save(new_settings);
+        }
+    };
+
+    let on_font_size_change = {
+        let mut save = save_settings;
+        move |font_size: u32| {
+            let mut new_settings = settings();
+            new_settings.font_size = font_size;
+            save(new_settings);
+        }
+    };
 
     rsx! {
         DialogRoot {
@@ -545,165 +595,64 @@ pub fn SettingsPanel() -> Element {
                     }
                 }
 
-                // Theme setting
-                SettingRow {
-                    label: "Theme",
-                    description: "Choose your preferred color scheme",
-
-                    Select::<String> {
-                        default_value: current_theme_value.to_string(),
-                        on_value_change: {
-                            let mut save = save_settings;
-                            move |value: Option<String>| {
-                                if let Some(value) = value {
-                                    let new_theme = match value.as_str() {
-                                        "light" => ThemeMode::Light,
-                                        "dark" => ThemeMode::Dark,
-                                        _ => ThemeMode::System,
-                                    };
-                                    let mut new_settings = settings();
-                                    new_settings.theme = new_theme;
-                                    save(new_settings);
-                                }
-                            }
+                div {
+                    style: "display: flex; gap: 8px; margin-bottom: 12px;",
+                    Button {
+                        variant: if active_tab() == SettingsTab::Appearance {
+                            ButtonVariant::Secondary
+                        } else {
+                            ButtonVariant::Ghost
                         },
-
-                        SelectTrigger {
-                            style: "width: 150px;",
-                            SelectValue {}
-                        }
-
-                        SelectList {
-                            SelectOption::<String> {
-                                index: 0usize,
-                                value: "system".to_string(),
-                                text_value: "System",
-                                "System"
-                                SelectItemIndicator {}
-                            }
-                            SelectOption::<String> {
-                                index: 1usize,
-                                value: "light".to_string(),
-                                text_value: "Light",
-                                "Light"
-                                SelectItemIndicator {}
-                            }
-                            SelectOption::<String> {
-                                index: 2usize,
-                                value: "dark".to_string(),
-                                text_value: "Dark",
-                                "Dark"
-                                SelectItemIndicator {}
-                            }
-                        }
+                        onclick: move |_| active_tab.set(SettingsTab::Appearance),
+                        "Appearance"
                     }
-                }
-
-                // Font family setting
-                SettingRow {
-                    label: "Font Family",
-                    description: "Font used for note content",
-
-                    Select::<String> {
-                        default_value: current_settings.font_family.clone(),
-                        on_value_change: {
-                            let mut save = save_settings;
-                            move |value: Option<String>| {
-                                if let Some(value) = value {
-                                    let mut new_settings = settings();
-                                    new_settings.font_family = value;
-                                    save(new_settings);
-                                }
-                            }
+                    Button {
+                        variant: if active_tab() == SettingsTab::Media {
+                            ButtonVariant::Secondary
+                        } else {
+                            ButtonVariant::Ghost
                         },
-
-                        SelectTrigger {
-                            style: "width: 170px;",
-                            SelectValue {}
-                        }
-
-                        SelectList {
-                            for (i, (value, label)) in FONT_FAMILIES.iter().enumerate() {
-                                SelectOption::<String> {
-                                    key: "{value}",
-                                    index: i,
-                                    value: (*value).to_string(),
-                                    text_value: *label,
-                                    "{label}"
-                                    SelectItemIndicator {}
-                                }
-                            }
-                        }
+                        onclick: move |_| active_tab.set(SettingsTab::Media),
+                        "Media"
+                    }
+                    Button {
+                        variant: if active_tab() == SettingsTab::Sync {
+                            ButtonVariant::Secondary
+                        } else {
+                            ButtonVariant::Ghost
+                        },
+                        onclick: move |_| active_tab.set(SettingsTab::Sync),
+                        "Sync"
+                    }
+                    Button {
+                        variant: if active_tab() == SettingsTab::Auth {
+                            ButtonVariant::Secondary
+                        } else {
+                            ButtonVariant::Ghost
+                        },
+                        onclick: move |_| active_tab.set(SettingsTab::Auth),
+                        "Account"
                     }
                 }
 
-                // Font size setting
-                SettingRow {
-                    label: "Font Size",
-                    description: "Size of text in notes (10-24px)",
-
-                    div {
-                        style: "display: flex; align-items: center; gap: 8px;",
-                        Slider {
-                            min: 10.0,
-                            max: 24.0,
-                            step: 1.0,
-                            default_value: SliderValue::Single(f64::from(current_settings.font_size)),
-                            on_value_change: {
-                                let mut save = save_settings;
-                                move |slider_value: SliderValue| {
-                                    let SliderValue::Single(size) = slider_value;
-                                    let mut new_settings = settings();
-                                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                                    {
-                                        new_settings.font_size = (size as u32).clamp(10, 24);
-                                    }
-                                    save(new_settings);
-                                }
-                            },
-                            style: "width: 100px;",
-
-                            SliderTrack {
-                                SliderRange {}
-                            }
-                            SliderThumb {}
+                match active_tab() {
+                    SettingsTab::Appearance => rsx! {
+                        ThemeSettingsTab {
+                            hotkey_bg: colors.bg_tertiary,
+                            hotkey_border: colors.border,
+                            current_settings: current_settings,
+                            current_theme_value: current_theme_value.to_string(),
+                            on_theme_change: on_theme_change,
+                            on_font_family_change: on_font_family_change,
+                            on_font_size_change: on_font_size_change,
                         }
-                        span {
-                            class: "slider-value",
-                            "{current_settings.font_size}px"
-                        }
-                    }
-                }
-
-                // Hotkey display (read-only for now)
-                SettingRow {
-                    label: "Capture Hotkey",
-                    description: "Global shortcut for quick capture",
-
-                    div {
-                        class: "hotkey-display",
-                        style: "
-                            background: {colors.bg_tertiary};
-                            border: 1px solid {colors.border};
-                        ",
-                        "Ctrl + Alt + N"
-                    }
-                }
-
-                SettingRow {
-                    label: "Voice Transcription",
-                    description: "{transcription_status_text}",
-
-                    div {
-                        class: "auth-actions",
-                        Button {
-                            variant: if current_settings.voice_memo_transcription_enabled {
-                                ButtonVariant::Secondary
-                            } else {
-                                ButtonVariant::Ghost
-                            },
-                            disabled: transcription_toggle_disabled,
-                            onclick: {
+                    },
+                    SettingsTab::Media => rsx! {
+                        MediaSettingsTab {
+                            current_settings: current_settings,
+                            transcription_status_text: transcription_status_text,
+                            transcription_toggle_disabled: transcription_toggle_disabled,
+                            on_toggle_transcription: {
                                 let mut save = save_settings;
                                 move |_| {
                                     let mut new_settings = settings();
@@ -712,315 +661,55 @@ pub fn SettingsPanel() -> Element {
                                     save(new_settings);
                                 }
                             },
-                            if current_settings.voice_memo_transcription_enabled {
-                                "Enabled"
-                            } else {
-                                "Disabled"
-                            }
-                        }
-                    }
-                }
-
-                SettingRow {
-                    label: "API Keys",
-                    description: "Store user-provided API keys in the OS keychain.",
-
-                    div {
-                        class: "auth-panel",
-
-                        Input {
-                            class: "auth-input",
-                            r#type: "password",
-                            placeholder: "OpenAI API key",
-                            value: "{openai_api_key_input}",
-                            oninput: move |event: FormEvent| {
-                                openai_api_key_input.set(event.value());
+                            openai_api_key_input: openai_api_key_input(),
+                            on_openai_api_key_input: move |value: String| {
+                                openai_api_key_input.set(value);
                             },
+                            on_save_openai_api_key: save_openai_api_key,
+                            on_clear_openai_api_key: clear_openai_api_key,
+                            openai_api_key_configured: openai_api_key_configured(),
+                            openai_api_key_message: openai_api_key_message(),
+                            export_busy: export_busy(),
+                            on_export_json: export_json,
+                            on_export_markdown: export_markdown,
+                            export_message: export_message(),
                         }
-
-                        div {
-                            class: "auth-actions",
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                onclick: save_openai_api_key,
-                                "Save Key"
-                            }
-                            Button {
-                                variant: ButtonVariant::Ghost,
-                                onclick: clear_openai_api_key,
-                                "Clear Key"
-                            }
+                    },
+                    SettingsTab::Sync => rsx! {
+                        SyncSettingsTab {
+                            pending_sync_count: pending_sync_count,
+                            pending_sync_preview: pending_sync_preview,
+                            sync_conflicts: sync_conflict_items,
+                            sync_conflicts_loading: sync_conflicts_loading(),
+                            sync_conflicts_error: sync_conflicts_error(),
+                            on_refresh_sync_conflicts: refresh_sync_conflicts,
                         }
-
-                        div {
-                            class: "auth-hint",
-                            if openai_api_key_configured() {
-                                "OpenAI API key is stored securely."
-                            } else {
-                                "No secure OpenAI API key is currently stored."
-                            }
+                    },
+                    SettingsTab::Auth => rsx! {
+                        AuthSettingsTab {
+                            auth_service_available: auth_service.is_some(),
+                            signed_in_identity: signed_in_identity,
+                            auth_working: auth_working,
+                            auth_email: auth_email(),
+                            auth_password: auth_password(),
+                            sign_up_blocked: sign_up_blocked,
+                            sign_up_blocked_reason: sign_up_blocked_reason,
+                            auth_config_status_message: auth_config_status_message,
+                            auth_message: auth_message(),
+                            init_auth_error: init_auth_error,
+                            on_auth_email_input: move |value: String| {
+                                auth_email.set(value);
+                            },
+                            on_auth_password_input: move |value: String| {
+                                auth_password.set(value);
+                            },
+                            on_sign_in: sign_in,
+                            on_sign_up: sign_up,
+                            on_sign_out: sign_out,
+                            on_verify_config: verify_config,
                         }
-
-                        if let Some(message) = openai_api_key_message() {
-                            div {
-                                class: "auth-message",
-                                "{message}"
-                            }
-                        }
-                    }
+                    },
                 }
-
-                SettingRow {
-                    label: "Export",
-                    description: "Export all notes as JSON or Markdown",
-
-                    div {
-                        class: "auth-panel",
-                        div {
-                            class: "auth-actions",
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                disabled: export_busy(),
-                                onclick: export_json,
-                                "Export JSON"
-                            }
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                disabled: export_busy(),
-                                onclick: export_markdown,
-                                "Export Markdown"
-                            }
-                        }
-
-                        if export_busy() {
-                            div {
-                                class: "auth-message",
-                                "Exporting..."
-                            }
-                        }
-
-                        if let Some(message) = export_message() {
-                            div {
-                                class: "auth-message",
-                                "{message}"
-                            }
-                        }
-                    }
-                }
-
-                SettingRow {
-                    label: "Offline Queue",
-                    description: "Pending local changes waiting for sync",
-
-                    div {
-                        class: "auth-panel",
-                        div {
-                            class: "auth-hint",
-                            "Pending changes: {pending_sync_count}"
-                        }
-                        if pending_sync_count > 0 {
-                            div {
-                                class: "auth-hint",
-                                "Pending note IDs: {pending_sync_preview}"
-                            }
-                        }
-                    }
-                }
-
-                SettingRow {
-                    label: "Sync Conflicts",
-                    description: "Recent LWW conflict resolutions",
-
-                    div {
-                        class: "auth-panel",
-                        div {
-                            class: "auth-actions",
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                disabled: sync_conflicts_loading(),
-                                onclick: refresh_sync_conflicts,
-                                "Refresh"
-                            }
-                        }
-
-                        if sync_conflicts_loading() {
-                            div {
-                                class: "auth-message",
-                                "Loading recent conflicts..."
-                            }
-                        } else if let Some(error) = sync_conflicts_error() {
-                            div {
-                                class: "auth-error",
-                                "{error}"
-                            }
-                        } else if sync_conflicts().is_empty() {
-                            div {
-                                class: "auth-hint",
-                                "No sync conflicts recorded yet."
-                            }
-                        } else {
-                            div {
-                                style: "display: flex; flex-direction: column; gap: 8px;",
-                                for conflict in sync_conflicts() {
-                                    div {
-                                        key: "{conflict.id}",
-                                        style: "padding: 8px; border: 1px solid #37415133; border-radius: 8px;",
-                                        div {
-                                            style: "font-size: 12px; font-weight: 600;",
-                                            "Note {conflict.note_id}"
-                                        }
-                                        div {
-                                            style: "font-size: 11px; opacity: 0.9;",
-                                            "Resolved: {format_sync_conflict_timestamp(conflict.resolved_at)}"
-                                        }
-                                        div {
-                                            style: "font-size: 11px; opacity: 0.9;",
-                                            "Local ts: {conflict.local_updated_at}, incoming ts: {conflict.incoming_updated_at}, strategy: {conflict.strategy}"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Account authentication
-                SettingRow {
-                    label: "Account",
-                    description: "Sign in with Supabase for cloud sync",
-
-                    div {
-                        class: "auth-panel",
-
-                        if let Some(identity) = &signed_in_identity {
-                            div {
-                                class: "auth-status",
-                                "Signed in as {identity}"
-                            }
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                disabled: auth_working,
-                                onclick: sign_out,
-                                "Sign Out"
-                            }
-                        } else if auth_service.is_some() {
-                            Input {
-                                class: "auth-input",
-                                r#type: "email",
-                                placeholder: "Email",
-                                value: "{auth_email}",
-                                disabled: auth_working,
-                                oninput: move |event: FormEvent| {
-                                    auth_email.set(event.value());
-                                },
-                            }
-                            Input {
-                                class: "auth-input",
-                                r#type: "password",
-                                placeholder: "Password",
-                                value: "{auth_password}",
-                                disabled: auth_working,
-                                oninput: move |event: FormEvent| {
-                                    auth_password.set(event.value());
-                                },
-                            }
-                            div {
-                                class: "auth-actions",
-                                Button {
-                                    variant: ButtonVariant::Primary,
-                                    disabled: auth_working,
-                                    onclick: sign_in,
-                                    "Sign In"
-                                }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    disabled: auth_working || sign_up_blocked,
-                                    onclick: sign_up,
-                                    "Sign Up"
-                                }
-                            }
-                        } else {
-                            div {
-                                class: "auth-hint",
-                                "Authentication is unavailable in this build."
-                            }
-                        }
-
-                        if auth_service.is_some() {
-                            Button {
-                                variant: ButtonVariant::Ghost,
-                                disabled: auth_working,
-                                onclick: verify_config,
-                                "Verify Config"
-                            }
-                        }
-
-                        if auth_working {
-                            div {
-                                class: "auth-message",
-                                "Working..."
-                            }
-                        }
-
-                        if let Some(reason) = &sign_up_blocked_reason {
-                            div {
-                                class: "auth-hint",
-                                "{reason}"
-                            }
-                        }
-
-                        if let Some(status) = auth_config_status() {
-                            div {
-                                class: "auth-hint",
-                                "{format_auth_config_status(status)}"
-                            }
-                        }
-
-                        if let Some(message) = auth_message() {
-                            div {
-                                class: "auth-message",
-                                "{message}"
-                            }
-                        }
-
-                        if let Some(error_message) = init_auth_error {
-                            div {
-                                class: "auth-error",
-                                "{error_message}"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Individual setting row
-#[component]
-fn SettingRow(
-    #[props(into)] label: String,
-    #[props(into)] description: String,
-    children: Element,
-) -> Element {
-    rsx! {
-        div {
-            class: "settings-row",
-
-            div {
-                class: "settings-row-info",
-                div {
-                    class: "settings-row-label",
-                    "{label}"
-                }
-                div {
-                    class: "settings-row-description",
-                    "{description}"
-                }
-            }
-            div {
-                class: "settings-row-control",
-                {children}
             }
         }
     }
