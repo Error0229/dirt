@@ -147,14 +147,6 @@ impl SupabaseAuthService {
         )
     }
 
-    /// Create a service from `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
-    pub fn new_from_env() -> AuthResult<Option<Self>> {
-        Self::new_from_sources(
-            std::env::var("SUPABASE_URL").ok(),
-            std::env::var("SUPABASE_ANON_KEY").ok(),
-        )
-    }
-
     fn new_from_sources(url: Option<String>, anon_key: Option<String>) -> AuthResult<Option<Self>> {
         match (url, anon_key) {
             (None, None) => Ok(None),

@@ -2209,7 +2209,6 @@ dependencies = [
  "clap_complete",
  "dirs",
  "dirt-core",
- "dotenvy",
  "keyring",
  "libsql",
  "reqwest",

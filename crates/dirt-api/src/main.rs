@@ -13,6 +13,8 @@ use routes::{app_router, AppState};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Only load .env in development; production uses platform-native env injection.
+    #[cfg(debug_assertions)]
     dotenvy::dotenv().ok();
 
     tracing_subscriber::fmt()

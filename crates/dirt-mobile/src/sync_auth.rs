@@ -54,14 +54,6 @@ impl TursoSyncAuthClient {
         Ok(Some(Self::new(endpoint)?))
     }
 
-    /// Create a token exchange client from `TURSO_SYNC_TOKEN_ENDPOINT`.
-    pub fn new_from_env() -> SyncAuthResult<Option<Self>> {
-        let Some(endpoint) = std::env::var("TURSO_SYNC_TOKEN_ENDPOINT").ok() else {
-            return Ok(None);
-        };
-        Ok(Some(Self::new(endpoint)?))
-    }
-
     /// Create a token exchange client with explicit endpoint.
     pub fn new(endpoint: impl Into<String>) -> SyncAuthResult<Self> {
         let endpoint = endpoint.into();

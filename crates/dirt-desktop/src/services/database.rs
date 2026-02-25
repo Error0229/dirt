@@ -25,40 +25,21 @@ pub struct DatabaseService {
 }
 
 impl DatabaseService {
-    /// Create a new database service, auto-detecting sync config from environment
-    ///
-    /// If `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set, sync is enabled automatically.
-    /// Otherwise, falls back to local-only mode.
+    /// Create a new local-only database service.
     pub async fn new() -> Result<Self> {
         let db_path = Self::default_db_path();
 
-        // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Check for sync config from environment
-        let sync_config = Self::sync_config_from_env();
-
-        let db = Self::open_database(db_path.clone(), sync_config.clone()).await?;
+        let db = Self::open_database(db_path.clone(), None).await?;
 
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
             db_path: Some(db_path),
-            sync_config,
+            sync_config: None,
         })
-    }
-
-    /// Read sync configuration from environment variables
-    fn sync_config_from_env() -> Option<SyncConfig> {
-        let url = std::env::var("TURSO_DATABASE_URL").ok()?;
-        let token = std::env::var("TURSO_AUTH_TOKEN").ok()?;
-
-        if url.is_empty() || token.is_empty() {
-            return None;
-        }
-
-        Some(SyncConfig::new(url, token))
     }
 
     /// Create a new database service with explicit sync config

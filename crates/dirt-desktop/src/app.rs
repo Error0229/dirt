@@ -86,11 +86,7 @@ pub fn App() -> Element {
                 }
             }
 
-            let service_result = match SupabaseAuthService::new_from_bootstrap(&bootstrap) {
-                Ok(Some(service)) => Ok(Some(service)),
-                Ok(None) => SupabaseAuthService::new_from_env(),
-                Err(error) => Err(error),
-            };
+            let service_result = SupabaseAuthService::new_from_bootstrap(&bootstrap);
 
             match service_result {
                 Ok(Some(service)) => {

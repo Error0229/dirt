@@ -175,21 +175,6 @@ impl SupabaseAuthService {
         }
     }
 
-    /// Create a service from `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
-    pub fn new_from_env() -> AuthResult<Option<Self>> {
-        let url = std::env::var("SUPABASE_URL").ok();
-        let anon_key = std::env::var("SUPABASE_ANON_KEY").ok();
-
-        match (url, anon_key) {
-            (None, None) => Ok(None),
-            (Some(url), Some(anon_key)) => {
-                let service = Self::new(url, anon_key)?;
-                Ok(Some(service))
-            }
-            _ => Err(AuthError::NotConfigured),
-        }
-    }
-
     /// Create a service with explicit Supabase project URL and anon key.
     pub fn new(url: impl AsRef<str>, anon_key: impl Into<String>) -> AuthResult<Self> {
         let auth_url = normalize_auth_url(url.as_ref())?;
