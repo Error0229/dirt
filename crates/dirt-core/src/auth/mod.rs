@@ -1,0 +1,546 @@
+//! Supabase authentication service with pluggable session persistence.
+//!
+//! Contains all shared auth types, HTTP logic, and response parsing.
+//! Platform-specific session storage is provided via the [`SessionPersistence`] trait.
+
+use reqwest::{Client, RequestBuilder, StatusCode};
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::util::unix_timestamp_now;
+
+const EXPIRY_SKEW_SECONDS: i64 = 60;
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/// Authenticated user metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthUser {
+    /// Provider user id.
+    pub id: String,
+    /// Optional email from provider profile.
+    pub email: Option<String>,
+}
+
+/// Persisted session used for API authorization.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthSession {
+    /// Short-lived access token.
+    pub access_token: String,
+    /// Refresh token for obtaining new access tokens.
+    pub refresh_token: String,
+    /// Unix timestamp (seconds) when access token expires.
+    pub expires_at: i64,
+    /// Authenticated user profile.
+    pub user: AuthUser,
+}
+
+impl AuthSession {
+    #[must_use]
+    pub fn is_expired(&self) -> bool {
+        self.is_expired_at(unix_timestamp_now())
+    }
+
+    #[must_use]
+    pub const fn is_expired_at(&self, now_secs: i64) -> bool {
+        self.expires_at <= now_secs + EXPIRY_SKEW_SECONDS
+    }
+}
+
+impl std::fmt::Debug for AuthSession {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthSession")
+            .field("access_token", &"[REDACTED]")
+            .field("refresh_token", &"[REDACTED]")
+            .field("expires_at", &self.expires_at)
+            .field("user", &self.user)
+            .finish()
+    }
+}
+
+/// Sign-up result from provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignUpOutcome {
+    /// Account created and session started immediately.
+    SignedIn(AuthSession),
+    /// Account created but provider requires email confirmation.
+    ConfirmationRequired,
+}
+
+/// Auth configuration status returned from Supabase settings endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct AuthConfigStatus {
+    /// Whether email auth provider is enabled.
+    pub email_enabled: bool,
+    /// Whether sign-ups are allowed.
+    pub signup_enabled: bool,
+    /// Whether sign-ups are auto-confirmed without email delivery.
+    pub mailer_autoconfirm: bool,
+    /// Whether custom SMTP credentials are configured.
+    pub smtp_configured: bool,
+    /// Current Supabase email send rate limit (requests/hour).
+    pub rate_limit_email_sent: Option<i64>,
+}
+
+/// Errors from authentication and secure storage flows.
+#[derive(Debug, Error)]
+pub enum AuthError {
+    #[error("Supabase auth is not configured.")]
+    NotConfigured,
+    #[error("Invalid auth configuration: {0}")]
+    InvalidConfiguration(&'static str),
+    #[error("HTTP request failed: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("Failed to parse JSON payload: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("Auth API error: {0}")]
+    Api(String),
+    #[error("Secure storage error: {0}")]
+    SecureStorage(String),
+}
+
+pub type AuthResult<T> = Result<T, AuthError>;
+
+// ---------------------------------------------------------------------------
+// Session persistence trait
+// ---------------------------------------------------------------------------
+
+/// Pluggable session persistence backend.
+///
+/// Implemented per-platform:
+/// - Desktop: OS keychain via `keyring` crate
+/// - Mobile: Android Keystore via `secret_store`
+/// - CLI: OS keychain with per-profile namespacing
+pub trait SessionPersistence: Send + Sync {
+    fn load(&self) -> AuthResult<Option<AuthSession>>;
+    fn save(&self, session: &AuthSession) -> AuthResult<()>;
+    fn clear(&self) -> AuthResult<()>;
+}
+
+/// No-op session persistence for clients that don't need persistence.
+pub struct NoopSessionStore;
+
+impl SessionPersistence for NoopSessionStore {
+    fn load(&self) -> AuthResult<Option<AuthSession>> {
+        Ok(None)
+    }
+    fn save(&self, _session: &AuthSession) -> AuthResult<()> {
+        Ok(())
+    }
+    fn clear(&self) -> AuthResult<()> {
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Supabase auth service
+// ---------------------------------------------------------------------------
+
+/// Supabase auth API client with pluggable session storage.
+pub struct SupabaseAuthService<S: SessionPersistence = NoopSessionStore> {
+    auth_url: String,
+    anon_key: String,
+    client: Client,
+    session_store: S,
+}
+
+impl SupabaseAuthService<NoopSessionStore> {
+    /// Create a service without session persistence.
+    pub fn new(url: impl AsRef<str>, anon_key: impl Into<String>) -> AuthResult<Self> {
+        Self::with_session_store(url, anon_key, NoopSessionStore)
+    }
+}
+
+impl<S: SessionPersistence> SupabaseAuthService<S> {
+    /// Create a service with a custom session store.
+    pub fn with_session_store(
+        url: impl AsRef<str>,
+        anon_key: impl Into<String>,
+        session_store: S,
+    ) -> AuthResult<Self> {
+        let auth_url = normalize_auth_url(url.as_ref())?;
+        let anon_key = anon_key.into().trim().to_string();
+        if anon_key.is_empty() {
+            return Err(AuthError::InvalidConfiguration(
+                "Supabase anon key must not be empty",
+            ));
+        }
+
+        let client = Client::builder().build()?;
+
+        Ok(Self {
+            auth_url,
+            anon_key,
+            client,
+            session_store,
+        })
+    }
+
+    /// Restore session from secure storage. If expired, refresh automatically.
+    pub async fn restore_session(&self) -> AuthResult<Option<AuthSession>> {
+        let Some(stored_session) = self.session_store.load()? else {
+            return Ok(None);
+        };
+
+        if !stored_session.is_expired() {
+            return Ok(Some(stored_session));
+        }
+
+        match self.refresh_session(&stored_session.refresh_token).await {
+            Ok(refreshed) => {
+                self.session_store.save(&refreshed)?;
+                Ok(Some(refreshed))
+            }
+            Err(error) => {
+                tracing::warn!("Failed to refresh persisted session: {}", error);
+                self.session_store.clear()?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Sign up a user by email/password.
+    pub async fn sign_up(&self, email: &str, password: &str) -> AuthResult<SignUpOutcome> {
+        validate_credentials(email, password)?;
+
+        let payload = serde_json::json!({
+            "email": email,
+            "password": password,
+        });
+        let request = self.public_request(
+            self.client
+                .post(format!("{}/signup", self.auth_url))
+                .json(&payload),
+        );
+        let response = self.send_auth_request(request).await?;
+        match response.into_session()? {
+            Some(session) => {
+                self.session_store.save(&session)?;
+                Ok(SignUpOutcome::SignedIn(session))
+            }
+            None => Ok(SignUpOutcome::ConfirmationRequired),
+        }
+    }
+
+    /// Sign in an existing user by email/password.
+    pub async fn sign_in(&self, email: &str, password: &str) -> AuthResult<AuthSession> {
+        validate_credentials(email, password)?;
+
+        let payload = serde_json::json!({
+            "email": email,
+            "password": password,
+        });
+        let request = self.public_request(
+            self.client
+                .post(format!("{}/token", self.auth_url))
+                .query(&[("grant_type", "password")])
+                .json(&payload),
+        );
+        let response = self.send_auth_request(request).await?;
+        let session = response.into_session()?.ok_or_else(|| {
+            AuthError::Api("Sign-in response did not include an active session".to_string())
+        })?;
+        self.session_store.save(&session)?;
+        Ok(session)
+    }
+
+    /// Refresh an access token using the refresh token.
+    pub async fn refresh_session(&self, refresh_token: &str) -> AuthResult<AuthSession> {
+        if refresh_token.trim().is_empty() {
+            return Err(AuthError::InvalidConfiguration(
+                "Refresh token must not be empty",
+            ));
+        }
+
+        let payload = serde_json::json!({
+            "refresh_token": refresh_token,
+        });
+        let request = self.public_request(
+            self.client
+                .post(format!("{}/token", self.auth_url))
+                .query(&[("grant_type", "refresh_token")])
+                .json(&payload),
+        );
+        let response = self.send_auth_request(request).await?;
+        let session = response.into_session()?.ok_or_else(|| {
+            AuthError::Api("Refresh response did not include an active session".to_string())
+        })?;
+        self.session_store.save(&session)?;
+        Ok(session)
+    }
+
+    /// Sign out and clear local session storage.
+    ///
+    /// Always clears local credentials, even if the server logout fails.
+    pub async fn sign_out(&self, access_token: &str) -> AuthResult<()> {
+        let server_logout = async {
+            let request = self
+                .client
+                .post(format!("{}/logout", self.auth_url))
+                .header("apikey", &self.anon_key)
+                .bearer_auth(access_token);
+            let response = request.send().await?;
+            if response.status().is_success() || response.status() == StatusCode::UNAUTHORIZED {
+                Ok(())
+            } else {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                Err(AuthError::Api(parse_api_error(status, &body)))
+            }
+        }
+        .await;
+
+        // Always clear local credentials when user requests sign-out.
+        self.session_store.clear()?;
+
+        if let Err(error) = server_logout {
+            tracing::warn!(
+                "Server logout failed after clearing local session: {}",
+                error
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Verify Supabase auth configuration and return a summary for UI diagnostics.
+    pub async fn verify_configuration(&self) -> AuthResult<AuthConfigStatus> {
+        let request = self.public_request(self.client.get(format!("{}/settings", self.auth_url)));
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AuthError::Api(parse_api_error(status, &body)));
+        }
+
+        let payload = response.json::<SupabaseAuthSettings>().await?;
+        Ok(AuthConfigStatus {
+            email_enabled: payload.external.email,
+            signup_enabled: !payload.disable_signup,
+            mailer_autoconfirm: payload.mailer_autoconfirm,
+            smtp_configured: payload.smtp_host.is_some(),
+            rate_limit_email_sent: payload.rate_limit_email_sent,
+        })
+    }
+
+    fn public_request(&self, request: RequestBuilder) -> RequestBuilder {
+        request
+            .header("apikey", &self.anon_key)
+            .header("Authorization", format!("Bearer {}", self.anon_key))
+    }
+
+    async fn send_auth_request(&self, request: RequestBuilder) -> AuthResult<SupabaseAuthResponse> {
+        let response = request.send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AuthError::Api(parse_api_error(status, &body)));
+        }
+
+        Ok(response.json::<SupabaseAuthResponse>().await?)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Private types and helpers
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct SupabaseAuthResponse {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    expires_at: Option<i64>,
+    expires_in: Option<i64>,
+    user: Option<SupabaseUser>,
+    session: Option<SupabaseAuthResponseSession>,
+}
+
+impl SupabaseAuthResponse {
+    fn into_session(self) -> AuthResult<Option<AuthSession>> {
+        let session = self.session;
+        let access_token = self
+            .access_token
+            .or_else(|| session.as_ref().and_then(|s| s.access_token.clone()));
+        let refresh_token = self
+            .refresh_token
+            .or_else(|| session.as_ref().and_then(|s| s.refresh_token.clone()));
+        let expires_at = self
+            .expires_at
+            .or_else(|| session.as_ref().and_then(|s| s.expires_at))
+            .or_else(|| {
+                self.expires_in
+                    .or_else(|| session.as_ref().and_then(|s| s.expires_in))
+                    .map(|expires_in| unix_timestamp_now().saturating_add(expires_in))
+            });
+        let user = self
+            .user
+            .or_else(|| session.and_then(|s| s.user))
+            .map(Into::into);
+
+        match (access_token, refresh_token, expires_at, user) {
+            (Some(access_token), Some(refresh_token), Some(expires_at), Some(user)) => {
+                Ok(Some(AuthSession {
+                    access_token,
+                    refresh_token,
+                    expires_at,
+                    user,
+                }))
+            }
+            (None, None, None, Some(_)) => Ok(None),
+            _ => Err(AuthError::Api(
+                "Auth response did not include enough session fields".to_string(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SupabaseAuthResponseSession {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    expires_at: Option<i64>,
+    expires_in: Option<i64>,
+    user: Option<SupabaseUser>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SupabaseUser {
+    id: String,
+    email: Option<String>,
+}
+
+impl From<SupabaseUser> for AuthUser {
+    fn from(value: SupabaseUser) -> Self {
+        Self {
+            id: value.id,
+            email: value.email,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SupabaseErrorResponse {
+    error: Option<String>,
+    error_description: Option<String>,
+    message: Option<String>,
+    msg: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SupabaseAuthSettings {
+    external: SupabaseExternalSettings,
+    disable_signup: bool,
+    mailer_autoconfirm: bool,
+    smtp_host: Option<String>,
+    rate_limit_email_sent: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SupabaseExternalSettings {
+    email: bool,
+}
+
+fn parse_api_error(status: StatusCode, body: &str) -> String {
+    if let Ok(payload) = serde_json::from_str::<SupabaseErrorResponse>(body) {
+        if let Some(message) = payload
+            .message
+            .or(payload.msg)
+            .or(payload.error_description)
+            .or(payload.error)
+        {
+            return format!("{} ({})", message.trim(), status.as_u16());
+        }
+    }
+
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        format!("HTTP {}", status.as_u16())
+    } else {
+        format!("{} ({})", trimmed, status.as_u16())
+    }
+}
+
+fn normalize_auth_url(url: &str) -> AuthResult<String> {
+    let trimmed = url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err(AuthError::InvalidConfiguration(
+            "Supabase URL must not be empty",
+        ));
+    }
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+        return Err(AuthError::InvalidConfiguration(
+            "Supabase URL must include http:// or https://",
+        ));
+    }
+
+    if trimmed.ends_with("/auth/v1") {
+        Ok(trimmed.to_string())
+    } else {
+        Ok(format!("{trimmed}/auth/v1"))
+    }
+}
+
+fn validate_credentials(email: &str, password: &str) -> AuthResult<()> {
+    if email.trim().is_empty() {
+        return Err(AuthError::Api("Email is required".to_string()));
+    }
+    if password.trim().is_empty() {
+        return Err(AuthError::Api("Password is required".to_string()));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_auth_url_appends_auth_path() {
+        let normalized = normalize_auth_url("https://demo.supabase.co").unwrap();
+        assert_eq!(normalized, "https://demo.supabase.co/auth/v1");
+    }
+
+    #[test]
+    fn normalize_auth_url_keeps_existing_auth_path() {
+        let normalized = normalize_auth_url("https://demo.supabase.co/auth/v1").unwrap();
+        assert_eq!(normalized, "https://demo.supabase.co/auth/v1");
+    }
+
+    #[test]
+    fn response_without_session_fields_means_confirmation_required() {
+        let response = SupabaseAuthResponse {
+            access_token: None,
+            refresh_token: None,
+            expires_at: None,
+            expires_in: None,
+            user: Some(SupabaseUser {
+                id: "user-id".to_string(),
+                email: Some("test@example.com".to_string()),
+            }),
+            session: None,
+        };
+
+        let session = response.into_session().unwrap();
+        assert!(session.is_none());
+    }
+
+    #[test]
+    fn session_expiry_uses_safety_skew() {
+        let session = AuthSession {
+            access_token: "access".to_string(),
+            refresh_token: "refresh".to_string(),
+            expires_at: 1_000,
+            user: AuthUser {
+                id: "user".to_string(),
+                email: None,
+            },
+        };
+
+        assert!(session.is_expired_at(940));
+        assert!(!session.is_expired_at(900));
+    }
+}

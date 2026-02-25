@@ -9,7 +9,7 @@ use dioxus::prelude::*;
 use dirt_core::models::{Note, NoteId, Settings};
 
 use crate::services::{
-    AuthSession, DatabaseService, MediaApiClient, SupabaseAuthService, TranscriptionService,
+    AuthSession, DatabaseService, DesktopAuthService, MediaApiClient, TranscriptionService,
 };
 use crate::theme::ResolvedTheme;
 
@@ -40,7 +40,7 @@ pub struct AppState {
     /// Database service (wrapped in Arc for sharing)
     pub db_service: Signal<Option<Arc<DatabaseService>>>,
     /// Auth service if cloud auth is configured
-    pub auth_service: Signal<Option<Arc<SupabaseAuthService>>>,
+    pub auth_service: Signal<Option<Arc<DesktopAuthService>>>,
     /// Managed media API client, if configured
     pub media_api_client: Signal<Option<Arc<MediaApiClient>>>,
     /// Optional transcription service.
