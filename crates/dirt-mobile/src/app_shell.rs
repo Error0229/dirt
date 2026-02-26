@@ -654,19 +654,30 @@ pub(crate) fn AppShell() -> Element {
 
     let on_save_sync_settings = move |_| {
         let runtime_config = MobileRuntimeConfig::from_raw(Some(turso_database_url_input()));
-        if !runtime_config.has_sync_url() {
-            status_message.set(Some(
-                "Turso URL is required to enable remote sync".to_string(),
-            ));
-            return;
-        }
+        let runtime_sync_enabled = runtime_config.has_sync_url();
 
         match save_runtime_config(&runtime_config) {
             Ok(()) => {
-                active_sync_source.set(SyncConfigSource::RuntimeSettings);
-                status_message.set(Some(
-                    "Sync settings saved. Reconnecting in background.".to_string(),
-                ));
+                if runtime_sync_enabled {
+                    active_sync_source.set(SyncConfigSource::RuntimeSettings);
+                    status_message.set(Some(
+                        "Sync settings saved. Reconnecting in background.".to_string(),
+                    ));
+                } else {
+                    active_sync_source.set(SyncConfigSource::None);
+                    sync_token_expires_at.set(None);
+                    if let Err(error) =
+                        secret_store::delete_secret(secret_store::SECRET_TURSO_AUTH_TOKEN)
+                    {
+                        status_message.set(Some(format!(
+                            "Saved local-only sync settings, but failed to clear cached sync token: {error}"
+                        )));
+                    } else {
+                        status_message.set(Some(
+                            "Sync settings saved. Running in local-only mode.".to_string(),
+                        ));
+                    }
+                }
                 db_init_retry_version.set(db_init_retry_version() + 1);
             }
             Err(error) => {
@@ -754,6 +765,7 @@ pub(crate) fn AppShell() -> Element {
         spawn(async move {
             match service.sign_in(&email, &password).await {
                 Ok(session) => {
+                    let runtime_sync_enabled = load_runtime_config().has_sync_url();
                     let session_email = session
                         .user
                         .email
@@ -763,25 +775,27 @@ pub(crate) fn AppShell() -> Element {
                     auth_password_input.set(String::new());
                     status_message.set(Some(format!("Signed in as {session_email}")));
 
-                    match refresh_managed_sync_token(
-                        sync_auth_client.read().clone(),
-                        Some(session),
-                        &mut status_message,
-                    )
-                    .await
-                    {
-                        Ok(Some(token)) => {
-                            sync_token_expires_at.set(Some(token.expires_at));
-                            status_message.set(Some(
-                                "Signed in and refreshed sync credentials.".to_string(),
-                            ));
-                            db_init_retry_version.set(db_init_retry_version() + 1);
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            status_message.set(Some(format!(
-                                "Signed in, but sync token refresh failed: {error}"
-                            )));
+                    if runtime_sync_enabled {
+                        match refresh_managed_sync_token(
+                            sync_auth_client.read().clone(),
+                            Some(session),
+                            &mut status_message,
+                        )
+                        .await
+                        {
+                            Ok(Some(token)) => {
+                                sync_token_expires_at.set(Some(token.expires_at));
+                                status_message.set(Some(
+                                    "Signed in and refreshed sync credentials.".to_string(),
+                                ));
+                                db_init_retry_version.set(db_init_retry_version() + 1);
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                status_message.set(Some(format!(
+                                    "Signed in, but sync token refresh failed: {error}"
+                                )));
+                            }
                         }
                     }
 
@@ -821,6 +835,7 @@ pub(crate) fn AppShell() -> Element {
         spawn(async move {
             match service.sign_up(&email, &password).await {
                 Ok(SignUpOutcome::SignedIn(session)) => {
+                    let runtime_sync_enabled = load_runtime_config().has_sync_url();
                     let session_email = session
                         .user
                         .email
@@ -830,25 +845,27 @@ pub(crate) fn AppShell() -> Element {
                     auth_password_input.set(String::new());
                     status_message.set(Some(format!("Signed up and signed in as {session_email}")));
 
-                    match refresh_managed_sync_token(
-                        sync_auth_client.read().clone(),
-                        Some(session),
-                        &mut status_message,
-                    )
-                    .await
-                    {
-                        Ok(Some(token)) => {
-                            sync_token_expires_at.set(Some(token.expires_at));
-                            status_message.set(Some(
-                                "Signed up and refreshed sync credentials.".to_string(),
-                            ));
-                            db_init_retry_version.set(db_init_retry_version() + 1);
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            status_message.set(Some(format!(
-                                "Signed up, but sync token refresh failed: {error}"
-                            )));
+                    if runtime_sync_enabled {
+                        match refresh_managed_sync_token(
+                            sync_auth_client.read().clone(),
+                            Some(session),
+                            &mut status_message,
+                        )
+                        .await
+                        {
+                            Ok(Some(token)) => {
+                                sync_token_expires_at.set(Some(token.expires_at));
+                                status_message.set(Some(
+                                    "Signed up and refreshed sync credentials.".to_string(),
+                                ));
+                                db_init_retry_version.set(db_init_retry_version() + 1);
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                status_message.set(Some(format!(
+                                    "Signed up, but sync token refresh failed: {error}"
+                                )));
+                            }
                         }
                     }
                 }
@@ -2218,6 +2235,18 @@ mod tests {
         assert!(status.auth_action.is_some());
         assert!(status.sync_action.is_some());
         assert!(status.media_action.is_some());
+    }
+
+    #[test]
+    fn provisioning_status_reports_local_only_without_runtime_sync_url() {
+        let mut diagnostics = diagnostics_fixture();
+        diagnostics.runtime_sync_url_configured = false;
+        diagnostics.managed_sync_endpoint_configured = false;
+        let status =
+            mobile_provisioning_status(&diagnostics, None, MobileSyncState::Offline, false);
+
+        assert_eq!(status.sync_status, "Local-only");
+        assert!(status.sync_action.is_some());
     }
 
     #[test]

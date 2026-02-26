@@ -1,17 +1,11 @@
 //! Data access layer for the mobile app.
 
-#[cfg(any(target_os = "android", test))]
-use std::path::Path;
 #[cfg(target_os = "android")]
 use std::path::PathBuf;
-use std::sync::Arc;
 
-#[cfg(target_os = "android")]
-use dirt_core::db::SyncConfig;
-use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository};
 use dirt_core::models::{Attachment, AttachmentId, Note, NoteId, SyncConflict};
+use dirt_core::services::DatabaseService as CoreDatabaseService;
 use dirt_core::{Error, Result};
-use tokio::sync::Mutex;
 
 #[cfg(target_os = "android")]
 use crate::config::resolve_sync_config;
@@ -19,10 +13,10 @@ use crate::config::resolve_sync_config;
 const DEFAULT_NOTES_LIMIT: usize = 100;
 const EXPORT_NOTES_PAGE_SIZE: usize = 500;
 
-/// Thin async wrapper around `dirt-core` note repository APIs.
+/// Thin async wrapper around shared core database service APIs.
 #[derive(Clone)]
 pub struct MobileNoteStore {
-    db: Arc<Mutex<Database>>,
+    db: CoreDatabaseService,
 }
 
 impl MobileNoteStore {
@@ -30,51 +24,34 @@ impl MobileNoteStore {
     #[cfg(target_os = "android")]
     pub async fn open_default() -> Result<Self> {
         let db_path = default_db_path();
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
         let resolved_sync_config = resolve_sync_config();
         if let Some(warning) = resolved_sync_config.warning.as_deref() {
             tracing::warn!("Mobile sync configuration warning: {warning}");
         }
-        let db = if let Some(sync_config) = resolved_sync_config.sync_config {
-            tracing::info!("Mobile sync enabled via {:?}", resolved_sync_config.source);
-            open_with_sync_recovery(&db_path, sync_config).await?
-        } else {
-            tracing::info!("Mobile sync config not found; opening local-only database");
-            Database::open(&db_path).await?
-        };
-        Ok(Self {
-            db: Arc::new(Mutex::new(db)),
-        })
+
+        let db = CoreDatabaseService::open_path(db_path, resolved_sync_config.sync_config).await?;
+        Ok(Self { db })
     }
 
     /// Open an in-memory database for tests.
     #[cfg(test)]
     pub async fn open_in_memory() -> Result<Self> {
-        let db = Database::open_in_memory().await?;
-        Ok(Self {
-            db: Arc::new(Mutex::new(db)),
-        })
+        let db = CoreDatabaseService::open_in_memory().await?;
+        Ok(Self { db })
     }
 
     /// List notes newest-first.
     pub async fn list_notes(&self) -> Result<Vec<Note>> {
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.list(DEFAULT_NOTES_LIMIT, 0).await
+        self.db.list_notes(DEFAULT_NOTES_LIMIT, 0).await
     }
 
     /// List all notes for full export operations.
     pub async fn list_all_notes(&self) -> Result<Vec<Note>> {
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
         let mut notes = Vec::new();
         let mut offset = 0usize;
 
         loop {
-            let batch = repo.list(EXPORT_NOTES_PAGE_SIZE, offset).await?;
+            let batch = self.db.list_notes(EXPORT_NOTES_PAGE_SIZE, offset).await?;
             let count = batch.len();
             notes.extend(batch);
 
@@ -90,24 +67,18 @@ impl MobileNoteStore {
     /// Create a note.
     pub async fn create_note(&self, content: &str) -> Result<Note> {
         let normalized = normalize_content(content)?;
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.create(&normalized).await
+        self.db.create_note(&normalized).await
     }
 
     /// Update an existing note.
     pub async fn update_note(&self, id: &NoteId, content: &str) -> Result<Note> {
         let normalized = normalize_content(content)?;
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.update(id, &normalized).await
+        self.db.update_note(id, &normalized).await
     }
 
     /// Soft delete a note.
     pub async fn delete_note(&self, id: &NoteId) -> Result<()> {
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.delete(id).await
+        self.db.delete_note(id).await
     }
 
     /// Create attachment metadata for a note.
@@ -119,43 +90,34 @@ impl MobileNoteStore {
         size_bytes: i64,
         r2_key: &str,
     ) -> Result<Attachment> {
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.create_attachment(note_id, filename, mime_type, size_bytes, r2_key)
+        self.db
+            .create_attachment(note_id, filename, mime_type, size_bytes, r2_key)
             .await
     }
 
     /// List attachment metadata for a note.
     pub async fn list_attachments(&self, note_id: &NoteId) -> Result<Vec<Attachment>> {
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.list_attachments(note_id).await
+        self.db.list_attachments(note_id).await
     }
 
     /// Soft delete attachment metadata by id.
     pub async fn delete_attachment(&self, attachment_id: &AttachmentId) -> Result<()> {
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.delete_attachment(attachment_id).await
+        self.db.delete_attachment(attachment_id).await
     }
 
     /// List recently resolved sync conflicts.
     pub async fn list_conflicts(&self, limit: usize) -> Result<Vec<SyncConflict>> {
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.list_conflicts(limit).await
+        self.db.list_conflicts(limit).await
     }
 
     /// Sync with remote database (if configured).
     pub async fn sync(&self) -> Result<()> {
-        let db = self.db.lock().await;
-        db.sync().await
+        self.db.sync().await
     }
 
     /// Check whether remote sync is enabled.
     pub async fn is_sync_enabled(&self) -> bool {
-        let db = self.db.lock().await;
-        db.is_sync_enabled()
+        self.db.is_sync_enabled().await
     }
 }
 
@@ -167,75 +129,6 @@ fn normalize_content(content: &str) -> Result<String> {
         ));
     }
     Ok(normalized.to_string())
-}
-
-#[cfg(target_os = "android")]
-async fn open_with_sync_recovery(db_path: &Path, sync_config: SyncConfig) -> Result<Database> {
-    match Database::open_with_sync(db_path, sync_config.clone()).await {
-        Ok(db) => Ok(db),
-        Err(error) if is_recoverable_local_replica_error(&error) => {
-            tracing::warn!(
-                "Detected inconsistent local mobile replica at {}: {}. Resetting local replica files and retrying once.",
-                db_path.display(),
-                error
-            );
-            quarantine_local_replica_files(db_path)?;
-            Database::open_with_sync(db_path, sync_config).await
-        }
-        Err(error) => Err(error),
-    }
-}
-
-#[cfg(any(target_os = "android", test))]
-fn is_recoverable_local_replica_error(error: &Error) -> bool {
-    let message = error.to_string().to_ascii_lowercase();
-    message.contains("file is not a database")
-        || message.contains("invalid local state")
-        || message.contains("metadata file exists but db file does not")
-}
-
-#[cfg(any(target_os = "android", test))]
-fn quarantine_local_replica_files(db_path: &Path) -> Result<()> {
-    if db_path.exists() {
-        let timestamp = chrono::Utc::now().timestamp_millis();
-        let base_name = db_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("dirt-mobile.db");
-        let backup_path = db_path.with_file_name(format!("{base_name}.corrupt-{timestamp}"));
-
-        std::fs::rename(db_path, &backup_path)?;
-        tracing::warn!(
-            "Moved corrupted mobile DB file from {} to {}",
-            db_path.display(),
-            backup_path.display()
-        );
-    }
-
-    let Some(parent) = db_path.parent() else {
-        return Ok(());
-    };
-    let Some(base_name) = db_path.file_name().and_then(|name| name.to_str()) else {
-        return Ok(());
-    };
-    let sidecar_prefix = format!("{base_name}-");
-
-    for entry in std::fs::read_dir(parent)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-
-        let file_name = entry.file_name();
-        let file_name = file_name.to_string_lossy();
-        if file_name.starts_with(&sidecar_prefix) {
-            let path = entry.path();
-            std::fs::remove_file(&path)?;
-            tracing::warn!("Removed stale mobile replica file {}", path.display());
-        }
-    }
-
-    Ok(())
 }
 
 /// Build a mobile-friendly local DB path.
@@ -358,56 +251,5 @@ mod tests {
             Error::NotFound(value) => assert_eq!(value, missing_note.to_string()),
             other => panic!("expected not found, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn detects_recoverable_local_replica_errors() {
-        assert!(is_recoverable_local_replica_error(&Error::Database(
-            "SQLite failure: file is not a database".to_string()
-        )));
-        assert!(is_recoverable_local_replica_error(&Error::Database(
-            "sync error: invalid local state: metadata file exists but db file does not"
-                .to_string()
-        )));
-        assert!(!is_recoverable_local_replica_error(&Error::InvalidInput(
-            "note content cannot be empty".to_string()
-        )));
-    }
-
-    #[test]
-    fn quarantine_local_replica_files_moves_db_and_removes_sidecars() {
-        let test_dir = std::env::temp_dir().join(format!(
-            "dirt-mobile-recovery-test-{}",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        std::fs::create_dir_all(&test_dir).unwrap();
-
-        let db_path = test_dir.join("dirt-mobile.db");
-        let info_path = test_dir.join("dirt-mobile.db-info");
-        let wal_path = test_dir.join("dirt-mobile.db-wal");
-
-        std::fs::write(&db_path, b"bad-db").unwrap();
-        std::fs::write(&info_path, b"meta").unwrap();
-        std::fs::write(&wal_path, b"wal").unwrap();
-
-        quarantine_local_replica_files(&db_path).unwrap();
-
-        assert!(!db_path.exists());
-        assert!(!info_path.exists());
-        assert!(!wal_path.exists());
-
-        let mut found_backup = false;
-        for entry in std::fs::read_dir(&test_dir).unwrap() {
-            let entry = entry.unwrap();
-            let file_name = entry.file_name();
-            let file_name = file_name.to_string_lossy();
-            if file_name.starts_with("dirt-mobile.db.corrupt-") {
-                found_backup = true;
-                break;
-            }
-        }
-        assert!(found_backup);
-
-        let _ = std::fs::remove_dir_all(test_dir);
     }
 }
