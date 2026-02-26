@@ -2,7 +2,10 @@
 
 use std::path::Path;
 
-use dirt_core::export::{render_json_export, render_markdown_export};
+use dirt_core::export::{
+    render_notes_export, suggested_export_file_name as core_suggested_export_file_name,
+    ExportFormat,
+};
 use dirt_core::Note;
 use thiserror::Error;
 
@@ -17,12 +20,11 @@ pub enum NotesExportFormat {
     Markdown,
 }
 
-impl NotesExportFormat {
-    #[must_use]
-    pub const fn extension(self) -> &'static str {
-        match self {
-            Self::Json => "json",
-            Self::Markdown => "md",
+impl From<NotesExportFormat> for ExportFormat {
+    fn from(value: NotesExportFormat) -> Self {
+        match value {
+            NotesExportFormat::Json => Self::Json,
+            NotesExportFormat::Markdown => Self::Markdown,
         }
     }
 }
@@ -45,10 +47,7 @@ pub async fn export_notes_to_path(
     output_path: &Path,
 ) -> Result<usize, NotesExportError> {
     let notes = list_all_notes(db).await?;
-    let rendered = match format {
-        NotesExportFormat::Json => render_json_export(&notes)?,
-        NotesExportFormat::Markdown => render_markdown_export(&notes),
-    };
+    let rendered = render_notes_export(&notes, format.into())?;
 
     std::fs::write(output_path, rendered)?;
     Ok(notes.len())
@@ -57,8 +56,7 @@ pub async fn export_notes_to_path(
 /// Build a deterministic default file name for save dialogs.
 #[must_use]
 pub fn suggested_export_file_name(format: NotesExportFormat, timestamp_ms: i64) -> String {
-    let extension = format.extension();
-    format!("dirt-export-{timestamp_ms}.{extension}")
+    core_suggested_export_file_name(format.into(), timestamp_ms)
 }
 
 async fn list_all_notes(db: &DatabaseService) -> Result<Vec<Note>, dirt_core::Error> {

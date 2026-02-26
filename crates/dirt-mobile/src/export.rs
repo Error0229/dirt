@@ -4,7 +4,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use dirt_core::export::{render_json_export, render_markdown_export};
+use dirt_core::export::{
+    render_notes_export, suggested_export_file_name as core_suggested_export_file_name,
+    ExportFormat,
+};
 use thiserror::Error;
 
 use crate::data::MobileNoteStore;
@@ -17,12 +20,11 @@ pub enum MobileExportFormat {
     Markdown,
 }
 
-impl MobileExportFormat {
-    #[must_use]
-    pub const fn extension(self) -> &'static str {
-        match self {
-            Self::Json => "json",
-            Self::Markdown => "md",
+impl From<MobileExportFormat> for ExportFormat {
+    fn from(value: MobileExportFormat) -> Self {
+        match value {
+            MobileExportFormat::Json => Self::Json,
+            MobileExportFormat::Markdown => Self::Markdown,
         }
     }
 }
@@ -43,10 +45,7 @@ pub async fn export_notes_to_path(
     output_path: &Path,
 ) -> Result<usize, MobileExportError> {
     let notes = note_store.list_all_notes().await?;
-    let rendered = match format {
-        MobileExportFormat::Json => render_json_export(&notes)?,
-        MobileExportFormat::Markdown => render_markdown_export(&notes),
-    };
+    let rendered = render_notes_export(&notes, format.into())?;
 
     if let Some(parent) = output_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -57,7 +56,7 @@ pub async fn export_notes_to_path(
 
 #[must_use]
 pub fn suggested_export_file_name(format: MobileExportFormat, timestamp_ms: i64) -> String {
-    format!("dirt-export-{timestamp_ms}.{}", format.extension())
+    core_suggested_export_file_name(format.into(), timestamp_ms)
 }
 
 #[must_use]

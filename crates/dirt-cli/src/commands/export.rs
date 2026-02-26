@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use dirt_core::export::{render_json_export, render_markdown_export};
+use dirt_core::export::{render_notes_export, ExportFormat as CoreExportFormat};
 
 use crate::cli::ExportFormat;
 use crate::commands::common::list_all_notes;
@@ -12,10 +12,11 @@ pub async fn run_export(
     db_path: &Path,
 ) -> Result<(), CliError> {
     let notes = list_all_notes(db_path).await?;
-    let rendered = match format {
-        ExportFormat::Json => render_json_export(&notes)?,
-        ExportFormat::Markdown => render_markdown_export(&notes),
+    let core_format = match format {
+        ExportFormat::Json => CoreExportFormat::Json,
+        ExportFormat::Markdown => CoreExportFormat::Markdown,
     };
+    let rendered = render_notes_export(&notes, core_format)?;
 
     if let Some(path) = output_path {
         std::fs::write(path, rendered)?;
