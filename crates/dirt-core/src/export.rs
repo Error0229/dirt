@@ -6,6 +6,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::Note;
 
+/// Export output format shared by all clients.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExportFormat {
+    Json,
+    Markdown,
+}
+
+impl ExportFormat {
+    #[must_use]
+    pub const fn extension(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Markdown => "md",
+        }
+    }
+}
+
 /// Serializable note representation used in JSON and Markdown exports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportNote {
@@ -68,6 +85,20 @@ pub fn render_markdown_export(notes: &[Note]) -> String {
     output
 }
 
+/// Render notes based on selected export format.
+pub fn render_notes_export(notes: &[Note], format: ExportFormat) -> serde_json::Result<String> {
+    match format {
+        ExportFormat::Json => render_json_export(notes),
+        ExportFormat::Markdown => Ok(render_markdown_export(notes)),
+    }
+}
+
+/// Build a deterministic default file name for export flows.
+#[must_use]
+pub fn suggested_export_file_name(format: ExportFormat, timestamp_ms: i64) -> String {
+    format!("dirt-export-{timestamp_ms}.{}", format.extension())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,5 +127,17 @@ mod tests {
         assert!(rendered.contains("updated_at: 456"));
         assert!(rendered.contains("tags:\n  - tag"));
         assert!(rendered.contains("Hello export #tag"));
+    }
+
+    #[test]
+    fn suggested_export_file_name_uses_format_extension() {
+        assert_eq!(
+            suggested_export_file_name(ExportFormat::Json, 123),
+            "dirt-export-123.json"
+        );
+        assert_eq!(
+            suggested_export_file_name(ExportFormat::Markdown, 456),
+            "dirt-export-456.md"
+        );
     }
 }
