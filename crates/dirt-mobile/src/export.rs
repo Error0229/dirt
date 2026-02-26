@@ -64,7 +64,7 @@ pub fn default_export_directory() -> PathBuf {
     dirs::download_dir()
         .or_else(dirs::document_dir)
         .or_else(dirs::data_local_dir)
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|| panic!("Failed to resolve mobile export directory"))
         .join(EXPORT_DIR_NAME)
 }
 

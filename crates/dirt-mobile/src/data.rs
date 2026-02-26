@@ -24,10 +24,8 @@ impl MobileNoteStore {
     #[cfg(target_os = "android")]
     pub async fn open_default() -> Result<Self> {
         let db_path = default_db_path();
-        let resolved_sync_config = resolve_sync_config();
-        if let Some(warning) = resolved_sync_config.warning.as_deref() {
-            tracing::warn!("Mobile sync configuration warning: {warning}");
-        }
+        let resolved_sync_config =
+            resolve_sync_config().map_err(|error| Error::InvalidInput(error.to_string()))?;
 
         let db = CoreDatabaseService::open_path(db_path, resolved_sync_config.sync_config).await?;
         Ok(Self { db })
@@ -136,7 +134,7 @@ fn normalize_content(content: &str) -> Result<String> {
 pub fn default_db_path() -> PathBuf {
     dirs::data_local_dir()
         .or_else(dirs::data_dir)
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|| panic!("Failed to resolve mobile data directory for database"))
         .join("dirt")
         .join("dirt-mobile.db")
 }

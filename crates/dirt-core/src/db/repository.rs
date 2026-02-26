@@ -129,7 +129,9 @@ impl<'a> LibSqlNoteRepository<'a> {
     fn parse_note(row: &libsql::Row) -> Result<Note> {
         let id: String = row.get(0)?;
         Ok(Note {
-            id: id.parse().unwrap_or_default(),
+            id: id
+                .parse()
+                .map_err(|_| Error::InvalidInput(format!("Invalid note ID in database: {id}")))?,
             content: row.get(1)?,
             created_at: row.get(2)?,
             updated_at: row.get(3)?,

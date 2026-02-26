@@ -60,14 +60,11 @@ fn load_workspace_dotenv() {
         env::var_os("CARGO_MANIFEST_DIR").map_or_else(|| PathBuf::from("."), PathBuf::from);
     let workspace_root = manifest_dir.join("..").join("..");
 
-    // Prefer .env.client (role-separated) over legacy .env
+    // Load role-separated client environment values for bootstrap generation.
     let client_env = workspace_root.join(".env.client");
-    let legacy_env = workspace_root.join(".env");
 
     if client_env.exists() {
         let _ = dotenvy::from_path(client_env);
-    } else if legacy_env.exists() {
-        let _ = dotenvy::from_path(legacy_env);
     }
 }
 

@@ -11,14 +11,12 @@ use std::sync::Arc;
 use config::AppConfig;
 use routes::{app_router, AppState};
 
-/// Load .env.server (preferred) or legacy .env for local development only.
+/// Load .env.server for local development.
 #[cfg(debug_assertions)]
 fn load_dev_dotenv() {
     let server_env = std::path::Path::new(".env.server");
     if server_env.exists() {
         let _ = dotenvy::from_path(server_env);
-    } else {
-        dotenvy::dotenv().ok();
     }
 }
 

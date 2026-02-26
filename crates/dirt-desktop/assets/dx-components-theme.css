@@ -75,7 +75,7 @@ body {
   }
 }
 
-/* Legacy browsers with `::-webkit-scrollbar-*` support */
+/* WebKit browsers with `::-webkit-scrollbar-*` support */
 @supports selector(::-webkit-scrollbar) {
   :root::-webkit-scrollbar-track {
     background: transparent;

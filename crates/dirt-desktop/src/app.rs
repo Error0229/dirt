@@ -67,7 +67,18 @@ pub fn App() -> Element {
         let fallback_bootstrap = embedded_bootstrap_config.clone();
 
         spawn(async move {
-            let bootstrap = resolve_bootstrap_config(fallback_bootstrap).await;
+            let bootstrap = match resolve_bootstrap_config(fallback_bootstrap).await {
+                Ok(config) => config,
+                Err(error) => {
+                    let message = format!("Failed to resolve bootstrap configuration: {error}");
+                    tracing::error!("{message}");
+                    sync_auth_client.set(None);
+                    media_api_client.set(None);
+                    auth_service.set(None);
+                    auth_error.set(Some(message));
+                    return;
+                }
+            };
 
             match sync_auth_from_bootstrap(&bootstrap) {
                 Ok(Some(client)) => sync_auth_client.set(Some(Arc::new(client))),
@@ -130,13 +141,9 @@ pub fn App() -> Element {
                         let sync_config = SyncConfig::new(token.database_url, token.token);
                         DatabaseService::new_with_sync(sync_config).await
                     }
-                    Err(error) => {
-                        tracing::warn!(
-                        "Managed sync token exchange failed; falling back to local/env mode: {}",
-                        error
-                    );
-                        DatabaseService::new().await
-                    }
+                    Err(error) => Err(dirt_core::Error::Storage(format!(
+                        "Managed sync token exchange failed: {error}"
+                    ))),
                 }
             } else {
                 DatabaseService::new().await
@@ -146,7 +153,15 @@ pub fn App() -> Element {
             Ok(db) => {
                 let db = Arc::new(db);
 
-                let loaded_settings = db.load_settings().await.unwrap_or_default();
+                let loaded_settings = match db.load_settings().await {
+                    Ok(settings) => settings,
+                    Err(error) => {
+                        tracing::error!("Failed to load desktop settings: {}", error);
+                        sync_status.set(SyncStatus::Error);
+                        db_service.set(None);
+                        return;
+                    }
+                };
                 let resolved_theme = resolve_theme(loaded_settings.theme);
                 settings.set(loaded_settings);
                 theme.set(resolved_theme);

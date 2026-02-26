@@ -183,7 +183,15 @@ pub(crate) fn AppShell() -> Element {
     use_future(move || {
         let bootstrap_config = bootstrap_config_for_init.clone();
         async move {
-            let bootstrap_config = resolve_bootstrap_config(bootstrap_config).await;
+            let bootstrap_config = match resolve_bootstrap_config(bootstrap_config).await {
+                Ok(config) => Some(config),
+                Err(error) => {
+                    status_message.set(Some(format!(
+                        "Failed to resolve bootstrap configuration: {error}"
+                    )));
+                    None
+                }
+            };
             let _db_init_retry_version = db_init_retry_version();
             let runtime_config = load_runtime_config();
             let runtime_has_sync_url = runtime_config.has_sync_url();
@@ -203,8 +211,18 @@ pub(crate) fn AppShell() -> Element {
                     openai_api_key_configured.set(false);
                 }
             }
-            let mut resolved_sync_config = resolve_sync_config();
-            active_sync_source.set(resolved_sync_config.source);
+            let mut resolved_sync_config = match resolve_sync_config() {
+                Ok(config) => Some(config),
+                Err(error) => {
+                    status_message.set(Some(format!("Sync configuration is invalid: {error}")));
+                    None
+                }
+            };
+            active_sync_source.set(
+                resolved_sync_config
+                    .as_ref()
+                    .map_or(SyncConfigSource::None, |config| config.source),
+            );
             auth_service.set(None);
             auth_session.set(None);
             auth_config_status.set(None);
@@ -212,50 +230,56 @@ pub(crate) fn AppShell() -> Element {
             sync_auth_client.set(None);
             sync_token_expires_at.set(None);
 
-            match MediaApiClient::new_from_bootstrap(&bootstrap_config) {
-                Ok(Some(client)) => media_api_client.set(Some(Arc::new(client))),
-                Ok(None) => {}
-                Err(error) => {
-                    status_message
-                        .set(Some(format!("Managed media API is misconfigured: {error}")));
+            if let Some(bootstrap_config) = bootstrap_config.as_ref() {
+                match MediaApiClient::new_from_bootstrap(bootstrap_config) {
+                    Ok(Some(client)) => media_api_client.set(Some(Arc::new(client))),
+                    Ok(None) => {}
+                    Err(error) => {
+                        status_message
+                            .set(Some(format!("Managed media API is misconfigured: {error}")));
+                    }
                 }
             }
 
-            match TursoSyncAuthClient::new_from_bootstrap(&bootstrap_config) {
-                Ok(Some(client)) => {
-                    sync_auth_client.set(Some(Arc::new(client)));
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    status_message
-                        .set(Some(format!("Managed sync auth is misconfigured: {error}")));
+            if let Some(bootstrap_config) = bootstrap_config.as_ref() {
+                match TursoSyncAuthClient::new_from_bootstrap(bootstrap_config) {
+                    Ok(Some(client)) => {
+                        sync_auth_client.set(Some(Arc::new(client)));
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        status_message
+                            .set(Some(format!("Managed sync auth is misconfigured: {error}")));
+                    }
                 }
             }
 
-            match SupabaseAuthService::new_from_bootstrap(&bootstrap_config) {
-                Ok(Some(service)) => {
-                    let service = Arc::new(service);
-                    match service.restore_session().await {
-                        Ok(session) => auth_session.set(session.clone()),
-                        Err(error) => {
-                            tracing::warn!("Failed to restore mobile auth session: {}", error);
-                            status_message
-                                .set(Some(format!("Auth session restore failed: {error}")));
+            if let Some(bootstrap_config) = bootstrap_config.as_ref() {
+                match SupabaseAuthService::new_from_bootstrap(bootstrap_config) {
+                    Ok(Some(service)) => {
+                        let service = Arc::new(service);
+                        match service.restore_session().await {
+                            Ok(session) => auth_session.set(session.clone()),
+                            Err(error) => {
+                                tracing::warn!("Failed to restore mobile auth session: {}", error);
+                                status_message
+                                    .set(Some(format!("Auth session restore failed: {error}")));
+                            }
                         }
-                    }
-                    match service.verify_configuration().await {
-                        Ok(config) => auth_config_status.set(Some(config)),
-                        Err(error) => {
-                            tracing::warn!("Mobile auth config verification failed: {}", error);
-                            status_message
-                                .set(Some(format!("Auth configuration check failed: {error}")));
+                        match service.verify_configuration().await {
+                            Ok(config) => auth_config_status.set(Some(config)),
+                            Err(error) => {
+                                tracing::warn!("Mobile auth config verification failed: {}", error);
+                                status_message
+                                    .set(Some(format!("Auth configuration check failed: {error}")));
+                            }
                         }
+                        auth_service.set(Some(service));
                     }
-                    auth_service.set(Some(service));
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    status_message.set(Some(format!("Auth is not configured: {error}")));
+                    Ok(None) => {}
+                    Err(error) => {
+                        status_message.set(Some(format!("Auth is not configured: {error}")));
+                    }
                 }
             }
 
@@ -279,8 +303,19 @@ pub(crate) fn AppShell() -> Element {
                 {
                     Ok(Some(token)) => {
                         sync_token_expires_at.set(Some(token.expires_at));
-                        resolved_sync_config = resolve_sync_config();
-                        active_sync_source.set(resolved_sync_config.source);
+                        resolved_sync_config = match resolve_sync_config() {
+                            Ok(config) => Some(config),
+                            Err(error) => {
+                                status_message
+                                    .set(Some(format!("Sync configuration is invalid: {error}")));
+                                None
+                            }
+                        };
+                        active_sync_source.set(
+                            resolved_sync_config
+                                .as_ref()
+                                .map_or(SyncConfigSource::None, |config| config.source),
+                        );
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -347,11 +382,10 @@ pub(crate) fn AppShell() -> Element {
                     } else {
                         sync_scheduler_active.set(false);
                         sync_state.set(MobileSyncState::Offline);
-                        let offline_message = resolved_sync_config.warning.clone().unwrap_or_else(|| {
-                        "Running in local-only mode (set Turso URL and sign in to enable auto-sync)"
-                            .to_string()
-                    });
-                        status_message.set(Some(offline_message));
+                        status_message.set(Some(
+                            "Running in local-only mode (set Turso URL and sign in to enable auto-sync)"
+                                .to_string(),
+                        ));
                     }
 
                     match note_store.list_notes().await {

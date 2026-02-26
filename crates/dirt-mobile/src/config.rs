@@ -33,8 +33,6 @@ pub enum SecretStatus {
 pub struct ResolvedSyncConfig {
     pub sync_config: Option<SyncConfig>,
     pub source: SyncConfigSource,
-    /// User-facing warning for partial/invalid sync configuration states.
-    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -58,7 +56,7 @@ impl MobileRuntimeConfig {
 pub fn default_runtime_config_path() -> PathBuf {
     dirs::data_local_dir()
         .or_else(dirs::data_dir)
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|| panic!("Failed to resolve mobile data directory for runtime config"))
         .join("dirt")
         .join(RUNTIME_CONFIG_FILE)
 }
@@ -72,27 +70,18 @@ pub fn load_runtime_config_from_path(path: &Path) -> MobileRuntimeConfig {
         return MobileRuntimeConfig::default();
     }
 
-    match std::fs::read_to_string(path) {
-        Ok(content) => match serde_json::from_str::<MobileRuntimeConfig>(&content) {
-            Ok(config) => config,
-            Err(error) => {
-                tracing::warn!(
-                    "Failed to parse mobile runtime config at {}: {}",
-                    path.display(),
-                    error
-                );
-                MobileRuntimeConfig::default()
-            }
-        },
-        Err(error) => {
-            tracing::warn!(
-                "Failed to read mobile runtime config at {}: {}",
-                path.display(),
-                error
-            );
-            MobileRuntimeConfig::default()
-        }
-    }
+    let content = std::fs::read_to_string(path).unwrap_or_else(|error| {
+        panic!(
+            "Failed to read mobile runtime config at {}: {error}",
+            path.display()
+        )
+    });
+    serde_json::from_str::<MobileRuntimeConfig>(&content).unwrap_or_else(|error| {
+        panic!(
+            "Failed to parse mobile runtime config at {}: {error}",
+            path.display()
+        )
+    })
 }
 
 pub fn save_runtime_config(config: &MobileRuntimeConfig) -> Result<()> {
@@ -110,7 +99,7 @@ pub fn save_runtime_config_to_path(config: &MobileRuntimeConfig, path: &Path) ->
     Ok(())
 }
 
-pub fn resolve_sync_config() -> ResolvedSyncConfig {
+pub fn resolve_sync_config() -> std::result::Result<ResolvedSyncConfig, String> {
     let runtime_config = load_runtime_config();
     let runtime_secret = secret_store::read_secret(secret_store::SECRET_TURSO_AUTH_TOKEN);
     resolve_sync_config_from_sources(runtime_config.turso_database_url, runtime_secret)
@@ -128,40 +117,35 @@ pub fn runtime_turso_token_status() -> SecretStatus {
 fn resolve_sync_config_from_sources(
     runtime_url: Option<String>,
     runtime_secret: std::result::Result<Option<String>, String>,
-) -> ResolvedSyncConfig {
-    let runtime_url_was_set = runtime_url.is_some();
-    let runtime_sync_config = parse_sync_config(
-        runtime_url,
-        runtime_secret.as_ref().ok().and_then(Clone::clone),
-    );
-    if let Some(sync_config) = runtime_sync_config {
-        return ResolvedSyncConfig {
-            sync_config: Some(sync_config),
-            source: SyncConfigSource::RuntimeSettings,
-            warning: None,
-        };
-    }
-
-    let warning = if runtime_url_was_set {
-        match runtime_secret {
-            Ok(None) => Some(
-                "Turso URL is configured but sync auth token is missing. Sign in and refresh sync settings."
-                    .to_string(),
-            ),
-            Err(error) => Some(format!(
-                "Failed to read Turso auth token from secure storage: {error}. Running local-only."
-            )),
-            Ok(Some(_)) => None,
-        }
-    } else {
-        None
+) -> std::result::Result<ResolvedSyncConfig, String> {
+    let runtime_url = normalize_text_option(runtime_url);
+    let Some(runtime_url) = runtime_url else {
+        return Ok(ResolvedSyncConfig {
+            sync_config: None,
+            source: SyncConfigSource::None,
+        });
     };
 
-    ResolvedSyncConfig {
-        sync_config: None,
-        source: SyncConfigSource::None,
-        warning,
-    }
+    let runtime_token = match runtime_secret {
+        Ok(Some(token)) => normalize_text_option(Some(token))
+            .ok_or_else(|| "Turso URL is configured but sync auth token is empty.".to_string())?,
+        Ok(None) => {
+            return Err(
+                "Turso URL is configured but sync auth token is missing. Sign in and refresh sync settings."
+                    .to_string(),
+            );
+        }
+        Err(error) => {
+            return Err(format!(
+                "Failed to read Turso auth token from secure storage: {error}"
+            ));
+        }
+    };
+
+    Ok(ResolvedSyncConfig {
+        sync_config: Some(SyncConfig::new(runtime_url, runtime_token)),
+        source: SyncConfigSource::RuntimeSettings,
+    })
 }
 
 pub fn parse_sync_config(url: Option<String>, auth_token: Option<String>) -> Option<SyncConfig> {
@@ -225,17 +209,13 @@ mod tests {
     }
 
     #[test]
-    fn runtime_url_without_secret_yields_warning() {
-        let resolved = resolve_sync_config_from_sources(
+    fn runtime_url_without_secret_yields_error() {
+        let error = resolve_sync_config_from_sources(
             Some("libsql://runtime.turso.io".to_string()),
             Ok(None),
-        );
+        )
+        .unwrap_err();
 
-        assert_eq!(resolved.source, SyncConfigSource::None);
-        assert!(resolved.sync_config.is_none());
-        assert!(resolved
-            .warning
-            .as_deref()
-            .is_some_and(|warning| warning.contains("auth token")));
+        assert!(error.contains("auth token is missing"));
     }
 }

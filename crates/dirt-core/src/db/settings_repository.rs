@@ -1,6 +1,6 @@
 //! Settings repository implementation
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::models::Settings;
 use libsql::Connection;
 
@@ -31,29 +31,32 @@ impl SettingsRepository for LibSqlSettingsRepository<'_> {
         let mut settings = Settings::default();
 
         // Load each setting individually
-        if let Ok(value) = self.get_setting("font_family").await {
+        if let Some(value) = self.get_setting_optional("font_family").await? {
             settings.font_family = value;
         }
 
-        if let Ok(value) = self.get_setting("font_size").await {
-            if let Ok(size) = value.parse() {
-                settings.font_size = size;
-            }
+        if let Some(value) = self.get_setting_optional("font_size").await? {
+            settings.font_size = value.parse::<u32>().map_err(|error| {
+                Error::InvalidInput(format!("Invalid settings value for 'font_size': {error}"))
+            })?;
         }
 
-        if let Ok(value) = self.get_setting("theme").await {
-            settings.theme = serde_json::from_str(&format!("\"{value}\"")).unwrap_or_default();
+        if let Some(value) = self.get_setting_optional("theme").await? {
+            settings.theme = serde_json::from_str(&format!("\"{value}\"")).map_err(|error| {
+                Error::InvalidInput(format!("Invalid settings value for 'theme': {error}"))
+            })?;
         }
 
-        if let Ok(value) = self.get_setting("capture_hotkey").await {
+        if let Some(value) = self.get_setting_optional("capture_hotkey").await? {
             settings.capture_hotkey = value;
         }
 
-        if let Ok(value) = self.get_setting("voice_memo_transcription_enabled").await {
-            settings.voice_memo_transcription_enabled = matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            );
+        if let Some(value) = self
+            .get_setting_optional("voice_memo_transcription_enabled")
+            .await?
+        {
+            settings.voice_memo_transcription_enabled =
+                Self::parse_bool_setting("voice_memo_transcription_enabled", &value)?;
         }
 
         Ok(settings)
@@ -64,8 +67,7 @@ impl SettingsRepository for LibSqlSettingsRepository<'_> {
             .await?;
         self.set_setting("font_size", &settings.font_size.to_string())
             .await?;
-        let theme_str = serde_json::to_string(&settings.theme)
-            .unwrap_or_default()
+        let theme_str = serde_json::to_string(&settings.theme)?
             .trim_matches('"')
             .to_string();
         self.set_setting("theme", &theme_str).await?;
@@ -85,6 +87,24 @@ impl SettingsRepository for LibSqlSettingsRepository<'_> {
 }
 
 impl LibSqlSettingsRepository<'_> {
+    async fn get_setting_optional(&self, key: &str) -> Result<Option<String>> {
+        match self.get_setting(key).await {
+            Ok(value) => Ok(Some(value)),
+            Err(Error::NotFound(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn parse_bool_setting(key: &str, raw: &str) -> Result<bool> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Ok(true),
+            "0" | "false" | "no" | "off" => Ok(false),
+            other => Err(Error::InvalidInput(format!(
+                "Invalid settings value for '{key}': '{other}'"
+            ))),
+        }
+    }
+
     async fn get_setting(&self, key: &str) -> Result<String> {
         let mut rows = self
             .conn
@@ -151,5 +171,29 @@ mod tests {
         assert_eq!(loaded.theme, ThemeMode::Dark);
         assert_eq!(loaded.font_family, "JetBrains Mono");
         assert!(loaded.voice_memo_transcription_enabled);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_load_rejects_invalid_theme_value() {
+        let db = setup().await;
+        let repo = LibSqlSettingsRepository::new(db.connection());
+        repo.set_setting("theme", "invalid-theme")
+            .await
+            .expect("failed to seed invalid theme");
+
+        let error = repo.load().await.unwrap_err();
+        assert!(matches!(error, Error::InvalidInput(_)));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_load_rejects_invalid_voice_memo_bool() {
+        let db = setup().await;
+        let repo = LibSqlSettingsRepository::new(db.connection());
+        repo.set_setting("voice_memo_transcription_enabled", "maybe")
+            .await
+            .expect("failed to seed invalid bool setting");
+
+        let error = repo.load().await.unwrap_err();
+        assert!(matches!(error, Error::InvalidInput(_)));
     }
 }

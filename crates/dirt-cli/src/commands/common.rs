@@ -381,7 +381,7 @@ pub fn resolve_db_path(cli_db_path: Option<PathBuf>) -> PathBuf {
 
 pub fn default_db_path() -> PathBuf {
     dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|| panic!("Failed to resolve CLI data directory"))
         .join("dirt")
         .join("dirt.db")
 }
@@ -427,9 +427,15 @@ async fn sync_config_from_profile(mode: OpenDatabaseMode) -> Result<Option<SyncC
     let config = CliProfilesConfig::load().map_err(CliError::Config)?;
     let profile_name = config.resolve_profile_name(None);
     let Some(profile) = config.profile(&profile_name) else {
+        if mode.requires_sync() {
+            return Err(CliError::SyncNotConfigured);
+        }
         return Ok(None);
     };
     let Some(endpoint) = profile.managed_sync_endpoint() else {
+        if mode.requires_sync() {
+            return Err(CliError::SyncNotConfigured);
+        }
         return Ok(None);
     };
 
@@ -461,28 +467,15 @@ async fn sync_config_from_profile(mode: OpenDatabaseMode) -> Result<Option<SyncC
     }
 
     let Some(session) = session else {
-        if mode.requires_sync() {
-            return Err(CliError::SyncNotConfigured);
-        }
-        return Ok(None);
+        return Err(CliError::SyncNotConfigured);
     };
 
     let sync_auth_client = ManagedSyncAuthClient::new(endpoint)
         .map_err(|error| CliError::ManagedSync(error.to_string()))?;
-    let managed_token = match sync_auth_client.exchange_token(&session.access_token).await {
-        Ok(token) => token,
-        Err(error) => {
-            if mode.requires_sync() {
-                return Err(CliError::ManagedSync(error.to_string()));
-            }
-            tracing::warn!(
-                "Managed sync token exchange failed for profile '{}': {}",
-                profile_name,
-                error
-            );
-            return Ok(None);
-        }
-    };
+    let managed_token = sync_auth_client
+        .exchange_token(&session.access_token)
+        .await
+        .map_err(|error| CliError::ManagedSync(error.to_string()))?;
 
     tracing::info!("Managed sync enabled via profile '{}'", profile_name);
     Ok(Some(SyncConfig::new(

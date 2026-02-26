@@ -35,7 +35,7 @@ const fn default_config_version() -> u32 {
 
 pub fn default_config_path() -> PathBuf {
     dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|| panic!("Failed to resolve CLI config directory"))
         .join("dirt")
         .join(CONFIG_FILE_NAME)
 }

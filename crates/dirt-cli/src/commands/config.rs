@@ -71,18 +71,10 @@ pub async fn run_config_init(
                     println!("Loaded managed bootstrap manifest from {url}");
                     Some(profile)
                 }
-                Err(error) if explicit_bootstrap_url.is_some() => {
+                Err(error) => {
                     return Err(CliError::Config(format!(
                         "Failed to load bootstrap manifest from {url}: {error}"
                     )));
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        "Bootstrap manifest fetch failed from {}: {}. Falling back to existing/env values.",
-                        url,
-                        error
-                    );
-                    None
                 }
             }
         } else {
