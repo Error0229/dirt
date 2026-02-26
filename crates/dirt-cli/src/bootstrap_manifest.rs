@@ -2,18 +2,16 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
+use dirt_core::config::{
+    parse_bootstrap_manifest as parse_core_bootstrap_manifest, BootstrapConfig,
+};
 use thiserror::Error;
 
 use crate::config_profiles::is_http_url;
 
-const BOOTSTRAP_SCHEMA_VERSION: u32 = 1;
 const BOOTSTRAP_HTTP_TIMEOUT_SECS: u64 = 5;
 
 /// Managed runtime configuration loaded from the backend bootstrap endpoint.
-///
-/// These values are public bootstrap fields that allow the CLI to initialize
-/// profile auth/sync configuration without user-provided infra secrets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedBootstrapConfig {
     /// Supabase project URL used for auth flows.
@@ -24,10 +22,6 @@ pub struct ManagedBootstrapConfig {
     pub api_base_url: String,
     /// Optional explicit managed sync token endpoint.
     pub sync_token_endpoint: Option<String>,
-    /// Whether managed sync token exchange is enabled.
-    pub managed_sync: bool,
-    /// Whether managed media presign flows are enabled.
-    pub managed_media: bool,
 }
 
 /// Errors returned while fetching or parsing managed bootstrap manifests.
@@ -43,30 +37,7 @@ pub enum ManagedBootstrapError {
     InvalidPayload(String),
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-struct ManagedBootstrapManifest {
-    schema_version: u32,
-    manifest_version: String,
-    supabase_url: String,
-    supabase_anon_key: String,
-    api_base_url: String,
-    #[serde(default)]
-    turso_sync_token_endpoint: Option<String>,
-    feature_flags: ManagedFeatureFlags,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-struct ManagedFeatureFlags {
-    managed_sync: bool,
-    managed_media: bool,
-}
-
 /// Fetches and validates a managed bootstrap manifest from the given URL.
-///
-/// This call enforces schema validation and URL normalization before returning
-/// runtime client configuration.
 pub async fn fetch_bootstrap_manifest(
     bootstrap_url: &str,
 ) -> Result<ManagedBootstrapConfig, ManagedBootstrapError> {
@@ -92,74 +63,85 @@ pub async fn fetch_bootstrap_manifest(
     }
 
     let body = response.text().await?;
-    parse_bootstrap_manifest(&body)
+    parse_bootstrap_manifest_with_url(&body, &bootstrap_url)
 }
 
 /// Parses a bootstrap manifest JSON payload into runtime configuration.
-///
-/// Parsing rejects unknown fields and unsupported schema versions.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn parse_bootstrap_manifest(
     payload: &str,
 ) -> Result<ManagedBootstrapConfig, ManagedBootstrapError> {
-    let manifest: ManagedBootstrapManifest = serde_json::from_str(payload)
-        .map_err(|error| ManagedBootstrapError::InvalidPayload(error.to_string()))?;
-    manifest.into_runtime_config()
+    parse_bootstrap_manifest_with_url(payload, "https://example.invalid/v1/bootstrap")
 }
 
-impl ManagedBootstrapManifest {
-    fn into_runtime_config(self) -> Result<ManagedBootstrapConfig, ManagedBootstrapError> {
-        if self.schema_version != BOOTSTRAP_SCHEMA_VERSION {
-            return Err(ManagedBootstrapError::InvalidPayload(format!(
-                "unsupported schema_version {} (expected {})",
-                self.schema_version, BOOTSTRAP_SCHEMA_VERSION
-            )));
-        }
-        if self.manifest_version.trim().is_empty() {
-            return Err(ManagedBootstrapError::InvalidPayload(
-                "manifest_version must not be empty".to_string(),
-            ));
-        }
-
-        let supabase_url = normalize_url(&self.supabase_url, "supabase_url")?;
-        let supabase_anon_key =
-            normalize_required_value(&self.supabase_anon_key, "supabase_anon_key")?;
-        let api_base_url = normalize_url(&self.api_base_url, "api_base_url")?;
-
-        let sync_token_endpoint = if self.feature_flags.managed_sync {
-            match self.turso_sync_token_endpoint {
-                Some(endpoint) => Some(normalize_url(&endpoint, "turso_sync_token_endpoint")?),
-                None => Some(format!("{api_base_url}/v1/sync/token")),
-            }
-        } else {
-            None
-        };
-
-        Ok(ManagedBootstrapConfig {
-            supabase_url,
-            supabase_anon_key,
-            api_base_url,
-            sync_token_endpoint,
-            managed_sync: self.feature_flags.managed_sync,
-            managed_media: self.feature_flags.managed_media,
-        })
-    }
+fn parse_bootstrap_manifest_with_url(
+    payload: &str,
+    manifest_url: &str,
+) -> Result<ManagedBootstrapConfig, ManagedBootstrapError> {
+    let config = parse_core_bootstrap_manifest(payload, manifest_url)
+        .map_err(ManagedBootstrapError::InvalidPayload)?;
+    managed_bootstrap_from_core(config)
 }
 
-fn normalize_required_value(value: &str, field: &str) -> Result<String, ManagedBootstrapError> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        Err(ManagedBootstrapError::InvalidPayload(format!(
+fn managed_bootstrap_from_core(
+    config: BootstrapConfig,
+) -> Result<ManagedBootstrapConfig, ManagedBootstrapError> {
+    let api_base_url = normalize_required_url(config.managed_api_base_url(), "api_base_url")?;
+    let supabase_url = normalize_required_url(config.supabase_url, "supabase_url")?;
+    let supabase_anon_key = normalize_required_text(config.supabase_anon_key, "supabase_anon_key")?;
+    let sync_token_endpoint = match normalize_optional_value(config.turso_sync_token_endpoint) {
+        Some(endpoint) => Some(normalize_url(&endpoint, "turso_sync_token_endpoint")?),
+        None => None,
+    };
+
+    Ok(ManagedBootstrapConfig {
+        supabase_url,
+        supabase_anon_key,
+        api_base_url,
+        sync_token_endpoint,
+    })
+}
+
+fn normalize_required_text(
+    value: Option<String>,
+    field: &str,
+) -> Result<String, ManagedBootstrapError> {
+    let Some(normalized) = normalize_optional_value(value) else {
+        return Err(ManagedBootstrapError::InvalidPayload(format!(
             "field '{field}' must not be empty"
-        )))
-    } else {
-        Ok(trimmed.to_string())
-    }
+        )));
+    };
+    Ok(normalized)
+}
+
+fn normalize_required_url(
+    value: Option<String>,
+    field: &str,
+) -> Result<String, ManagedBootstrapError> {
+    let normalized = normalize_required_text(value, field)?;
+    normalize_url(&normalized, field)
+}
+
+fn normalize_optional_value(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 fn normalize_url(value: &str, field: &str) -> Result<String, ManagedBootstrapError> {
-    let value = normalize_required_value(value, field)?;
-    if is_http_url(&value) {
-        Ok(value.trim_end_matches('/').to_string())
+    let trimmed = value.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err(ManagedBootstrapError::InvalidPayload(format!(
+            "field '{field}' must not be empty"
+        )));
+    }
+    if is_http_url(trimmed) {
+        Ok(trimmed.to_string())
     } else {
         Err(ManagedBootstrapError::InvalidUrl(format!(
             "field '{field}' must include http:// or https://"
@@ -286,8 +268,7 @@ mod tests {
             parsed.sync_token_endpoint.as_deref(),
             Some("https://api.example.com/v1/sync/token")
         );
-        assert!(parsed.managed_sync);
-        assert!(parsed.managed_media);
+        assert_eq!(parsed.api_base_url, "https://api.example.com");
     }
 
     #[tokio::test]

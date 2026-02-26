@@ -520,6 +520,6 @@ async fn sync_config_from_profile(mode: OpenDatabaseMode) -> Result<Option<SyncC
     tracing::info!("Managed sync enabled via profile '{}'", profile_name);
     Ok(Some(SyncConfig::new(
         managed_token.database_url,
-        managed_token.auth_token,
+        managed_token.token,
     )))
 }
