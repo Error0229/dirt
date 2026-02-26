@@ -5,19 +5,16 @@ pub use dirt_core::config::BootstrapConfig as MobileBootstrapConfig;
 pub use dirt_core::util::normalize_text_option;
 
 /// Loads the generated mobile bootstrap JSON from `OUT_DIR`.
-///
-/// Falls back to an empty config when parsing fails so the app can continue
-/// running in local-only mode.
 pub fn load_bootstrap_config() -> MobileBootstrapConfig {
     let raw = include_str!(concat!(env!("OUT_DIR"), "/mobile-bootstrap.json"));
-    serde_json::from_str(raw).unwrap_or_else(|error| {
-        tracing::warn!("Failed to parse mobile bootstrap config: {}", error);
-        MobileBootstrapConfig::default()
-    })
+    serde_json::from_str(raw)
+        .unwrap_or_else(|error| panic!("Failed to parse mobile bootstrap config: {error}"))
 }
 
-/// Resolves runtime bootstrap config, falling back to embedded values.
-pub async fn resolve_bootstrap_config(fallback: MobileBootstrapConfig) -> MobileBootstrapConfig {
+/// Resolves runtime bootstrap config.
+pub async fn resolve_bootstrap_config(
+    fallback: MobileBootstrapConfig,
+) -> Result<MobileBootstrapConfig, String> {
     dirt_core::config::resolve_bootstrap_config(fallback).await
 }
 

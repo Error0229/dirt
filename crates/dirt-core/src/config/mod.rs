@@ -50,25 +50,16 @@ impl BootstrapConfig {
 
 /// Resolve runtime bootstrap config by fetching the manifest URL.
 ///
-/// Attempts to fetch a managed bootstrap manifest from `bootstrap_manifest_url`.
-/// When fetching/parsing/validation fails, safely falls back to the provided
-/// embedded build-time config.
-pub async fn resolve_bootstrap_config(fallback: BootstrapConfig) -> BootstrapConfig {
+/// If `bootstrap_manifest_url` is set, fetch/parse/validation failures are
+/// returned as errors instead of falling back to embedded values.
+pub async fn resolve_bootstrap_config(
+    fallback: BootstrapConfig,
+) -> Result<BootstrapConfig, String> {
     let Some(manifest_url) = normalize_text_option(fallback.bootstrap_manifest_url.clone()) else {
-        return fallback;
+        return Ok(fallback);
     };
 
-    match fetch_bootstrap_manifest(&manifest_url).await {
-        Ok(config) => config,
-        Err(error) => {
-            tracing::warn!(
-                "Failed to resolve runtime bootstrap from {}: {}. Falling back to embedded config.",
-                manifest_url,
-                error
-            );
-            fallback
-        }
-    }
+    fetch_bootstrap_manifest(&manifest_url).await
 }
 
 /// Parse a bootstrap manifest from a raw JSON payload.
@@ -168,7 +159,10 @@ async fn fetch_bootstrap_manifest(url: &str) -> Result<BootstrapConfig, String> 
 
     if !response.status().is_success() {
         let status = response.status().as_u16();
-        let body = response.text().await.unwrap_or_default();
+        let body = response
+            .text()
+            .await
+            .map_err(|error| format!("failed to read bootstrap error response body: {error}"))?;
         return Err(format!(
             "bootstrap endpoint returned HTTP {status}: {}",
             compact_text(&body)

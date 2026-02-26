@@ -37,7 +37,7 @@ impl DatabaseService {
 
     fn default_db_path() -> PathBuf {
         dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
+            .unwrap_or_else(|| panic!("Failed to resolve desktop data directory"))
             .join("dirt")
             .join("dirt.db")
     }

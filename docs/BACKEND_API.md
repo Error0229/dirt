@@ -57,7 +57,7 @@ Last updated: 2026-02-11
 
 ## Configuration
 
-Use server environment variables (see `.env.example` backend section):
+Use server environment variables (see `.env.server.example`):
 
 - Supabase verification:
   - `SUPABASE_URL`
