@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use dirt_core::db::SyncConfig;
+use dirt_core::util::normalize_text_option;
 use dirt_core::Result;
 use serde::{Deserialize, Serialize};
 
@@ -167,16 +168,6 @@ pub fn parse_sync_config(url: Option<String>, auth_token: Option<String>) -> Opt
     let url = normalize_text_option(url)?;
     let auth_token = normalize_text_option(auth_token)?;
     Some(SyncConfig::new(url, auth_token))
-}
-
-fn normalize_text_option(value: Option<String>) -> Option<String> {
-    let value = value?;
-    let value = value.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
 }
 
 #[cfg(test)]

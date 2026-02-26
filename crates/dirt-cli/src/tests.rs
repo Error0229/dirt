@@ -11,7 +11,7 @@ use crate::cli::{CompletionShell, ExportFormat};
 use crate::commands::common::{
     default_editor, format_relative_time, format_sync_conflict_lines, format_sync_timestamp,
     list_notes, normalize_content, normalize_note_identifier, normalize_search_query, note_preview,
-    resolve_note_for_edit, search_notes,
+    open_database, resolve_note_for_edit, search_notes,
 };
 use crate::commands::completions::run_completions;
 use crate::commands::config::{normalize_bootstrap_url, resolve_bootstrap_url};
@@ -201,13 +201,16 @@ async fn resolve_note_for_edit_supports_exact_and_prefix_id() {
     };
     repo.create_with_note(&note_a).await.unwrap();
     repo.create_with_note(&note_b).await.unwrap();
+    drop(db);
 
-    let by_exact = resolve_note_for_edit("11111111-1111-7111-8111-111111111111", &db)
+    let service = open_database(&db_path).await.unwrap();
+
+    let by_exact = resolve_note_for_edit("11111111-1111-7111-8111-111111111111", &service)
         .await
         .unwrap();
     assert_eq!(by_exact.content, "Note A");
 
-    let by_prefix = resolve_note_for_edit("11111111-1111-7111-8111-2", &db)
+    let by_prefix = resolve_note_for_edit("11111111-1111-7111-8111-2", &service)
         .await
         .unwrap();
     assert_eq!(by_prefix.content, "Note B");
@@ -238,8 +241,11 @@ async fn resolve_note_for_edit_rejects_ambiguous_prefix() {
     };
     repo.create_with_note(&note_a).await.unwrap();
     repo.create_with_note(&note_b).await.unwrap();
+    drop(db);
 
-    let error = resolve_note_for_edit("aaaaaaaa-aaaa-7aaa-8aaa", &db)
+    let service = open_database(&db_path).await.unwrap();
+
+    let error = resolve_note_for_edit("aaaaaaaa-aaaa-7aaa-8aaa", &service)
         .await
         .unwrap_err();
     assert!(matches!(error, CliError::AmbiguousNoteId(_)));
@@ -251,9 +257,9 @@ async fn resolve_note_for_edit_rejects_ambiguous_prefix() {
 #[tokio::test(flavor = "current_thread")]
 async fn resolve_note_for_edit_rejects_missing_note() {
     let db_path = unique_test_db_path();
-    let db = Database::open(&db_path).await.unwrap();
+    let service = open_database(&db_path).await.unwrap();
 
-    let error = resolve_note_for_edit("does-not-exist", &db)
+    let error = resolve_note_for_edit("does-not-exist", &service)
         .await
         .unwrap_err();
     assert!(matches!(error, CliError::NoteNotFound(_)));
