@@ -8,6 +8,7 @@ use dirt_core::export::{render_json_export, render_markdown_export};
 use thiserror::Error;
 
 use crate::data::MobileNoteStore;
+use crate::paths::dirt_data_dir;
 
 const EXPORT_DIR_NAME: &str = "dirt-exports";
 
@@ -65,7 +66,7 @@ pub fn default_export_directory() -> PathBuf {
     dirs::download_dir()
         .or_else(dirs::document_dir)
         .or_else(dirs::data_local_dir)
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(dirt_data_dir)
         .join(EXPORT_DIR_NAME)
 }
 

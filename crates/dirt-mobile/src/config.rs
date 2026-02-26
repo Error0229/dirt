@@ -7,6 +7,7 @@ use dirt_core::db::SyncConfig;
 use dirt_core::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::paths::dirt_data_dir;
 use crate::secret_store;
 
 const RUNTIME_CONFIG_FILE: &str = "mobile-config.json";
@@ -56,11 +57,7 @@ impl MobileRuntimeConfig {
 }
 
 pub fn default_runtime_config_path() -> PathBuf {
-    dirs::data_local_dir()
-        .or_else(dirs::data_dir)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("dirt")
-        .join(RUNTIME_CONFIG_FILE)
+    dirt_data_dir().join(RUNTIME_CONFIG_FILE)
 }
 
 pub fn load_runtime_config() -> MobileRuntimeConfig {

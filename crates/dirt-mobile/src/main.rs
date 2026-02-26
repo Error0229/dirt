@@ -23,6 +23,8 @@ mod launch;
 #[cfg(any(target_os = "android", test))]
 mod media_api;
 #[cfg(any(target_os = "android", test))]
+mod paths;
+#[cfg(any(target_os = "android", test))]
 mod secret_store;
 #[cfg(any(target_os = "android", test))]
 mod sync_auth;

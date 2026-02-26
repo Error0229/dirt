@@ -199,7 +199,6 @@ fn AppShell() -> Element {
             let bootstrap_config = resolve_bootstrap_config(bootstrap_config).await;
             let _db_init_retry_version = db_init_retry_version();
             let runtime_config = load_runtime_config();
-            let runtime_has_sync_url = runtime_config.has_sync_url();
             turso_database_url_input.set(
                 runtime_config
                     .turso_database_url
@@ -262,17 +261,19 @@ fn AppShell() -> Element {
                 }
             }
 
-            if runtime_has_sync_url {
-                if sync_auth_client.read().is_some() && auth_session().is_none() {
-                    if let Err(error) =
-                        secret_store::delete_secret(secret_store::SECRET_TURSO_AUTH_TOKEN)
-                    {
-                        tracing::warn!(
-                            "Failed to clear stale managed sync token without active session: {}",
-                            error
-                        );
-                    }
+            let managed_sync_enabled =
+                sync_auth_client.read().is_some() && runtime_config.has_sync_url();
+            if managed_sync_enabled && auth_session().is_none() {
+                if let Err(error) =
+                    secret_store::delete_secret(secret_store::SECRET_TURSO_AUTH_TOKEN)
+                {
+                    tracing::warn!(
+                        "Failed to clear stale managed sync token without active session: {}",
+                        error
+                    );
                 }
+            }
+            if managed_sync_enabled {
                 match refresh_managed_sync_token(
                     sync_auth_client.read().clone(),
                     auth_session(),
@@ -282,6 +283,13 @@ fn AppShell() -> Element {
                 {
                     Ok(Some(token)) => {
                         sync_token_expires_at.set(Some(token.expires_at));
+                        let runtime_config = load_runtime_config();
+                        turso_database_url_input.set(
+                            runtime_config
+                                .turso_database_url
+                                .clone()
+                                .unwrap_or_default(),
+                        );
                         resolved_sync_config = resolve_sync_config();
                         active_sync_source.set(resolved_sync_config.source);
                     }
@@ -733,25 +741,36 @@ fn AppShell() -> Element {
                     auth_password_input.set(String::new());
                     status_message.set(Some(format!("Signed in as {session_email}")));
 
-                    match refresh_managed_sync_token(
-                        sync_auth_client.read().clone(),
-                        Some(session),
-                        &mut status_message,
-                    )
-                    .await
-                    {
-                        Ok(Some(token)) => {
-                            sync_token_expires_at.set(Some(token.expires_at));
-                            status_message.set(Some(
-                                "Signed in and refreshed sync credentials.".to_string(),
-                            ));
-                            db_init_retry_version.set(db_init_retry_version() + 1);
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            status_message.set(Some(format!(
-                                "Signed in, but sync token refresh failed: {error}"
-                            )));
+                    let managed_sync_enabled =
+                        sync_auth_client.read().is_some() && load_runtime_config().has_sync_url();
+                    if managed_sync_enabled {
+                        match refresh_managed_sync_token(
+                            sync_auth_client.read().clone(),
+                            Some(session),
+                            &mut status_message,
+                        )
+                        .await
+                        {
+                            Ok(Some(token)) => {
+                                sync_token_expires_at.set(Some(token.expires_at));
+                                let runtime_config = load_runtime_config();
+                                turso_database_url_input.set(
+                                    runtime_config
+                                        .turso_database_url
+                                        .clone()
+                                        .unwrap_or_default(),
+                                );
+                                status_message.set(Some(
+                                    "Signed in and refreshed sync credentials.".to_string(),
+                                ));
+                                db_init_retry_version.set(db_init_retry_version() + 1);
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                status_message.set(Some(format!(
+                                    "Signed in, but sync token refresh failed: {error}"
+                                )));
+                            }
                         }
                     }
 
@@ -800,25 +819,36 @@ fn AppShell() -> Element {
                     auth_password_input.set(String::new());
                     status_message.set(Some(format!("Signed up and signed in as {session_email}")));
 
-                    match refresh_managed_sync_token(
-                        sync_auth_client.read().clone(),
-                        Some(session),
-                        &mut status_message,
-                    )
-                    .await
-                    {
-                        Ok(Some(token)) => {
-                            sync_token_expires_at.set(Some(token.expires_at));
-                            status_message.set(Some(
-                                "Signed up and refreshed sync credentials.".to_string(),
-                            ));
-                            db_init_retry_version.set(db_init_retry_version() + 1);
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            status_message.set(Some(format!(
-                                "Signed up, but sync token refresh failed: {error}"
-                            )));
+                    let managed_sync_enabled =
+                        sync_auth_client.read().is_some() && load_runtime_config().has_sync_url();
+                    if managed_sync_enabled {
+                        match refresh_managed_sync_token(
+                            sync_auth_client.read().clone(),
+                            Some(session),
+                            &mut status_message,
+                        )
+                        .await
+                        {
+                            Ok(Some(token)) => {
+                                sync_token_expires_at.set(Some(token.expires_at));
+                                let runtime_config = load_runtime_config();
+                                turso_database_url_input.set(
+                                    runtime_config
+                                        .turso_database_url
+                                        .clone()
+                                        .unwrap_or_default(),
+                                );
+                                status_message.set(Some(
+                                    "Signed up and refreshed sync credentials.".to_string(),
+                                ));
+                                db_init_retry_version.set(db_init_retry_version() + 1);
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                status_message.set(Some(format!(
+                                    "Signed up, but sync token refresh failed: {error}"
+                                )));
+                            }
                         }
                     }
                 }
@@ -2884,7 +2914,10 @@ fn mobile_provisioning_status(
     let (sync_status, sync_action) = if !diagnostics.runtime_sync_url_configured {
         (
             "Local-only".to_string(),
-            Some("Add your Turso URL in Sync settings to enable cloud sync.".to_string()),
+            Some(
+                "Remote sync is optional. Add a Turso URL in Sync settings to enable it."
+                    .to_string(),
+            ),
         )
     } else if !diagnostics.managed_sync_endpoint_configured {
         (
@@ -2985,6 +3018,21 @@ async fn refresh_managed_sync_token(
         .exchange_token(&session.access_token)
         .await
         .map_err(|error| error.to_string())?;
+
+    if let Some(database_url) = token.database_url.as_deref() {
+        let current = load_runtime_config();
+        let current_url = current
+            .turso_database_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if current_url != Some(database_url) {
+            let config = MobileRuntimeConfig::from_raw(Some(database_url.to_string()));
+            save_runtime_config(&config)
+                .map_err(|error| format!("Failed to persist managed sync URL: {error}"))?;
+        }
+    }
+
     secret_store::write_secret(secret_store::SECRET_TURSO_AUTH_TOKEN, &token.token)
         .map_err(|error| format!("Failed to persist managed sync token: {error}"))?;
     Ok(Some(token))
@@ -3266,5 +3314,19 @@ mod tests {
         assert!(status.auth_action.is_none());
         assert!(status.sync_action.is_none());
         assert!(status.media_action.is_none());
+    }
+
+    #[test]
+    fn provisioning_status_prefers_local_only_without_runtime_sync_url() {
+        let mut diagnostics = diagnostics_fixture();
+        diagnostics.runtime_sync_url_configured = false;
+        let status =
+            mobile_provisioning_status(&diagnostics, None, MobileSyncState::Offline, false);
+
+        assert_eq!(status.sync_status, "Local-only");
+        assert_eq!(
+            status.sync_action.as_deref(),
+            Some("Remote sync is optional. Add a Turso URL in Sync settings to enable it.")
+        );
     }
 }

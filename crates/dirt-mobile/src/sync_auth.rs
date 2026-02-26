@@ -1,207 +1,50 @@
 //! Managed Turso sync token exchange client for mobile.
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
-use std::fmt;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use reqwest::{Client, StatusCode};
-use serde::Deserialize;
-use thiserror::Error;
-
 use crate::bootstrap_config::MobileBootstrapConfig;
 
-/// Short-lived Turso sync token minted by backend auth exchange.
-#[derive(Clone, PartialEq, Eq)]
-pub struct SyncToken {
-    pub token: String,
-    pub expires_at: i64,
-}
-
-impl fmt::Debug for SyncToken {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("SyncToken")
-            .field("token", &"[REDACTED]")
-            .field("expires_at", &self.expires_at)
-            .finish()
-    }
-}
-
-#[derive(Debug, Error)]
-pub enum SyncAuthError {
-    #[error("Invalid sync auth configuration: {0}")]
-    InvalidConfiguration(&'static str),
-    #[error("Sync auth HTTP request failed: {0}")]
-    Http(#[from] reqwest::Error),
-    #[error("Sync auth API error: {0}")]
-    Api(String),
-}
-
-type SyncAuthResult<T> = Result<T, SyncAuthError>;
+pub type SyncAuthError = dirt_core::sync::SyncAuthError;
+pub type SyncToken = dirt_core::sync::SyncToken;
 
 #[derive(Clone)]
 pub struct TursoSyncAuthClient {
-    endpoint: String,
-    client: Client,
+    inner: dirt_core::sync::TursoSyncAuthClient,
 }
 
 impl TursoSyncAuthClient {
-    /// Create a token exchange client from bootstrap config.
-    pub fn new_from_bootstrap(config: &MobileBootstrapConfig) -> SyncAuthResult<Option<Self>> {
+    pub fn new_from_bootstrap(
+        config: &MobileBootstrapConfig,
+    ) -> Result<Option<Self>, SyncAuthError> {
         let Some(endpoint) = config.turso_sync_token_endpoint.clone() else {
             return Ok(None);
         };
         Ok(Some(Self::new(endpoint)?))
     }
 
-    /// Create a token exchange client from `TURSO_SYNC_TOKEN_ENDPOINT`.
-    pub fn new_from_env() -> SyncAuthResult<Option<Self>> {
+    pub fn new_from_env() -> Result<Option<Self>, SyncAuthError> {
         let Some(endpoint) = std::env::var("TURSO_SYNC_TOKEN_ENDPOINT").ok() else {
             return Ok(None);
         };
         Ok(Some(Self::new(endpoint)?))
     }
 
-    /// Create a token exchange client with explicit endpoint.
-    pub fn new(endpoint: impl Into<String>) -> SyncAuthResult<Self> {
-        let endpoint = endpoint.into();
-        let endpoint = normalize_endpoint(&endpoint)?;
-        let client = Client::builder().build()?;
-        Ok(Self { endpoint, client })
-    }
-
-    /// Exchange a Supabase access token for a short-lived Turso auth token.
-    pub async fn exchange_token(&self, supabase_access_token: &str) -> SyncAuthResult<SyncToken> {
-        let supabase_access_token = supabase_access_token.trim();
-        if supabase_access_token.is_empty() {
-            return Err(SyncAuthError::InvalidConfiguration(
-                "Supabase access token must not be empty",
-            ));
-        }
-
-        let response = self
-            .client
-            .post(&self.endpoint)
-            .bearer_auth(supabase_access_token)
-            .header("Accept", "application/json")
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(SyncAuthError::Api(parse_api_error(status, &body)));
-        }
-
-        let payload = response.json::<SyncTokenResponse>().await?;
-        let token = payload
-            .auth_token
-            .or(payload.token)
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                SyncAuthError::Api("Sync token response did not include a token".to_string())
-            })?;
-
-        let expires_at = payload
-            .expires_at
-            .or_else(|| {
-                payload
-                    .expires_in
-                    .map(|expires_in| unix_timestamp_now().saturating_add(expires_in))
-            })
-            .ok_or_else(|| {
-                SyncAuthError::Api("Sync token response did not include expiration".to_string())
-            })?;
-
-        Ok(SyncToken { token, expires_at })
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct SyncTokenResponse {
-    auth_token: Option<String>,
-    token: Option<String>,
-    expires_at: Option<i64>,
-    expires_in: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SyncAuthErrorBody {
-    error: Option<String>,
-    message: Option<String>,
-}
-
-fn parse_api_error(status: StatusCode, body: &str) -> String {
-    if let Ok(payload) = serde_json::from_str::<SyncAuthErrorBody>(body) {
-        if let Some(message) = payload.message.or(payload.error) {
-            return format!("{} ({})", message.trim(), status.as_u16());
-        }
-    }
-    let trimmed = body.trim();
-    if trimmed.is_empty() {
-        format!("HTTP {}", status.as_u16())
-    } else {
-        format!("{} ({})", trimmed, status.as_u16())
-    }
-}
-
-fn normalize_endpoint(endpoint: &str) -> SyncAuthResult<String> {
-    let endpoint = endpoint.trim().trim_end_matches('/').to_string();
-    if endpoint.is_empty() {
-        return Err(SyncAuthError::InvalidConfiguration(
-            "TURSO_SYNC_TOKEN_ENDPOINT must not be empty",
-        ));
-    }
-    if !(endpoint.starts_with("https://") || endpoint.starts_with("http://")) {
-        return Err(SyncAuthError::InvalidConfiguration(
-            "TURSO_SYNC_TOKEN_ENDPOINT must include http:// or https://",
-        ));
-    }
-    Ok(endpoint)
-}
-
-fn unix_timestamp_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| {
-            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
+    pub fn new(endpoint: impl Into<String>) -> Result<Self, SyncAuthError> {
+        Ok(Self {
+            inner: dirt_core::sync::TursoSyncAuthClient::new(endpoint)?,
         })
+    }
+
+    pub async fn exchange_token(
+        &self,
+        supabase_access_token: &str,
+    ) -> Result<SyncToken, SyncAuthError> {
+        self.inner.exchange_token(supabase_access_token).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bootstrap_config::MobileBootstrapConfig;
-
-    #[test]
-    fn normalize_endpoint_rejects_empty() {
-        let error = normalize_endpoint("  ").unwrap_err();
-        assert!(error.to_string().contains("must not be empty"));
-    }
-
-    #[test]
-    fn normalize_endpoint_rejects_missing_scheme() {
-        let error = normalize_endpoint("example.com/token").unwrap_err();
-        assert!(error.to_string().contains("http:// or https://"));
-    }
-
-    #[test]
-    fn normalize_endpoint_trims_trailing_slash() {
-        let normalized = normalize_endpoint("https://example.com/token/").unwrap();
-        assert_eq!(normalized, "https://example.com/token");
-    }
-
-    #[test]
-    fn sync_token_debug_redacts_token() {
-        let token = SyncToken {
-            token: "sensitive-token".to_string(),
-            expires_at: 1_700_000_000,
-        };
-        let debug_output = format!("{token:?}");
-        assert!(!debug_output.contains("sensitive-token"));
-        assert!(debug_output.contains("[REDACTED]"));
-    }
 
     #[test]
     fn new_from_bootstrap_returns_none_when_missing_endpoint() {
@@ -209,5 +52,17 @@ mod tests {
         assert!(TursoSyncAuthClient::new_from_bootstrap(&config)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn sync_token_debug_redacts_token() {
+        let token = SyncToken {
+            token: "sensitive-token".to_string(),
+            expires_at: 1_700_000_000,
+            database_url: Some("libsql://db.turso.io".to_string()),
+        };
+        let debug_output = format!("{token:?}");
+        assert!(!debug_output.contains("sensitive-token"));
+        assert!(debug_output.contains("[REDACTED]"));
     }
 }
