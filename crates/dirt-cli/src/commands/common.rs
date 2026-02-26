@@ -5,7 +5,8 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
-use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository, SyncConfig};
+use dirt_core::db::SyncConfig;
+use dirt_core::services::DatabaseService;
 use dirt_core::{Note, NoteId, SyncConflict};
 use serde::Serialize;
 
@@ -42,12 +43,10 @@ pub async fn list_notes(
     db_path: &Path,
 ) -> Result<Vec<Note>, CliError> {
     let db = open_database(db_path).await?;
-    let repo = LibSqlNoteRepository::new(db.connection());
-
     if let Some(tag_name) = tag {
-        Ok(repo.list_by_tag(tag_name, limit, 0).await?)
+        Ok(db.list_notes_by_tag(tag_name, limit, 0).await?)
     } else {
-        Ok(repo.list(limit, 0).await?)
+        Ok(db.list_notes(limit, 0).await?)
     }
 }
 
@@ -55,13 +54,12 @@ pub async fn list_all_notes(db_path: &Path) -> Result<Vec<Note>, CliError> {
     const PAGE_SIZE: usize = 500;
 
     let db = open_database(db_path).await?;
-    let repo = LibSqlNoteRepository::new(db.connection());
 
     let mut notes = Vec::new();
     let mut offset = 0usize;
 
     loop {
-        let batch = repo.list(PAGE_SIZE, offset).await?;
+        let batch = db.list_notes(PAGE_SIZE, offset).await?;
         let count = batch.len();
         notes.extend(batch);
 
@@ -80,8 +78,7 @@ pub async fn search_notes(
     db_path: &Path,
 ) -> Result<Vec<Note>, CliError> {
     let db = open_database(db_path).await?;
-    let repo = LibSqlNoteRepository::new(db.connection());
-    Ok(repo.search(query, limit).await?)
+    Ok(db.search_notes(query, limit).await?)
 }
 
 pub async fn list_sync_conflicts(
@@ -89,36 +86,20 @@ pub async fn list_sync_conflicts(
     db_path: &Path,
 ) -> Result<Vec<SyncConflict>, CliError> {
     let db = open_database(db_path).await?;
-    let repo = LibSqlNoteRepository::new(db.connection());
-    Ok(repo.list_conflicts(limit).await?)
+    Ok(db.list_conflicts(limit).await?)
 }
 
-pub async fn resolve_note_for_edit(note_query: &str, db: &Database) -> Result<Note, CliError> {
-    let repo = LibSqlNoteRepository::new(db.connection());
-
+pub async fn resolve_note_for_edit(
+    note_query: &str,
+    db: &DatabaseService,
+) -> Result<Note, CliError> {
     if let Ok(note_id) = note_query.parse::<NoteId>() {
-        if let Some(note) = repo.get(&note_id).await? {
+        if let Some(note) = db.get_note(&note_id).await? {
             return Ok(note);
         }
     }
 
-    let mut rows = db
-        .connection()
-        .query(
-            "SELECT id
-             FROM notes
-             WHERE is_deleted = 0 AND id LIKE ?
-             ORDER BY updated_at DESC
-             LIMIT ?",
-            libsql::params![format!("{note_query}%"), 3i64],
-        )
-        .await?;
-
-    let mut matching_ids = Vec::new();
-    while let Some(row) = rows.next().await? {
-        let id: String = row.get(0)?;
-        matching_ids.push(id);
-    }
+    let matching_ids = db.list_note_ids_by_prefix(note_query, 3).await?;
 
     match matching_ids.len() {
         0 => Err(CliError::NoteNotFound(note_query.to_string())),
@@ -126,7 +107,7 @@ pub async fn resolve_note_for_edit(note_query: &str, db: &Database) -> Result<No
             let resolved_id = matching_ids[0]
                 .parse::<NoteId>()
                 .map_err(|_| CliError::NoteNotFound(note_query.to_string()))?;
-            repo.get(&resolved_id)
+            db.get_note(&resolved_id)
                 .await?
                 .ok_or_else(|| CliError::NoteNotFound(note_query.to_string()))
         }
@@ -417,18 +398,18 @@ impl OpenDatabaseMode {
     }
 }
 
-pub async fn open_database(path: &Path) -> Result<Database, CliError> {
+pub async fn open_database(path: &Path) -> Result<DatabaseService, CliError> {
     open_database_with_mode(path, OpenDatabaseMode::Standard).await
 }
 
-pub async fn open_sync_database(path: &Path) -> Result<Database, CliError> {
+pub async fn open_sync_database(path: &Path) -> Result<DatabaseService, CliError> {
     open_database_with_mode(path, OpenDatabaseMode::RequireSync).await
 }
 
 async fn open_database_with_mode(
     path: &Path,
     mode: OpenDatabaseMode,
-) -> Result<Database, CliError> {
+) -> Result<DatabaseService, CliError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -436,23 +417,9 @@ async fn open_database_with_mode(
     let sync_config = sync_config_from_profile(mode).await?;
 
     if let Some(sync_config) = sync_config {
-        let path_buf = path.to_path_buf();
-        let db = std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(move || {
-                let runtime = tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|error| dirt_core::Error::Database(error.to_string()))?;
-                runtime.block_on(Database::open_with_sync(&path_buf, sync_config))
-            })
-            .map_err(|error| CliError::DatabaseInit(error.to_string()))?
-            .join()
-            .map_err(|_| CliError::DatabaseInit("sync initialization thread panicked".into()))??;
-
-        Ok(db)
+        Ok(DatabaseService::open_sync_path(path.to_path_buf(), sync_config).await?)
     } else {
-        Ok(Database::open(path).await?)
+        Ok(DatabaseService::open_local_path(path.to_path_buf()).await?)
     }
 }
 

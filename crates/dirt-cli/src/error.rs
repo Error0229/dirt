@@ -26,8 +26,6 @@ pub enum CliError {
     AmbiguousNoteId(String),
     #[error("Editor command failed: {0}")]
     EditorFailed(String),
-    #[error("Database initialization failed: {0}")]
-    DatabaseInit(String),
     #[error("Configuration error: {0}")]
     Config(String),
     #[error("Authentication error: {0}")]

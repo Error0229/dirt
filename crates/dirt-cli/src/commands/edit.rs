@@ -1,7 +1,5 @@
 use std::path::Path;
 
-use dirt_core::db::{LibSqlNoteRepository, NoteRepository};
-
 use crate::commands::common::{
     capture_editor_input_with_initial, normalize_note_identifier, open_database,
     resolve_note_for_edit,
@@ -22,8 +20,7 @@ pub async fn run_edit(id: &str, db_path: &Path) -> Result<(), CliError> {
         return Ok(());
     }
 
-    let repo = LibSqlNoteRepository::new(db.connection());
-    let updated = repo.update(&note.id, &edited_content).await?;
+    let updated = db.update_note(&note.id, &edited_content).await?;
     println!("{}", updated.id);
     Ok(())
 }

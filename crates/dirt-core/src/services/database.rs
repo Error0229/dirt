@@ -221,6 +221,31 @@ impl DatabaseService {
         repo.get(id).await
     }
 
+    /// Find recent non-deleted note IDs by id prefix.
+    pub async fn list_note_ids_by_prefix(&self, prefix: &str, limit: usize) -> Result<Vec<String>> {
+        let limit = i64::try_from(limit).map_or(i64::MAX, |value| value);
+        let db = self.db.lock().await;
+        let mut rows = db
+            .connection()
+            .query(
+                "SELECT id
+                 FROM notes
+                 WHERE is_deleted = 0 AND id LIKE ?
+                 ORDER BY updated_at DESC
+                 LIMIT ?",
+                libsql::params![format!("{prefix}%"), limit],
+            )
+            .await?;
+
+        let mut matching_ids = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let id: String = row.get(0)?;
+            matching_ids.push(id);
+        }
+
+        Ok(matching_ids)
+    }
+
     /// Create a new note.
     pub async fn create_note(&self, content: &str) -> Result<Note> {
         let db = self.db.lock().await;

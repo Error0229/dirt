@@ -41,13 +41,7 @@ pub fn default_config_path() -> PathBuf {
 }
 
 pub fn normalize_text_option(value: Option<String>) -> Option<String> {
-    let value = value?;
-    let value = value.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
+    dirt_core::util::normalize_text_option(value)
 }
 
 pub fn normalize_profile_name(value: Option<&str>) -> Option<String> {
