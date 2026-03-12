@@ -58,22 +58,23 @@ impl DatabaseService {
 
     async fn open_database(db_path: PathBuf, sync_config: Option<SyncConfig>) -> Result<Database> {
         if let Some(config) = sync_config {
-            Self::open_database_with_sync_recovery(db_path, config)
+            Self::open_database_with_sync_recovery(&db_path, config)
         } else {
             tracing::info!("Running in local-only mode (no sync config)");
             Database::open(&db_path).await
         }
     }
 
+    #[allow(clippy::cognitive_complexity)]
     fn open_database_with_sync_recovery(
-        db_path: PathBuf,
+        db_path: &Path,
         sync_config: SyncConfig,
     ) -> Result<Database> {
         tracing::info!(
             "Sync enabled with Turso: {}",
             sync_config.url.as_deref().unwrap_or("unknown")
         );
-        match Self::open_database_with_sync_thread(db_path.clone(), sync_config.clone()) {
+        match Self::open_database_with_sync_thread(db_path.to_path_buf(), sync_config.clone()) {
             Ok(db) => Ok(db),
             Err(error) if Self::is_recoverable_local_replica_error(&error) => {
                 tracing::warn!(
@@ -81,14 +82,14 @@ impl DatabaseService {
                     db_path.display(),
                     error
                 );
-                match Self::quarantine_corrupted_db_files(&db_path) {
+                match Self::quarantine_corrupted_db_files(db_path) {
                     Ok(()) => match Self::open_database_with_sync_thread(
-                        db_path.clone(),
+                        db_path.to_path_buf(),
                         sync_config.clone(),
                     ) {
                         Ok(db) => Ok(db),
                         Err(retry_error) if Self::is_file_in_use_error(&retry_error) => {
-                            let fallback_path = Self::sync_replica_fallback_path(&db_path);
+                            let fallback_path = Self::sync_replica_fallback_path(db_path);
                             tracing::warn!(
                                 "Primary replica file is locked at {} ({}). Switching sync replica to {}.",
                                 db_path.display(),
@@ -100,7 +101,7 @@ impl DatabaseService {
                         Err(retry_error) => Err(retry_error),
                     },
                     Err(quarantine_error) if Self::is_file_in_use_error(&quarantine_error) => {
-                        let fallback_path = Self::sync_replica_fallback_path(&db_path);
+                        let fallback_path = Self::sync_replica_fallback_path(db_path);
                         tracing::warn!(
                             "Primary replica file is locked at {} ({}). Switching sync replica to {}.",
                             db_path.display(),

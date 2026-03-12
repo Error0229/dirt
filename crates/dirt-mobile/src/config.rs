@@ -53,18 +53,18 @@ impl MobileRuntimeConfig {
     }
 }
 
-pub(crate) fn default_mobile_data_directory() -> PathBuf {
-    dirs::data_local_dir()
-        .or_else(dirs::data_dir)
-        .map(|dir| dir.join("dirt"))
-        .unwrap_or_else(|| {
+pub fn default_mobile_data_directory() -> PathBuf {
+    dirs::data_local_dir().or_else(dirs::data_dir).map_or_else(
+        || {
             let fallback = fallback_mobile_data_directory();
             tracing::warn!(
                 "Failed to resolve mobile data directory from OS defaults; falling back to {}",
                 fallback.display()
             );
             fallback
-        })
+        },
+        |dir| dir.join("dirt"),
+    )
 }
 
 pub fn default_runtime_config_path() -> PathBuf {

@@ -181,6 +181,7 @@ impl<S: SessionPersistence> SupabaseAuthService<S> {
     }
 
     /// Restore session from secure storage. If expired, refresh automatically.
+    #[allow(clippy::cognitive_complexity)]
     pub async fn restore_session(&self) -> AuthResult<Option<AuthSession>> {
         let Some(stored_session) = self.session_store.load()? else {
             tracing::info!("No persisted auth session found in secure storage");
@@ -201,7 +202,10 @@ impl<S: SessionPersistence> SupabaseAuthService<S> {
         tracing::info!("Persisted session has expired, attempting token refresh");
         match self.refresh_session(&stored_session.refresh_token).await {
             Ok(refreshed) => {
-                tracing::info!("Session refresh succeeded, new expires_at={}", refreshed.expires_at);
+                tracing::info!(
+                    "Session refresh succeeded, new expires_at={}",
+                    refreshed.expires_at
+                );
                 self.session_store.save(&refreshed)?;
                 Ok(Some(refreshed))
             }

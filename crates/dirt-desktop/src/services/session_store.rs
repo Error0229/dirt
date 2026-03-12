@@ -59,7 +59,7 @@ impl KeyringSessionStore {
                     }
                     return Ok(Some(session));
                 }
-                Err(keyring::Error::NoEntry) => continue,
+                Err(keyring::Error::NoEntry) => {}
                 Err(error) => return Err(AuthError::SecureStorage(error.to_string())),
             }
         }
@@ -69,6 +69,7 @@ impl KeyringSessionStore {
 }
 
 impl SessionPersistence for KeyringSessionStore {
+    #[allow(clippy::cognitive_complexity)]
     fn load(&self) -> AuthResult<Option<AuthSession>> {
         tracing::debug!(
             "Loading session from keyring (service={}, user={})",
@@ -162,7 +163,9 @@ mod tests {
         store.clear().expect("keyring clear should succeed");
 
         // Verify cleared
-        let after_clear = store.load().expect("keyring load after clear should succeed");
+        let after_clear = store
+            .load()
+            .expect("keyring load after clear should succeed");
         assert!(after_clear.is_none());
     }
 }

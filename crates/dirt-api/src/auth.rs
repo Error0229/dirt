@@ -248,7 +248,7 @@ fn parse_jwks_keys(payload: JwkSet) -> Result<HashMap<String, DecodingKey>, AppE
     Ok(out)
 }
 
-fn is_supported_verification_algorithm(algorithm: Algorithm) -> bool {
+const fn is_supported_verification_algorithm(algorithm: Algorithm) -> bool {
     matches!(
         algorithm,
         Algorithm::RS256

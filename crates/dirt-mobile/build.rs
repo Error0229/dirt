@@ -87,11 +87,21 @@ fn write_mobile_bootstrap_config() -> io::Result<()> {
     fs::create_dir_all(&out_dir)?;
 
     let dirt_api_base_url = env_var_trimmed("DIRT_MOBILE_API_BASE_URL")
+        .as_deref()
         .map(normalize_android_emulator_base_url)
-        .or_else(|| env_var_trimmed("DIRT_API_BASE_URL").map(normalize_android_emulator_base_url));
+        .or_else(|| {
+            env_var_trimmed("DIRT_API_BASE_URL")
+                .as_deref()
+                .map(normalize_android_emulator_base_url)
+        });
     let bootstrap_manifest_url = env_var_trimmed("DIRT_MOBILE_BOOTSTRAP_URL")
+        .as_deref()
         .map(normalize_android_emulator_base_url)
-        .or_else(|| env_var_trimmed("DIRT_BOOTSTRAP_URL").map(normalize_android_emulator_base_url))
+        .or_else(|| {
+            env_var_trimmed("DIRT_BOOTSTRAP_URL")
+                .as_deref()
+                .map(normalize_android_emulator_base_url)
+        })
         .or_else(|| {
             dirt_api_base_url
                 .as_deref()
@@ -135,7 +145,7 @@ fn env_var_trimmed(name: &str) -> Option<String> {
     }
 }
 
-fn normalize_android_emulator_base_url(raw: String) -> String {
+fn normalize_android_emulator_base_url(raw: &str) -> String {
     raw.trim()
         .trim_end_matches('/')
         .replace("://127.0.0.1", "://10.0.2.2")

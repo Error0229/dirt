@@ -15,19 +15,26 @@ pub fn load_bootstrap_config() -> BootstrapConfig {
 }
 
 fn normalize_desktop_bootstrap(mut config: BootstrapConfig) -> BootstrapConfig {
-    config.bootstrap_manifest_url = normalize_desktop_url(config.bootstrap_manifest_url);
-    config.turso_sync_token_endpoint = normalize_desktop_url(config.turso_sync_token_endpoint);
-    config.dirt_api_base_url = normalize_desktop_url(config.dirt_api_base_url);
+    config.bootstrap_manifest_url = config
+        .bootstrap_manifest_url
+        .as_deref()
+        .map(normalize_desktop_url);
+    config.turso_sync_token_endpoint = config
+        .turso_sync_token_endpoint
+        .as_deref()
+        .map(normalize_desktop_url);
+    config.dirt_api_base_url = config
+        .dirt_api_base_url
+        .as_deref()
+        .map(normalize_desktop_url);
     config
 }
 
-fn normalize_desktop_url(value: Option<String>) -> Option<String> {
-    value.map(|raw| {
-        raw.trim()
-            .trim_end_matches('/')
-            .replace("://10.0.2.2", "://127.0.0.1")
-            .replace("://localhost", "://127.0.0.1")
-    })
+fn normalize_desktop_url(raw: &str) -> String {
+    raw.trim()
+        .trim_end_matches('/')
+        .replace("://10.0.2.2", "://127.0.0.1")
+        .replace("://localhost", "://127.0.0.1")
 }
 
 #[cfg(test)]
