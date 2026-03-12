@@ -3,9 +3,6 @@
 use crate::error::Result;
 use libsql::Connection;
 
-/// Current schema version
-const CURRENT_VERSION: i32 = 3;
-
 /// Run all pending migrations
 pub async fn run(conn: &Connection) -> Result<()> {
     let version = get_version(conn).await?;
@@ -183,7 +180,7 @@ async fn migrate_v2(conn: &Connection) -> Result<()> {
         return Err(e.into());
     }
 
-    tracing::info!("Migrated database to version {CURRENT_VERSION}");
+    tracing::info!("Migrated database to version 2");
     Ok(())
 }
 
@@ -220,7 +217,7 @@ async fn migrate_v3(conn: &Connection) -> Result<()> {
         return Err(e.into());
     }
 
-    tracing::info!("Migrated database to version {CURRENT_VERSION}");
+    tracing::info!("Migrated database to version 3");
     Ok(())
 }
 
@@ -240,7 +237,7 @@ mod tests {
         run(&conn).await.unwrap();
 
         let version = get_version(&conn).await.unwrap();
-        assert_eq!(version, CURRENT_VERSION);
+        assert_eq!(version, 3);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -250,7 +247,7 @@ mod tests {
         run(&conn).await.unwrap(); // Should not fail
 
         let version = get_version(&conn).await.unwrap();
-        assert_eq!(version, CURRENT_VERSION);
+        assert_eq!(version, 3);
     }
 
     #[tokio::test(flavor = "multi_thread")]

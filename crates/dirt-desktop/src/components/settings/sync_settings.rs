@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 
 use super::row::SettingRow;
 use crate::components::button::{Button, ButtonVariant};
+use crate::state::SyncStatus;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct SyncConflictView {
@@ -13,6 +14,8 @@ pub(super) struct SyncConflictView {
 
 #[component]
 pub(super) fn SyncSettingsTab(
+    sync_status: SyncStatus,
+    sync_issue: Option<String>,
     pending_sync_count: usize,
     pending_sync_preview: String,
     sync_conflicts: Vec<SyncConflictView>,
@@ -21,6 +24,25 @@ pub(super) fn SyncSettingsTab(
     on_refresh_sync_conflicts: EventHandler<MouseEvent>,
 ) -> Element {
     rsx! {
+        SettingRow {
+            label: "Sync Health",
+            description: "Current cloud sync runtime status",
+
+            div {
+                class: "auth-panel",
+                div {
+                    class: "auth-hint",
+                    "Status: {sync_status_label(sync_status)}"
+                }
+                if let Some(issue) = sync_issue {
+                    div {
+                        class: "auth-error",
+                        "{issue}"
+                    }
+                }
+            }
+        }
+
         SettingRow {
             label: "Offline Queue",
             description: "Pending local changes waiting for sync",
@@ -96,5 +118,14 @@ pub(super) fn SyncSettingsTab(
                 }
             }
         }
+    }
+}
+
+const fn sync_status_label(status: SyncStatus) -> &'static str {
+    match status {
+        SyncStatus::Synced => "Synced",
+        SyncStatus::Syncing => "Syncing",
+        SyncStatus::Offline => "Offline",
+        SyncStatus::Error => "Error",
     }
 }

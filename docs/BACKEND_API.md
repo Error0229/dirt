@@ -74,7 +74,8 @@ Use server environment variables (see `.env.server.example`):
   - `TURSO_ORGANIZATION_SLUG`
   - `TURSO_DATABASE_NAME`
   - `TURSO_DATABASE_URL`
-  - `TURSO_PLATFORM_API_TOKEN` (server-only secret)
+  - `TURSO_PLATFORM_API_TOKEN` (server-only secret, preferred)
+  - `TURSO_AUTH_TOKEN` (dev fallback; used only when platform minting is unavailable)
 - Hardening/rate limits:
   - `AUTH_CLOCK_SKEW_SECS` (default `60`)
   - `RATE_LIMIT_WINDOW_SECS` (default `60`)
@@ -93,6 +94,7 @@ cargo run -p dirt-api
 ```
 
 Default bind address: `127.0.0.1:8080`.
+For Android emulator testing with `http://10.0.2.2:8080`, bind to `0.0.0.0:8080` (for example `make run-api`).
 
 ## Operational requirements
 

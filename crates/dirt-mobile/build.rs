@@ -30,8 +30,12 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SUPABASE_URL");
     println!("cargo:rerun-if-env-changed=SUPABASE_ANON_KEY");
     println!("cargo:rerun-if-env-changed=TURSO_SYNC_TOKEN_ENDPOINT");
+    println!("cargo:rerun-if-env-changed=DIRT_MOBILE_API_BASE_URL");
+    println!("cargo:rerun-if-env-changed=DIRT_MOBILE_BOOTSTRAP_URL");
     println!("cargo:rerun-if-env-changed=DIRT_API_BASE_URL");
     println!("cargo:rerun-if-env-changed=DIRT_BOOTSTRAP_URL");
+    println!("cargo:rerun-if-changed=../../.env.client");
+    println!("cargo:rerun-if-changed=../../.env.client.example");
 
     if let Err(error) = write_mobile_bootstrap_config() {
         println!("cargo:warning=failed to generate mobile bootstrap config: {error}");
@@ -82,12 +86,17 @@ fn write_mobile_bootstrap_config() -> io::Result<()> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "OUT_DIR is not set"))?;
     fs::create_dir_all(&out_dir)?;
 
-    let dirt_api_base_url = env_var_trimmed("DIRT_API_BASE_URL");
-    let bootstrap_manifest_url = env_var_trimmed("DIRT_BOOTSTRAP_URL").or_else(|| {
-        dirt_api_base_url
-            .as_deref()
-            .map(|value| format!("{}/v1/bootstrap", value.trim_end_matches('/')))
-    });
+    let dirt_api_base_url = env_var_trimmed("DIRT_MOBILE_API_BASE_URL")
+        .map(normalize_android_emulator_base_url)
+        .or_else(|| env_var_trimmed("DIRT_API_BASE_URL").map(normalize_android_emulator_base_url));
+    let bootstrap_manifest_url = env_var_trimmed("DIRT_MOBILE_BOOTSTRAP_URL")
+        .map(normalize_android_emulator_base_url)
+        .or_else(|| env_var_trimmed("DIRT_BOOTSTRAP_URL").map(normalize_android_emulator_base_url))
+        .or_else(|| {
+            dirt_api_base_url
+                .as_deref()
+                .map(|value| format!("{}/v1/bootstrap", value.trim_end_matches('/')))
+        });
 
     let config = MobileBootstrapConfig {
         bootstrap_manifest_url,
@@ -124,4 +133,11 @@ fn env_var_trimmed(name: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn normalize_android_emulator_base_url(raw: String) -> String {
+    raw.trim()
+        .trim_end_matches('/')
+        .replace("://127.0.0.1", "://10.0.2.2")
+        .replace("://localhost", "://10.0.2.2")
 }

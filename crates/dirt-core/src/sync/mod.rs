@@ -89,7 +89,8 @@ impl TursoSyncAuthClient {
             let status = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();
             return Err(SyncAuthError::Api(format!(
-                "HTTP {status}: {}",
+                "POST {} returned HTTP {status}: {}",
+                self.endpoint,
                 compact_text(&body)
             )));
         }
@@ -149,13 +150,23 @@ fn normalize_endpoint(raw: String) -> SyncAuthResult<String> {
     let normalized = normalize_text_option(Some(raw)).ok_or_else(|| {
         SyncAuthError::InvalidConfiguration("endpoint must not be empty".to_string())
     })?;
-    if is_http_url(&normalized) {
-        Ok(normalized.trim_end_matches('/').to_string())
-    } else {
+    if !is_http_url(&normalized) {
         Err(SyncAuthError::InvalidConfiguration(
             "endpoint must include http:// or https://".to_string(),
-        ))
+        ))?;
     }
+
+    let mut endpoint = normalized.trim_end_matches('/').to_string();
+    if let Some(base) = endpoint.strip_suffix("/v1/bootstrap") {
+        let corrected = format!("{base}/v1/sync/token");
+        tracing::warn!(
+            "Sync endpoint pointed at bootstrap manifest; rewriting endpoint to {}",
+            corrected
+        );
+        endpoint = corrected;
+    }
+
+    Ok(endpoint)
 }
 
 #[cfg(test)]
@@ -175,6 +186,12 @@ mod tests {
     #[test]
     fn normalize_endpoint_trims_trailing_slash() {
         let result = normalize_endpoint("https://api.example.com/v1/sync/token/".to_string());
+        assert_eq!(result.unwrap(), "https://api.example.com/v1/sync/token");
+    }
+
+    #[test]
+    fn normalize_endpoint_rewrites_bootstrap_manifest_endpoint() {
+        let result = normalize_endpoint("https://api.example.com/v1/bootstrap".to_string());
         assert_eq!(result.unwrap(), "https://api.example.com/v1/sync/token");
     }
 

@@ -10,6 +10,7 @@ use dirt_core::export::{
 };
 use thiserror::Error;
 
+use crate::config::default_mobile_data_directory;
 use crate::data::MobileNoteStore;
 
 const EXPORT_DIR_NAME: &str = "dirt-exports";
@@ -64,7 +65,8 @@ pub fn default_export_directory() -> PathBuf {
     dirs::download_dir()
         .or_else(dirs::document_dir)
         .or_else(dirs::data_local_dir)
-        .unwrap_or_else(|| panic!("Failed to resolve mobile export directory"))
+        .or_else(dirs::data_dir)
+        .unwrap_or_else(default_mobile_data_directory)
         .join(EXPORT_DIR_NAME)
 }
 

@@ -45,6 +45,8 @@ pub struct AppState {
     pub db_reconnect_version: Signal<u64>,
     /// Current sync status
     pub sync_status: Signal<SyncStatus>,
+    /// Last sync subsystem error shown in settings diagnostics
+    pub sync_issue: Signal<Option<String>>,
     /// Timestamp (unix ms) of the most recent successful sync
     pub last_sync_at: Signal<Option<i64>>,
     /// Count of local changes pending cloud sync

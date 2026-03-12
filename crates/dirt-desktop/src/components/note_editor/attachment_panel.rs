@@ -56,29 +56,31 @@ pub(super) fn AttachmentPanel(
     let mut voice_memo_state = use_signal(VoiceMemoRecorderState::default);
     let mut voice_memo_started_at = use_signal(|| None::<Instant>);
 
-    use_effect(move || {
-        if note_id != *last_note_id.read() {
-            deleting_attachment_id.set(None);
-            let recorder_state = voice_memo_state();
-            let should_discard = matches!(
-                recorder_state,
-                VoiceMemoRecorderState::Starting | VoiceMemoRecorderState::Recording
-            );
-            if recorder_state != VoiceMemoRecorderState::Stopping {
-                voice_memo_state.set(VoiceMemoRecorderState::Idle);
-                voice_memo_started_at.set(None);
-            }
-            if should_discard {
-                spawn(async move {
-                    let _ = discard_voice_memo_recording().await;
-                });
-            }
-            last_note_id.set(note_id);
+    // Sync the note_id prop into a signal so effects can track it reactively.
+    // Props are plain values invisible to Dioxus's reactive system — without
+    // this, effects would never re-run when the user switches notes.
+    if note_id != *last_note_id.peek() {
+        last_note_id.set(note_id);
+        deleting_attachment_id.set(None);
+        let recorder_state = *voice_memo_state.peek();
+        let should_discard = matches!(
+            recorder_state,
+            VoiceMemoRecorderState::Starting | VoiceMemoRecorderState::Recording
+        );
+        if recorder_state != VoiceMemoRecorderState::Stopping {
+            voice_memo_state.set(VoiceMemoRecorderState::Idle);
+            voice_memo_started_at.set(None);
         }
-    });
+        if should_discard {
+            spawn(async move {
+                let _ = discard_voice_memo_recording().await;
+            });
+        }
+    }
 
     use_effect(move || {
         let _refresh = attachment_refresh_version();
+        let current_note_id = last_note_id();
         let request_id = attachment_load_request_id.fetch_add(1, Ordering::SeqCst) + 1;
         let db = state.db_service.read().clone();
         let mut attachment_signal = attachments;
@@ -92,7 +94,7 @@ pub(super) fn AttachmentPanel(
             }
             attachment_error_signal.set(None);
 
-            let Some(note_id) = note_id else {
+            let Some(note_id) = current_note_id else {
                 if request_id_signal.load(Ordering::SeqCst) == request_id {
                     attachment_signal.set(Vec::new());
                     attachment_loading_signal.set(false);
@@ -101,12 +103,9 @@ pub(super) fn AttachmentPanel(
             };
 
             let Some(db) = db else {
-                if request_id_signal.load(Ordering::SeqCst) == request_id {
-                    attachment_signal.set(Vec::new());
-                    attachment_error_signal
-                        .set(Some("Database service is not available.".to_string()));
-                    attachment_loading_signal.set(false);
-                }
+                // DB may be temporarily None during a reconnection cycle.
+                // Keep loading state so the user sees "Loading…" instead of
+                // an error flash; the effect will re-run once the DB returns.
                 return;
             };
 
@@ -120,14 +119,33 @@ pub(super) fn AttachmentPanel(
             }
 
             match load_result {
-                Ok(list) => attachment_signal.set(list),
+                Ok(list) => {
+                    attachment_signal.set(list);
+                    attachment_loading_signal.set(false);
+                }
+                Err(error)
+                    if error
+                        .to_string()
+                        .to_ascii_lowercase()
+                        .contains("file is not a database") =>
+                {
+                    // Corrupted local replica — trigger reconnection and keep
+                    // loading state so the user sees "Loading…" instead of an
+                    // error flash while the DB quarantines and rebuilds.
+                    tracing::warn!(
+                        "Attachment query hit corrupted local replica, triggering DB reconnection"
+                    );
+                    let mut reconnect = state.db_reconnect_version;
+                    let next = *reconnect.peek() + 1;
+                    reconnect.set(next);
+                }
                 Err(error) => {
                     attachment_signal.set(Vec::new());
                     attachment_error_signal
                         .set(Some(format!("Failed to load attachments: {error}")));
+                    attachment_loading_signal.set(false);
                 }
             }
-            attachment_loading_signal.set(false);
         });
     });
 

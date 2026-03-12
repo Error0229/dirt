@@ -16,8 +16,6 @@ use crate::{NoteId, Result};
 #[derive(Clone)]
 pub struct DatabaseService {
     db: Arc<Mutex<Database>>,
-    db_path: Option<PathBuf>,
-    sync_config: Option<SyncConfig>,
 }
 
 impl DatabaseService {
@@ -31,11 +29,9 @@ impl DatabaseService {
             std::fs::create_dir_all(parent)?;
         }
 
-        let db = Self::open_database(db_path.clone(), sync_config.clone()).await?;
+        let db = Self::open_database(db_path, sync_config).await?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
-            db_path: Some(db_path),
-            sync_config,
         })
     }
 
@@ -57,8 +53,6 @@ impl DatabaseService {
         let db = Database::open_in_memory().await?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
-            db_path: None,
-            sync_config: None,
         })
     }
 
@@ -87,8 +81,36 @@ impl DatabaseService {
                     db_path.display(),
                     error
                 );
-                Self::quarantine_corrupted_db_files(&db_path)?;
-                Self::open_database_with_sync_thread(db_path, sync_config)
+                match Self::quarantine_corrupted_db_files(&db_path) {
+                    Ok(()) => match Self::open_database_with_sync_thread(
+                        db_path.clone(),
+                        sync_config.clone(),
+                    ) {
+                        Ok(db) => Ok(db),
+                        Err(retry_error) if Self::is_file_in_use_error(&retry_error) => {
+                            let fallback_path = Self::sync_replica_fallback_path(&db_path);
+                            tracing::warn!(
+                                "Primary replica file is locked at {} ({}). Switching sync replica to {}.",
+                                db_path.display(),
+                                retry_error,
+                                fallback_path.display()
+                            );
+                            Self::open_database_with_sync_thread(fallback_path, sync_config)
+                        }
+                        Err(retry_error) => Err(retry_error),
+                    },
+                    Err(quarantine_error) if Self::is_file_in_use_error(&quarantine_error) => {
+                        let fallback_path = Self::sync_replica_fallback_path(&db_path);
+                        tracing::warn!(
+                            "Primary replica file is locked at {} ({}). Switching sync replica to {}.",
+                            db_path.display(),
+                            quarantine_error,
+                            fallback_path.display()
+                        );
+                        Self::open_database_with_sync_thread(fallback_path, sync_config)
+                    }
+                    Err(quarantine_error) => Err(quarantine_error),
+                }
             }
             Err(error) => Err(error),
         }
@@ -127,6 +149,32 @@ impl DatabaseService {
         let message = error.to_string().to_ascii_lowercase();
         message.contains("invalid local state")
             || message.contains("metadata file exists but db file does not")
+            || message.contains("wal frame insert conflict")
+    }
+
+    fn is_file_in_use_error(error: &crate::Error) -> bool {
+        let message = error.to_string().to_ascii_lowercase();
+        message.contains("os error 32")
+            || message.contains("being used by another process")
+            || message.contains("sharing violation")
+    }
+
+    fn sync_replica_fallback_path(db_path: &Path) -> PathBuf {
+        let parent = db_path
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        let stem = db_path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("dirt");
+        let extension = db_path.extension().and_then(|ext| ext.to_str());
+
+        let file_name = extension.map_or_else(
+            || format!("{stem}-sync"),
+            |ext| format!("{stem}-sync.{ext}"),
+        );
+
+        parent.join(file_name)
     }
 
     fn quarantine_corrupted_db_files(db_path: &Path) -> Result<()> {
@@ -166,33 +214,6 @@ impl DatabaseService {
         }
 
         Ok(())
-    }
-
-    async fn reopen_after_corruption(&self) -> Result<bool> {
-        let Some(db_path) = self.db_path.clone() else {
-            return Ok(false);
-        };
-
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        tracing::warn!(
-            "Detected invalid local DB file; attempting to reopen connection at {}",
-            db_path.display()
-        );
-
-        {
-            let mut db = self.db.lock().await;
-            let placeholder = Database::open_in_memory().await?;
-            let _old = std::mem::replace(&mut *db, placeholder);
-        }
-
-        Self::quarantine_corrupted_db_files(&db_path)?;
-        let reopened = Self::open_database(db_path, self.sync_config.clone()).await?;
-        let mut db = self.db.lock().await;
-        *db = reopened;
-        Ok(true)
     }
 
     /// Sync with remote DB when sync is enabled.
@@ -316,50 +337,17 @@ impl DatabaseService {
         size_bytes: i64,
         r2_key: &str,
     ) -> Result<Attachment> {
-        let first_attempt = {
-            let db = self.db.lock().await;
-            let repo = LibSqlNoteRepository::new(db.connection());
-            repo.create_attachment(note_id, filename, mime_type, size_bytes, r2_key)
-                .await
-        };
-
-        match first_attempt {
-            Ok(attachment) => Ok(attachment),
-            Err(error) if Self::is_corrupted_db_error(&error) => {
-                if self.reopen_after_corruption().await? {
-                    let db = self.db.lock().await;
-                    let repo = LibSqlNoteRepository::new(db.connection());
-                    repo.create_attachment(note_id, filename, mime_type, size_bytes, r2_key)
-                        .await
-                } else {
-                    Err(error)
-                }
-            }
-            Err(error) => Err(error),
-        }
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.create_attachment(note_id, filename, mime_type, size_bytes, r2_key)
+            .await
     }
 
     /// List non-deleted attachment metadata for a note.
     pub async fn list_attachments(&self, note_id: &NoteId) -> Result<Vec<Attachment>> {
-        let first_attempt = {
-            let db = self.db.lock().await;
-            let repo = LibSqlNoteRepository::new(db.connection());
-            repo.list_attachments(note_id).await
-        };
-
-        match first_attempt {
-            Ok(attachments) => Ok(attachments),
-            Err(error) if Self::is_corrupted_db_error(&error) => {
-                if self.reopen_after_corruption().await? {
-                    let db = self.db.lock().await;
-                    let repo = LibSqlNoteRepository::new(db.connection());
-                    repo.list_attachments(note_id).await
-                } else {
-                    Err(error)
-                }
-            }
-            Err(error) => Err(error),
-        }
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.list_attachments(note_id).await
     }
 
     /// Soft-delete attachment metadata by id.
@@ -409,9 +397,29 @@ mod tests {
                     .to_string()
             )
         ));
+        assert!(DatabaseService::is_recoverable_local_replica_error(
+            &crate::Error::Database("libSQL error: WAL frame insert conflict".to_string())
+        ));
         assert!(!DatabaseService::is_recoverable_local_replica_error(
             &crate::Error::InvalidInput("note content cannot be empty".to_string())
         ));
+    }
+
+    #[test]
+    fn detects_file_in_use_io_errors() {
+        assert!(DatabaseService::is_file_in_use_error(&crate::Error::Io(
+            std::io::Error::from_raw_os_error(32),
+        )));
+        assert!(!DatabaseService::is_file_in_use_error(
+            &crate::Error::InvalidInput("no lock".to_string())
+        ));
+    }
+
+    #[test]
+    fn builds_sync_replica_fallback_path() {
+        let path = PathBuf::from("C:/tmp/dirt.db");
+        let fallback = DatabaseService::sync_replica_fallback_path(&path);
+        assert_eq!(fallback, PathBuf::from("C:/tmp/dirt-sync.db"));
     }
 
     #[test]

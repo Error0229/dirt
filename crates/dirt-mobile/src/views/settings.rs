@@ -348,65 +348,6 @@ rsx! {
                             background: #ffffff;
                             display: flex;
                             flex-direction: column;
-                            gap: 8px;
-                            margin-bottom: 10px;
-                        ",
-                        p {
-                            style: "
-                                margin: 0;
-                                font-size: 12px;
-                                font-weight: 700;
-                                color: #6b7280;
-                                text-transform: uppercase;
-                                letter-spacing: 0.04em;
-                            ",
-                            "Turso sync settings"
-                        }
-                        Label {
-                            html_for: "turso-url",
-                            style: "margin: 0; font-size: 12px; color: #6b7280;",
-                            "Turso URL"
-                        }
-                        UiInput {
-                            id: "turso-url",
-                            r#type: "text",
-                            placeholder: "libsql://your-db.region.turso.io",
-                            value: "{turso_database_url_input}",
-                            oninput: move |event: Event<FormData>| {
-                                turso_database_url_input.set(event.value());
-                            },
-                        }
-                        p {
-                            style: "margin: 0; font-size: 12px; color: #6b7280;",
-                            "Managed mode uses signed-in Supabase session + bootstrap sync endpoint to fetch short-lived sync credentials."
-                        }
-                        div {
-                            style: "display: flex; gap: 8px;",
-                            UiButton {
-                                type: "button",
-                                block: true,
-                                variant: ButtonVariant::Primary,
-                                onclick: on_save_sync_settings,
-                                "Save sync config"
-                            }
-                            UiButton {
-                                type: "button",
-                                block: true,
-                                variant: ButtonVariant::Outline,
-                                onclick: on_clear_sync_settings,
-                                "Clear"
-                            }
-                        }
-                    }
-
-                    div {
-                        style: "
-                            padding: 12px;
-                            border: 1px solid #e5e7eb;
-                            border-radius: 12px;
-                            background: #ffffff;
-                            display: flex;
-                            flex-direction: column;
                             gap: 6px;
                             margin-bottom: 10px;
                         ",
@@ -535,4 +476,3 @@ rsx! {
                 }
 
 }
-

@@ -29,7 +29,8 @@ pub struct AppConfig {
     pub turso_organization_slug: String,
     pub turso_database_name: String,
     pub turso_database_url: String,
-    pub turso_platform_api_token: String,
+    pub turso_platform_api_token: Option<String>,
+    pub turso_static_auth_token: Option<String>,
     pub turso_token_ttl: Duration,
     pub media_url_ttl: Duration,
     pub auth_clock_skew: Duration,
@@ -86,7 +87,14 @@ impl fmt::Debug for AppConfig {
             .field("turso_organization_slug", &self.turso_organization_slug)
             .field("turso_database_name", &self.turso_database_name)
             .field("turso_database_url", &self.turso_database_url)
-            .field("turso_platform_api_token", &"[REDACTED]")
+            .field(
+                "turso_platform_api_token",
+                &self.turso_platform_api_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "turso_static_auth_token",
+                &self.turso_static_auth_token.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("turso_token_ttl", &self.turso_token_ttl)
             .field("media_url_ttl", &self.media_url_ttl)
             .field("auth_clock_skew", &self.auth_clock_skew)
@@ -188,7 +196,14 @@ impl AppConfig {
         let turso_organization_slug = required_trimmed(&lookup, "TURSO_ORGANIZATION_SLUG")?;
         let turso_database_name = required_trimmed(&lookup, "TURSO_DATABASE_NAME")?;
         let turso_database_url = required_trimmed(&lookup, "TURSO_DATABASE_URL")?;
-        let turso_platform_api_token = required_trimmed(&lookup, "TURSO_PLATFORM_API_TOKEN")?;
+        let turso_platform_api_token = optional_trimmed(&lookup, "TURSO_PLATFORM_API_TOKEN");
+        let turso_static_auth_token = optional_trimmed(&lookup, "TURSO_AUTH_TOKEN");
+        if turso_platform_api_token.is_none() && turso_static_auth_token.is_none() {
+            return Err(ConfigError::Invalid(
+                "At least one of TURSO_PLATFORM_API_TOKEN or TURSO_AUTH_TOKEN must be set"
+                    .to_string(),
+            ));
+        }
 
         let turso_ttl_secs = value_or_default(&lookup, "TURSO_SYNC_TOKEN_TTL_SECS", "900")
             .parse::<u64>()
@@ -290,6 +305,7 @@ impl AppConfig {
             turso_database_name,
             turso_database_url,
             turso_platform_api_token,
+            turso_static_auth_token,
             turso_token_ttl: Duration::from_secs(turso_ttl_secs),
             media_url_ttl: Duration::from_secs(media_ttl_secs),
             auth_clock_skew: Duration::from_secs(auth_clock_skew_secs),
@@ -384,6 +400,7 @@ mod tests {
         map.insert("TURSO_DATABASE_NAME", "db");
         map.insert("TURSO_DATABASE_URL", "libsql://db.turso.io");
         map.insert("TURSO_PLATFORM_API_TOKEN", "sensitive-platform-token");
+        map.insert("TURSO_AUTH_TOKEN", "sensitive-static-token");
         map.insert("R2_ACCOUNT_ID", "acc");
         map.insert("R2_BUCKET", "bucket");
         map.insert("R2_ACCESS_KEY_ID", "access");
@@ -394,7 +411,27 @@ mod tests {
 
         let debug_output = format!("{config:?}");
         assert!(!debug_output.contains("sensitive-platform-token"));
+        assert!(!debug_output.contains("sensitive-static-token"));
         assert!(!debug_output.contains("sensitive-r2-secret"));
         assert!(debug_output.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn config_allows_static_turso_token_without_platform_token() {
+        let mut map = HashMap::new();
+        map.insert("SUPABASE_URL", "https://project.supabase.co");
+        map.insert("SUPABASE_ANON_KEY", "public-anon-key");
+        map.insert("TURSO_ORGANIZATION_SLUG", "org");
+        map.insert("TURSO_DATABASE_NAME", "db");
+        map.insert("TURSO_DATABASE_URL", "libsql://db.turso.io");
+        map.insert("TURSO_AUTH_TOKEN", "static-db-token");
+
+        let config =
+            AppConfig::from_lookup(|key| map.get(key).map(|value| (*value).to_string())).unwrap();
+        assert!(config.turso_platform_api_token.is_none());
+        assert_eq!(
+            config.turso_static_auth_token.as_deref(),
+            Some("static-db-token")
+        );
     }
 }

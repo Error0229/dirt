@@ -99,6 +99,8 @@ pub fn SettingsPanel() -> Element {
         })
     });
     let active_session = (state.auth_session)();
+    let sync_status = (state.sync_status)();
+    let sync_issue = (state.sync_issue)();
     let pending_sync_count = (state.pending_sync_count)();
     let pending_sync_note_ids = (state.pending_sync_note_ids)();
     let pending_sync_preview = format_pending_sync_preview(&pending_sync_note_ids);
@@ -677,6 +679,8 @@ pub fn SettingsPanel() -> Element {
                     },
                     SettingsTab::Sync => rsx! {
                         SyncSettingsTab {
+                            sync_status: sync_status,
+                            sync_issue: sync_issue,
                             pending_sync_count: pending_sync_count,
                             pending_sync_preview: pending_sync_preview,
                             sync_conflicts: sync_conflict_items,

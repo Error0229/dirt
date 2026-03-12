@@ -15,14 +15,33 @@ struct DesktopBootstrapConfig {
 }
 
 fn main() {
+    configure_windows_stack_size();
+
     println!("cargo:rerun-if-env-changed=SUPABASE_URL");
     println!("cargo:rerun-if-env-changed=SUPABASE_ANON_KEY");
     println!("cargo:rerun-if-env-changed=TURSO_SYNC_TOKEN_ENDPOINT");
+    println!("cargo:rerun-if-env-changed=DIRT_DESKTOP_API_BASE_URL");
+    println!("cargo:rerun-if-env-changed=DIRT_DESKTOP_BOOTSTRAP_URL");
     println!("cargo:rerun-if-env-changed=DIRT_API_BASE_URL");
     println!("cargo:rerun-if-env-changed=DIRT_BOOTSTRAP_URL");
+    println!("cargo:rerun-if-changed=../../.env.client");
+    println!("cargo:rerun-if-changed=../../.env.client.example");
 
     if let Err(error) = write_desktop_bootstrap_config() {
         println!("cargo:warning=failed to generate desktop bootstrap config: {error}");
+    }
+}
+
+fn configure_windows_stack_size() {
+    #[cfg(target_os = "windows")]
+    {
+        let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+        if target_env == "msvc" {
+            // Increase the main-thread stack for deep libSQL call paths on Windows.
+            println!("cargo:rustc-link-arg=/STACK:16777216");
+        } else {
+            println!("cargo:rustc-link-arg=-Wl,--stack,16777216");
+        }
     }
 }
 
@@ -34,12 +53,17 @@ fn write_desktop_bootstrap_config() -> io::Result<()> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "OUT_DIR is not set"))?;
     fs::create_dir_all(&out_dir)?;
 
-    let dirt_api_base_url = env_var_trimmed("DIRT_API_BASE_URL");
-    let bootstrap_manifest_url = env_var_trimmed("DIRT_BOOTSTRAP_URL").or_else(|| {
-        dirt_api_base_url
-            .as_deref()
-            .map(|value| format!("{}/v1/bootstrap", value.trim_end_matches('/')))
-    });
+    let dirt_api_base_url = env_var_trimmed("DIRT_DESKTOP_API_BASE_URL")
+        .map(normalize_desktop_local_base_url)
+        .or_else(|| env_var_trimmed("DIRT_API_BASE_URL").map(normalize_desktop_local_base_url));
+    let bootstrap_manifest_url = env_var_trimmed("DIRT_DESKTOP_BOOTSTRAP_URL")
+        .map(normalize_desktop_local_base_url)
+        .or_else(|| env_var_trimmed("DIRT_BOOTSTRAP_URL").map(normalize_desktop_local_base_url))
+        .or_else(|| {
+            dirt_api_base_url
+                .as_deref()
+                .map(|value| format!("{}/v1/bootstrap", value.trim_end_matches('/')))
+        });
 
     let config = DesktopBootstrapConfig {
         bootstrap_manifest_url,
@@ -76,4 +100,11 @@ fn env_var_trimmed(name: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn normalize_desktop_local_base_url(raw: String) -> String {
+    raw.trim()
+        .trim_end_matches('/')
+        .replace("://10.0.2.2", "://127.0.0.1")
+        .replace("://localhost", "://127.0.0.1")
 }

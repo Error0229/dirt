@@ -9,149 +9,219 @@ use base64::Engine as _;
 use serde::Deserialize;
 
 #[cfg(target_os = "android")]
+use serde::de::DeserializeOwned;
+#[cfg(target_os = "android")]
+use std::time::Duration;
+
+#[cfg(target_os = "android")]
 use dioxus::document;
 
 const START_RECORDING_SCRIPT: &str = r#"
 (() => {
-    const state = window.__dirtVoiceMemoRecorder;
-    if (state && state.recorder && state.recorder.state !== "inactive") {
-        return { ok: false, error: "Voice memo recorder is already running." };
-    }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        return { ok: false, error: "Microphone capture is unavailable in this runtime." };
-    }
-    return (async () => {
+    const send = (payload) => {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const preferredTypes = [
-                "audio/webm;codecs=opus",
-                "audio/webm",
-                "audio/mp4",
-                "audio/ogg;codecs=opus",
-                "audio/ogg",
-                "audio/wav",
-            ];
-
-            let mimeType = "";
-            for (const candidate of preferredTypes) {
-                if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(candidate)) {
-                    mimeType = candidate;
-                    break;
-                }
-            }
-
-            const recorder = mimeType
-                ? new MediaRecorder(stream, { mimeType })
-                : new MediaRecorder(stream);
-            const chunks = [];
-
-            recorder.ondataavailable = (event) => {
-                if (event.data && event.data.size > 0) {
-                    chunks.push(event.data);
-                }
-            };
-            recorder.start(250);
-
-            window.__dirtVoiceMemoRecorder = {
-                recorder,
-                stream,
-                chunks,
-                mimeType: mimeType || recorder.mimeType || "audio/webm",
-                startedAtMs: Date.now(),
-            };
-
-            return { ok: true };
-        } catch (error) {
-            return {
-                ok: false,
-                error: error && error.message ? error.message : String(error),
-            };
+            dioxus.send(payload);
+        } catch (_) {
+            // Best-effort send; Rust side applies timeout handling.
         }
-    })();
+    };
+
+    try {
+        const state = window.__dirtVoiceMemoRecorder;
+        if (state && state.recorder && state.recorder.state !== "inactive") {
+            send({ ok: false, error: "Voice memo recorder is already running." });
+            return;
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            send({
+                ok: false,
+                error: "Microphone capture is unavailable in this runtime.",
+            });
+            return;
+        }
+
+        navigator.mediaDevices
+            .getUserMedia({ audio: true })
+            .then((stream) => {
+                try {
+                    const preferredTypes = [
+                        "audio/webm;codecs=opus",
+                        "audio/webm",
+                        "audio/mp4",
+                        "audio/ogg;codecs=opus",
+                        "audio/ogg",
+                        "audio/wav",
+                    ];
+
+                    let mimeType = "";
+                    for (const candidate of preferredTypes) {
+                        if (
+                            typeof MediaRecorder !== "undefined" &&
+                            MediaRecorder.isTypeSupported(candidate)
+                        ) {
+                            mimeType = candidate;
+                            break;
+                        }
+                    }
+
+                    const recorder = mimeType
+                        ? new MediaRecorder(stream, { mimeType })
+                        : new MediaRecorder(stream);
+                    const chunks = [];
+
+                    recorder.ondataavailable = (event) => {
+                        if (event.data && event.data.size > 0) {
+                            chunks.push(event.data);
+                        }
+                    };
+                    recorder.start(250);
+
+                    window.__dirtVoiceMemoRecorder = {
+                        recorder,
+                        stream,
+                        chunks,
+                        mimeType: mimeType || recorder.mimeType || "audio/webm",
+                        startedAtMs: Date.now(),
+                    };
+
+                    send({ ok: true });
+                } catch (error) {
+                    send({
+                        ok: false,
+                        error: error && error.message ? error.message : String(error),
+                    });
+                }
+            })
+            .catch((error) => {
+                send({
+                    ok: false,
+                    error: error && error.message ? error.message : String(error),
+                });
+            });
+    } catch (error) {
+        send({
+            ok: false,
+            error: error && error.message ? error.message : String(error),
+        });
+    }
 })()
 "#;
 
 const STOP_RECORDING_SCRIPT: &str = r#"
 (() => {
-    const state = window.__dirtVoiceMemoRecorder;
-    if (!state || !state.recorder) {
-        return { ok: false, error: "No active voice memo recording." };
-    }
-
-    const recorder = state.recorder;
-    const stream = state.stream;
-    const startedAtMs = state.startedAtMs || Date.now();
-    const chunks = Array.isArray(state.chunks) ? state.chunks : [];
-    const mimeType = state.mimeType || recorder.mimeType || "audio/webm";
-
-    return (async () => {
+    const send = (payload) => {
         try {
-            if (recorder.state !== "inactive") {
-                await new Promise((resolve, reject) => {
-                    recorder.addEventListener("stop", () => resolve(), { once: true });
-                    recorder.addEventListener(
-                        "error",
-                        (event) => {
-                            reject(event.error || new Error("Recorder stop failed"));
-                        },
-                        { once: true }
-                    );
-                    recorder.stop();
+            dioxus.send(payload);
+        } catch (_) {
+            // Best-effort send; Rust side applies timeout handling.
+        }
+    };
+
+    try {
+        const state = window.__dirtVoiceMemoRecorder;
+        if (!state || !state.recorder) {
+            send({ ok: false, error: "No active voice memo recording." });
+            return;
+        }
+
+        const recorder = state.recorder;
+        const stream = state.stream;
+        const startedAtMs = state.startedAtMs || Date.now();
+        const chunks = Array.isArray(state.chunks) ? state.chunks : [];
+        const mimeType = state.mimeType || recorder.mimeType || "audio/webm";
+
+        const stopStream = () => {
+            if (stream && stream.getTracks) {
+                for (const track of stream.getTracks()) {
+                    track.stop();
+                }
+            }
+        };
+
+        const finalize = async () => {
+            try {
+                stopStream();
+
+                const blob = new Blob(chunks, { type: mimeType });
+                const buffer = await blob.arrayBuffer();
+                const bytes = new Uint8Array(buffer);
+
+                let binary = "";
+                const CHUNK = 0x8000;
+                for (let i = 0; i < bytes.length; i += CHUNK) {
+                    const sub = bytes.subarray(i, i + CHUNK);
+                    binary += String.fromCharCode.apply(null, sub);
+                }
+
+                const encoded = btoa(binary);
+                const durationMs = Math.max(0, Date.now() - startedAtMs);
+
+                window.__dirtVoiceMemoRecorder = null;
+                send({
+                    ok: true,
+                    base64: encoded,
+                    mimeType: blob.type || mimeType || "audio/webm",
+                    durationMs,
+                });
+            } catch (error) {
+                stopStream();
+                window.__dirtVoiceMemoRecorder = null;
+                send({
+                    ok: false,
+                    error: error && error.message ? error.message : String(error),
                 });
             }
+        };
 
-            if (stream && stream.getTracks) {
-                for (const track of stream.getTracks()) {
-                    track.stop();
-                }
-            }
-
-            const blob = new Blob(chunks, { type: mimeType });
-            const buffer = await blob.arrayBuffer();
-            const bytes = new Uint8Array(buffer);
-
-            let binary = "";
-            const CHUNK = 0x8000;
-            for (let i = 0; i < bytes.length; i += CHUNK) {
-                const sub = bytes.subarray(i, i + CHUNK);
-                binary += String.fromCharCode.apply(null, sub);
-            }
-
-            const encoded = btoa(binary);
-            const durationMs = Math.max(0, Date.now() - startedAtMs);
-
-            window.__dirtVoiceMemoRecorder = null;
-            return {
-                ok: true,
-                base64: encoded,
-                mimeType: blob.type || mimeType || "audio/webm",
-                durationMs,
-            };
-        } catch (error) {
-            if (stream && stream.getTracks) {
-                for (const track of stream.getTracks()) {
-                    track.stop();
-                }
-            }
-            window.__dirtVoiceMemoRecorder = null;
-            return {
-                ok: false,
-                error: error && error.message ? error.message : String(error),
-            };
+        if (recorder.state !== "inactive") {
+            recorder.addEventListener("stop", () => {
+                finalize();
+            }, { once: true });
+            recorder.addEventListener(
+                "error",
+                (event) => {
+                    stopStream();
+                    window.__dirtVoiceMemoRecorder = null;
+                    send({
+                        ok: false,
+                        error:
+                            (event && event.error && event.error.message) ||
+                            "Recorder stop failed",
+                    });
+                },
+                { once: true }
+            );
+            recorder.stop();
+        } else {
+            finalize();
         }
-    })();
+    } catch (error) {
+        send({
+            ok: false,
+            error: error && error.message ? error.message : String(error),
+        });
+    }
 })()
 "#;
 
 const DISCARD_RECORDING_SCRIPT: &str = r#"
 (() => {
-    const state = window.__dirtVoiceMemoRecorder;
-    if (!state || !state.recorder) {
-        window.__dirtVoiceMemoRecorder = null;
-        return { ok: true };
-    }
+    const send = (payload) => {
+        try {
+            dioxus.send(payload);
+        } catch (_) {
+            // Best-effort send; Rust side applies timeout handling.
+        }
+    };
 
     try {
+        const state = window.__dirtVoiceMemoRecorder;
+        if (!state || !state.recorder) {
+            window.__dirtVoiceMemoRecorder = null;
+            send({ ok: true });
+            return;
+        }
+
         if (state.recorder.state !== "inactive") {
             state.recorder.stop();
         }
@@ -161,13 +231,13 @@ const DISCARD_RECORDING_SCRIPT: &str = r#"
             }
         }
         window.__dirtVoiceMemoRecorder = null;
-        return { ok: true };
+        send({ ok: true });
     } catch (error) {
         window.__dirtVoiceMemoRecorder = null;
-        return {
+        send({
             ok: false,
             error: error && error.message ? error.message : String(error),
-        };
+        });
     }
 })()
 "#;
@@ -262,31 +332,37 @@ struct StopRecorderResult {
 /// Start a microphone recording session.
 #[cfg(target_os = "android")]
 pub async fn start_voice_memo_recording() -> Result<(), String> {
-    let result: RecorderResult = document::eval(START_RECORDING_SCRIPT)
-        .join()
-        .await
-        .map_err(|error| format!("Failed to start voice memo recorder: {error}"))?;
+    let result: RecorderResult =
+        eval_response(START_RECORDING_SCRIPT, "start voice memo recorder").await?;
     parse_recorder_result(result)
 }
 
 /// Stop recording and return captured voice memo bytes.
 #[cfg(target_os = "android")]
 pub async fn stop_voice_memo_recording() -> Result<RecordedVoiceMemo, String> {
-    let result: StopRecorderResult = document::eval(STOP_RECORDING_SCRIPT)
-        .join()
-        .await
-        .map_err(|error| format!("Failed to stop voice memo recorder: {error}"))?;
+    let result: StopRecorderResult =
+        eval_response(STOP_RECORDING_SCRIPT, "stop voice memo recorder").await?;
     parse_stop_result(result)
 }
 
 /// Discard the active recording session.
 #[cfg(target_os = "android")]
 pub async fn discard_voice_memo_recording() -> Result<(), String> {
-    let result: RecorderResult = document::eval(DISCARD_RECORDING_SCRIPT)
-        .join()
-        .await
-        .map_err(|error| format!("Failed to discard voice memo recorder: {error}"))?;
+    let result: RecorderResult =
+        eval_response(DISCARD_RECORDING_SCRIPT, "discard voice memo recorder").await?;
     parse_recorder_result(result)
+}
+
+#[cfg(target_os = "android")]
+async fn eval_response<T>(script: &str, operation: &str) -> Result<T, String>
+where
+    T: DeserializeOwned,
+{
+    let mut eval = document::eval(script);
+    tokio::time::timeout(Duration::from_secs(20), eval.recv())
+        .await
+        .map_err(|_| format!("Timed out while waiting to {operation}"))?
+        .map_err(|error| format!("Failed to {operation}: {error}"))
 }
 
 /// Start a microphone recording session.

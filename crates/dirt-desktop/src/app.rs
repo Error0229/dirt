@@ -52,10 +52,13 @@ pub fn App() -> Element {
     let mut auth_error: Signal<Option<String>> = use_signal(|| None);
     let mut db_reconnect_version = use_signal(|| 0u64);
     let mut auth_initialized = use_signal(|| false);
+    let mut bootstrap_ready = use_signal(|| false);
     let mut sync_status = use_signal(|| SyncStatus::Offline);
+    let mut sync_issue = use_signal(|| None::<String>);
     let mut last_sync_at = use_signal(|| None::<i64>);
     let mut pending_sync_count = use_signal(|| 0usize);
     let mut pending_sync_note_ids = use_signal(Vec::new);
+    let mut sync_token_expires_at = use_signal(|| None::<i64>);
     let embedded_bootstrap_config = load_bootstrap_config();
 
     // Initialize authentication service and restore persisted session.
@@ -67,16 +70,14 @@ pub fn App() -> Element {
         let fallback_bootstrap = embedded_bootstrap_config.clone();
 
         spawn(async move {
-            let bootstrap = match resolve_bootstrap_config(fallback_bootstrap).await {
+            let bootstrap = match resolve_bootstrap_config(fallback_bootstrap.clone()).await {
                 Ok(config) => config,
                 Err(error) => {
-                    let message = format!("Failed to resolve bootstrap configuration: {error}");
-                    tracing::error!("{message}");
-                    sync_auth_client.set(None);
-                    media_api_client.set(None);
-                    auth_service.set(None);
-                    auth_error.set(Some(message));
-                    return;
+                    tracing::warn!(
+                        "Failed to resolve runtime bootstrap manifest ({}). Falling back to embedded desktop bootstrap values.",
+                        error
+                    );
+                    fallback_bootstrap
                 }
             };
 
@@ -125,27 +126,52 @@ pub fn App() -> Element {
                     auth_error.set(Some(error.to_string()));
                 }
             }
+
+            bootstrap_ready.set(true);
         });
     });
 
     // Initialize or reconnect database when auth/session context changes.
-    use_future(move || async move {
+    // `use_resource` reruns when read signals change.
+    let _db_init_task = use_resource(move || async move {
         let _db_reconnect_version = db_reconnect_version();
-        let current_session = auth_session();
-        let managed_sync_client = sync_auth_client.read().clone();
+        if !bootstrap_ready() {
+            return;
+        }
+
+        let current_session = auth_session.peek().clone();
+        let managed_sync_client = sync_auth_client.peek().clone();
+        let managed_sync_expected = managed_sync_client.is_some() && current_session.is_some();
+        let had_existing_db = db_service.peek().is_some();
+
+        // Force-drop the previous local connection before opening a sync replica.
+        // libsql remote replicas can fail to initialize when the same db file is still held.
+        if managed_sync_expected && had_existing_db {
+            db_service.set(None);
+            tokio::time::sleep(Duration::from_millis(120)).await;
+        }
+
+        if !managed_sync_expected {
+            sync_issue.set(None);
+        }
 
         let db_result =
             if let (Some(client), Some(session)) = (managed_sync_client, current_session) {
                 match client.exchange_token(&session.access_token).await {
                     Ok(token) => {
+                        sync_token_expires_at.set(Some(token.expires_at));
                         let sync_config = SyncConfig::new(token.database_url, token.token);
                         DatabaseService::new_with_sync(sync_config).await
                     }
-                    Err(error) => Err(dirt_core::Error::Storage(format!(
-                        "Managed sync token exchange failed: {error}"
-                    ))),
+                    Err(error) => {
+                        sync_token_expires_at.set(None);
+                        let message = format!("Managed sync token exchange failed: {error}");
+                        sync_issue.set(Some(message.clone()));
+                        Err(dirt_core::Error::Storage(message))
+                    }
                 }
             } else {
+                sync_token_expires_at.set(None);
                 DatabaseService::new().await
             };
 
@@ -153,10 +179,12 @@ pub fn App() -> Element {
             Ok(db) => {
                 let db = Arc::new(db);
 
-                let loaded_settings = match db.load_settings().await {
+                let loaded_settings = match db.load_settings_with_large_stack().await {
                     Ok(settings) => settings,
                     Err(error) => {
-                        tracing::error!("Failed to load desktop settings: {}", error);
+                        let message = format!("Failed to load desktop settings: {error}");
+                        tracing::error!("{message}");
+                        sync_issue.set(Some(message));
                         sync_status.set(SyncStatus::Error);
                         db_service.set(None);
                         return;
@@ -168,26 +196,37 @@ pub fn App() -> Element {
 
                 if db.is_sync_enabled().await {
                     sync_status.set(SyncStatus::Syncing);
-                    match db.sync().await {
+                    match db.sync_with_large_stack().await {
                         Ok(()) => {
                             sync_status.set(SyncStatus::Synced);
+                            sync_issue.set(None);
                             last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
                             pending_sync_count.set(0);
                             pending_sync_note_ids.write().clear();
                         }
                         Err(error) => {
-                            tracing::error!("Initial sync failed: {}", error);
+                            let message = format!("Initial sync failed: {error}");
+                            tracing::error!("{message}");
+                            sync_issue.set(Some(message));
                             sync_status.set(SyncStatus::Error);
                         }
                     }
+                } else if managed_sync_expected {
+                    let message = "Signed in, but this database connection is running without managed sync credentials.".to_string();
+                    tracing::error!("{message}");
+                    sync_issue.set(Some(message));
+                    sync_status.set(SyncStatus::Error);
                 } else {
+                    sync_issue.set(None);
                     sync_status.set(SyncStatus::Offline);
                 }
 
                 db_service.set(Some(db));
             }
             Err(error) => {
-                tracing::error!("Failed to initialize database: {}", error);
+                let message = format!("Failed to initialize database: {error}");
+                tracing::error!("{message}");
+                sync_issue.set(Some(message));
                 sync_status.set(SyncStatus::Error);
                 db_service.set(None);
             }
@@ -198,28 +237,98 @@ pub fn App() -> Element {
     use_future(move || async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
+            let cloud_sync_expected = sync_auth_client.read().is_some() && auth_session().is_some();
+
+            // Proactively refresh the sync token before it expires.
+            // Turso tokens are short-lived (~15min) and libSQL bakes them
+            // into the connection at construction time, so we must re-open
+            // the database with fresh credentials before the token lapses.
+            if let Some(expires_at) = sync_token_expires_at() {
+                let now = chrono::Utc::now().timestamp();
+                if now >= expires_at - 120 {
+                    tracing::info!(
+                        "Sync token expires in {}s, triggering credential refresh",
+                        expires_at - now
+                    );
+                    db_reconnect_version.set(db_reconnect_version() + 1);
+                    continue;
+                }
+            }
 
             let db = db_service.read().clone();
             let Some(db) = db else {
-                sync_status.set(SyncStatus::Offline);
+                if cloud_sync_expected {
+                    sync_status.set(SyncStatus::Error);
+                    if sync_issue().is_none() {
+                        sync_issue.set(Some(
+                            "Signed in, but sync database service is not initialized.".to_string(),
+                        ));
+                    }
+                } else {
+                    sync_issue.set(None);
+                    sync_status.set(SyncStatus::Offline);
+                }
                 continue;
             };
 
             if !db.is_sync_enabled().await {
-                sync_status.set(SyncStatus::Offline);
+                if cloud_sync_expected {
+                    sync_status.set(SyncStatus::Error);
+                    if sync_issue().is_none() {
+                        sync_issue.set(Some(
+                            "Cloud sync is expected for this session, but the database is running local-only."
+                                .to_string(),
+                        ));
+                    }
+                } else {
+                    sync_issue.set(None);
+                    sync_status.set(SyncStatus::Offline);
+                }
                 continue;
             }
 
             sync_status.set(SyncStatus::Syncing);
-            match db.sync().await {
+            match db.sync_with_large_stack().await {
                 Ok(()) => {
                     sync_status.set(SyncStatus::Synced);
+                    sync_issue.set(None);
                     last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
                     pending_sync_count.set(0);
                     pending_sync_note_ids.write().clear();
                 }
                 Err(error) => {
-                    tracing::error!("Periodic sync failed: {}", error);
+                    let message = format!("{error}");
+
+                    // Detect expired/revoked tokens and trigger credential refresh
+                    // instead of staying stuck in an error loop.
+                    if message.contains("401")
+                        || message.contains("Unauthorized")
+                        || message.contains("token expired")
+                    {
+                        tracing::warn!(
+                            "Sync rejected with auth error, triggering credential refresh: {message}"
+                        );
+                        db_reconnect_version.set(db_reconnect_version() + 1);
+                        continue;
+                    }
+
+                    // Detect corrupted local replica and trigger database
+                    // reconnection so the startup recovery can quarantine the
+                    // bad file and pull a fresh copy from Turso.
+                    let lower = message.to_ascii_lowercase();
+                    if lower.contains("file is not a database")
+                        || lower.contains("wal frame insert conflict")
+                    {
+                        tracing::warn!(
+                            "Sync detected corrupted local replica, triggering reconnection: {message}"
+                        );
+                        db_reconnect_version.set(db_reconnect_version() + 1);
+                        continue;
+                    }
+
+                    let message = format!("Periodic sync failed: {error}");
+                    tracing::error!("{message}");
+                    sync_issue.set(Some(message));
                     sync_status.set(SyncStatus::Error);
                 }
             }
@@ -346,6 +455,7 @@ pub fn App() -> Element {
         auth_error,
         db_reconnect_version,
         sync_status,
+        sync_issue,
         last_sync_at,
         pending_sync_count,
         pending_sync_note_ids,

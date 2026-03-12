@@ -53,12 +53,22 @@ impl MobileRuntimeConfig {
     }
 }
 
-pub fn default_runtime_config_path() -> PathBuf {
+pub(crate) fn default_mobile_data_directory() -> PathBuf {
     dirs::data_local_dir()
         .or_else(dirs::data_dir)
-        .unwrap_or_else(|| panic!("Failed to resolve mobile data directory for runtime config"))
-        .join("dirt")
-        .join(RUNTIME_CONFIG_FILE)
+        .map(|dir| dir.join("dirt"))
+        .unwrap_or_else(|| {
+            let fallback = fallback_mobile_data_directory();
+            tracing::warn!(
+                "Failed to resolve mobile data directory from OS defaults; falling back to {}",
+                fallback.display()
+            );
+            fallback
+        })
+}
+
+pub fn default_runtime_config_path() -> PathBuf {
+    default_mobile_data_directory().join(RUNTIME_CONFIG_FILE)
 }
 
 pub fn load_runtime_config() -> MobileRuntimeConfig {
@@ -70,18 +80,29 @@ pub fn load_runtime_config_from_path(path: &Path) -> MobileRuntimeConfig {
         return MobileRuntimeConfig::default();
     }
 
-    let content = std::fs::read_to_string(path).unwrap_or_else(|error| {
-        panic!(
-            "Failed to read mobile runtime config at {}: {error}",
-            path.display()
-        )
-    });
-    serde_json::from_str::<MobileRuntimeConfig>(&content).unwrap_or_else(|error| {
-        panic!(
-            "Failed to parse mobile runtime config at {}: {error}",
-            path.display()
-        )
-    })
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) => {
+            tracing::warn!(
+                "Failed to read mobile runtime config at {}: {}",
+                path.display(),
+                error
+            );
+            return MobileRuntimeConfig::default();
+        }
+    };
+
+    match serde_json::from_str::<MobileRuntimeConfig>(&content) {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::warn!(
+                "Failed to parse mobile runtime config at {}: {}",
+                path.display(),
+                error
+            );
+            MobileRuntimeConfig::default()
+        }
+    }
 }
 
 pub fn save_runtime_config(config: &MobileRuntimeConfig) -> Result<()> {
@@ -154,6 +175,43 @@ pub fn parse_sync_config(url: Option<String>, auth_token: Option<String>) -> Opt
     Some(SyncConfig::new(url, auth_token))
 }
 
+#[cfg(target_os = "android")]
+fn fallback_mobile_data_directory() -> PathBuf {
+    android_process_name()
+        .map(|process_name| {
+            PathBuf::from("/data/user/0")
+                .join(process_name)
+                .join("files")
+                .join("dirt")
+        })
+        .unwrap_or_else(|| std::env::temp_dir().join("dirt"))
+}
+
+#[cfg(not(target_os = "android"))]
+fn fallback_mobile_data_directory() -> PathBuf {
+    std::env::temp_dir().join("dirt")
+}
+
+#[cfg(target_os = "android")]
+fn android_process_name() -> Option<String> {
+    let cmdline = std::fs::read("/proc/self/cmdline").ok()?;
+    parse_cmdline_process_name(&cmdline)
+}
+
+fn parse_cmdline_process_name(cmdline: &[u8]) -> Option<String> {
+    let end = cmdline
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(cmdline.len());
+    let raw = std::str::from_utf8(&cmdline[..end]).ok()?;
+    let normalized = raw.trim();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +275,34 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("auth token is missing"));
+    }
+
+    #[test]
+    fn parse_cmdline_process_name_handles_terminator() {
+        let name = parse_cmdline_process_name(b"com.example.DirtMobile\0ignored");
+        assert_eq!(name.as_deref(), Some("com.example.DirtMobile"));
+    }
+
+    #[test]
+    fn parse_cmdline_process_name_rejects_blank_values() {
+        assert!(parse_cmdline_process_name(b"   \0").is_none());
+        assert!(parse_cmdline_process_name(&[]).is_none());
+    }
+
+    #[test]
+    fn load_runtime_config_invalid_json_returns_default() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "dirt-mobile-config-invalid-test-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let config_path = test_dir.join("mobile-config.json");
+        std::fs::create_dir_all(&test_dir).unwrap();
+        std::fs::write(&config_path, "{ this is invalid json ").unwrap();
+
+        let loaded = load_runtime_config_from_path(&config_path);
+        assert_eq!(loaded, MobileRuntimeConfig::default());
+
+        let _ = std::fs::remove_file(config_path);
+        let _ = std::fs::remove_dir_all(test_dir);
     }
 }

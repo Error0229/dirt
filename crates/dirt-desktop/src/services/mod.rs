@@ -47,7 +47,12 @@ pub fn auth_service_from_bootstrap(
 pub fn sync_auth_from_bootstrap(
     config: &BootstrapConfig,
 ) -> Result<Option<TursoSyncAuthClient>, dirt_core::sync::SyncAuthError> {
-    let Some(endpoint) = config.turso_sync_token_endpoint.clone() else {
+    let endpoint = config.turso_sync_token_endpoint.clone().or_else(|| {
+        config
+            .managed_api_base_url()
+            .map(|base| format!("{}/v1/sync/token", base.trim_end_matches('/')))
+    });
+    let Some(endpoint) = endpoint else {
         return Ok(None);
     };
     Ok(Some(TursoSyncAuthClient::new(endpoint)?))
