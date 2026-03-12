@@ -32,6 +32,7 @@ fn main() {
     }
 }
 
+#[allow(clippy::missing_const_for_fn)]
 fn configure_windows_stack_size() {
     #[cfg(target_os = "windows")]
     {
