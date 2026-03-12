@@ -181,24 +181,48 @@ impl<S: SessionPersistence> SupabaseAuthService<S> {
     }
 
     /// Restore session from secure storage. If expired, refresh automatically.
+    #[allow(clippy::cognitive_complexity)]
     pub async fn restore_session(&self) -> AuthResult<Option<AuthSession>> {
         let Some(stored_session) = self.session_store.load()? else {
+            tracing::info!("No persisted auth session found in secure storage");
             return Ok(None);
         };
 
+        tracing::info!(
+            "Found persisted auth session for user={}, expires_at={}",
+            stored_session.user.email.as_deref().unwrap_or("unknown"),
+            stored_session.expires_at,
+        );
+
         if !stored_session.is_expired() {
+            tracing::info!("Persisted session is still valid, restoring");
             return Ok(Some(stored_session));
         }
 
+        tracing::info!("Persisted session has expired, attempting token refresh");
         match self.refresh_session(&stored_session.refresh_token).await {
             Ok(refreshed) => {
+                tracing::info!(
+                    "Session refresh succeeded, new expires_at={}",
+                    refreshed.expires_at
+                );
                 self.session_store.save(&refreshed)?;
                 Ok(Some(refreshed))
             }
-            Err(error) => {
-                tracing::warn!("Failed to refresh persisted session: {}", error);
+            Err(AuthError::Api(_)) => {
+                tracing::warn!(
+                    "Session refresh rejected by server, clearing stored credentials: {}",
+                    stored_session.user.email.as_deref().unwrap_or("unknown"),
+                );
                 self.session_store.clear()?;
                 Ok(None)
+            }
+            Err(error) => {
+                tracing::warn!(
+                    "Session refresh failed due to transient error, keeping stored credentials: {}",
+                    error,
+                );
+                Ok(Some(stored_session))
             }
         }
     }

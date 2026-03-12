@@ -29,6 +29,32 @@ impl TursoTokenBroker {
     }
 
     pub async fn mint_sync_token(&self, user_id: &str) -> Result<MintedSyncToken, AppError> {
+        if let Some(platform_token) = self.config.turso_platform_api_token.as_deref() {
+            match self
+                .mint_token_via_platform_api(user_id, platform_token)
+                .await
+            {
+                Ok(token) => return Ok(token),
+                Err(error) => {
+                    if self.config.turso_static_auth_token.is_none() {
+                        return Err(error);
+                    }
+                    tracing::warn!(
+                        error = %error,
+                        "Managed Turso token mint failed; falling back to static TURSO_AUTH_TOKEN"
+                    );
+                }
+            }
+        }
+
+        self.mint_token_from_static_fallback()
+    }
+
+    async fn mint_token_via_platform_api(
+        &self,
+        user_id: &str,
+        platform_token: &str,
+    ) -> Result<MintedSyncToken, AppError> {
         let request_url = format!(
             "{}/v1/organizations/{}/databases/{}/auth/tokens?expiration={}",
             self.config.turso_api_url.trim_end_matches('/'),
@@ -49,7 +75,7 @@ impl TursoTokenBroker {
         let response = self
             .client
             .post(&request_url)
-            .bearer_auth(&self.config.turso_platform_api_token)
+            .bearer_auth(platform_token)
             .header("Accept", "application/json")
             .json(&body)
             .send()
@@ -91,6 +117,30 @@ impl TursoTokenBroker {
 
         Ok(MintedSyncToken {
             auth_token: token,
+            expires_at,
+            database_url: self.config.turso_database_url.clone(),
+        })
+    }
+
+    fn mint_token_from_static_fallback(&self) -> Result<MintedSyncToken, AppError> {
+        let token = self
+            .config
+            .turso_static_auth_token
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                AppError::external(
+                    "Turso token broker has no usable TURSO_PLATFORM_API_TOKEN or TURSO_AUTH_TOKEN",
+                )
+            })?;
+
+        let expires_at = Utc::now()
+            .timestamp()
+            .saturating_add(i64::try_from(self.config.turso_token_ttl.as_secs()).unwrap_or(900));
+
+        Ok(MintedSyncToken {
+            auth_token: token.to_string(),
             expires_at,
             database_url: self.config.turso_database_url.clone(),
         })

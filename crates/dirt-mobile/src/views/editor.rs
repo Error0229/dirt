@@ -12,6 +12,13 @@ rsx! {
                         onclick: on_back_to_list,
                         "Back"
                     }
+                    UiButton {
+                        type: "button",
+                        variant: ButtonVariant::Primary,
+                        disabled: saving(),
+                        onclick: on_save_note,
+                        if saving() { "Saving..." } else { "Save" }
+                    }
                     if saving() {
                         p {
                             style: "margin: 0; align-self: center; font-size: 12px; color: #6b7280;",
@@ -369,4 +376,3 @@ rsx! {
                 }
 
 }
-

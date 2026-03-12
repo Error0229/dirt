@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::http::HeaderMap;
+use jsonwebtoken::jwk::{JwkSet, KeyOperations, PublicKeyUse};
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde::Deserialize;
 use serde_json::Value;
@@ -40,10 +41,14 @@ impl SupabaseJwtVerifier {
         let kid = header
             .kid
             .ok_or_else(|| AppError::unauthorized("Token header missing `kid`"))?;
+        let algorithm = header.alg;
+        if !is_supported_verification_algorithm(algorithm) {
+            return Err(AppError::unauthorized("Token algorithm is not allowed"));
+        }
 
         let key = self.find_key(&kid).await?;
 
-        let mut validation = Validation::new(Algorithm::RS256);
+        let mut validation = Validation::new(algorithm);
         validation.validate_aud = false;
         validation.set_issuer(&[self.config.supabase_jwt_issuer.as_str()]);
 
@@ -137,20 +142,6 @@ impl JwksCache {
 }
 
 #[derive(Debug, Deserialize)]
-struct JwksDocument {
-    keys: Vec<Jwk>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Jwk {
-    kid: Option<String>,
-    kty: Option<String>,
-    use_: Option<String>,
-    n: Option<String>,
-    e: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 struct SupabaseClaims {
     sub: String,
     aud: Option<Value>,
@@ -212,40 +203,64 @@ async fn fetch_jwks(
         )));
     }
 
-    let payload = response.json::<JwksDocument>().await.map_err(|error| {
+    let payload = response.json::<JwkSet>().await.map_err(|error| {
         AppError::external(format!("JWKS JSON parse failed: {}", sanitize(&error)))
     })?;
 
-    let mut out = HashMap::new();
-    for key in payload.keys {
-        let Some(kid) = key.kid else {
-            continue;
-        };
-        if key.kty.as_deref() != Some("RSA") {
-            continue;
-        }
-        if key.use_.as_deref().is_some_and(|usage| usage != "sig") {
-            continue;
-        }
-        let Some(n) = key.n else {
-            continue;
-        };
-        let Some(e) = key.e else {
-            continue;
-        };
-        let decoding = DecodingKey::from_rsa_components(&n, &e).map_err(|error| {
-            AppError::external(format!("Invalid JWKS RSA key: {}", sanitize(&error)))
-        })?;
-        out.insert(kid, decoding);
-    }
-
+    let out = parse_jwks_keys(payload)?;
     if out.is_empty() {
         return Err(AppError::external(
-            "JWKS did not include any usable RSA signing keys",
+            "JWKS did not include any usable signing keys",
         ));
     }
 
     Ok(out)
+}
+
+fn parse_jwks_keys(payload: JwkSet) -> Result<HashMap<String, DecodingKey>, AppError> {
+    let mut out = HashMap::new();
+    for key in payload.keys {
+        let Some(kid) = key.common.key_id.clone() else {
+            continue;
+        };
+        if key
+            .common
+            .public_key_use
+            .as_ref()
+            .is_some_and(|usage| *usage != PublicKeyUse::Signature)
+        {
+            continue;
+        }
+        if key
+            .common
+            .key_operations
+            .as_ref()
+            .is_some_and(|operations| !operations.contains(&KeyOperations::Verify))
+        {
+            continue;
+        }
+        let decoding = DecodingKey::from_jwk(&key).map_err(|error| {
+            AppError::external(format!("Invalid JWKS signing key: {}", sanitize(&error)))
+        })?;
+        out.insert(kid, decoding);
+    }
+
+    Ok(out)
+}
+
+const fn is_supported_verification_algorithm(algorithm: Algorithm) -> bool {
+    matches!(
+        algorithm,
+        Algorithm::RS256
+            | Algorithm::RS384
+            | Algorithm::RS512
+            | Algorithm::PS256
+            | Algorithm::PS384
+            | Algorithm::PS512
+            | Algorithm::ES256
+            | Algorithm::ES384
+            | Algorithm::EdDSA
+    )
 }
 
 fn audience_matches(aud: Option<&Value>, expected: &str) -> bool {
@@ -343,5 +358,32 @@ mod tests {
         let err =
             validate_temporal_claims(&claims, std::time::Duration::from_secs(30)).unwrap_err();
         assert!(err.to_string().contains("future"));
+    }
+
+    #[test]
+    fn parse_jwks_keys_accepts_ec_signing_key() {
+        let payload = serde_json::json!({
+            "keys": [
+                {
+                    "alg": "ES256",
+                    "crv": "P-256",
+                    "kid": "ec-key-1",
+                    "kty": "EC",
+                    "use": "sig",
+                    "x": "NmmjAg1ZY_f79RW_c4LrTpBhwnzC3sHA4MbH69RS2yw",
+                    "y": "L5GuARufM_jlB4Xez_j4uNM9ytd8-Z7T02Ewef-dW78"
+                }
+            ]
+        });
+        let set: JwkSet = serde_json::from_value(payload).unwrap();
+        let parsed = parse_jwks_keys(set).unwrap();
+        assert!(parsed.contains_key("ec-key-1"));
+    }
+
+    #[test]
+    fn supported_verification_algorithms_exclude_hmac() {
+        assert!(is_supported_verification_algorithm(Algorithm::ES256));
+        assert!(is_supported_verification_algorithm(Algorithm::RS256));
+        assert!(!is_supported_verification_algorithm(Algorithm::HS256));
     }
 }

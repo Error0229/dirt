@@ -1,6 +1,8 @@
 //! Database connection management
 
 use crate::error::Result;
+#[cfg(target_os = "android")]
+use hyper_rustls::HttpsConnectorBuilder;
 use libsql::{Builder, Connection, Database as LibSqlDatabase};
 use std::fmt;
 use std::path::Path;
@@ -124,6 +126,16 @@ impl Database {
             .ok_or_else(|| crate::error::Error::InvalidInput("Auth token is required".into()))?;
 
         let mut builder = Builder::new_remote_replica(&path_str, url.clone(), token.clone());
+        #[cfg(target_os = "android")]
+        {
+            // Android emulators can fail native root-store discovery; use bundled WebPKI roots.
+            let connector = HttpsConnectorBuilder::new()
+                .with_webpki_roots()
+                .https_or_http()
+                .enable_http1()
+                .build();
+            builder = builder.connector(connector);
+        }
 
         // Configure automatic sync interval if specified (per Turso docs recommendation)
         if let Some(interval) = sync_config.sync_interval {

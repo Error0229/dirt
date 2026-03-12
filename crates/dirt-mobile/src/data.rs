@@ -8,7 +8,7 @@ use dirt_core::services::DatabaseService as CoreDatabaseService;
 use dirt_core::{Error, Result};
 
 #[cfg(target_os = "android")]
-use crate::config::resolve_sync_config;
+use crate::config::{default_mobile_data_directory, resolve_sync_config};
 
 const DEFAULT_NOTES_LIMIT: usize = 100;
 const EXPORT_NOTES_PAGE_SIZE: usize = 500;
@@ -24,6 +24,9 @@ impl MobileNoteStore {
     #[cfg(target_os = "android")]
     pub async fn open_default() -> Result<Self> {
         let db_path = default_db_path();
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let resolved_sync_config =
             resolve_sync_config().map_err(|error| Error::InvalidInput(error.to_string()))?;
 
@@ -132,11 +135,7 @@ fn normalize_content(content: &str) -> Result<String> {
 /// Build a mobile-friendly local DB path.
 #[cfg(target_os = "android")]
 pub fn default_db_path() -> PathBuf {
-    dirs::data_local_dir()
-        .or_else(dirs::data_dir)
-        .unwrap_or_else(|| panic!("Failed to resolve mobile data directory for database"))
-        .join("dirt")
-        .join("dirt-mobile.db")
+    default_mobile_data_directory().join("dirt-mobile.db")
 }
 
 #[cfg(test)]
