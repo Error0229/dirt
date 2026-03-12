@@ -77,11 +77,9 @@ fn main() {
     let _hotkey_manager = match initialize_hotkey_manager() {
         Ok(manager) => Some(manager),
         Err(e) => {
-            tracing::error!("Failed to register hotkey after retries: {}", e);
-            tracing::error!(
-                "Desktop instance startup aborted to avoid multi-instance sync conflicts."
-            );
-            return;
+            tracing::warn!("Failed to register hotkey after retries: {}", e);
+            tracing::warn!("Continuing desktop startup without global hotkey support.");
+            None
         }
     };
 
