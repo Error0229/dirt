@@ -29,10 +29,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
+      - name: Check workflow parity
+        id: workflow-parity
+        shell: bash
+        run: |
+          base_ref="${{ github.event.pull_request.base.ref }}"
+          git fetch --no-tags --depth=1 origin "${base_ref}"
+
+          if git show "origin/${base_ref}:.github/workflows/claude-code-review.yml" >/dev/null 2>&1 &&
+             git diff --quiet "origin/${base_ref}" -- .github/workflows/claude-code-review.yml; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          echo "Skipping Claude review because this PR changes the review workflow file."
 
       - name: Run Claude Code Review
         id: claude-review
+        if: steps.workflow-parity.outputs.skip != 'true'
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -56,4 +73,9 @@ jobs:
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
+
+      - name: Note skipped review
+        if: steps.workflow-parity.outputs.skip == 'true'
+        shell: bash
+        run: echo "Claude review skipped because the workflow file differs from the default branch."
 
