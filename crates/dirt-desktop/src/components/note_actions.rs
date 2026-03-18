@@ -2,6 +2,7 @@
 
 use dioxus::prelude::*;
 use dirt_core::models::Note;
+use dirt_core::NoteId;
 
 use crate::queries::invalidate_notes_query;
 use crate::state::AppState;
@@ -25,11 +26,46 @@ pub fn create_note_optimistic(state: &mut AppState) {
         if let Some(db) = db {
             if let Err(e) = db.create_note_with_id(&optimistic_note).await {
                 tracing::error!("Failed to persist note: {}", e);
-                // Note: Don't rollback - user can continue editing
             } else {
-                // Invalidate query to sync state
                 invalidate_notes_query().await;
             }
         }
     });
+}
+
+/// Delete a note with optimistic UI removal and background persistence.
+pub fn delete_note_optimistic(state: &mut AppState, note_id: NoteId) {
+    state.notes.write().retain(|n| n.id != note_id);
+    if (state.current_note_id)() == Some(note_id) {
+        state.current_note_id.set(None);
+    }
+    // Remove from pending sync queue — the note no longer exists locally,
+    // so it should not be treated as a pending edit.
+    {
+        let mut pending = state.pending_sync_note_ids.write();
+        pending.retain(|id| *id != note_id);
+        state.pending_sync_count.set(pending.len());
+    }
+
+    tracing::info!("Deleted note (optimistic): {}", note_id);
+
+    let db = state.db_service.read().clone();
+    spawn(async move {
+        if let Some(db) = db {
+            if let Err(e) = db.delete_note(&note_id).await {
+                tracing::error!("Failed to persist delete: {}", e);
+            }
+            // Always re-sync: on success to confirm, on failure to rollback the optimistic removal
+            invalidate_notes_query().await;
+        }
+    });
+}
+
+/// Optimistically update a note's content in the local notes list.
+pub fn update_note_content(state: &mut AppState, note_id: NoteId, new_content: String) {
+    let mut notes = state.notes.write();
+    if let Some(note) = notes.iter_mut().find(|note| note.id == note_id) {
+        note.content = new_content;
+        note.updated_at = chrono::Utc::now().timestamp_millis();
+    }
 }

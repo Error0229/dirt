@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
-/// Shared row layout for settings sections.
+/// Stacked row layout for settings sections.
+/// Label and description on top, control below.
 #[component]
 pub(super) fn SettingRow(
     #[props(into)] label: String,
@@ -12,7 +13,7 @@ pub(super) fn SettingRow(
             class: "settings-row",
 
             div {
-                class: "settings-row-info",
+                class: "settings-row-header",
                 div {
                     class: "settings-row-label",
                     "{label}"

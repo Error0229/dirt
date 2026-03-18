@@ -2,9 +2,7 @@
 
 use dioxus::prelude::*;
 
-use crate::components::{
-    create_note_optimistic, NoteEditor, NoteList, SearchBar, Sidebar, Toolbar,
-};
+use crate::components::{create_note_optimistic, NoteEditor, NoteList, Toolbar};
 use crate::state::AppState;
 
 /// Home view component - the main application screen
@@ -25,6 +23,19 @@ pub fn Home() -> Element {
             return;
         }
 
+        // Toggle note list with Ctrl+\
+        let is_toggle_list = (evt.modifiers().ctrl() || evt.modifiers().meta())
+            && matches!(
+                evt.key(),
+                Key::Character(ch) if ch == "\\"
+            );
+        if is_toggle_list {
+            evt.prevent_default();
+            let visible = (state.note_list_visible)();
+            state.note_list_visible.set(!visible);
+            return;
+        }
+
         if evt.key() == Key::Escape {
             if (state.settings_open)() {
                 state.settings_open.set(false);
@@ -39,25 +50,17 @@ pub fn Home() -> Element {
     rsx! {
         div {
             class: "home-container",
-            style: "display: flex; height: 100vh;",
+            style: "display: flex; flex-direction: column; height: 100vh;",
             onkeydown: handle_keydown,
 
-            Sidebar {}
+            Toolbar {}
 
             div {
-                class: "main-content",
-                style: "flex: 1; display: flex; flex-direction: column;",
+                class: "content-area",
+                style: "flex: 1; display: flex; overflow: hidden;",
 
-                Toolbar {}
-                SearchBar {}
-
-                div {
-                    class: "content-area",
-                    style: "flex: 1; display: flex; overflow: hidden;",
-
-                    NoteList {}
-                    NoteEditor {}
-                }
+                NoteList {}
+                NoteEditor {}
             }
         }
     }

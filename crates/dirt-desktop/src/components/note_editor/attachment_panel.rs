@@ -492,7 +492,7 @@ pub(super) fn AttachmentPanel(
                 div {
                     style: "display: flex; align-items: center; justify-content: space-between; gap: 12px;",
                     div {
-                        style: "font-size: 12px; color: {colors.text_muted}; text-transform: uppercase; letter-spacing: 0.04em;",
+                        style: "font-size: 11px; font-weight: 600; color: {colors.text_muted}; text-transform: uppercase; letter-spacing: 0.06em;",
                         "Attachments"
                     }
 
@@ -503,7 +503,7 @@ pub(super) fn AttachmentPanel(
                             onclick: on_pick_attachment,
                             disabled: attachment_uploading()
                                 || voice_memo_state_value == VoiceMemoRecorderState::Stopping,
-                            style: "padding: 3px 10px; font-size: 12px;",
+                            style: "padding: 6px 14px; font-size: 13px; border-radius: 6px;",
                             "+ Upload"
                         }
                         if voice_memo_state_value == VoiceMemoRecorderState::Idle {
@@ -511,14 +511,14 @@ pub(super) fn AttachmentPanel(
                                 variant: ButtonVariant::Ghost,
                                 onclick: on_start_voice_memo,
                                 disabled: attachment_uploading(),
-                                style: "padding: 3px 10px; font-size: 12px;",
+                                style: "padding: 6px 14px; font-size: 13px; border-radius: 6px;",
                                 "Record"
                             }
                         } else if voice_memo_state_value == VoiceMemoRecorderState::Starting {
                             Button {
                                 variant: ButtonVariant::Ghost,
                                 disabled: true,
-                                style: "padding: 3px 10px; font-size: 12px;",
+                                style: "padding: 6px 14px; font-size: 13px; border-radius: 6px;",
                                 "Starting..."
                             }
                         } else if voice_memo_state_value == VoiceMemoRecorderState::Recording {
@@ -526,21 +526,21 @@ pub(super) fn AttachmentPanel(
                                 variant: ButtonVariant::Secondary,
                                 onclick: on_stop_voice_memo,
                                 disabled: attachment_uploading(),
-                                style: "padding: 3px 10px; font-size: 12px;",
+                                style: "padding: 6px 14px; font-size: 13px; border-radius: 6px;",
                                 "Stop & attach"
                             }
                             Button {
                                 variant: ButtonVariant::Ghost,
                                 onclick: on_discard_voice_memo,
                                 disabled: attachment_uploading(),
-                                style: "padding: 3px 10px; font-size: 12px;",
+                                style: "padding: 6px 14px; font-size: 13px; border-radius: 6px;",
                                 "Discard"
                             }
                         } else {
                             Button {
                                 variant: ButtonVariant::Ghost,
                                 disabled: true,
-                                style: "padding: 3px 10px; font-size: 12px;",
+                                style: "padding: 6px 14px; font-size: 13px; border-radius: 6px;",
                                 "Finalizing..."
                             }
                         }
@@ -581,7 +581,7 @@ pub(super) fn AttachmentPanel(
                                 style: "display: flex; align-items: center; gap: 6px; flex-shrink: 0;",
                                 Button {
                                     variant: ButtonVariant::Ghost,
-                                    style: "padding: 2px 8px; font-size: 11px;",
+                                    style: "padding: 4px 10px; font-size: 12px; border-radius: 4px;",
                                     onclick: {
                                         let attachment = attachment.clone();
                                         move |_| {
@@ -612,7 +612,7 @@ pub(super) fn AttachmentPanel(
                                 }
                                 Button {
                                     variant: ButtonVariant::Ghost,
-                                    style: "padding: 2px 8px; font-size: 11px;",
+                                    style: "padding: 4px 10px; font-size: 12px; border-radius: 4px;",
                                     disabled: active_deleting_attachment == Some(attachment.id),
                                     onclick: move |_| {
                                         let mut deleting_signal = deleting_attachment_id;

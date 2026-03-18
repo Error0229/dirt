@@ -1,145 +1,132 @@
-//! Note card component
+//! Compact note card component
 
 use dioxus::prelude::*;
 
-use super::button::{Button, ButtonVariant};
-use super::card::{Card, CardContent};
+use dirt_core::NoteId;
+
+use super::delete_note_optimistic;
 use crate::state::AppState;
+use crate::time_format::format_short_time;
 
-const MINUTE_MS: i64 = 60_000;
-const HOUR_MS: i64 = 60 * MINUTE_MS;
-const DAY_MS: i64 = 24 * HOUR_MS;
-const WEEK_MS: i64 = 7 * DAY_MS;
-
-fn format_relative_time(timestamp_ms: i64) -> String {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let delta = (now_ms - timestamp_ms).max(0);
-
-    if delta < MINUTE_MS {
-        return "just now".to_string();
-    }
-    if delta < HOUR_MS {
-        let minutes = delta / MINUTE_MS;
-        return if minutes == 1 {
-            "1 minute ago".to_string()
-        } else {
-            format!("{minutes} minutes ago")
-        };
-    }
-    if delta < DAY_MS {
-        let hours = delta / HOUR_MS;
-        return if hours == 1 {
-            "1 hour ago".to_string()
-        } else {
-            format!("{hours} hours ago")
-        };
-    }
-    if delta < WEEK_MS {
-        let days = delta / DAY_MS;
-        return if days == 1 {
-            "1 day ago".to_string()
-        } else {
-            format!("{days} days ago")
-        };
-    }
-
-    let weeks = delta / WEEK_MS;
-    if weeks == 1 {
-        "1 week ago".to_string()
-    } else {
-        format!("{weeks} weeks ago")
-    }
-}
-
-/// A single note row rendered in the note list.
+/// Compact 48px note card
 #[component]
 pub fn NoteCard(
+    note_id: NoteId,
     title: String,
     preview: String,
     updated_at_ms: i64,
     is_selected: bool,
     onclick: EventHandler<MouseEvent>,
 ) -> Element {
-    let state = use_context::<AppState>();
+    let mut state = use_context::<AppState>();
     let colors = (state.theme)().palette();
-    let relative_time = format_relative_time(updated_at_ms);
+    let mut hovered = use_signal(|| false);
+    let relative_time = format_short_time(updated_at_ms);
+    let is_hovered = hovered();
 
     let bg = if is_selected {
         colors.bg_tertiary
     } else {
-        colors.bg_primary
+        "transparent"
     };
-    let border_left = if is_selected {
+
+    let left_border = if is_selected {
         format!("3px solid {}", colors.accent)
     } else {
         "3px solid transparent".to_string()
     };
 
+    let delete_note = move |evt: MouseEvent| {
+        evt.stop_propagation();
+        delete_note_optimistic(&mut state, note_id);
+    };
+
     rsx! {
-        Button {
-            variant: ButtonVariant::Ghost,
-            class: if is_selected { "note-item selected" } else { "note-item" },
+        div {
+            class: "note-card",
             style: "
-                width: 100%;
-                padding: 0;
-                border-bottom: 1px solid {colors.border_light};
-                border-left: {border_left};
+                padding: 8px 10px;
+                border-left: {left_border};
+                border-bottom: 1px solid {colors.border};
                 background: {bg};
-                transition: background 0.15s;
-                border-radius: 0;
-                text-align: left;
+                cursor: pointer;
+                overflow: hidden;
+                transition: background 0.08s;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
             ",
             onclick: move |evt| onclick.call(evt),
+            onmouseenter: move |_| hovered.set(true),
+            onmouseleave: move |_| hovered.set(false),
 
-            Card {
+            // Row 1: title + time/delete
+            div {
                 style: "
-                padding: 0;
-                gap: 0;
-                border: none;
-                border-radius: 0;
-                box-shadow: none;
-            ",
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    min-width: 0;
+                ",
 
-                CardContent {
+                // Title
+                span {
                     style: "
-                        padding: 12px 16px;
+                        flex: 1;
+                        font-size: 13px;
+                        font-weight: 500;
+                        color: {colors.text_primary};
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                        min-width: 0;
                     ",
+                    if title.is_empty() { "Untitled" } else { "{title}" }
+                }
 
-                    div {
-                        class: "note-title",
+                // Delete icon on hover, timestamp otherwise
+                if is_hovered {
+                    button {
                         style: "
-                            font-weight: 500;
-                            margin-bottom: 4px;
-                            overflow: hidden;
-                            text-overflow: ellipsis;
-                            white-space: nowrap;
-                            color: {colors.text_primary};
+                            background: none;
+                            border: none;
+                            cursor: pointer;
+                            color: {colors.error};
+                            font-size: 13px;
+                            padding: 0 2px;
+                            line-height: 1;
+                            flex-shrink: 0;
+                            opacity: 0.7;
                         ",
-                        "{title}"
+                        onclick: delete_note,
+                        "×"
                     }
-
-                    div {
-                        class: "note-preview",
+                } else {
+                    span {
                         style: "
-                            font-size: 12px;
-                            color: {colors.text_secondary};
-                            overflow: hidden;
-                            text-overflow: ellipsis;
-                            white-space: nowrap;
-                        ",
-                        "{preview}"
-                    }
-
-                    div {
-                        class: "note-timestamp",
-                        style: "
-                            margin-top: 4px;
                             font-size: 11px;
                             color: {colors.text_muted};
                             white-space: nowrap;
+                            flex-shrink: 0;
                         ",
                         "{relative_time}"
                     }
+                }
+            }
+
+            // Row 2: preview/tags — only if non-empty
+            if !preview.is_empty() {
+                div {
+                    style: "
+                        font-size: 11px;
+                        color: {colors.text_secondary};
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                        margin-top: 1px;
+                        line-height: 1.2;
+                    ",
+                    "{preview}"
                 }
             }
         }
