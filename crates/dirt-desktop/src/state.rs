@@ -69,31 +69,6 @@ impl AppState {
         current_id.and_then(|id| (self.notes)().into_iter().find(|note| note.id == id))
     }
 
-    /// Get filtered notes based on search query and tag filter
-    #[must_use]
-    pub fn filtered_notes(&self) -> Vec<Note> {
-        let notes = (self.notes)();
-        let query = (self.search_query)().to_lowercase();
-        let tag_filter = (self.active_tag_filter)();
-
-        notes
-            .into_iter()
-            .filter(|note| !note.is_deleted)
-            .filter(|note| {
-                if query.is_empty() {
-                    true
-                } else {
-                    note.content.to_lowercase().contains(&query)
-                }
-            })
-            .filter(|note| {
-                tag_filter
-                    .as_ref()
-                    .map_or(true, |tag| note.tags().iter().any(|t| t == tag))
-            })
-            .collect()
-    }
-
     /// Track a pending change for a note until the next successful sync.
     pub fn enqueue_pending_change(&mut self, note_id: NoteId) {
         let mut pending_notes = self.pending_sync_note_ids.write();

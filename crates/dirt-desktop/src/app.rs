@@ -172,10 +172,9 @@ pub fn App() -> Element {
                                 session = refreshed;
                             }
                             Err(error) => {
-                                let message =
-                                    format!("Supabase session refresh failed: {error}");
+                                let message = format!("Supabase session refresh failed: {error}");
                                 tracing::error!("{message}");
-                                sync_issue.set(Some(message.clone()));
+                                sync_issue.set(Some(message));
                                 return;
                             }
                         }

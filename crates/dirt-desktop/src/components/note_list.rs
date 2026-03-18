@@ -30,26 +30,40 @@ pub fn NoteList() -> Element {
     }
 
     let colors = (state.theme)().palette();
-    let filtered_notes = state.filtered_notes();
     let current_id = (state.current_note_id)();
+    let active_tag = (state.active_tag_filter)();
+    let query = (state.search_query)().to_lowercase();
 
-    // Collect tags with counts
-    let tag_counts: HashMap<String, usize> = {
-        let notes = (state.notes)();
-        let mut counts: HashMap<String, usize> = HashMap::new();
-        for note in notes.iter().filter(|n| !n.is_deleted) {
-            for tag in note.tags() {
-                *counts.entry(tag).or_insert(0) += 1;
-            }
+    // Single pass: compute tag counts, total, and filtered notes from one read.
+    let all_notes = (state.notes)();
+
+    let mut tag_counts: HashMap<String, usize> = HashMap::new();
+    let mut total_notes = 0usize;
+    let mut filtered_notes = Vec::new();
+
+    for note in &all_notes {
+        if note.is_deleted {
+            continue;
         }
-        counts
-    };
+        total_notes += 1;
+
+        let tags = note.tags();
+        for tag in &tags {
+            *tag_counts.entry(tag.clone()).or_insert(0) += 1;
+        }
+
+        let matches_query = query.is_empty() || note.content.to_lowercase().contains(&query);
+        let matches_tag = active_tag
+            .as_ref()
+            .map_or(true, |filter_tag| tags.iter().any(|t| t == filter_tag));
+
+        if matches_query && matches_tag {
+            filtered_notes.push(note.clone());
+        }
+    }
 
     let mut sorted_tags: Vec<(String, usize)> = tag_counts.into_iter().collect();
     sorted_tags.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-
-    let active_tag = (state.active_tag_filter)();
-    let total_notes = (state.notes)().iter().filter(|n| !n.is_deleted).count();
 
     rsx! {
         div {
@@ -82,6 +96,11 @@ pub fn NoteList() -> Element {
                     TagChip {
                         label: format!("All {total_notes}"),
                         is_active: active_tag.is_none(),
+                        accent: colors.accent,
+                        border_color: colors.border,
+                        bg_active: colors.bg_tertiary,
+                        text_active: colors.text_primary,
+                        text_inactive: colors.text_muted,
                         onclick: move |_| {
                             state.active_tag_filter.set(None);
                         },
@@ -95,6 +114,11 @@ pub fn NoteList() -> Element {
                                 TagChip {
                                     label: format!("#{tag} {count}"),
                                     is_active: is_active,
+                                    accent: colors.accent,
+                                    border_color: colors.border,
+                                    bg_active: colors.bg_tertiary,
+                                    text_active: colors.text_primary,
+                                    text_inactive: colors.text_muted,
                                     onclick: move |_| {
                                         state.active_tag_filter.set(Some(tag_clone.clone()));
                                     },
@@ -133,7 +157,6 @@ pub fn NoteList() -> Element {
                             let title = note.title_preview(40);
                             let tags = note.tags();
                             let preview = if tags.is_empty() {
-                                // Show second line or beginning of content as preview
                                 note.content.lines().nth(1).unwrap_or("").chars().take(40).collect::<String>()
                             } else {
                                 tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" ")
@@ -161,19 +184,29 @@ pub fn NoteList() -> Element {
     }
 }
 
-/// Compact tag chip
+/// Compact tag chip — receives colors as props to avoid redundant context lookups.
 #[component]
-fn TagChip(label: String, is_active: bool, onclick: EventHandler<MouseEvent>) -> Element {
-    let state = use_context::<AppState>();
-    let colors = (state.theme)().palette();
-
-    let bg = if is_active { colors.bg_tertiary } else { "transparent" };
+fn TagChip(
+    label: String,
+    is_active: bool,
+    accent: &'static str,
+    border_color: &'static str,
+    bg_active: &'static str,
+    text_active: &'static str,
+    text_inactive: &'static str,
+    onclick: EventHandler<MouseEvent>,
+) -> Element {
+    let bg = if is_active { bg_active } else { "transparent" };
     let border = if is_active {
-        format!("1px solid {}", colors.accent)
+        format!("1px solid {accent}")
     } else {
-        format!("1px solid {}", colors.border)
+        format!("1px solid {border_color}")
     };
-    let text_color = if is_active { colors.text_primary } else { colors.text_muted };
+    let text_color = if is_active {
+        text_active
+    } else {
+        text_inactive
+    };
 
     rsx! {
         button {

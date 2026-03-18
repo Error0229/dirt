@@ -7,6 +7,7 @@ use dioxus::prelude::*;
 use dirt_core::NoteId;
 
 use self::attachment_panel::AttachmentPanel;
+use crate::components::update_note_content;
 use crate::queries::invalidate_notes_query;
 use crate::state::AppState;
 
@@ -52,66 +53,20 @@ pub fn NoteEditor() -> Element {
         }
     });
 
-    // Debounced auto-save.
-    use_effect(move || {
-        let current_version = save_version();
-        if current_version == 0 || current_version == last_saved_version() {
-            return;
-        }
-
-        let note_id = current_note_id();
-        let content_to_save = content();
-
+    // Shared save logic used by both debounced auto-save and immediate save.
+    let mut persist_note = move |version: u64, note_id: Option<NoteId>, content_to_save: String| {
         if let Some(id) = note_id {
             state.enqueue_pending_change(id);
         }
 
+        let db = state.db_service.read().clone();
         spawn(async move {
-            tokio::time::sleep(Duration::from_millis(IDLE_SAVE_MS)).await;
-
-            if save_version() != current_version {
-                return;
-            }
-
             if let Some(id) = note_id {
-                let db = state.db_service.read().clone();
                 if let Some(db) = db {
                     match db.update_note(&id, &content_to_save).await {
                         Ok(_) => {
-                            tracing::debug!("Auto-saved note: {}", id);
-                            last_saved_version.set(current_version);
-                            invalidate_notes_query().await;
-                        }
-                        Err(error) => {
-                            tracing::error!("Failed to save note: {}", error);
-                        }
-                    }
-                }
-            }
-        });
-    });
-
-    let mut perform_save_now = move || {
-        let current_version = save_version();
-        if current_version == 0 || current_version == last_saved_version() {
-            return;
-        }
-
-        let note_id = current_note_id();
-        let content_to_save = content();
-
-        if let Some(id) = note_id {
-            state.enqueue_pending_change(id);
-        }
-
-        spawn(async move {
-            if let Some(id) = note_id {
-                let db = state.db_service.read().clone();
-                if let Some(db) = db {
-                    match db.update_note(&id, &content_to_save).await {
-                        Ok(_) => {
-                            tracing::debug!("Saved note on blur/shortcut: {}", id);
-                            last_saved_version.set(current_version);
+                            tracing::debug!("Saved note: {}", id);
+                            last_saved_version.set(version);
                             invalidate_notes_query().await;
                         }
                         Err(error) => {
@@ -123,6 +78,36 @@ pub fn NoteEditor() -> Element {
         });
     };
 
+    // Debounced auto-save.
+    use_effect(move || {
+        let current_version = save_version();
+        if current_version == 0 || current_version == last_saved_version() {
+            return;
+        }
+
+        let note_id = current_note_id();
+        let content_to_save = content();
+        let mut persist = persist_note;
+
+        spawn(async move {
+            tokio::time::sleep(Duration::from_millis(IDLE_SAVE_MS)).await;
+
+            if save_version() != current_version {
+                return;
+            }
+
+            persist(current_version, note_id, content_to_save);
+        });
+    });
+
+    let mut perform_save_now = move || {
+        let current_version = save_version();
+        if current_version == 0 || current_version == last_saved_version() {
+            return;
+        }
+        persist_note(current_version, current_note_id(), content());
+    };
+
     let on_input = move |evt: Event<FormData>| {
         let new_content = evt.value();
         content.set(new_content.clone());
@@ -130,11 +115,7 @@ pub fn NoteEditor() -> Element {
 
         // Optimistically reflect the latest content in local list state.
         if let Some(id) = current_note_id() {
-            let mut notes = state.notes.write();
-            if let Some(note) = notes.iter_mut().find(|note| note.id == id) {
-                note.content = new_content;
-                note.updated_at = chrono::Utc::now().timestamp_millis();
-            }
+            update_note_content(&mut state, id, new_content);
         }
     };
 
@@ -256,11 +237,7 @@ pub fn NoteEditor() -> Element {
                             on_editor_content_change: move |updated_content: String| {
                                 content.set(updated_content.clone());
                                 if let Some(id) = current_note_id() {
-                                    let mut notes = state.notes.write();
-                                    if let Some(note) = notes.iter_mut().find(|note| note.id == id) {
-                                        note.content = updated_content;
-                                        note.updated_at = chrono::Utc::now().timestamp_millis();
-                                    }
+                                    update_note_content(&mut state, id, updated_content);
                                 }
                             },
                         }

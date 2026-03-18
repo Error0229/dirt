@@ -370,7 +370,7 @@ pub fn SettingsPanel() -> Element {
         });
     };
 
-    let export_json = move |_: MouseEvent| {
+    let mut export_notes = move |format: NotesExportFormat| {
         if export_busy() {
             return;
         }
@@ -388,10 +388,8 @@ pub fn SettingsPanel() -> Element {
                 return;
             };
 
-            let default_name = suggested_export_file_name(
-                NotesExportFormat::Json,
-                chrono::Utc::now().timestamp_millis(),
-            );
+            let default_name =
+                suggested_export_file_name(format, chrono::Utc::now().timestamp_millis());
             let Some(file) = AsyncFileDialog::new()
                 .set_file_name(&default_name)
                 .save_file()
@@ -401,7 +399,7 @@ pub fn SettingsPanel() -> Element {
                 return;
             };
 
-            match export_notes_to_path(db.as_ref(), NotesExportFormat::Json, file.path()).await {
+            match export_notes_to_path(db.as_ref(), format, file.path()).await {
                 Ok(count) => {
                     export_message_signal.set(Some(format!(
                         "Exported {count} notes to {}",
@@ -416,52 +414,8 @@ pub fn SettingsPanel() -> Element {
         });
     };
 
-    let export_markdown = move |_: MouseEvent| {
-        if export_busy() {
-            return;
-        }
-
-        export_busy.set(true);
-        export_message.set(None);
-
-        let db = state.db_service.read().clone();
-        let mut export_busy_signal = export_busy;
-        let mut export_message_signal = export_message;
-        spawn(async move {
-            let Some(db) = db else {
-                export_message_signal.set(Some("Database service is not available.".to_string()));
-                export_busy_signal.set(false);
-                return;
-            };
-
-            let default_name = suggested_export_file_name(
-                NotesExportFormat::Markdown,
-                chrono::Utc::now().timestamp_millis(),
-            );
-            let Some(file) = AsyncFileDialog::new()
-                .set_file_name(&default_name)
-                .save_file()
-                .await
-            else {
-                export_busy_signal.set(false);
-                return;
-            };
-
-            match export_notes_to_path(db.as_ref(), NotesExportFormat::Markdown, file.path()).await
-            {
-                Ok(count) => {
-                    export_message_signal.set(Some(format!(
-                        "Exported {count} notes to {}",
-                        file.path().display()
-                    )));
-                }
-                Err(error) => {
-                    export_message_signal.set(Some(format!("Export failed: {error}")));
-                }
-            }
-            export_busy_signal.set(false);
-        });
-    };
+    let export_json = move |_: MouseEvent| export_notes(NotesExportFormat::Json);
+    let export_markdown = move |_: MouseEvent| export_notes(NotesExportFormat::Markdown);
 
     let refresh_sync_conflicts = move |_: MouseEvent| {
         sync_conflicts_refresh_version.set(sync_conflicts_refresh_version().saturating_add(1));

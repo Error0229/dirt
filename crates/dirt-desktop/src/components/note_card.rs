@@ -4,32 +4,9 @@ use dioxus::prelude::*;
 
 use dirt_core::NoteId;
 
-use crate::queries::invalidate_notes_query;
+use super::delete_note_optimistic;
 use crate::state::AppState;
-
-const MINUTE_MS: i64 = 60_000;
-const HOUR_MS: i64 = 60 * MINUTE_MS;
-const DAY_MS: i64 = 24 * HOUR_MS;
-const WEEK_MS: i64 = 7 * DAY_MS;
-
-fn format_short_time(timestamp_ms: i64) -> String {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let delta = (now_ms - timestamp_ms).max(0);
-
-    if delta < MINUTE_MS {
-        return "now".to_string();
-    }
-    if delta < HOUR_MS {
-        return format!("{}m", delta / MINUTE_MS);
-    }
-    if delta < DAY_MS {
-        return format!("{}h", delta / HOUR_MS);
-    }
-    if delta < WEEK_MS {
-        return format!("{}d", delta / DAY_MS);
-    }
-    format!("{}w", delta / WEEK_MS)
-}
+use crate::time_format::format_short_time;
 
 /// Compact 48px note card
 #[component]
@@ -61,23 +38,7 @@ pub fn NoteCard(
 
     let delete_note = move |evt: MouseEvent| {
         evt.stop_propagation();
-        let id = note_id;
-        state.notes.write().retain(|n| n.id != id);
-        if (state.current_note_id)() == Some(id) {
-            state.current_note_id.set(None);
-        }
-        state.enqueue_pending_change(id);
-
-        let db = state.db_service.read().clone();
-        spawn(async move {
-            if let Some(db) = db {
-                if let Err(e) = db.delete_note(&id).await {
-                    tracing::error!("Failed to persist delete: {}", e);
-                } else {
-                    invalidate_notes_query().await;
-                }
-            }
-        });
+        delete_note_optimistic(&mut state, note_id);
     };
 
     rsx! {

@@ -15,15 +15,6 @@ pub enum ResolvedTheme {
     Dark,
 }
 
-impl ResolvedTheme {
-    /// Check if the theme is dark
-    #[must_use]
-    #[allow(dead_code)] // Will be used for CSS class names
-    pub const fn is_dark(self) -> bool {
-        matches!(self, Self::Dark)
-    }
-}
-
 /// Resolve theme mode to actual light/dark theme
 #[must_use]
 pub fn resolve_theme(mode: ThemeMode) -> ResolvedTheme {
@@ -46,14 +37,10 @@ pub fn is_system_dark_mode() -> bool {
     *SYSTEM_DARK_MODE.get_or_init(detect_system_dark_mode)
 }
 
-/// Perform the actual system dark mode detection
-/// This is expensive (spawns subprocess) so we only call it once
-fn detect_system_dark_mode() -> bool {
-    detect_system_dark_mode_impl()
-}
-
+/// Perform the actual system dark mode detection.
+/// This is expensive (spawns subprocess) so we only call it once.
 #[cfg(target_os = "windows")]
-fn detect_system_dark_mode_impl() -> bool {
+fn detect_system_dark_mode() -> bool {
     use std::process::Command;
     // Check Windows AppsUseLightTheme registry value
     // 0 = dark mode, 1 = light mode
@@ -88,7 +75,7 @@ fn detect_system_dark_mode_impl() -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn detect_system_dark_mode_impl() -> bool {
+fn detect_system_dark_mode() -> bool {
     use std::process::Command;
     let output = Command::new("defaults")
         .args(["read", "-g", "AppleInterfaceStyle"])
@@ -115,7 +102,7 @@ fn detect_system_dark_mode_impl() -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn detect_system_dark_mode_impl() -> bool {
+fn detect_system_dark_mode() -> bool {
     // Check GTK theme or use environment variable
     std::env::var("GTK_THEME").map_or_else(
         |_| {
@@ -134,12 +121,23 @@ fn detect_system_dark_mode_impl() -> bool {
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-fn detect_system_dark_mode_impl() -> bool {
+fn detect_system_dark_mode() -> bool {
     tracing::debug!("Unsupported platform for system theme detection, defaulting to light mode");
     false
 }
 
-/// Color palette for the application
+/// Color palette for the application.
+///
+// KEEP IN SYNC with `theme-overrides.css` CSS custom properties:
+//   bg_primary    ↔ --primary-color
+//   bg_secondary  ↔ --primary-color-3
+//   border        ↔ --primary-color-6
+//   text_primary  ↔ --secondary-color
+//   text_muted    ↔ --secondary-color-5
+//   accent        ↔ --focused-border-color
+//   error         ↔ --primary-error-color
+//   success       ↔ --secondary-success-color
+//   warning       ↔ --secondary-warning-color
 #[derive(Debug, Clone, Copy)]
 #[allow(dead_code)] // All colors defined for completeness, not all used yet
 pub struct ColorPalette {
@@ -155,6 +153,7 @@ pub struct ColorPalette {
     pub accent_hover: &'static str,
     pub accent_text: &'static str,
     pub error: &'static str,
+    pub warning: &'static str,
     pub success: &'static str,
 }
 
@@ -172,6 +171,7 @@ pub const LIGHT_PALETTE: ColorPalette = ColorPalette {
     accent_hover: "#976a42",
     accent_text: "#ffffff",
     error: "#c45c5c",
+    warning: "#c4a95c",
     success: "#5a9a68",
 };
 
@@ -189,6 +189,7 @@ pub const DARK_PALETTE: ColorPalette = ColorPalette {
     accent_hover: "#d4aa7c",
     accent_text: "#17151a",
     error: "#c45c5c",
+    warning: "#c4a95c",
     success: "#6bba7a",
 };
 
