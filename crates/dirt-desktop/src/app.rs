@@ -190,6 +190,7 @@ pub fn App() -> Element {
                 match client.exchange_token(&session.access_token).await {
                     Ok(token) => {
                         sync_token_expires_at.set(Some(token.expires_at));
+                        sync_issue.set(None);
                         let sync_config = SyncConfig::new(token.database_url, token.token);
                         DatabaseService::new_with_sync(sync_config).await
                     }

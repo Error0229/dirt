@@ -39,7 +39,13 @@ pub fn delete_note_optimistic(state: &mut AppState, note_id: NoteId) {
     if (state.current_note_id)() == Some(note_id) {
         state.current_note_id.set(None);
     }
-    state.enqueue_pending_change(note_id);
+    // Remove from pending sync queue — the note no longer exists locally,
+    // so it should not be treated as a pending edit.
+    {
+        let mut pending = state.pending_sync_note_ids.write();
+        pending.retain(|id| *id != note_id);
+        state.pending_sync_count.set(pending.len());
+    }
 
     tracing::info!("Deleted note (optimistic): {}", note_id);
 

@@ -92,7 +92,7 @@ pub fn NoteEditor() -> Element {
         spawn(async move {
             tokio::time::sleep(Duration::from_millis(IDLE_SAVE_MS)).await;
 
-            if save_version() != current_version {
+            if save_version() != current_version || last_saved_version() == current_version {
                 return;
             }
 
