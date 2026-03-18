@@ -48,9 +48,9 @@ pub fn delete_note_optimistic(state: &mut AppState, note_id: NoteId) {
         if let Some(db) = db {
             if let Err(e) = db.delete_note(&note_id).await {
                 tracing::error!("Failed to persist delete: {}", e);
-            } else {
-                invalidate_notes_query().await;
             }
+            // Always re-sync: on success to confirm, on failure to rollback the optimistic removal
+            invalidate_notes_query().await;
         }
     });
 }

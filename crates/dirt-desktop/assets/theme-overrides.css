@@ -273,9 +273,9 @@
   color: var(--secondary-error-color);
 }
 
-/* Note card hover — uses CSS class, inline background removed */
-.note-card:hover {
-  background: var(--primary-color-4) !important;
+/* Note card hover — high specificity avoids !important and won't override inline selected bg */
+.note-cards .note-card:hover {
+  background: var(--primary-color-4);
 }
 
 /* Editor textarea placeholder */

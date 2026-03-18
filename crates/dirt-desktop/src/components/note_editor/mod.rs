@@ -201,13 +201,10 @@ pub fn NoteEditor() -> Element {
                             border-top: 1px solid {colors.border};
                             background: {colors.bg_secondary};
                             flex-shrink: 0;
-                            max-height: 100px;
-                            overflow-y: auto;
-                            padding: 4px 12px 6px;
                             position: relative;
                         ",
 
-                        // Close button — top right
+                        // Close button — fixed outside the scroll container
                         button {
                             style: "
                                 position: absolute;
@@ -215,7 +212,7 @@ pub fn NoteEditor() -> Element {
                                 right: 8px;
                                 width: 24px;
                                 height: 24px;
-                                background: none;
+                                background: {colors.bg_secondary};
                                 border: none;
                                 border-radius: 4px;
                                 color: {colors.text_secondary};
@@ -225,21 +222,30 @@ pub fn NoteEditor() -> Element {
                                 display: flex;
                                 align-items: center;
                                 justify-content: center;
-                                z-index: 1;
+                                z-index: 2;
                             ",
                             onclick: move |_| attachments_expanded.set(false),
                             "×"
                         }
 
-                        AttachmentPanel {
-                            note_id: current_note_id(),
-                            editor_content: content(),
-                            on_editor_content_change: move |updated_content: String| {
-                                content.set(updated_content.clone());
-                                if let Some(id) = current_note_id() {
-                                    update_note_content(&mut state, id, updated_content);
-                                }
-                            },
+                        // Scrollable attachment list
+                        div {
+                            style: "
+                                max-height: 200px;
+                                overflow-y: auto;
+                                padding: 4px 12px 6px;
+                            ",
+
+                            AttachmentPanel {
+                                note_id: current_note_id(),
+                                editor_content: content(),
+                                on_editor_content_change: move |updated_content: String| {
+                                    content.set(updated_content.clone());
+                                    if let Some(id) = current_note_id() {
+                                        update_note_content(&mut state, id, updated_content);
+                                    }
+                                },
+                            }
                         }
                     }
                 }

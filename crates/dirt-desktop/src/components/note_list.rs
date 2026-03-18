@@ -147,7 +147,11 @@ pub fn NoteList() -> Element {
                             font-size: 13px;
                             font-style: italic;
                         ",
-                        "Hit + to capture a thought"
+                        if active_tag.is_some() || !query.is_empty() {
+                            "No notes match this filter"
+                        } else {
+                            "Hit + to capture a thought"
+                        }
                     }
                 } else {
                     for note in filtered_notes {
