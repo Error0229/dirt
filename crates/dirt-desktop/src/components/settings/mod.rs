@@ -578,7 +578,7 @@ pub fn SettingsPanel() -> Element {
             },
 
             DialogContent {
-                style: "width: 400px; max-width: 90vw; text-align: left;",
+                style: "width: 520px; max-width: 92vw; text-align: left; padding: 28px;",
 
                 // Header with close button
                 div {
@@ -586,54 +586,65 @@ pub fn SettingsPanel() -> Element {
                         display: flex;
                         justify-content: space-between;
                         align-items: center;
-                        margin-bottom: 8px;
+                        margin-bottom: 16px;
                     ",
-                    DialogTitle { "Settings" }
+                    DialogTitle {
+                        style: "font-size: 20px; font-weight: 600;",
+                        "Settings"
+                    }
                     Button {
                         variant: ButtonVariant::Ghost,
                         onclick: close_settings,
-                        style: "padding: 4px 8px; font-size: 18px;",
+                        style: "width: 32px; height: 32px; padding: 0; font-size: 20px; display: flex; align-items: center; justify-content: center; border-radius: 6px;",
                         "×"
                     }
                 }
 
+                // Tab bar — underline style
                 div {
-                    style: "display: flex; gap: 8px; margin-bottom: 12px;",
-                    Button {
-                        variant: if active_tab() == SettingsTab::Appearance {
-                            ButtonVariant::Secondary
-                        } else {
-                            ButtonVariant::Ghost
-                        },
-                        onclick: move |_| active_tab.set(SettingsTab::Appearance),
-                        "Appearance"
-                    }
-                    Button {
-                        variant: if active_tab() == SettingsTab::Media {
-                            ButtonVariant::Secondary
-                        } else {
-                            ButtonVariant::Ghost
-                        },
-                        onclick: move |_| active_tab.set(SettingsTab::Media),
-                        "Media"
-                    }
-                    Button {
-                        variant: if active_tab() == SettingsTab::Sync {
-                            ButtonVariant::Secondary
-                        } else {
-                            ButtonVariant::Ghost
-                        },
-                        onclick: move |_| active_tab.set(SettingsTab::Sync),
-                        "Sync"
-                    }
-                    Button {
-                        variant: if active_tab() == SettingsTab::Auth {
-                            ButtonVariant::Secondary
-                        } else {
-                            ButtonVariant::Ghost
-                        },
-                        onclick: move |_| active_tab.set(SettingsTab::Auth),
-                        "Account"
+                    style: "
+                        display: flex;
+                        gap: 0;
+                        margin-bottom: 24px;
+                        border-bottom: 1px solid {colors.border};
+                    ",
+                    {
+                        let tabs = [
+                            (SettingsTab::Appearance, "Appearance"),
+                            (SettingsTab::Media, "Media"),
+                            (SettingsTab::Sync, "Sync"),
+                            (SettingsTab::Auth, "Account"),
+                        ];
+                        rsx! {
+                            for (tab, label) in tabs {
+                                {
+                                    let is_active = active_tab() == tab;
+                                    let text_color = if is_active { colors.text_primary } else { colors.text_muted };
+                                    let border_bottom = if is_active {
+                                        format!("2px solid {}", colors.accent)
+                                    } else {
+                                        "2px solid transparent".to_string()
+                                    };
+                                    rsx! {
+                                        button {
+                                            style: "
+                                                background: none;
+                                                border: none;
+                                                border-bottom: {border_bottom};
+                                                color: {text_color};
+                                                font-size: 14px;
+                                                font-weight: 500;
+                                                padding: 10px 18px;
+                                                cursor: pointer;
+                                                transition: color 0.1s;
+                                            ",
+                                            onclick: move |_| active_tab.set(tab),
+                                            "{label}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 

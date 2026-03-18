@@ -160,36 +160,36 @@ pub struct ColorPalette {
 
 /// Light theme colors
 pub const LIGHT_PALETTE: ColorPalette = ColorPalette {
-    bg_primary: "#ffffff",
-    bg_secondary: "#f8f9fa",
-    bg_tertiary: "#f1f3f4",
-    text_primary: "#1a1a1a",
-    text_secondary: "#5f6368",
-    text_muted: "#9aa0a6",
-    border: "#dadce0",
-    border_light: "#e8eaed",
-    accent: "#4f46e5",
-    accent_hover: "#4338ca",
+    bg_primary: "#faf9f7",
+    bg_secondary: "#f0eeeb",
+    bg_tertiary: "#e6e3df",
+    text_primary: "#1a1816",
+    text_secondary: "#6b6560",
+    text_muted: "#9a948e",
+    border: "#ddd8d2",
+    border_light: "#e8e4de",
+    accent: "#b07d4f",
+    accent_hover: "#976a42",
     accent_text: "#ffffff",
-    error: "#dc2626",
-    success: "#16a34a",
+    error: "#c45c5c",
+    success: "#5a9a68",
 };
 
-/// Dark theme colors
+/// Dark theme colors — warm walnut palette
 pub const DARK_PALETTE: ColorPalette = ColorPalette {
-    bg_primary: "#1a1a1a",
-    bg_secondary: "#242424",
-    bg_tertiary: "#2d2d2d",
-    text_primary: "#e8eaed",
-    text_secondary: "#9aa0a6",
-    text_muted: "#5f6368",
-    border: "#3c4043",
-    border_light: "#5f6368",
-    accent: "#818cf8",
-    accent_hover: "#a5b4fc",
-    accent_text: "#1a1a1a",
-    error: "#f87171",
-    success: "#4ade80",
+    bg_primary: "#17151a",
+    bg_secondary: "#1e1b22",
+    bg_tertiary: "#362f42",
+    text_primary: "#e8e4ed",
+    text_secondary: "#9a93a6",
+    text_muted: "#6b6478",
+    border: "#2a2730",
+    border_light: "#2d2936",
+    accent: "#c49a6c",
+    accent_hover: "#d4aa7c",
+    accent_text: "#17151a",
+    error: "#c45c5c",
+    success: "#6bba7a",
 };
 
 impl ResolvedTheme {

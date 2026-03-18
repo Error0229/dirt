@@ -1,6 +1,5 @@
 /* Theme overrides for Dioxus components
  * Overrides the dx-components-theme.css variables based on [data-theme] attribute
- * This allows manual control of light/dark mode instead of relying on prefers-color-scheme
  */
 
 /* Light theme variables */
@@ -8,102 +7,96 @@
   --dark: ;
   --light: initial;
 
-  /* Primary colors */
-  --primary-color: #fff;
-  --primary-color-1: #fbfbfb;
-  --primary-color-2: #fff;
-  --primary-color-3: #f8f8f8;
-  --primary-color-4: #f8f8f8;
-  --primary-color-5: #f5f5f5;
-  --primary-color-6: #e5e5e5;
-  --primary-color-7: #b0b0b0;
+  --primary-color: #faf9f7;
+  --primary-color-1: #f5f3f0;
+  --primary-color-2: #faf9f7;
+  --primary-color-3: #f0eeeb;
+  --primary-color-4: #e6e3df;
+  --primary-color-5: #ddd8d2;
+  --primary-color-6: #cdc7bf;
+  --primary-color-7: #b0a99f;
 
-  /* Secondary colors */
-  --secondary-color: #000;
-  --secondary-color-1: #000;
-  --secondary-color-2: #0d0d0d;
-  --secondary-color-3: #2b2b2b;
-  --secondary-color-4: #111;
-  --secondary-color-5: #848484;
-  --secondary-color-6: #d0d0d0;
+  --secondary-color: #1a1816;
+  --secondary-color-1: #1a1816;
+  --secondary-color-2: #2a2724;
+  --secondary-color-3: #4a4540;
+  --secondary-color-4: #1a1816;
+  --secondary-color-5: #9a948e;
+  --secondary-color-6: #cdc7bf;
 
-  /* Highlight colors */
-  --focused-border-color: #4f46e5;
+  --focused-border-color: #b07d4f;
   --primary-success-color: #ecfdf5;
-  --secondary-success-color: #10b981;
+  --secondary-success-color: #5a9a68;
   --primary-warning-color: #fffbeb;
-  --secondary-warning-color: #f59e0b;
-  --primary-error-color: #dc2626;
-  --secondary-error-color: #ef4444;
+  --secondary-warning-color: #c4a95c;
+  --primary-error-color: #c45c5c;
+  --secondary-error-color: #c45c5c;
   --contrast-error-color: #fff;
-  --primary-info-color: #f5f5f5;
-  --secondary-info-color: #2b2b2b;
+  --primary-info-color: #f0eeeb;
+  --secondary-info-color: #6b6560;
 }
 
-/* Dark theme variables */
+/* Dark theme variables — warm walnut */
 [data-theme="dark"] {
   --dark: initial;
   --light: ;
 
-  /* Primary colors */
-  --primary-color: #1a1a1a;
-  --primary-color-1: #1e1e1e;
-  --primary-color-2: #1a1a1a;
-  --primary-color-3: #242424;
-  --primary-color-4: #2d2d2d;
-  --primary-color-5: #363636;
-  --primary-color-6: #3c4043;
-  --primary-color-7: #5f6368;
+  --primary-color: #17151a;
+  --primary-color-1: #1a1720;
+  --primary-color-2: #17151a;
+  --primary-color-3: #1e1b22;
+  --primary-color-4: #24212a;
+  --primary-color-5: #2d2936;
+  --primary-color-6: #2a2730;
+  --primary-color-7: #6b6478;
 
-  /* Secondary colors */
-  --secondary-color: #fff;
-  --secondary-color-1: #fafafa;
-  --secondary-color-2: #e6e6e6;
-  --secondary-color-3: #dcdcdc;
-  --secondary-color-4: #d4d4d4;
-  --secondary-color-5: #a1a1a1;
-  --secondary-color-6: #5d5d5d;
+  --secondary-color: #e8e4ed;
+  --secondary-color-1: #e8e4ed;
+  --secondary-color-2: #d4d0da;
+  --secondary-color-3: #bab5c4;
+  --secondary-color-4: #e8e4ed;
+  --secondary-color-5: #9a93a6;
+  --secondary-color-6: #4a4358;
 
-  /* Highlight colors */
-  --focused-border-color: #818cf8;
-  --primary-success-color: #02271c;
-  --secondary-success-color: #b6fae3;
-  --primary-warning-color: #342203;
-  --secondary-warning-color: #feeac7;
-  --primary-error-color: #a22e2e;
-  --secondary-error-color: #9b1c1c;
-  --contrast-error-color: #dcdcdc;
-  --primary-info-color: #363636;
-  --secondary-info-color: #5f6368;
+  --focused-border-color: #c49a6c;
+  --primary-success-color: #1a2e1f;
+  --secondary-success-color: #6bba7a;
+  --primary-warning-color: #2e2a1a;
+  --secondary-warning-color: #c4a95c;
+  --primary-error-color: #c45c5c;
+  --secondary-error-color: #c45c5c;
+  --contrast-error-color: #e8e4ed;
+  --primary-info-color: #24212a;
+  --secondary-info-color: #6b6478;
 }
 
-/* Accent color matching our theme (indigo) */
-[data-theme="light"] .button[data-style="primary"],
-[data-theme="dark"] .button[data-style="primary"] {
-  background-color: #4f46e5;
+/* Accent button — copper/amber */
+[data-theme="light"] .button[data-style="primary"] {
+  background-color: #b07d4f;
   color: #fff;
 }
 
-[data-theme="light"] .button[data-style="primary"]:hover,
-[data-theme="dark"] .button[data-style="primary"]:hover {
-  background-color: #4338ca;
+[data-theme="light"] .button[data-style="primary"]:hover {
+  background-color: #976a42;
 }
 
 [data-theme="dark"] .button[data-style="primary"] {
-  background-color: #818cf8;
-  color: #1a1a1a;
+  background-color: #c49a6c;
+  color: #17151a;
 }
 
 [data-theme="dark"] .button[data-style="primary"]:hover {
-  background-color: #a5b4fc;
+  background-color: #d4aa7c;
 }
 
-/* Additional toolbar styling */
+/* Toolbar */
 .toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
+  padding: 0 12px;
+  height: 44px;
+  min-height: 44px;
   border-bottom: 1px solid var(--primary-color-6);
   background: var(--primary-color-3);
 }
@@ -111,12 +104,25 @@
 .toolbar .button {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  font-size: 13px;
-  font-weight: 500;
+  justify-content: center;
+  padding: 0;
+  font-size: 18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
 }
 
+/* Hide scrollbar on tag chips row */
+.tag-chips-row {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tag-chips-row::-webkit-scrollbar {
+  display: none;
+}
+
+/* Sync indicator */
 .sync-indicator {
   display: inline-flex;
   align-items: center;
@@ -172,7 +178,161 @@
   border: 1px solid color-mix(in srgb, var(--secondary-warning-color) 35%, transparent);
 }
 
-/* Search bar styling */
+/* Dialog/Settings panel styling */
+.settings-dialog .dialog {
+  width: 520px;
+  max-width: 92vw;
+  padding: 28px;
+  border-radius: 14px;
+  background: var(--primary-color);
+  color: var(--secondary-color-4);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.35);
+}
+
+.settings-dialog .dialog-title {
+  margin: 0 0 16px 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Settings rows — stacked layout */
+.settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--primary-color-6);
+}
+
+.settings-row:last-child {
+  border-bottom: none;
+}
+
+.settings-row-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-row-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-row-description {
+  font-size: 13px;
+  color: var(--secondary-color-5);
+  line-height: 1.4;
+}
+
+.settings-row-control {
+  width: 100%;
+}
+
+.settings-row .select {
+  width: 200px;
+}
+
+.settings-row .select-trigger {
+  padding: 10px 14px;
+  font-size: 14px;
+  background: var(--primary-color-3);
+  border: 1px solid var(--primary-color-6);
+  border-radius: 8px;
+}
+
+.settings-row .slider {
+  width: 140px;
+}
+
+.slider-value {
+  font-size: 14px;
+  color: var(--secondary-color-5);
+  min-width: 40px;
+  margin-left: 12px;
+}
+
+.hotkey-display {
+  background: var(--primary-color-4);
+  border: 1px solid var(--primary-color-6);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--secondary-color-5);
+  display: inline-block;
+}
+
+/* Auth & control panels — full width */
+.auth-panel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.auth-input .input {
+  padding: 10px 12px;
+  font-size: 14px;
+  border-radius: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.auth-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-actions .button {
+  padding: 10px 18px;
+  font-size: 14px;
+  border-radius: 8px;
+}
+
+.auth-status {
+  font-size: 13px;
+  color: var(--secondary-color-5);
+  word-break: break-all;
+}
+
+.auth-hint {
+  font-size: 13px;
+  color: var(--secondary-color-5);
+  line-height: 1.4;
+}
+
+.auth-message {
+  font-size: 13px;
+  color: var(--secondary-info-color);
+}
+
+.auth-error {
+  font-size: 13px;
+  color: var(--secondary-error-color);
+}
+
+/* Note card hover — subtle but visible */
+.note-card:hover {
+  background: var(--primary-color-4) !important;
+}
+
+/* Note card selected — stronger highlight via inline styles + this */
+.note-card.selected {
+  background: var(--primary-color-5) !important;
+}
+
+/* Editor textarea placeholder */
+.editor-textarea::placeholder {
+  color: var(--secondary-color-5);
+}
+
+/* Search bar styling (now in toolbar) */
 .search-bar {
   padding: 12px 16px;
   border-bottom: 1px solid var(--primary-color-6);
@@ -192,127 +352,4 @@
 .search-bar .input:focus {
   outline: none;
   border-color: var(--focused-border-color);
-}
-
-/* Dialog/Settings panel styling */
-.settings-dialog .dialog {
-  width: 400px;
-  max-width: 90vw;
-  padding: 24px;
-  border-radius: 12px;
-  background: var(--primary-color);
-  color: var(--secondary-color-4);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-}
-
-.settings-dialog .dialog-title {
-  margin: 0 0 24px 0;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.settings-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--primary-color-6);
-}
-
-.settings-row-info {
-  flex: 1;
-}
-
-.settings-row-label {
-  font-size: 14px;
-  font-weight: 500;
-  margin-bottom: 4px;
-}
-
-.settings-row-description {
-  font-size: 12px;
-  color: var(--secondary-color-5);
-}
-
-.settings-row-control {
-  flex-shrink: 0;
-}
-
-/* Select component width in settings */
-.settings-row .select {
-  width: 150px;
-}
-
-.settings-row .select-trigger {
-  padding: 8px 12px;
-  font-size: 14px;
-  background: var(--primary-color-3);
-  border: 1px solid var(--primary-color-6);
-  border-radius: 6px;
-}
-
-/* Slider styling */
-.settings-row .slider {
-  width: 100px;
-}
-
-.slider-value {
-  font-size: 14px;
-  color: var(--secondary-color-5);
-  min-width: 40px;
-  margin-left: 12px;
-}
-
-/* Hotkey display */
-.hotkey-display {
-  background: var(--primary-color-4);
-  border: 1px solid var(--primary-color-6);
-  border-radius: 6px;
-  padding: 8px 12px;
-  font-size: 13px;
-  font-family: monospace;
-  color: var(--secondary-color-5);
-}
-
-.auth-panel {
-  width: 220px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.auth-input {
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.auth-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.auth-actions .button {
-  flex: 1;
-}
-
-.auth-status {
-  font-size: 12px;
-  color: var(--secondary-color-5);
-  word-break: break-all;
-}
-
-.auth-hint {
-  font-size: 12px;
-  color: var(--secondary-color-5);
-  line-height: 1.35;
-}
-
-.auth-message {
-  font-size: 12px;
-  color: var(--secondary-info-color);
-}
-
-.auth-error {
-  font-size: 12px;
-  color: var(--secondary-error-color);
 }

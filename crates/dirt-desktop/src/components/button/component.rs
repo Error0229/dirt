@@ -6,7 +6,6 @@ pub enum ButtonVariant {
     #[default]
     Primary,
     Secondary,
-    Destructive,
     #[allow(dead_code)]
     Outline,
     Ghost,
@@ -17,7 +16,6 @@ impl ButtonVariant {
         match self {
             Self::Primary => "primary",
             Self::Secondary => "secondary",
-            Self::Destructive => "destructive",
             Self::Outline => "outline",
             Self::Ghost => "ghost",
         }

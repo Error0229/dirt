@@ -35,6 +35,7 @@ pub fn App() -> Element {
     let mut theme = use_signal(|| resolve_theme(dirt_core::models::ThemeMode::System));
     let settings_open = use_signal(|| false);
     let mut quick_capture_open = use_signal(|| false);
+    let note_list_visible = use_signal(|| true);
     let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
     let mut db_service: Signal<Option<Arc<DatabaseService>>> = use_signal(|| None);
     let mut auth_service: Signal<Option<Arc<DesktopAuthService>>> = use_signal(|| None);
@@ -156,7 +157,37 @@ pub fn App() -> Element {
         }
 
         let db_result =
-            if let (Some(client), Some(session)) = (managed_sync_client, current_session) {
+            if let (Some(client), Some(mut session)) = (managed_sync_client, current_session) {
+                // Refresh the Supabase access token if it has expired,
+                // otherwise `exchange_token` will be rejected with 401.
+                if session.is_expired() {
+                    if let Some(service) = auth_service.peek().as_ref() {
+                        match service.refresh_session(&session.refresh_token).await {
+                            Ok(refreshed) => {
+                                tracing::info!(
+                                    "Supabase session refreshed, new expires_at={}",
+                                    refreshed.expires_at
+                                );
+                                auth_session.set(Some(refreshed.clone()));
+                                session = refreshed;
+                            }
+                            Err(error) => {
+                                let message =
+                                    format!("Supabase session refresh failed: {error}");
+                                tracing::error!("{message}");
+                                sync_issue.set(Some(message.clone()));
+                                return;
+                            }
+                        }
+                    } else {
+                        let message =
+                            "Supabase session expired but auth service is unavailable".to_string();
+                        tracing::error!("{message}");
+                        sync_issue.set(Some(message));
+                        return;
+                    }
+                }
+
                 match client.exchange_token(&session.access_token).await {
                     Ok(token) => {
                         sync_token_expires_at.set(Some(token.expires_at));
@@ -461,6 +492,7 @@ pub fn App() -> Element {
         pending_sync_note_ids,
         settings_open,
         quick_capture_open,
+        note_list_visible,
     });
 
     let current_theme = theme();

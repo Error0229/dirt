@@ -57,6 +57,8 @@ pub struct AppState {
     pub settings_open: Signal<bool>,
     /// Whether quick capture overlay is active
     pub quick_capture_open: Signal<bool>,
+    /// Whether note list panel is visible
+    pub note_list_visible: Signal<bool>,
 }
 
 impl AppState {

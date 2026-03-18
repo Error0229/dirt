@@ -1,54 +1,35 @@
-//! Toolbar component with actions
+//! Compact unified toolbar with integrated search
 
 use chrono::Utc;
 use dioxus::prelude::*;
 
 use super::button::{Button, ButtonVariant};
 use super::create_note_optimistic;
-use crate::queries::invalidate_notes_query;
 use crate::state::{AppState, SyncStatus};
 
-/// Toolbar with action buttons
+/// Compact 36px toolbar: hamburger, search, new note, sync dot, settings
 #[component]
 pub fn Toolbar() -> Element {
     let mut state = use_context::<AppState>();
-    let has_selected_note = state.current_note().is_some();
+    let colors = (state.theme)().palette();
     let sync_status = (state.sync_status)();
     let last_sync_at = (state.last_sync_at)();
-    let pending_sync_count = (state.pending_sync_count)();
-    let pending_sync_note_ids = (state.pending_sync_note_ids)();
+    let note_list_visible = (state.note_list_visible)();
 
-    let sync_status_text = format_sync_status_text(sync_status, last_sync_at);
-    let sync_status_class = sync_status_class(sync_status);
-    let pending_title = format_pending_title(&pending_sync_note_ids);
+    let sync_dot_color = match sync_status {
+        SyncStatus::Synced => colors.success,
+        SyncStatus::Syncing => "#c4a95c",
+        SyncStatus::Offline => colors.text_muted,
+        SyncStatus::Error => colors.error,
+    };
+    let sync_title = format_sync_status_text(sync_status, last_sync_at);
+
+    let toggle_list = move |_| {
+        state.note_list_visible.set(!note_list_visible);
+    };
 
     let create_note = move |_| {
         create_note_optimistic(&mut state);
-    };
-
-    let delete_note = move |_| {
-        let note_id = *state.current_note_id.read();
-        if let Some(id) = note_id {
-            // Update UI immediately (optimistic)
-            state.notes.write().retain(|n| n.id != id);
-            state.current_note_id.set(None);
-            state.enqueue_pending_change(id);
-
-            tracing::info!("Deleted note (optimistic): {}", id);
-
-            // Persist in background
-            let db = state.db_service.read().clone();
-            spawn(async move {
-                if let Some(db) = db {
-                    if let Err(e) = db.delete_note(&id).await {
-                        tracing::error!("Failed to persist delete: {}", e);
-                    } else {
-                        // Invalidate query to sync state
-                        invalidate_notes_query().await;
-                    }
-                }
-            });
-        }
     };
 
     let open_settings = move |_| {
@@ -58,55 +39,103 @@ pub fn Toolbar() -> Element {
     rsx! {
         div {
             class: "toolbar",
+            style: "
+                height: 44px;
+                min-height: 44px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 0 12px;
+                background: {colors.bg_secondary};
+                border-bottom: 1px solid {colors.border};
+                -webkit-app-region: drag;
+            ",
 
+            // Hamburger — toggle note list
             Button {
-                variant: ButtonVariant::Primary,
+                variant: ButtonVariant::Ghost,
+                style: "
+                    width: 36px; height: 36px;
+                    padding: 0;
+                    display: flex; align-items: center; justify-content: center;
+                    font-size: 18px;
+                    color: {colors.text_secondary};
+                    -webkit-app-region: no-drag;
+                    flex-shrink: 0;
+                    border-radius: 6px;
+                ",
+                onclick: toggle_list,
+                if note_list_visible { "◧" } else { "☰" }
+            }
+
+            // Search input — flex: 1
+            input {
+                r#type: "text",
+                placeholder: "Search notes...",
+                value: "{state.search_query}",
+                style: "
+                    flex: 1;
+                    height: 34px;
+                    padding: 0 12px;
+                    border: 1px solid {colors.border};
+                    border-radius: 8px;
+                    background: {colors.bg_primary};
+                    color: {colors.text_primary};
+                    font-size: 14px;
+                    outline: none;
+                    -webkit-app-region: no-drag;
+                    min-width: 80px;
+                ",
+                oninput: move |evt: FormEvent| {
+                    state.search_query.set(evt.value());
+                },
+            }
+
+            // New note button
+            Button {
+                variant: ButtonVariant::Ghost,
+                style: "
+                    width: 36px; height: 36px;
+                    padding: 0;
+                    display: flex; align-items: center; justify-content: center;
+                    font-size: 22px;
+                    color: {colors.accent};
+                    -webkit-app-region: no-drag;
+                    flex-shrink: 0;
+                    border-radius: 6px;
+                ",
                 onclick: create_note,
-                "+ New Note"
+                "+"
             }
 
-            if has_selected_note {
-                Button {
-                    variant: ButtonVariant::Destructive,
-                    onclick: delete_note,
-                    "Delete"
-                }
-            }
-
-            // Spacer
-            div { style: "flex: 1;" }
-
+            // Sync dot
             div {
-                class: "sync-indicator {sync_status_class}",
-                title: "{sync_status_text}",
-                span { class: "sync-dot" }
-                span { class: "sync-label", "{sync_status_text}" }
+                title: "{sync_title}",
+                style: "
+                    width: 10px; height: 10px;
+                    border-radius: 50%;
+                    background: {sync_dot_color};
+                    flex-shrink: 0;
+                    -webkit-app-region: no-drag;
+                ",
             }
 
-            if pending_sync_count > 0 {
-                div {
-                    class: "queue-indicator",
-                    title: "{pending_title}",
-                    "{pending_sync_count} pending"
-                }
-            }
-
-            // Settings button
+            // Settings
             Button {
-                variant: ButtonVariant::Secondary,
+                variant: ButtonVariant::Ghost,
+                style: "
+                    width: 36px; height: 36px;
+                    padding: 0;
+                    display: flex; align-items: center; justify-content: center;
+                    font-size: 18px;
+                    color: {colors.text_secondary};
+                    -webkit-app-region: no-drag;
+                    flex-shrink: 0;
+                ",
                 onclick: open_settings,
-                "Settings"
+                "⚙"
             }
         }
-    }
-}
-
-const fn sync_status_class(status: SyncStatus) -> &'static str {
-    match status {
-        SyncStatus::Synced => "sync-synced",
-        SyncStatus::Syncing => "sync-syncing",
-        SyncStatus::Offline => "sync-offline",
-        SyncStatus::Error => "sync-error",
     }
 }
 
@@ -137,24 +166,5 @@ fn format_relative_time(timestamp_ms: i64) -> String {
         format!("{}h ago", diff / hour)
     } else {
         format!("{}d ago", diff / day)
-    }
-}
-
-fn format_pending_title(note_ids: &[dirt_core::NoteId]) -> String {
-    if note_ids.is_empty() {
-        return "No pending changes".to_string();
-    }
-
-    let preview = note_ids
-        .iter()
-        .take(5)
-        .map(std::string::ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    if note_ids.len() > 5 {
-        format!("Pending note IDs: {preview}, +{}", note_ids.len() - 5)
-    } else {
-        format!("Pending note IDs: {preview}")
     }
 }
