@@ -37,9 +37,7 @@ pub fn Toolbar() -> Element {
     };
 
     rsx! {
-        div {
-            class: "toolbar",
-            style: "-webkit-app-region: drag;",
+        div { class: "toolbar", style: "-webkit-app-region: drag;",
 
             // Hamburger — toggle note list
             Button {
@@ -49,13 +47,17 @@ pub fn Toolbar() -> Element {
                     -webkit-app-region: no-drag;
                 ",
                 onclick: toggle_list,
-                if note_list_visible { "◧" } else { "☰" }
+                if note_list_visible {
+                    "◧"
+                } else {
+                    "☰"
+                }
             }
 
             // Search input — flex: 1
             input {
                 r#type: "text",
-                placeholder: "Search notes...",
+                placeholder: "...",
                 value: "{state.search_query}",
                 style: "
                     flex: 1;

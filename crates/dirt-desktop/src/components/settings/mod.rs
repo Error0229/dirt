@@ -532,68 +532,71 @@ pub fn SettingsPanel() -> Element {
             },
 
             DialogContent {
-                style: "width: 520px; max-width: 92vw; text-align: left; padding: 28px;",
+                style: "text-align: left; width: 480px; max-width: 92vw; height: 520px; max-height: 80vh; padding: 0; gap: 0; border-radius: 12px; overflow: hidden;",
 
-                // Header with close button
+                // Fixed header: title + tabs
                 div {
-                    style: "
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        margin-bottom: 16px;
-                    ",
-                    DialogTitle {
-                        style: "font-size: 20px; font-weight: 600;",
-                        "Settings"
-                    }
-                    Button {
-                        variant: ButtonVariant::Ghost,
-                        onclick: close_settings,
-                        style: "width: 32px; height: 32px; padding: 0; font-size: 20px; display: flex; align-items: center; justify-content: center; border-radius: 6px;",
-                        "×"
-                    }
-                }
+                    class: "settings-header",
 
-                // Tab bar — underline style
-                div {
-                    style: "
-                        display: flex;
-                        gap: 0;
-                        margin-bottom: 24px;
-                        border-bottom: 1px solid {colors.border};
-                    ",
-                    {
-                        let tabs = [
-                            (SettingsTab::Appearance, "Appearance"),
-                            (SettingsTab::Media, "Media"),
-                            (SettingsTab::Sync, "Sync"),
-                            (SettingsTab::Auth, "Account"),
-                        ];
-                        rsx! {
-                            for (tab, label) in tabs {
-                                {
-                                    let is_active = active_tab() == tab;
-                                    let text_color = if is_active { colors.text_primary } else { colors.text_muted };
-                                    let border_bottom = if is_active {
-                                        format!("2px solid {}", colors.accent)
-                                    } else {
-                                        "2px solid transparent".to_string()
-                                    };
-                                    rsx! {
-                                        button {
-                                            style: "
-                                                background: none;
-                                                border: none;
-                                                border-bottom: {border_bottom};
-                                                color: {text_color};
-                                                font-size: 14px;
-                                                font-weight: 500;
-                                                padding: 10px 18px;
-                                                cursor: pointer;
-                                                transition: color 0.1s;
-                                            ",
-                                            onclick: move |_| active_tab.set(tab),
-                                            "{label}"
+                    // Title row
+                    div {
+                        style: "
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            margin-bottom: 12px;
+                        ",
+                        DialogTitle {
+                            "Settings"
+                        }
+                        Button {
+                            variant: ButtonVariant::Ghost,
+                            onclick: close_settings,
+                            style: "width: 28px; height: 28px; padding: 0; font-size: 18px; display: flex; align-items: center; justify-content: center; border-radius: 6px;",
+                            "×"
+                        }
+                    }
+
+                    // Tab bar
+                    div {
+                        style: "
+                            display: flex;
+                            gap: 0;
+                            border-bottom: 1px solid {colors.border};
+                        ",
+                        {
+                            let tabs = [
+                                (SettingsTab::Appearance, "Appearance"),
+                                (SettingsTab::Media, "Media"),
+                                (SettingsTab::Sync, "Sync"),
+                                (SettingsTab::Auth, "Account"),
+                            ];
+                            rsx! {
+                                for (tab, label) in tabs {
+                                    {
+                                        let is_active = active_tab() == tab;
+                                        let text_color = if is_active { colors.text_primary } else { colors.text_muted };
+                                        let border_bottom = if is_active {
+                                            format!("2px solid {}", colors.accent)
+                                        } else {
+                                            "2px solid transparent".to_string()
+                                        };
+                                        rsx! {
+                                            button {
+                                                style: "
+                                                    background: none;
+                                                    border: none;
+                                                    border-bottom: {border_bottom};
+                                                    color: {text_color};
+                                                    font-size: 13px;
+                                                    font-weight: 500;
+                                                    padding: 8px 14px;
+                                                    cursor: pointer;
+                                                    transition: color 0.1s;
+                                                ",
+                                                onclick: move |_| active_tab.set(tab),
+                                                "{label}"
+                                            }
                                         }
                                     }
                                 }
@@ -601,6 +604,10 @@ pub fn SettingsPanel() -> Element {
                         }
                     }
                 }
+
+                // Scrollable body
+                div {
+                    class: "settings-body",
 
                 match active_tab() {
                     SettingsTab::Appearance => rsx! {
@@ -679,6 +686,8 @@ pub fn SettingsPanel() -> Element {
                         }
                     },
                 }
+
+                } // settings-body
             }
         }
     }

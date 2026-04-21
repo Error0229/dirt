@@ -136,27 +136,46 @@
 
 /* Dialog/Settings panel styling */
 .settings-dialog .dialog {
-  width: 520px;
+  width: 480px;
   max-width: 92vw;
-  padding: 28px;
-  border-radius: 14px;
+  height: 520px;
+  max-height: 80vh;
+  padding: 0;
+  gap: 0;
+  border-radius: 12px;
   background: var(--primary-color);
   color: var(--secondary-color-4);
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .settings-dialog .dialog-title {
-  margin: 0 0 16px 0;
-  font-size: 20px;
+  margin: 0;
+  font-size: 18px;
   font-weight: 600;
 }
 
-/* Settings rows — stacked layout */
+/* Fixed header area (title + tabs) */
+.settings-header {
+  padding: 20px 24px 0 24px;
+  flex-shrink: 0;
+}
+
+/* Scrollable tab content */
+.settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 24px 24px 24px;
+}
+
+/* Settings rows — compact stacked layout */
 .settings-row {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 16px 0;
+  gap: 6px;
+  padding: 14px 0;
   border-bottom: 1px solid var(--primary-color-6);
 }
 
@@ -167,53 +186,54 @@
 .settings-row-header {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .settings-row-label {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .settings-row-description {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--secondary-color-5);
-  line-height: 1.4;
+  line-height: 1.3;
 }
 
 .settings-row-control {
   width: 100%;
+  margin-top: 2px;
 }
 
 .settings-row .select {
-  width: 200px;
+  width: 180px;
 }
 
 .settings-row .select-trigger {
-  padding: 10px 14px;
-  font-size: 14px;
+  padding: 8px 12px;
+  font-size: 13px;
   background: var(--primary-color-3);
   border: 1px solid var(--primary-color-6);
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
 .settings-row .slider {
-  width: 140px;
+  width: 120px;
 }
 
 .slider-value {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--secondary-color-5);
-  min-width: 40px;
-  margin-left: 12px;
+  min-width: 36px;
+  margin-left: 8px;
 }
 
 .hotkey-display {
   background: var(--primary-color-4);
   border: 1px solid var(--primary-color-6);
-  border-radius: 8px;
-  padding: 10px 14px;
-  font-size: 13px;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 12px;
   font-family: monospace;
   color: var(--secondary-color-5);
   display: inline-block;
@@ -224,7 +244,7 @@
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .auth-input {
@@ -233,43 +253,43 @@
 }
 
 .auth-input .input {
-  padding: 10px 12px;
-  font-size: 14px;
-  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  border-radius: 6px;
   width: 100%;
   box-sizing: border-box;
 }
 
 .auth-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .auth-actions .button {
-  padding: 10px 18px;
-  font-size: 14px;
-  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  border-radius: 6px;
 }
 
 .auth-status {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--secondary-color-5);
   word-break: break-all;
 }
 
 .auth-hint {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--secondary-color-5);
-  line-height: 1.4;
+  line-height: 1.3;
 }
 
 .auth-message {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--secondary-info-color);
 }
 
 .auth-error {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--secondary-error-color);
 }
 

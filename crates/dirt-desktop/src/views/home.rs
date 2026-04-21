@@ -50,7 +50,9 @@ pub fn Home() -> Element {
     rsx! {
         div {
             class: "home-container",
-            style: "display: flex; flex-direction: column; height: 100vh;",
+            style: "display: flex; flex-direction: column; height: 100vh; outline: none;",
+            tabindex: "0",
+            autofocus: true,
             onkeydown: handle_keydown,
 
             Toolbar {}
