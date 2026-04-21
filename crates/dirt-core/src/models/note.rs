@@ -5,6 +5,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fmt;
 use std::str::FromStr;
+use std::sync::OnceLock;
+
+/// Returns the pre-compiled regex for extracting `#tag` patterns from note content.
+fn tag_regex() -> &'static Regex {
+    static TAG_REGEX: OnceLock<Regex> = OnceLock::new();
+    TAG_REGEX.get_or_init(|| Regex::new(r"#([a-zA-Z][a-zA-Z0-9_-]*)").expect("Invalid regex"))
+}
 use uuid::Uuid;
 
 /// A unique identifier for a note, using UUID v7 (time-sortable)
@@ -115,8 +122,8 @@ impl Note {
 /// ```
 #[must_use]
 pub fn extract_tags(text: &str) -> Vec<String> {
-    let re = Regex::new(r"#([a-zA-Z][a-zA-Z0-9_-]*)").expect("Invalid regex");
-    re.captures_iter(text)
+    tag_regex()
+        .captures_iter(text)
         .map(|cap| cap[1].to_lowercase())
         .collect::<HashSet<_>>()
         .into_iter()

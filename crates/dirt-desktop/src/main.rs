@@ -15,6 +15,7 @@ mod queries;
 mod services;
 mod state;
 mod theme;
+mod time_format;
 mod tray;
 mod views;
 
