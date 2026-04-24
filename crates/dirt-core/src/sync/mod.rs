@@ -1,7 +1,11 @@
-//! Managed Turso sync token exchange client.
+//! Sync module.
 //!
-//! Exchanges a Supabase access token for short-lived Turso database
-//! credentials via the Dirt API backend.
+//! `merge` holds the pure conflict-matrix resolver used by every client
+//! driver. The Supabase-era `TursoSyncAuthClient` is still here but is
+//! slated for replacement with an `ApiClient` that talks to the new
+//! bearer-token-authed `dirt-api` backend.
+
+pub mod merge;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
