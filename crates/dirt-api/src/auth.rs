@@ -4,7 +4,7 @@
 //! using `subtle::ConstantTimeEq` to avoid leaking the token through
 //! response-timing differences. Solo-phase authentication: every valid
 //! token resolves to `SOLO_USER_ID`; the handler layer reads that
-//! constant directly, so there's no per-request user_id threading yet.
+//! constant directly, so there's no per-request `user_id` threading yet.
 
 use axum::extract::{Request, State};
 use axum::http::header;
@@ -81,7 +81,7 @@ mod tests {
         }
     }
 
-    async fn build_test_router(token: &str) -> Router {
+    fn build_test_router(token: &str) -> Router {
         let state = test_state(token);
         Router::new()
             .route("/guarded", get(|| async { "ok" }))
@@ -94,7 +94,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn rejects_missing_header() {
-        let router = build_test_router("abcdef1234567890").await;
+        let router = build_test_router("abcdef1234567890");
         let resp = router
             .oneshot(Request::builder().uri("/guarded").body(Body::empty()).unwrap())
             .await
@@ -104,7 +104,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn rejects_wrong_token() {
-        let router = build_test_router("abcdef1234567890").await;
+        let router = build_test_router("abcdef1234567890");
         let resp = router
             .oneshot(
                 Request::builder()
@@ -121,7 +121,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn accepts_correct_token() {
         let token = "abcdef1234567890";
-        let router = build_test_router(token).await;
+        let router = build_test_router(token);
         let resp = router
             .oneshot(
                 Request::builder()
@@ -137,7 +137,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn rejects_mismatched_length() {
-        let router = build_test_router("abcdef1234567890").await;
+        let router = build_test_router("abcdef1234567890");
         let resp = router
             .oneshot(
                 Request::builder()

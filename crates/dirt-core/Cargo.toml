@@ -32,6 +32,9 @@ hyper-rustls = { version = "0.25", default-features = false, features = ["http1"
 pretty_assertions.workspace = true
 tempfile = "3"
 dotenvy = "0.15"
+# Mock HTTP server for api_client tests. `0.6` is the current 1.x-compatible
+# series and pairs cleanly with reqwest 0.12.
+wiremock = "0.6"
 
 [lints]
 workspace = true

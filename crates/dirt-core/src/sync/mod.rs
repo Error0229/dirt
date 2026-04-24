@@ -5,6 +5,7 @@
 //! slated for replacement with an `ApiClient` that talks to the new
 //! bearer-token-authed `dirt-api` backend.
 
+pub mod api_client;
 pub mod merge;
 
 use reqwest::Client;

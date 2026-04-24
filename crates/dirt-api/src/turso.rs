@@ -102,7 +102,11 @@ impl TursoRepo {
         limit: usize,
     ) -> Result<Vec<Note>, AppError> {
         let conn = self.conn()?;
-        let clamped_limit = limit.clamp(1, PULL_MAX_LIMIT) as i64;
+        // Clamp range is [1, PULL_MAX_LIMIT=1000]; the conversion is
+        // infallible on every target, but `try_from` keeps the lint quiet
+        // without a blanket allow.
+        let clamped_limit = i64::try_from(limit.clamp(1, PULL_MAX_LIMIT))
+            .expect("PULL_MAX_LIMIT always fits in i64");
 
         let mut rows = if let Some(id) = cursor_id {
             conn.query(

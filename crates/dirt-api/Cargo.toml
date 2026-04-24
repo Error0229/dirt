@@ -37,5 +37,10 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 dotenvy = "0.15"
 base64 = "0.22"
 
+[dev-dependencies]
+# `ServiceExt::oneshot` lets the auth-middleware tests drive the axum
+# Router in-process without spinning up a TCP listener.
+tower = { version = "0.5", features = ["util"] }
+
 [lints]
 workspace = true

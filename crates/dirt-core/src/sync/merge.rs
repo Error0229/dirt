@@ -95,7 +95,7 @@ fn resolve_clean(local: &Note, remote: &Note) -> MergeAction {
     }
 }
 
-fn remote_is_newer(local: &Note, remote: &Note) -> bool {
+const fn remote_is_newer(local: &Note, remote: &Note) -> bool {
     match (local.server_updated_at, remote.server_updated_at) {
         (Some(local_sua), Some(remote_sua)) => remote_sua > local_sua,
         // Clean local without a server_updated_at would mean it was never

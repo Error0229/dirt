@@ -36,14 +36,13 @@ pub struct AppState {
 
 impl AppState {
     #[must_use]
-    pub fn new(config: Arc<AppConfig>, repo: Arc<TursoRepo>) -> Self {
+    pub const fn new(config: Arc<AppConfig>, repo: Arc<TursoRepo>) -> Self {
         Self { config, repo }
     }
 }
 
 /// Build the axum router with auth middleware applied to the `/v1/*`
 /// routes. Consumed by both the local dev binary and the Vercel adapter.
-#[must_use]
 pub fn build_router(state: AppState) -> Router {
     let authed = Router::new()
         .route("/v1/notes/push", post(routes::push_notes))

@@ -239,7 +239,7 @@ async fn migrate_v3(conn: &Connection) -> Result<()> {
 /// 3. Add `user_id`, `server_updated_at`, `deleted_at` columns.
 /// 4. Backfill `deleted_at` from any rows with `is_deleted = 1`, using
 ///    `updated_at` as the approximate tombstone moment.
-/// 5. Drop the `is_deleted` column (requires SQLite ≥ 3.35, satisfied by
+/// 5. Drop the `is_deleted` column (requires `SQLite` ≥ 3.35, satisfied by
 ///    libsql 0.9's bundled 3.44+).
 /// 6. Recreate the FTS triggers filtering on `deleted_at IS NULL` so full-text
 ///    search ignores tombstoned notes.
