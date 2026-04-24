@@ -1,178 +1,192 @@
+//! Server-side libSQL client and schema bootstrap.
+//!
+//! One long-lived `libsql::Database` per process. `bootstrap` creates the
+//! server schema on first run, matching the shape in the design doc. Push
+//! and pull both stamp `server_updated_at` with `now_ms()` — clients never
+//! write that column.
+
 use std::sync::Arc;
-use std::time::Duration;
 
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use dirt_core::models::{Note, NoteId};
+use libsql::{Builder, Connection, Database};
 
-use crate::config::AppConfig;
 use crate::error::AppError;
 
-#[derive(Debug, Clone)]
-pub struct TursoTokenBroker {
-    client: reqwest::Client,
-    config: Arc<AppConfig>,
+/// Maximum notes accepted in one push batch.
+pub const PUSH_BATCH_LIMIT: usize = 500;
+
+/// Default page size for pulls. Callers may override via query string up to
+/// `PULL_MAX_LIMIT`.
+pub const PULL_DEFAULT_LIMIT: usize = 500;
+
+/// Hard ceiling to bound memory even if a malicious client asks for more.
+pub const PULL_MAX_LIMIT: usize = 1000;
+
+pub struct TursoRepo {
+    db: Option<Database>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct MintedSyncToken {
-    pub auth_token: String,
-    pub expires_at: i64,
-    pub database_url: String,
-}
-
-impl TursoTokenBroker {
-    pub fn new(config: Arc<AppConfig>) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            config,
-        }
+impl TursoRepo {
+    /// Connect to a Turso remote database and run the server-side schema
+    /// bootstrap. Idempotent: running twice against a seeded DB is a no-op.
+    pub async fn connect(url: &str, auth_token: &str) -> Result<Self, AppError> {
+        let db = Builder::new_remote(url.to_string(), auth_token.to_string())
+            .build()
+            .await
+            .map_err(|e| AppError::config(format!("failed to build Turso client: {e}")))?;
+        let conn = db.connect()?;
+        bootstrap(&conn).await?;
+        Ok(Self { db: Some(db) })
     }
 
-    pub async fn mint_sync_token(&self, user_id: &str) -> Result<MintedSyncToken, AppError> {
-        if let Some(platform_token) = self.config.turso_platform_api_token.as_deref() {
-            match self
-                .mint_token_via_platform_api(user_id, platform_token)
-                .await
-            {
-                Ok(token) => return Ok(token),
-                Err(error) => {
-                    if self.config.turso_static_auth_token.is_none() {
-                        return Err(error);
-                    }
-                    tracing::warn!(
-                        error = %error,
-                        "Managed Turso token mint failed; falling back to static TURSO_AUTH_TOKEN"
-                    );
-                }
-            }
-        }
-
-        self.mint_token_from_static_fallback()
+    /// Test-only constructor that holds no real database. Any handler that
+    /// actually queries will panic — only useful for middleware tests that
+    /// don't touch the repo.
+    #[cfg(test)]
+    pub const fn dangling() -> Self {
+        Self { db: None }
     }
 
-    async fn mint_token_via_platform_api(
+    fn conn(&self) -> Result<Connection, AppError> {
+        let db = self
+            .db
+            .as_ref()
+            .ok_or_else(|| AppError::internal("TursoRepo used without a live connection"))?;
+        db.connect().map_err(Into::into)
+    }
+
+    /// Upsert one note and stamp `server_updated_at` on the server clock.
+    ///
+    /// Returns the stamped `server_updated_at_ms` so the caller can include
+    /// it in the per-note result the client needs to update its local
+    /// `server_updated_at` column and clear its `pending_sync` entry.
+    pub async fn upsert(
         &self,
         user_id: &str,
-        platform_token: &str,
-    ) -> Result<MintedSyncToken, AppError> {
-        let request_url = format!(
-            "{}/v1/organizations/{}/databases/{}/auth/tokens?expiration={}",
-            self.config.turso_api_url.trim_end_matches('/'),
-            self.config.turso_organization_slug,
-            self.config.turso_database_name,
-            expiration_query(self.config.turso_token_ttl),
-        );
+        note: &PushNote<'_>,
+        server_now_ms: i64,
+    ) -> Result<i64, AppError> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO notes (id, user_id, content, created_at, client_updated_at, server_updated_at, deleted_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                 user_id = excluded.user_id,
+                 content = excluded.content,
+                 created_at = excluded.created_at,
+                 client_updated_at = excluded.client_updated_at,
+                 server_updated_at = excluded.server_updated_at,
+                 deleted_at = excluded.deleted_at",
+            libsql::params![
+                note.id.as_str(),
+                user_id,
+                note.content,
+                note.created_at_ms,
+                note.client_updated_at_ms,
+                server_now_ms,
+                note.deleted_at_ms,
+            ],
+        )
+        .await?;
+        Ok(server_now_ms)
+    }
 
-        let body = serde_json::json!({
-            "permissions": {
-                "full_access": true
-            },
-            "metadata": {
-                "subject": user_id
-            }
-        });
+    /// Fetch a page of notes strictly after `(cursor_sua, cursor_id)` for a
+    /// given user. Ordering uses `(server_updated_at, id)` to guarantee a
+    /// total order even when multiple rows share the same timestamp.
+    pub async fn pull_page(
+        &self,
+        user_id: &str,
+        cursor_sua: i64,
+        cursor_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Note>, AppError> {
+        let conn = self.conn()?;
+        let clamped_limit = limit.clamp(1, PULL_MAX_LIMIT) as i64;
 
-        let response = self
-            .client
-            .post(&request_url)
-            .bearer_auth(platform_token)
-            .header("Accept", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|error| {
-                AppError::external(format!("Turso token request failed: {}", sanitize(&error)))
-            })?;
+        let mut rows = if let Some(id) = cursor_id {
+            conn.query(
+                "SELECT id, user_id, content, created_at, client_updated_at, server_updated_at, deleted_at
+                 FROM notes
+                 WHERE user_id = ?
+                   AND (server_updated_at > ?
+                        OR (server_updated_at = ? AND id > ?))
+                 ORDER BY server_updated_at ASC, id ASC
+                 LIMIT ?",
+                libsql::params![user_id, cursor_sua, cursor_sua, id, clamped_limit],
+            )
+            .await?
+        } else {
+            conn.query(
+                "SELECT id, user_id, content, created_at, client_updated_at, server_updated_at, deleted_at
+                 FROM notes
+                 WHERE user_id = ? AND server_updated_at > ?
+                 ORDER BY server_updated_at ASC, id ASC
+                 LIMIT ?",
+                libsql::params![user_id, cursor_sua, clamped_limit],
+            )
+            .await?
+        };
 
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
-            return Err(AppError::external(format!(
-                "Turso token request failed with HTTP {}: {}",
-                status,
-                compact_body(&body)
-            )));
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(parse_pulled_note(&row)?);
         }
-
-        let payload = response
-            .json::<TursoTokenResponse>()
-            .await
-            .map_err(|error| {
-                AppError::external(format!("Turso token parse failed: {}", sanitize(&error)))
-            })?;
-
-        let token = payload
-            .auth_token
-            .or(payload.token)
-            .or(payload.jwt)
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| AppError::external("Turso token API returned no token"))?;
-
-        let expires_at = payload.expires_at.unwrap_or_else(|| {
-            Utc::now()
-                .timestamp()
-                .saturating_add(i64::try_from(self.config.turso_token_ttl.as_secs()).unwrap_or(900))
-        });
-
-        Ok(MintedSyncToken {
-            auth_token: token,
-            expires_at,
-            database_url: self.config.turso_database_url.clone(),
-        })
-    }
-
-    fn mint_token_from_static_fallback(&self) -> Result<MintedSyncToken, AppError> {
-        let token = self
-            .config
-            .turso_static_auth_token
-            .as_ref()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                AppError::external(
-                    "Turso token broker has no usable TURSO_PLATFORM_API_TOKEN or TURSO_AUTH_TOKEN",
-                )
-            })?;
-
-        let expires_at = Utc::now()
-            .timestamp()
-            .saturating_add(i64::try_from(self.config.turso_token_ttl.as_secs()).unwrap_or(900));
-
-        Ok(MintedSyncToken {
-            auth_token: token.to_string(),
-            expires_at,
-            database_url: self.config.turso_database_url.clone(),
-        })
+        Ok(out)
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct TursoTokenResponse {
-    auth_token: Option<String>,
-    token: Option<String>,
-    jwt: Option<String>,
-    expires_at: Option<i64>,
+/// Body shape the push handler already validated. Kept here so the repo
+/// stays oblivious to JSON concerns.
+pub struct PushNote<'a> {
+    pub id: &'a NoteId,
+    pub content: &'a str,
+    pub created_at_ms: i64,
+    pub client_updated_at_ms: i64,
+    pub deleted_at_ms: Option<i64>,
 }
 
-fn expiration_query(ttl: Duration) -> String {
-    format!("{}s", ttl.as_secs())
+fn parse_pulled_note(row: &libsql::Row) -> Result<Note, AppError> {
+    let id: String = row.get(0)?;
+    let id = id
+        .parse::<NoteId>()
+        .map_err(|_| AppError::internal(format!("invalid note id stored on server: {id}")))?;
+    Ok(Note {
+        id,
+        user_id: row.get(1)?,
+        content: row.get(2)?,
+        created_at: row.get(3)?,
+        updated_at: row.get::<i64>(4)?,
+        server_updated_at: row.get(5)?,
+        deleted_at: row.get(6)?,
+    })
 }
 
-fn sanitize(error: &impl std::fmt::Display) -> String {
-    error.to_string().replace('\n', " ").trim().to_string()
-}
-
-fn compact_body(body: &str) -> String {
-    body.trim().chars().take(180).collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn expiration_query_is_seconds_suffix() {
-        assert_eq!(expiration_query(Duration::from_secs(900)), "900s");
+async fn bootstrap(conn: &Connection) -> Result<(), AppError> {
+    // No transaction — CREATE TABLE IF NOT EXISTS is idempotent and each
+    // statement can be retried independently. libsql's remote driver does
+    // not pipeline DDL usefully anyway.
+    let statements = [
+        "CREATE TABLE IF NOT EXISTS notes (
+             id TEXT PRIMARY KEY,
+             user_id TEXT NOT NULL,
+             content TEXT NOT NULL,
+             created_at INTEGER NOT NULL,
+             client_updated_at INTEGER NOT NULL,
+             server_updated_at INTEGER NOT NULL,
+             deleted_at INTEGER
+         )",
+        "CREATE INDEX IF NOT EXISTS idx_notes_user_sua ON notes(user_id, server_updated_at, id)",
+    ];
+    for stmt in statements {
+        conn.execute(stmt, ()).await?;
     }
+    Ok(())
+}
+
+/// Wrap into `Arc` for the handler state. Keeps every handler reference
+/// cheap to clone.
+#[must_use]
+pub fn arc(repo: TursoRepo) -> Arc<TursoRepo> {
+    Arc::new(repo)
 }

@@ -1,389 +1,153 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Instant;
+//! Bearer-token authentication middleware.
+//!
+//! Verifies `Authorization: Bearer <token>` against `DIRT_SERVER_TOKEN`
+//! using `subtle::ConstantTimeEq` to avoid leaking the token through
+//! response-timing differences. Solo-phase authentication: every valid
+//! token resolves to `SOLO_USER_ID`; the handler layer reads that
+//! constant directly, so there's no per-request user_id threading yet.
 
-use axum::http::HeaderMap;
-use jsonwebtoken::jwk::{JwkSet, KeyOperations, PublicKeyUse};
-use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
-use serde::Deserialize;
-use serde_json::Value;
-use tokio::sync::RwLock;
+use axum::extract::{Request, State};
+use axum::http::header;
+use axum::middleware::Next;
+use axum::response::Response;
+use subtle::ConstantTimeEq;
 
-use crate::config::AppConfig;
+use crate::AppState;
 use crate::error::AppError;
 
-#[derive(Debug, Clone)]
-pub struct AuthenticatedUser {
-    pub user_id: String,
-    pub session_id: Option<String>,
-}
+const BEARER_PREFIX: &str = "Bearer ";
 
-#[derive(Clone)]
-pub struct SupabaseJwtVerifier {
-    client: reqwest::Client,
-    config: Arc<AppConfig>,
-    cache: Arc<RwLock<JwksCache>>,
-}
+pub async fn require_bearer_token(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    let header_value = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .ok_or_else(|| AppError::unauthorized("missing Authorization header"))?;
 
-impl SupabaseJwtVerifier {
-    pub fn new(config: Arc<AppConfig>) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            config,
-            cache: Arc::new(RwLock::new(JwksCache::default())),
-        }
-    }
-
-    pub async fn verify_access_token(&self, token: &str) -> Result<AuthenticatedUser, AppError> {
-        let header = decode_header(token).map_err(|error| {
-            AppError::unauthorized(format!("Token header decode failed: {}", sanitize(&error)))
-        })?;
-        let kid = header
-            .kid
-            .ok_or_else(|| AppError::unauthorized("Token header missing `kid`"))?;
-        let algorithm = header.alg;
-        if !is_supported_verification_algorithm(algorithm) {
-            return Err(AppError::unauthorized("Token algorithm is not allowed"));
-        }
-
-        let key = self.find_key(&kid).await?;
-
-        let mut validation = Validation::new(algorithm);
-        validation.validate_aud = false;
-        validation.set_issuer(&[self.config.supabase_jwt_issuer.as_str()]);
-
-        let decoded = decode::<SupabaseClaims>(token, &key, &validation).map_err(|error| {
-            AppError::unauthorized(format!("Token validation failed: {}", sanitize(&error)))
-        })?;
-
-        if !audience_matches(
-            decoded.claims.aud.as_ref(),
-            &self.config.supabase_jwt_audience,
-        ) {
-            return Err(AppError::unauthorized("Token audience is not allowed"));
-        }
-        if decoded.claims.sub.trim().is_empty() {
-            return Err(AppError::unauthorized("Token subject is missing"));
-        }
-        if decoded.claims.role.as_deref() != Some("authenticated") {
-            return Err(AppError::unauthorized("Token role is not allowed"));
-        }
-        validate_temporal_claims(&decoded.claims, self.config.auth_clock_skew)?;
-
-        Ok(AuthenticatedUser {
-            user_id: decoded.claims.sub,
-            session_id: decoded.claims.session_id.or(decoded.claims.jti),
-        })
-    }
-
-    async fn find_key(&self, kid: &str) -> Result<DecodingKey, AppError> {
-        {
-            let cache = self.cache.read().await;
-            if !cache.is_stale(self.config.jwks_cache_ttl) {
-                if let Some(key) = cache.keys.get(kid) {
-                    return Ok(key.clone());
-                }
-            }
-        }
-
-        let mut cache = self.cache.write().await;
-        if !cache.is_stale(self.config.jwks_cache_ttl) {
-            if let Some(key) = cache.keys.get(kid) {
-                return Ok(key.clone());
-            }
-        }
-
-        let keys = fetch_jwks(&self.client, &self.config.supabase_jwks_url).await?;
-        cache.keys = keys;
-        cache.fetched_at = Some(Instant::now());
-
-        cache
-            .keys
-            .get(kid)
-            .cloned()
-            .ok_or_else(|| AppError::unauthorized("Signing key not found in Supabase JWKS"))
-    }
-}
-
-pub fn extract_bearer_token(headers: &HeaderMap) -> Result<&str, AppError> {
-    let header = headers
-        .get("authorization")
-        .ok_or_else(|| AppError::unauthorized("Missing Authorization header"))?
+    let header_str = header_value
         .to_str()
         .map_err(|_| AppError::unauthorized("Authorization header is not valid UTF-8"))?;
 
-    let (scheme, token) = header
-        .split_once(' ')
-        .ok_or_else(|| AppError::unauthorized("Authorization header must be `Bearer <token>`"))?;
-
-    if !scheme.eq_ignore_ascii_case("bearer") {
+    let Some(token) = header_str.strip_prefix(BEARER_PREFIX) else {
         return Err(AppError::unauthorized(
-            "Authorization scheme must be `Bearer`",
+            "Authorization header must start with 'Bearer '",
         ));
-    }
-    let token = token.trim();
-    if token.is_empty() {
-        return Err(AppError::unauthorized("Bearer token is empty"));
-    }
-
-    Ok(token)
-}
-
-#[derive(Default)]
-struct JwksCache {
-    keys: HashMap<String, DecodingKey>,
-    fetched_at: Option<Instant>,
-}
-
-impl JwksCache {
-    fn is_stale(&self, ttl: std::time::Duration) -> bool {
-        self.fetched_at.map_or(true, |at| at.elapsed() > ttl)
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct SupabaseClaims {
-    sub: String,
-    aud: Option<Value>,
-    role: Option<String>,
-    exp: Option<i64>,
-    iat: Option<i64>,
-    nbf: Option<i64>,
-    jti: Option<String>,
-    session_id: Option<String>,
-}
-
-fn validate_temporal_claims(
-    claims: &SupabaseClaims,
-    clock_skew: std::time::Duration,
-) -> Result<(), AppError> {
-    let now = chrono::Utc::now().timestamp();
-    let skew = i64::try_from(clock_skew.as_secs()).unwrap_or(0);
-
-    let exp = claims
-        .exp
-        .ok_or_else(|| AppError::unauthorized("Token missing `exp` claim"))?;
-    if exp <= now.saturating_sub(skew) {
-        return Err(AppError::unauthorized("Token is expired"));
-    }
-
-    let iat = claims
-        .iat
-        .ok_or_else(|| AppError::unauthorized("Token missing `iat` claim"))?;
-    if iat > now.saturating_add(skew) {
-        return Err(AppError::unauthorized("Token `iat` is in the future"));
-    }
-
-    if let Some(nbf) = claims.nbf {
-        if nbf > now.saturating_add(skew) {
-            return Err(AppError::unauthorized("Token is not yet valid"));
-        }
-    }
-
-    Ok(())
-}
-
-async fn fetch_jwks(
-    client: &reqwest::Client,
-    jwks_url: &str,
-) -> Result<HashMap<String, DecodingKey>, AppError> {
-    let response = client
-        .get(jwks_url)
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .map_err(|error| {
-            AppError::external(format!("JWKS request failed: {}", sanitize(&error)))
-        })?;
-
-    if !response.status().is_success() {
-        return Err(AppError::external(format!(
-            "JWKS request failed with HTTP {}",
-            response.status().as_u16()
-        )));
-    }
-
-    let payload = response.json::<JwkSet>().await.map_err(|error| {
-        AppError::external(format!("JWKS JSON parse failed: {}", sanitize(&error)))
-    })?;
-
-    let out = parse_jwks_keys(payload)?;
-    if out.is_empty() {
-        return Err(AppError::external(
-            "JWKS did not include any usable signing keys",
-        ));
-    }
-
-    Ok(out)
-}
-
-fn parse_jwks_keys(payload: JwkSet) -> Result<HashMap<String, DecodingKey>, AppError> {
-    let mut out = HashMap::new();
-    for key in payload.keys {
-        let Some(kid) = key.common.key_id.clone() else {
-            continue;
-        };
-        if key
-            .common
-            .public_key_use
-            .as_ref()
-            .is_some_and(|usage| *usage != PublicKeyUse::Signature)
-        {
-            continue;
-        }
-        if key
-            .common
-            .key_operations
-            .as_ref()
-            .is_some_and(|operations| !operations.contains(&KeyOperations::Verify))
-        {
-            continue;
-        }
-        let decoding = DecodingKey::from_jwk(&key).map_err(|error| {
-            AppError::external(format!("Invalid JWKS signing key: {}", sanitize(&error)))
-        })?;
-        out.insert(kid, decoding);
-    }
-
-    Ok(out)
-}
-
-const fn is_supported_verification_algorithm(algorithm: Algorithm) -> bool {
-    matches!(
-        algorithm,
-        Algorithm::RS256
-            | Algorithm::RS384
-            | Algorithm::RS512
-            | Algorithm::PS256
-            | Algorithm::PS384
-            | Algorithm::PS512
-            | Algorithm::ES256
-            | Algorithm::ES384
-            | Algorithm::EdDSA
-    )
-}
-
-fn audience_matches(aud: Option<&Value>, expected: &str) -> bool {
-    let Some(aud) = aud else {
-        return false;
     };
 
-    match aud {
-        Value::String(value) => value == expected,
-        Value::Array(values) => values
-            .iter()
-            .filter_map(Value::as_str)
-            .any(|value| value == expected),
-        _ => false,
-    }
-}
+    let token_bytes = token.as_bytes();
+    let expected = state.config.server_token.0.as_slice();
 
-fn sanitize(error: &impl std::fmt::Display) -> String {
-    error.to_string().replace('\n', " ").trim().to_string()
+    // ConstantTimeEq only compares equal-length slices in constant time.
+    // Different lengths obviously differ and we short-circuit with an Err —
+    // the length check itself isn't a timing attack surface because the
+    // attacker already controls the length they send.
+    if token_bytes.len() != expected.len() {
+        return Err(AppError::unauthorized("invalid bearer token"));
+    }
+
+    if bool::from(token_bytes.ct_eq(expected)) {
+        Ok(next.run(request).await)
+    } else {
+        Err(AppError::unauthorized("invalid bearer token"))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use axum::http::HeaderValue;
-
     use super::*;
+    use crate::TursoRepo;
+    use crate::config::{AppConfig, ServerToken};
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use axum::routing::get;
+    use axum::{Router, middleware};
+    use std::sync::Arc;
+    use tower::ServiceExt;
 
-    #[test]
-    fn bearer_token_extractor_accepts_standard_header() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "authorization",
-            HeaderValue::from_static("Bearer abc.def.ghi"),
-        );
-
-        assert_eq!(extract_bearer_token(&headers).unwrap(), "abc.def.ghi");
-    }
-
-    #[test]
-    fn bearer_token_extractor_rejects_wrong_scheme() {
-        let mut headers = HeaderMap::new();
-        headers.insert("authorization", HeaderValue::from_static("Basic abc"));
-        assert!(extract_bearer_token(&headers).is_err());
-    }
-
-    #[test]
-    fn audience_matches_string_or_array() {
-        assert!(audience_matches(
-            Some(&Value::String("authenticated".to_string())),
-            "authenticated"
-        ));
-        assert!(audience_matches(
-            Some(&Value::Array(vec![
-                Value::String("anon".to_string()),
-                Value::String("authenticated".to_string())
-            ])),
-            "authenticated"
-        ));
-        assert!(!audience_matches(
-            Some(&Value::String("anon".to_string())),
-            "authenticated"
-        ));
-    }
-
-    #[test]
-    fn temporal_claims_require_exp_and_iat() {
-        let claims = SupabaseClaims {
-            sub: "user".to_string(),
-            aud: Some(Value::String("authenticated".to_string())),
-            role: Some("authenticated".to_string()),
-            exp: None,
-            iat: None,
-            nbf: None,
-            jti: None,
-            session_id: None,
+    fn test_state(token: &str) -> AppState {
+        let config = AppConfig {
+            bind_addr: "127.0.0.1:0".into(),
+            turso_database_url: "libsql://unused.test".into(),
+            turso_auth_token: "unused".into(),
+            server_token: ServerToken(token.as_bytes().to_vec()),
         };
-        let err =
-            validate_temporal_claims(&claims, std::time::Duration::from_secs(60)).unwrap_err();
-        assert!(err.to_string().contains("missing `exp`"));
+        AppState {
+            config: Arc::new(config),
+            // Repo is never touched by the middleware itself.
+            repo: Arc::new(TursoRepo::dangling()),
+        }
     }
 
-    #[test]
-    fn temporal_claims_reject_future_iat() {
-        let now = chrono::Utc::now().timestamp();
-        let claims = SupabaseClaims {
-            sub: "user".to_string(),
-            aud: Some(Value::String("authenticated".to_string())),
-            role: Some("authenticated".to_string()),
-            exp: Some(now + 300),
-            iat: Some(now + 120),
-            nbf: None,
-            jti: None,
-            session_id: None,
-        };
-        let err =
-            validate_temporal_claims(&claims, std::time::Duration::from_secs(30)).unwrap_err();
-        assert!(err.to_string().contains("future"));
+    async fn build_test_router(token: &str) -> Router {
+        let state = test_state(token);
+        Router::new()
+            .route("/guarded", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_bearer_token,
+            ))
+            .with_state(state)
     }
 
-    #[test]
-    fn parse_jwks_keys_accepts_ec_signing_key() {
-        let payload = serde_json::json!({
-            "keys": [
-                {
-                    "alg": "ES256",
-                    "crv": "P-256",
-                    "kid": "ec-key-1",
-                    "kty": "EC",
-                    "use": "sig",
-                    "x": "NmmjAg1ZY_f79RW_c4LrTpBhwnzC3sHA4MbH69RS2yw",
-                    "y": "L5GuARufM_jlB4Xez_j4uNM9ytd8-Z7T02Ewef-dW78"
-                }
-            ]
-        });
-        let set: JwkSet = serde_json::from_value(payload).unwrap();
-        let parsed = parse_jwks_keys(set).unwrap();
-        assert!(parsed.contains_key("ec-key-1"));
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejects_missing_header() {
+        let router = build_test_router("abcdef1234567890").await;
+        let resp = router
+            .oneshot(Request::builder().uri("/guarded").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
-    #[test]
-    fn supported_verification_algorithms_exclude_hmac() {
-        assert!(is_supported_verification_algorithm(Algorithm::ES256));
-        assert!(is_supported_verification_algorithm(Algorithm::RS256));
-        assert!(!is_supported_verification_algorithm(Algorithm::HS256));
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejects_wrong_token() {
+        let router = build_test_router("abcdef1234567890").await;
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/guarded")
+                    .header("authorization", "Bearer wrong-token-value")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn accepts_correct_token() {
+        let token = "abcdef1234567890";
+        let router = build_test_router(token).await;
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/guarded")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejects_mismatched_length() {
+        let router = build_test_router("abcdef1234567890").await;
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/guarded")
+                    .header("authorization", "Bearer short")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }
