@@ -9,7 +9,7 @@ use crate::db::{
     Database, LibSqlNoteRepository, LibSqlSettingsRepository, NoteRepository, SettingsRepository,
     SyncConfig,
 };
-use crate::models::{Attachment, AttachmentId, Note, Settings, SyncConflict};
+use crate::models::{Note, Settings};
 use crate::{NoteId, Result};
 
 /// Thread-safe service for DB and repository operations.
@@ -252,7 +252,7 @@ impl DatabaseService {
             .query(
                 "SELECT id
                  FROM notes
-                 WHERE is_deleted = 0 AND id LIKE ?
+                 WHERE deleted_at IS NULL AND id LIKE ?
                  ORDER BY updated_at DESC
                  LIMIT ?",
                 libsql::params![format!("{prefix}%"), limit],
@@ -320,42 +320,6 @@ impl DatabaseService {
         let db = self.db.lock().await;
         let repo = LibSqlNoteRepository::new(db.connection());
         repo.list_tags().await
-    }
-
-    /// List recently resolved sync conflicts.
-    pub async fn list_conflicts(&self, limit: usize) -> Result<Vec<SyncConflict>> {
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.list_conflicts(limit).await
-    }
-
-    /// Create attachment metadata for a note.
-    pub async fn create_attachment(
-        &self,
-        note_id: &NoteId,
-        filename: &str,
-        mime_type: &str,
-        size_bytes: i64,
-        r2_key: &str,
-    ) -> Result<Attachment> {
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.create_attachment(note_id, filename, mime_type, size_bytes, r2_key)
-            .await
-    }
-
-    /// List non-deleted attachment metadata for a note.
-    pub async fn list_attachments(&self, note_id: &NoteId) -> Result<Vec<Attachment>> {
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.list_attachments(note_id).await
-    }
-
-    /// Soft-delete attachment metadata by id.
-    pub async fn delete_attachment(&self, attachment_id: &AttachmentId) -> Result<()> {
-        let db = self.db.lock().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.delete_attachment(attachment_id).await
     }
 
     /// Load settings.

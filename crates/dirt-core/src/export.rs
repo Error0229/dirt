@@ -115,10 +115,12 @@ mod tests {
     fn render_markdown_export_includes_frontmatter_and_content() {
         let note = Note {
             id: "cccccccc-cccc-7ccc-8ccc-111111111111".parse().unwrap(),
+            user_id: crate::SOLO_USER_ID.to_string(),
             content: "Hello export #tag".to_string(),
             created_at: 123,
             updated_at: 456,
-            is_deleted: false,
+            server_updated_at: None,
+            deleted_at: None,
         };
 
         let rendered = render_markdown_export(&[note]);

@@ -3,9 +3,7 @@
 #![allow(clippy::cast_possible_wrap)] // SQLite uses i64 for LIMIT/OFFSET
 
 use crate::error::{Error, Result};
-use crate::models::{
-    extract_tags, Attachment, AttachmentId, Note, NoteId, SyncConflict, Tag, TagId,
-};
+use crate::models::{Note, NoteId, Tag, TagId, extract_tags};
 use libsql::Connection;
 
 /// Trait for note storage operations (async)
@@ -17,16 +15,16 @@ pub trait NoteRepository {
     /// Create a note with a pre-generated ID (for optimistic UI updates)
     async fn create_with_note(&self, note: &Note) -> Result<Note>;
 
-    /// Get a note by ID
+    /// Get a note by ID (live rows only)
     async fn get(&self, id: &NoteId) -> Result<Option<Note>>;
 
-    /// List notes (excluding deleted), newest first
+    /// List live notes, newest first
     async fn list(&self, limit: usize, offset: usize) -> Result<Vec<Note>>;
 
     /// Update a note's content
     async fn update(&self, id: &NoteId, content: &str) -> Result<Note>;
 
-    /// Soft delete a note
+    /// Soft-delete a note by stamping `deleted_at`
     async fn delete(&self, id: &NoteId) -> Result<()>;
 
     /// Search notes by content using FTS
@@ -35,27 +33,16 @@ pub trait NoteRepository {
     /// List notes by tag
     async fn list_by_tag(&self, tag: &str, limit: usize, offset: usize) -> Result<Vec<Note>>;
 
-    /// Get all tags with note counts
+    /// Get all tags with live-note counts
     async fn list_tags(&self) -> Result<Vec<(String, usize)>>;
 
-    /// List recently resolved sync conflicts
-    async fn list_conflicts(&self, limit: usize) -> Result<Vec<SyncConflict>>;
-
-    /// Create attachment metadata for a note
-    async fn create_attachment(
-        &self,
-        note_id: &NoteId,
-        filename: &str,
-        mime_type: &str,
-        size_bytes: i64,
-        r2_key: &str,
-    ) -> Result<Attachment>;
-
-    /// List non-deleted attachments for a note
-    async fn list_attachments(&self, note_id: &NoteId) -> Result<Vec<Attachment>>;
-
-    /// Soft delete attachment metadata by id
-    async fn delete_attachment(&self, attachment_id: &AttachmentId) -> Result<()>;
+    /// Write a server-authoritative note into the local DB.
+    ///
+    /// Used by the pull-merge path once the pure resolver in
+    /// `dirt_core::sync::merge` has decided this row should overwrite the
+    /// local copy. Re-populates `note_tags` when the note is live and clears
+    /// them on tombstone.
+    async fn upsert_from_server(&self, note: &Note) -> Result<()>;
 }
 
 /// libSQL implementation of `NoteRepository`
@@ -83,10 +70,8 @@ impl<'a> LibSqlNoteRepository<'a> {
 
         // Add new tag links
         for tag_name in tags {
-            // Get or create tag
             let tag_id = self.get_or_create_tag(&tag_name).await?;
 
-            // Link tag to note
             self.conn
                 .execute(
                     "INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)",
@@ -100,7 +85,6 @@ impl<'a> LibSqlNoteRepository<'a> {
 
     /// Get or create a tag by name
     async fn get_or_create_tag(&self, name: &str) -> Result<TagId> {
-        // Try to find existing tag
         let mut rows = self
             .conn
             .query("SELECT id FROM tags WHERE name = ? COLLATE NOCASE", [name])
@@ -113,7 +97,6 @@ impl<'a> LibSqlNoteRepository<'a> {
                 .map_err(|_| Error::InvalidInput("Invalid tag ID".into()));
         }
 
-        // Create new tag
         let tag = Tag::new(name);
         self.conn
             .execute(
@@ -125,52 +108,28 @@ impl<'a> LibSqlNoteRepository<'a> {
         Ok(tag.id)
     }
 
-    /// Parse a note from a database row
+    /// Parse a note from a database row.
+    ///
+    /// Expected column order:
+    /// `id, user_id, content, created_at, updated_at, server_updated_at, deleted_at`
     fn parse_note(row: &libsql::Row) -> Result<Note> {
         let id: String = row.get(0)?;
         Ok(Note {
             id: id
                 .parse()
                 .map_err(|_| Error::InvalidInput(format!("Invalid note ID in database: {id}")))?,
-            content: row.get(1)?,
-            created_at: row.get(2)?,
-            updated_at: row.get(3)?,
-            is_deleted: row.get::<i32>(4)? != 0,
-        })
-    }
-
-    /// Parse a sync conflict from a database row
-    fn parse_conflict(row: &libsql::Row) -> Result<SyncConflict> {
-        Ok(SyncConflict {
-            id: row.get(0)?,
-            note_id: row.get(1)?,
-            local_updated_at: row.get(2)?,
-            incoming_updated_at: row.get(3)?,
-            resolved_at: row.get(4)?,
-            strategy: row.get(5)?,
-        })
-    }
-
-    /// Parse attachment metadata from a database row
-    fn parse_attachment(row: &libsql::Row) -> Result<Attachment> {
-        let id: String = row.get(0)?;
-        let note_id: String = row.get(1)?;
-        Ok(Attachment {
-            id: id
-                .parse()
-                .map_err(|_| Error::InvalidInput("Invalid attachment ID".into()))?,
-            note_id: note_id
-                .parse()
-                .map_err(|_| Error::InvalidInput("Invalid note ID".into()))?,
-            filename: row.get(2)?,
-            mime_type: row.get(3)?,
-            size_bytes: row.get(4)?,
-            r2_key: row.get(5)?,
-            created_at: row.get(6)?,
-            is_deleted: row.get::<i32>(7)? != 0,
+            user_id: row.get(1)?,
+            content: row.get(2)?,
+            created_at: row.get(3)?,
+            updated_at: row.get(4)?,
+            server_updated_at: row.get(5)?,
+            deleted_at: row.get(6)?,
         })
     }
 }
+
+const NOTE_COLUMNS: &str =
+    "id, user_id, content, created_at, updated_at, server_updated_at, deleted_at";
 
 impl NoteRepository for LibSqlNoteRepository<'_> {
     async fn create(&self, content: &str) -> Result<Note> {
@@ -181,30 +140,32 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
     async fn create_with_note(&self, note: &Note) -> Result<Note> {
         self.conn
             .execute(
-                "INSERT INTO notes (id, content, created_at, updated_at, is_deleted) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO notes (id, user_id, content, created_at, updated_at, server_updated_at, deleted_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
                 libsql::params![
                     note.id.as_str(),
+                    note.user_id.as_str(),
                     note.content.as_str(),
                     note.created_at,
                     note.updated_at,
-                    i32::from(note.is_deleted)
+                    note.server_updated_at,
+                    note.deleted_at,
                 ],
             )
             .await?;
 
-        self.sync_tags(&note.id, &note.content).await?;
+        if note.deleted_at.is_none() {
+            self.sync_tags(&note.id, &note.content).await?;
+        }
 
         Ok(note.clone())
     }
 
     async fn get(&self, id: &NoteId) -> Result<Option<Note>> {
-        let mut rows = self
-            .conn
-            .query(
-                "SELECT id, content, created_at, updated_at, is_deleted FROM notes WHERE id = ? AND is_deleted = 0",
-                [id.as_str()],
-            )
-            .await?;
+        let sql = format!(
+            "SELECT {NOTE_COLUMNS} FROM notes WHERE id = ? AND deleted_at IS NULL"
+        );
+        let mut rows = self.conn.query(&sql, [id.as_str()]).await?;
 
         if let Some(row) = rows.next().await? {
             Ok(Some(Self::parse_note(&row)?))
@@ -214,16 +175,16 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
     }
 
     async fn list(&self, limit: usize, offset: usize) -> Result<Vec<Note>> {
+        let sql = format!(
+            "SELECT {NOTE_COLUMNS}
+             FROM notes
+             WHERE deleted_at IS NULL
+             ORDER BY updated_at DESC
+             LIMIT ? OFFSET ?"
+        );
         let mut rows = self
             .conn
-            .query(
-                "SELECT id, content, created_at, updated_at, is_deleted
-                 FROM notes
-                 WHERE is_deleted = 0
-                 ORDER BY updated_at DESC
-                 LIMIT ? OFFSET ?",
-                libsql::params![limit as i64, offset as i64],
-            )
+            .query(&sql, libsql::params![limit as i64, offset as i64])
             .await?;
 
         let mut notes = Vec::new();
@@ -240,7 +201,9 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
         let rows_affected = self
             .conn
             .execute(
-                "UPDATE notes SET content = ?, updated_at = ? WHERE id = ? AND is_deleted = 0",
+                "UPDATE notes
+                 SET content = ?, updated_at = ?, server_updated_at = NULL
+                 WHERE id = ? AND deleted_at IS NULL",
                 libsql::params![content, now, id.as_str()],
             )
             .await?;
@@ -262,14 +225,23 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
         let rows_affected = self
             .conn
             .execute(
-                "UPDATE notes SET is_deleted = 1, updated_at = ? WHERE id = ? AND is_deleted = 0",
-                libsql::params![now, id.as_str()],
+                "UPDATE notes
+                 SET deleted_at = ?, updated_at = ?, server_updated_at = NULL
+                 WHERE id = ? AND deleted_at IS NULL",
+                libsql::params![now, now, id.as_str()],
             )
             .await?;
 
         if rows_affected == 0 {
             return Err(Error::NotFound(id.to_string()));
         }
+
+        self.conn
+            .execute(
+                "DELETE FROM note_tags WHERE note_id = ?",
+                [id.as_str()],
+            )
+            .await?;
 
         Ok(())
     }
@@ -279,17 +251,23 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
             return self.list(limit, 0).await;
         }
 
+        let sql = format!(
+            "SELECT {}
+             FROM notes n
+             JOIN notes_fts fts ON n.rowid = fts.rowid
+             WHERE notes_fts MATCH ? AND n.deleted_at IS NULL
+             ORDER BY rank
+             LIMIT ?",
+            NOTE_COLUMNS
+                .split(", ")
+                .map(|c| format!("n.{c}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
         let mut rows = self
             .conn
-            .query(
-                "SELECT n.id, n.content, n.created_at, n.updated_at, n.is_deleted
-                 FROM notes n
-                 JOIN notes_fts fts ON n.rowid = fts.rowid
-                 WHERE notes_fts MATCH ? AND n.is_deleted = 0
-                 ORDER BY rank
-                 LIMIT ?",
-                libsql::params![query, limit as i64],
-            )
+            .query(&sql, libsql::params![query, limit as i64])
             .await?;
 
         let mut notes = Vec::new();
@@ -301,18 +279,24 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
     }
 
     async fn list_by_tag(&self, tag: &str, limit: usize, offset: usize) -> Result<Vec<Note>> {
+        let sql = format!(
+            "SELECT {}
+             FROM notes n
+             JOIN note_tags nt ON n.id = nt.note_id
+             JOIN tags t ON nt.tag_id = t.id
+             WHERE t.name = ? COLLATE NOCASE AND n.deleted_at IS NULL
+             ORDER BY n.updated_at DESC
+             LIMIT ? OFFSET ?",
+            NOTE_COLUMNS
+                .split(", ")
+                .map(|c| format!("n.{c}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
         let mut rows = self
             .conn
-            .query(
-                "SELECT n.id, n.content, n.created_at, n.updated_at, n.is_deleted
-                 FROM notes n
-                 JOIN note_tags nt ON n.id = nt.note_id
-                 JOIN tags t ON nt.tag_id = t.id
-                 WHERE t.name = ? COLLATE NOCASE AND n.is_deleted = 0
-                 ORDER BY n.updated_at DESC
-                 LIMIT ? OFFSET ?",
-                libsql::params![tag, limit as i64, offset as i64],
-            )
+            .query(&sql, libsql::params![tag, limit as i64, offset as i64])
             .await?;
 
         let mut notes = Vec::new();
@@ -324,13 +308,17 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
     }
 
     async fn list_tags(&self) -> Result<Vec<(String, usize)>> {
+        // Prior bug: counted `nt.note_id` which stayed non-NULL even when the
+        // joined note was tombstoned, inflating counts. Counting `n.id` with a
+        // deleted_at filter in the JOIN produces NULL for tombstoned rows, so
+        // only live notes are tallied.
         let mut rows = self
             .conn
             .query(
-                "SELECT t.name, COUNT(nt.note_id) as count
+                "SELECT t.name, COUNT(n.id) as count
                  FROM tags t
                  LEFT JOIN note_tags nt ON t.id = nt.tag_id
-                 LEFT JOIN notes n ON nt.note_id = n.id AND n.is_deleted = 0
+                 LEFT JOIN notes n ON nt.note_id = n.id AND n.deleted_at IS NULL
                  GROUP BY t.id
                  HAVING count > 0
                  ORDER BY count DESC, t.name ASC",
@@ -349,101 +337,39 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
         Ok(tags)
     }
 
-    async fn list_conflicts(&self, limit: usize) -> Result<Vec<SyncConflict>> {
-        let mut rows = self
-            .conn
-            .query(
-                "SELECT id, note_id, local_updated_at, incoming_updated_at, resolved_at, strategy
-                 FROM sync_conflicts
-                 ORDER BY resolved_at DESC, id DESC
-                 LIMIT ?",
-                libsql::params![limit as i64],
-            )
-            .await?;
-
-        let mut conflicts = Vec::new();
-        while let Some(row) = rows.next().await? {
-            conflicts.push(Self::parse_conflict(&row)?);
-        }
-
-        Ok(conflicts)
-    }
-
-    async fn create_attachment(
-        &self,
-        note_id: &NoteId,
-        filename: &str,
-        mime_type: &str,
-        size_bytes: i64,
-        r2_key: &str,
-    ) -> Result<Attachment> {
-        let mut rows = self
-            .conn
-            .query(
-                "SELECT id FROM notes WHERE id = ? AND is_deleted = 0",
-                [note_id.as_str()],
-            )
-            .await?;
-        if rows.next().await?.is_none() {
-            return Err(Error::NotFound(note_id.to_string()));
-        }
-
-        let attachment = Attachment::new(*note_id, filename, mime_type, size_bytes, r2_key)?;
-
+    async fn upsert_from_server(&self, note: &Note) -> Result<()> {
         self.conn
             .execute(
-                "INSERT INTO attachments (
-                    id, note_id, filename, mime_type, size_bytes, r2_key, created_at, is_deleted
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO notes (id, user_id, content, created_at, updated_at, server_updated_at, deleted_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(id) DO UPDATE SET
+                     user_id = excluded.user_id,
+                     content = excluded.content,
+                     created_at = excluded.created_at,
+                     updated_at = excluded.updated_at,
+                     server_updated_at = excluded.server_updated_at,
+                     deleted_at = excluded.deleted_at",
                 libsql::params![
-                    attachment.id.as_str(),
-                    attachment.note_id.as_str(),
-                    attachment.filename.as_str(),
-                    attachment.mime_type.as_str(),
-                    attachment.size_bytes,
-                    attachment.r2_key.as_str(),
-                    attachment.created_at,
-                    i32::from(attachment.is_deleted),
+                    note.id.as_str(),
+                    note.user_id.as_str(),
+                    note.content.as_str(),
+                    note.created_at,
+                    note.updated_at,
+                    note.server_updated_at,
+                    note.deleted_at,
                 ],
             )
             .await?;
 
-        Ok(attachment)
-    }
-
-    async fn list_attachments(&self, note_id: &NoteId) -> Result<Vec<Attachment>> {
-        let mut rows = self
-            .conn
-            .query(
-                "SELECT id, note_id, filename, mime_type, size_bytes, r2_key, created_at, is_deleted
-                 FROM attachments
-                 WHERE note_id = ? AND is_deleted = 0
-                 ORDER BY created_at DESC, id DESC",
-                [note_id.as_str()],
-            )
-            .await?;
-
-        let mut attachments = Vec::new();
-        while let Some(row) = rows.next().await? {
-            attachments.push(Self::parse_attachment(&row)?);
-        }
-
-        Ok(attachments)
-    }
-
-    async fn delete_attachment(&self, attachment_id: &AttachmentId) -> Result<()> {
-        let rows_affected = self
-            .conn
-            .execute(
-                "UPDATE attachments
-                 SET is_deleted = 1
-                 WHERE id = ? AND is_deleted = 0",
-                [attachment_id.as_str()],
-            )
-            .await?;
-
-        if rows_affected == 0 {
-            return Err(Error::NotFound(attachment_id.to_string()));
+        if note.deleted_at.is_some() {
+            self.conn
+                .execute(
+                    "DELETE FROM note_tags WHERE note_id = ?",
+                    [note.id.as_str()],
+                )
+                .await?;
+        } else {
+            self.sync_tags(&note.id, &note.content).await?;
         }
 
         Ok(())
@@ -453,6 +379,7 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SOLO_USER_ID;
     use crate::db::Database;
 
     async fn setup() -> Database {
@@ -466,6 +393,9 @@ mod tests {
 
         let note = repo.create("Hello world #test").await.unwrap();
         assert_eq!(note.content, "Hello world #test");
+        assert_eq!(note.user_id, SOLO_USER_ID);
+        assert!(note.server_updated_at.is_none());
+        assert!(note.deleted_at.is_none());
 
         let fetched = repo.get(&note.id).await.unwrap().unwrap();
         assert_eq!(fetched.id, note.id);
@@ -483,70 +413,108 @@ mod tests {
 
         let notes = repo.list(10, 0).await.unwrap();
         assert_eq!(notes.len(), 3);
-
-        // Should be in reverse chronological order
         assert!(notes[0].created_at >= notes[1].created_at);
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn test_update() {
+    async fn test_update_clears_server_updated_at() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
         let note = repo.create("Original").await.unwrap();
+
+        // Pretend the note was previously synced.
+        db.connection()
+            .execute(
+                "UPDATE notes SET server_updated_at = 42 WHERE id = ?",
+                [note.id.as_str()],
+            )
+            .await
+            .unwrap();
+
         let updated = repo.update(&note.id, "Updated").await.unwrap();
 
         assert_eq!(updated.content, "Updated");
         assert!(updated.updated_at >= note.updated_at);
+        assert!(
+            updated.server_updated_at.is_none(),
+            "local mutation must invalidate server_updated_at so the next push re-syncs"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn test_delete() {
+    async fn test_delete_stamps_deleted_at_and_clears_tags() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let note = repo.create("To delete").await.unwrap();
+        let note = repo.create("To delete #tagged").await.unwrap();
         repo.delete(&note.id).await.unwrap();
 
-        // Should not find deleted note
+        // Not visible via live-only queries.
         let fetched = repo.get(&note.id).await.unwrap();
         assert!(fetched.is_none());
 
-        // Should not appear in list
         let notes = repo.list(10, 0).await.unwrap();
         assert!(notes.is_empty());
-    }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn test_search() {
-        let db = setup().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-
-        repo.create("Hello world").await.unwrap();
-        repo.create("Goodbye world").await.unwrap();
-        repo.create("Something else").await.unwrap();
-
-        let results = repo.search("world", 10).await.unwrap();
-        assert_eq!(results.len(), 2);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn test_tags() {
-        let db = setup().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-
-        repo.create("Note with #rust and #programming")
+        // Tombstone timestamp actually set.
+        let mut rows = db
+            .connection()
+            .query(
+                "SELECT deleted_at FROM notes WHERE id = ?",
+                [note.id.as_str()],
+            )
             .await
             .unwrap();
-        repo.create("Another #rust note").await.unwrap();
-        repo.create("Just #programming").await.unwrap();
+        let deleted_at: Option<i64> = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        assert!(deleted_at.is_some());
+
+        // note_tags row cleared so tag listing no longer surfaces this note.
+        let tags = repo.list_tags().await.unwrap();
+        assert!(
+            tags.iter().all(|(_, count)| *count == 0) || tags.is_empty(),
+            "tombstoned note must not contribute to tag counts"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_search_excludes_tombstoned() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let alive = repo.create("Hello apple").await.unwrap();
+        let doomed = repo.create("Goodbye apple").await.unwrap();
+        repo.create("Something else").await.unwrap();
+
+        let results = repo.search("apple", 10).await.unwrap();
+        assert_eq!(results.len(), 2);
+
+        repo.delete(&doomed.id).await.unwrap();
+        let results = repo.search("apple", 10).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, alive.id);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_tags_counts_skip_tombstoned_notes() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let a = repo.create("#rust one").await.unwrap();
+        let _b = repo.create("#rust two").await.unwrap();
+        let _c = repo.create("#rust three").await.unwrap();
 
         let tags = repo.list_tags().await.unwrap();
-        assert_eq!(tags.len(), 2);
+        let rust_count = tags.iter().find(|(n, _)| n == "rust").unwrap().1;
+        assert_eq!(rust_count, 3, "live notes should count");
 
-        // Rust should have 2 notes
-        let rust_tag = tags.iter().find(|(name, _)| name == "rust").unwrap();
-        assert_eq!(rust_tag.1, 2);
+        repo.delete(&a.id).await.unwrap();
+        let tags = repo.list_tags().await.unwrap();
+        let rust_count = tags.iter().find(|(n, _)| n == "rust").unwrap().1;
+        assert_eq!(
+            rust_count, 2,
+            "tombstoned note must not be counted (prior bug counted it)"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -563,112 +531,51 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn test_lww_stale_update_is_ignored_and_logged() {
+    async fn test_upsert_from_server_inserts_new_live_note() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let note = repo.create("Current value").await.unwrap();
-        let stale_ts = note.updated_at - 10_000;
-
-        repo.conn
-            .execute(
-                "UPDATE notes SET content = ?, updated_at = ? WHERE id = ?",
-                libsql::params!["Stale value", stale_ts, note.id.as_str()],
-            )
-            .await
-            .unwrap();
+        let note = Note {
+            id: NoteId::new(),
+            user_id: SOLO_USER_ID.to_string(),
+            content: "From the server #sync".to_string(),
+            created_at: 1_700_000_000_000,
+            updated_at: 1_700_000_000_500,
+            server_updated_at: Some(1_700_000_001_000),
+            deleted_at: None,
+        };
+        repo.upsert_from_server(&note).await.unwrap();
 
         let fetched = repo.get(&note.id).await.unwrap().unwrap();
-        assert_eq!(fetched.content, "Current value");
-        assert_eq!(fetched.updated_at, note.updated_at);
+        assert_eq!(fetched.content, note.content);
+        assert_eq!(fetched.server_updated_at, Some(1_700_000_001_000));
 
-        let conflicts = repo.list_conflicts(10).await.unwrap();
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].note_id, note.id.to_string());
-        assert_eq!(conflicts[0].local_updated_at, note.updated_at);
-        assert_eq!(conflicts[0].incoming_updated_at, stale_ts);
-        assert_eq!(conflicts[0].strategy, "lww");
+        let by_tag = repo.list_by_tag("sync", 10, 0).await.unwrap();
+        assert_eq!(by_tag.len(), 1, "sync_tags must run for live upserts");
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn test_lww_newer_update_wins() {
+    async fn test_upsert_from_server_tombstones_and_clears_tags() {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let note = repo.create("Original").await.unwrap();
-        let newer_ts = note.updated_at + 10_000;
+        let existing = repo.create("Live #work note").await.unwrap();
+        assert_eq!(repo.list_by_tag("work", 10, 0).await.unwrap().len(), 1);
 
-        repo.conn
-            .execute(
-                "UPDATE notes SET content = ?, updated_at = ? WHERE id = ?",
-                libsql::params!["Newer value", newer_ts, note.id.as_str()],
-            )
-            .await
-            .unwrap();
+        let tombstoned = Note {
+            id: existing.id,
+            user_id: existing.user_id.clone(),
+            content: existing.content.clone(),
+            created_at: existing.created_at,
+            updated_at: existing.updated_at + 1,
+            server_updated_at: Some(existing.updated_at + 10),
+            deleted_at: Some(existing.updated_at + 5),
+        };
+        repo.upsert_from_server(&tombstoned).await.unwrap();
 
-        let fetched = repo.get(&note.id).await.unwrap().unwrap();
-        assert_eq!(fetched.content, "Newer value");
-        assert_eq!(fetched.updated_at, newer_ts);
-
-        let conflicts = repo.list_conflicts(10).await.unwrap();
-        assert!(conflicts.is_empty());
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn test_attachment_metadata_crud() {
-        let db = setup().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-
-        let note = repo.create("Attachment note").await.unwrap();
-
-        let first = repo
-            .create_attachment(
-                &note.id,
-                "image-1.png",
-                "image/png",
-                1234,
-                "notes/a/image-1.png",
-            )
-            .await
-            .unwrap();
-        let second = repo
-            .create_attachment(
-                &note.id,
-                "image-2.jpg",
-                "image/jpeg",
-                4567,
-                "notes/a/image-2.jpg",
-            )
-            .await
-            .unwrap();
-
-        let attachments = repo.list_attachments(&note.id).await.unwrap();
-        assert_eq!(attachments.len(), 2);
-        assert_eq!(attachments[0].id, second.id);
-        assert_eq!(attachments[1].id, first.id);
-
-        repo.delete_attachment(&second.id).await.unwrap();
-
-        let attachments = repo.list_attachments(&note.id).await.unwrap();
-        assert_eq!(attachments.len(), 1);
-        assert_eq!(attachments[0].id, first.id);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn test_create_attachment_requires_existing_note() {
-        let db = setup().await;
-        let repo = LibSqlNoteRepository::new(db.connection());
-
-        let missing_note = NoteId::new();
-        let result = repo
-            .create_attachment(
-                &missing_note,
-                "missing.png",
-                "image/png",
-                1,
-                "notes/missing.png",
-            )
-            .await;
-        assert!(matches!(result, Err(Error::NotFound(_))));
+        // Not visible via live queries.
+        assert!(repo.get(&existing.id).await.unwrap().is_none());
+        // Tag listing no longer surfaces it.
+        assert_eq!(repo.list_by_tag("work", 10, 0).await.unwrap().len(), 0);
     }
 }
