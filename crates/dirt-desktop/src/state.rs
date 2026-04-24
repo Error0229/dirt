@@ -76,7 +76,7 @@ impl AppState {
 
         notes
             .into_iter()
-            .filter(|note| !note.is_deleted)
+            .filter(|note| !note.is_deleted())
             .filter(|note| {
                 if query.is_empty() {
                     true

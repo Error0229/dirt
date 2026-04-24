@@ -3,7 +3,7 @@
 #[cfg(target_os = "android")]
 use std::path::PathBuf;
 
-use dirt_core::models::{Attachment, AttachmentId, Note, NoteId, SyncConflict};
+use dirt_core::models::{Note, NoteId};
 use dirt_core::services::DatabaseService as CoreDatabaseService;
 use dirt_core::{Error, Result};
 
@@ -80,35 +80,6 @@ impl MobileNoteStore {
     /// Soft delete a note.
     pub async fn delete_note(&self, id: &NoteId) -> Result<()> {
         self.db.delete_note(id).await
-    }
-
-    /// Create attachment metadata for a note.
-    pub async fn create_attachment(
-        &self,
-        note_id: &NoteId,
-        filename: &str,
-        mime_type: &str,
-        size_bytes: i64,
-        r2_key: &str,
-    ) -> Result<Attachment> {
-        self.db
-            .create_attachment(note_id, filename, mime_type, size_bytes, r2_key)
-            .await
-    }
-
-    /// List attachment metadata for a note.
-    pub async fn list_attachments(&self, note_id: &NoteId) -> Result<Vec<Attachment>> {
-        self.db.list_attachments(note_id).await
-    }
-
-    /// Soft delete attachment metadata by id.
-    pub async fn delete_attachment(&self, attachment_id: &AttachmentId) -> Result<()> {
-        self.db.delete_attachment(attachment_id).await
-    }
-
-    /// List recently resolved sync conflicts.
-    pub async fn list_conflicts(&self, limit: usize) -> Result<Vec<SyncConflict>> {
-        self.db.list_conflicts(limit).await
     }
 
     /// Sync with remote database (if configured).
@@ -195,58 +166,4 @@ mod tests {
         store.sync().await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn in_memory_store_conflict_list_defaults_empty() {
-        let store = MobileNoteStore::open_in_memory().await.unwrap();
-        let conflicts = store.list_conflicts(10).await.unwrap();
-        assert!(conflicts.is_empty());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn attachment_metadata_roundtrip() {
-        let store = MobileNoteStore::open_in_memory().await.unwrap();
-        let note = store.create_note("Attachment host note").await.unwrap();
-
-        let created = store
-            .create_attachment(
-                &note.id,
-                "mobile-photo.jpg",
-                "image/jpeg",
-                4242,
-                "notes/mobile/mobile-photo.jpg",
-            )
-            .await
-            .unwrap();
-
-        let attachments = store.list_attachments(&note.id).await.unwrap();
-        assert_eq!(attachments.len(), 1);
-        assert_eq!(attachments[0].id, created.id);
-        assert_eq!(attachments[0].r2_key, "notes/mobile/mobile-photo.jpg");
-
-        store.delete_attachment(&created.id).await.unwrap();
-        let attachments = store.list_attachments(&note.id).await.unwrap();
-        assert!(attachments.is_empty());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn create_attachment_requires_existing_note() {
-        let store = MobileNoteStore::open_in_memory().await.unwrap();
-
-        let missing_note = NoteId::new();
-        let err = store
-            .create_attachment(
-                &missing_note,
-                "missing.png",
-                "image/png",
-                1,
-                "notes/missing.png",
-            )
-            .await
-            .unwrap_err();
-
-        match err {
-            Error::NotFound(value) => assert_eq!(value, missing_note.to_string()),
-            other => panic!("expected not found, got {other:?}"),
-        }
-    }
 }

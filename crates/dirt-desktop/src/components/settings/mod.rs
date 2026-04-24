@@ -5,7 +5,7 @@ use std::sync::Arc;
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 
-use dirt_core::models::{NoteId, Settings, SyncConflict, ThemeMode};
+use dirt_core::models::{NoteId, Settings, ThemeMode};
 
 use super::button::{Button, ButtonVariant};
 use super::dialog::{DialogContent, DialogRoot, DialogTitle};
@@ -17,7 +17,7 @@ use crate::state::AppState;
 use crate::theme::resolve_theme;
 use auth_settings::AuthSettingsTab;
 use media_settings::MediaSettingsTab;
-use sync_settings::{SyncConflictView, SyncSettingsTab};
+use sync_settings::SyncSettingsTab;
 use theme_settings::ThemeSettingsTab;
 
 mod auth_settings;
@@ -25,8 +25,6 @@ mod media_settings;
 mod row;
 mod sync_settings;
 mod theme_settings;
-
-const SYNC_CONFLICT_LIMIT: usize = 10;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsTab {
@@ -122,10 +120,6 @@ pub fn SettingsPanel() -> Element {
     let auth_service_for_preflight = auth_service.clone();
     let mut export_busy = use_signal(|| false);
     let mut export_message = use_signal(|| None::<String>);
-    let sync_conflicts = use_signal(Vec::<SyncConflict>::new);
-    let mut sync_conflicts_loading = use_signal(|| false);
-    let mut sync_conflicts_error = use_signal(|| None::<String>);
-    let mut sync_conflicts_refresh_version = use_signal(|| 0u64);
 
     use_effect(move || {
         if auth_config_checked() || auth_service_for_preflight.is_none() {
@@ -159,38 +153,6 @@ pub fn SettingsPanel() -> Element {
             }
 
             auth_verifying_signal.set(false);
-        });
-    });
-
-    use_effect(move || {
-        let _refresh_version = sync_conflicts_refresh_version();
-        let db = state.db_service.read().clone();
-
-        sync_conflicts_loading.set(true);
-        sync_conflicts_error.set(None);
-
-        let mut conflicts_signal = sync_conflicts;
-        let mut loading_signal = sync_conflicts_loading;
-        let mut error_signal = sync_conflicts_error;
-        spawn(async move {
-            let Some(db) = db else {
-                conflicts_signal.set(Vec::new());
-                loading_signal.set(false);
-                error_signal.set(Some("Database service is not available.".to_string()));
-                return;
-            };
-
-            match db.list_conflicts(SYNC_CONFLICT_LIMIT).await {
-                Ok(conflicts) => {
-                    conflicts_signal.set(conflicts);
-                }
-                Err(error) => {
-                    conflicts_signal.set(Vec::new());
-                    error_signal.set(Some(format!("Failed to load sync conflicts: {error}")));
-                }
-            }
-
-            loading_signal.set(false);
         });
     });
 
@@ -463,10 +425,6 @@ pub fn SettingsPanel() -> Element {
         });
     };
 
-    let refresh_sync_conflicts = move |_: MouseEvent| {
-        sync_conflicts_refresh_version.set(sync_conflicts_refresh_version().saturating_add(1));
-    };
-
     let save_openai_api_key = move |_: MouseEvent| {
         let api_key = openai_api_key_input().trim().to_string();
         if api_key.is_empty() {
@@ -521,18 +479,6 @@ pub fn SettingsPanel() -> Element {
     let sign_up_blocked_reason = sign_up_block_reason(auth_config_status());
     let sign_up_blocked = sign_up_blocked_reason.is_some();
     let auth_config_status_message = auth_config_status().map(format_auth_config_status);
-    let sync_conflict_items = sync_conflicts()
-        .into_iter()
-        .map(|conflict| SyncConflictView {
-            id: conflict.id,
-            note_id: conflict.note_id.clone(),
-            resolved_at: format_sync_conflict_timestamp(conflict.resolved_at),
-            details: format!(
-                "Local ts: {}, incoming ts: {}, strategy: {}",
-                conflict.local_updated_at, conflict.incoming_updated_at, conflict.strategy
-            ),
-        })
-        .collect::<Vec<_>>();
 
     let mut active_tab = use_signal(|| SettingsTab::Appearance);
 
@@ -683,10 +629,6 @@ pub fn SettingsPanel() -> Element {
                             sync_issue: sync_issue,
                             pending_sync_count: pending_sync_count,
                             pending_sync_preview: pending_sync_preview,
-                            sync_conflicts: sync_conflict_items,
-                            sync_conflicts_loading: sync_conflicts_loading(),
-                            sync_conflicts_error: sync_conflicts_error(),
-                            on_refresh_sync_conflicts: refresh_sync_conflicts,
                         }
                     },
                     SettingsTab::Auth => rsx! {
@@ -807,13 +749,6 @@ fn format_auth_config_status(status: AuthConfigStatus) -> String {
     "Auth config check passed.".to_string()
 }
 
-fn format_sync_conflict_timestamp(timestamp_ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(timestamp_ms).map_or_else(
-        || timestamp_ms.to_string(),
-        |date_time| date_time.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-    )
-}
-
 fn format_pending_sync_preview(note_ids: &[NoteId]) -> String {
     if note_ids.is_empty() {
         return "none".to_string();
@@ -899,12 +834,6 @@ mod tests {
         };
 
         assert!(sign_up_block_reason(Some(status)).is_none());
-    }
-
-    #[test]
-    fn format_sync_conflict_timestamp_uses_utc_display() {
-        let formatted = format_sync_conflict_timestamp(0);
-        assert_eq!(formatted, "1970-01-01 00:00:00 UTC");
     }
 
     #[test]

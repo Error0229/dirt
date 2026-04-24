@@ -6,14 +6,8 @@ use dioxus::prelude::*;
 
 use dirt_core::NoteId;
 
-use self::attachment_panel::AttachmentPanel;
 use crate::queries::invalidate_notes_query;
 use crate::state::AppState;
-
-mod attachment_panel;
-mod attachment_preview;
-mod attachment_utils;
-mod transcription;
 
 /// Idle save delay - save after 2 seconds of no typing
 const IDLE_SAVE_MS: u64 = 2000;
@@ -178,21 +172,6 @@ pub fn NoteEditor() -> Element {
                     oninput: on_input,
                     onblur: on_blur,
                     onkeydown: on_keydown,
-                }
-
-                AttachmentPanel {
-                    note_id: current_note_id(),
-                    editor_content: content(),
-                    on_editor_content_change: move |updated_content: String| {
-                        content.set(updated_content.clone());
-                        if let Some(id) = current_note_id() {
-                            let mut notes = state.notes.write();
-                            if let Some(note) = notes.iter_mut().find(|note| note.id == id) {
-                                note.content = updated_content;
-                                note.updated_at = chrono::Utc::now().timestamp_millis();
-                            }
-                        }
-                    },
                 }
             } else {
                 div {

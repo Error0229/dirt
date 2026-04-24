@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::Utc;
 use dirt_core::db::SyncConfig;
 use dirt_core::services::DatabaseService;
-use dirt_core::{Note, NoteId, SyncConflict};
+use dirt_core::{Note, NoteId};
 use serde::Serialize;
 
 use crate::auth::{clear_stored_session, load_stored_session, SupabaseAuthService};
@@ -24,17 +24,6 @@ pub struct NoteListItem {
     pub updated_at: i64,
     pub relative_time: String,
     pub tags: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SyncConflictItem {
-    pub id: i64,
-    pub note_id: String,
-    pub local_updated_at: i64,
-    pub incoming_updated_at: i64,
-    pub resolved_at: i64,
-    pub resolved_at_iso: String,
-    pub strategy: String,
 }
 
 pub async fn list_notes(
@@ -79,14 +68,6 @@ pub async fn search_notes(
 ) -> Result<Vec<Note>, CliError> {
     let db = open_database(db_path).await?;
     Ok(db.search_notes(query, limit).await?)
-}
-
-pub async fn list_sync_conflicts(
-    limit: usize,
-    db_path: &Path,
-) -> Result<Vec<SyncConflict>, CliError> {
-    let db = open_database(db_path).await?;
-    Ok(db.list_conflicts(limit).await?)
 }
 
 pub async fn resolve_note_for_edit(
@@ -162,18 +143,6 @@ pub fn note_to_list_item(note: &Note) -> NoteListItem {
     }
 }
 
-pub fn sync_conflict_to_item(conflict: &SyncConflict) -> SyncConflictItem {
-    SyncConflictItem {
-        id: conflict.id,
-        note_id: conflict.note_id.clone(),
-        local_updated_at: conflict.local_updated_at,
-        incoming_updated_at: conflict.incoming_updated_at,
-        resolved_at: conflict.resolved_at,
-        resolved_at_iso: format_sync_timestamp(conflict.resolved_at),
-        strategy: conflict.strategy.clone(),
-    }
-}
-
 pub fn note_preview(note: &Note, max_chars: usize) -> String {
     let first_line = note.content.lines().next().unwrap_or("").trim();
     let collapsed = first_line.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -195,29 +164,6 @@ pub fn render_tags(note: &Note) -> String {
         .map(|tag| format!("#{tag}"))
         .collect::<Vec<String>>()
         .join(" ")
-}
-
-pub fn format_sync_conflict_lines(conflicts: &[SyncConflict]) -> Vec<String> {
-    conflicts
-        .iter()
-        .map(|conflict| {
-            format!(
-                "{}  {:<4}  note={}  local={} incoming={}",
-                format_sync_timestamp(conflict.resolved_at),
-                conflict.strategy,
-                conflict.note_id,
-                conflict.local_updated_at,
-                conflict.incoming_updated_at
-            )
-        })
-        .collect()
-}
-
-pub fn format_sync_timestamp(timestamp_ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(timestamp_ms).map_or_else(
-        || timestamp_ms.to_string(),
-        |date_time| date_time.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-    )
 }
 
 pub fn format_relative_time(timestamp_ms: i64, now_ms: i64) -> String {

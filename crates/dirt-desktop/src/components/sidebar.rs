@@ -17,7 +17,7 @@ pub fn Sidebar() -> Element {
     let tag_counts: HashMap<String, usize> = {
         let notes = (state.notes)();
         let mut counts: HashMap<String, usize> = HashMap::new();
-        for note in notes.iter().filter(|n| !n.is_deleted) {
+        for note in notes.iter().filter(|n| !n.is_deleted()) {
             for tag in note.tags() {
                 *counts.entry(tag).or_insert(0) += 1;
             }
@@ -30,7 +30,7 @@ pub fn Sidebar() -> Element {
     sorted_tags.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
     let active_tag = (state.active_tag_filter)();
-    let total_notes = (state.notes)().iter().filter(|n| !n.is_deleted).count();
+    let total_notes = (state.notes)().iter().filter(|n| !n.is_deleted()).count();
 
     rsx! {
         aside {

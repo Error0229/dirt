@@ -83,10 +83,7 @@ pub enum Commands {
         output: Option<PathBuf>,
     },
     /// Sync local replica with remote Turso database
-    Sync {
-        #[command(subcommand)]
-        command: Option<SyncCommands>,
-    },
+    Sync,
     /// Configure CLI managed profiles
     Config {
         #[command(subcommand)]
@@ -114,18 +111,6 @@ pub enum CompletionShell {
     Fish,
 }
 
-#[derive(Subcommand)]
-pub enum SyncCommands {
-    /// List recently resolved sync conflicts
-    Conflicts {
-        /// Number of conflicts to show
-        #[arg(short, long, default_value = "10")]
-        limit: usize,
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-    },
-}
 
 #[derive(Subcommand)]
 pub enum ConfigCommands {

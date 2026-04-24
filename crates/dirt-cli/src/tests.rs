@@ -4,14 +4,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository};
 use dirt_core::export::render_markdown_export;
-use dirt_core::{Note, SyncConflict};
+use dirt_core::Note;
 use tokio::time::sleep;
 
 use crate::cli::{CompletionShell, ExportFormat};
 use crate::commands::common::{
-    default_editor, format_relative_time, format_sync_conflict_lines, format_sync_timestamp,
-    list_notes, normalize_content, normalize_note_identifier, normalize_search_query, note_preview,
-    open_database, resolve_note_for_edit, search_notes,
+    default_editor, format_relative_time, list_notes, normalize_content, normalize_note_identifier,
+    normalize_search_query, note_preview, open_database, resolve_note_for_edit, search_notes,
 };
 use crate::commands::completions::run_completions;
 use crate::commands::config::{normalize_bootstrap_url, resolve_bootstrap_url};
@@ -82,30 +81,6 @@ fn note_preview_truncates_with_ellipsis() {
     let note = dirt_core::Note::new("This is a very long sentence that should be shortened");
     let preview = note_preview(&note, 20);
     assert_eq!(preview, "This is a very lo...");
-}
-
-#[test]
-fn format_sync_timestamp_returns_utc_label() {
-    assert_eq!(format_sync_timestamp(0), "1970-01-01 00:00:00 UTC");
-}
-
-#[test]
-fn format_sync_conflict_lines_include_key_fields() {
-    let conflicts = vec![SyncConflict {
-        id: 1,
-        note_id: "11111111-1111-7111-8111-111111111111".to_string(),
-        local_updated_at: 200,
-        incoming_updated_at: 100,
-        resolved_at: 300,
-        strategy: "lww".to_string(),
-    }];
-
-    let rendered = format_sync_conflict_lines(&conflicts);
-    assert_eq!(rendered.len(), 1);
-    assert!(rendered[0].contains("lww"));
-    assert!(rendered[0].contains("note=11111111-1111-7111-8111-111111111111"));
-    assert!(rendered[0].contains("local=200"));
-    assert!(rendered[0].contains("incoming=100"));
 }
 
 #[cfg_attr(windows, ignore = "libsql integration is flaky on windows CI")]
@@ -190,14 +165,18 @@ async fn resolve_note_for_edit_supports_exact_and_prefix_id() {
         content: "Note A".to_string(),
         created_at: 1000,
         updated_at: 1000,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
     let note_b = Note {
         id: "11111111-1111-7111-8111-222222222222".parse().unwrap(),
         content: "Note B".to_string(),
         created_at: 1001,
         updated_at: 1001,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
     repo.create_with_note(&note_a).await.unwrap();
     repo.create_with_note(&note_b).await.unwrap();
@@ -230,14 +209,18 @@ async fn resolve_note_for_edit_rejects_ambiguous_prefix() {
         content: "Left".to_string(),
         created_at: 1000,
         updated_at: 1000,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
     let note_b = Note {
         id: "aaaaaaaa-aaaa-7aaa-8aaa-bbbbbbbbbbbb".parse().unwrap(),
         content: "Right".to_string(),
         created_at: 1001,
         updated_at: 1001,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
     repo.create_with_note(&note_a).await.unwrap();
     repo.create_with_note(&note_b).await.unwrap();
@@ -279,14 +262,18 @@ async fn run_delete_soft_deletes_note_by_exact_and_prefix_id() {
         content: "Keep me".to_string(),
         created_at: 1000,
         updated_at: 1000,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
     let note_b = Note {
         id: "bbbbbbbb-bbbb-7bbb-8bbb-222222222222".parse().unwrap(),
         content: "Delete me".to_string(),
         created_at: 1001,
         updated_at: 1001,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
     repo.create_with_note(&note_a).await.unwrap();
     repo.create_with_note(&note_b).await.unwrap();
@@ -339,7 +326,9 @@ fn render_markdown_export_includes_frontmatter_and_content() {
         content: "Hello export #tag".to_string(),
         created_at: 123,
         updated_at: 456,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
 
     let rendered = render_markdown_export(&[note]);
