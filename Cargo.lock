@@ -2207,11 +2207,9 @@ dependencies = [
  "subtle",
  "thiserror 2.0.18",
  "tokio",
- "tower 0.5.3",
  "tower-http 0.6.8",
  "tracing",
  "tracing-subscriber",
- "vercel_runtime",
 ]
 
 [[package]]
@@ -2312,6 +2310,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "urlencoding",
+]
+
+[[package]]
+name = "dirt-vercel"
+version = "0.1.0"
+dependencies = [
+ "dirt-api",
+ "tokio",
+ "tower 0.5.3",
+ "vercel_runtime",
 ]
 
 [[package]]

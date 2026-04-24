@@ -2,6 +2,35 @@
 resolver = "2"
 members = ["crates/*"]
 
+# Root-level package whose only job is to be the Vercel deploy surface.
+# Vercel's Rust runtime picks up `api/axum.rs` and builds it as a serverless
+# function; routing it there via `vercel.json` rewrites gives us a single
+# axum Router at the edge. dirt-api stays the library where the interesting
+# code actually lives.
+[package]
+name = "dirt-vercel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Vercel serverless entry point for dirt-api"
+publish = false
+
+[[bin]]
+name = "axum"
+path = "api/axum.rs"
+
+[dependencies]
+dirt-api = { path = "crates/dirt-api" }
+tokio.workspace = true
+tower = "0.5"
+# The `axum` feature pulls in VercelLayer so the Router built in
+# dirt_api::build_router can be dropped straight into vercel_runtime::run.
+vercel_runtime = { version = "2", features = ["axum"] }
+
+[lints]
+workspace = true
+
 [workspace.package]
 version = "0.1.0"
 edition = "2021"

@@ -15,13 +15,6 @@ path = "src/lib.rs"
 name = "dirt-api"
 path = "src/main.rs"
 
-# Vercel serverless entry point. Deployed by pointing Vercel's Root Directory
-# at `crates/dirt-api/` so it picks up `api/axum.rs` as a Rust serverless
-# function. Locally this binary is inert — nothing calls it outside Vercel.
-[[bin]]
-name = "axum"
-path = "api/axum.rs"
-
 [dependencies]
 dirt-core = { path = "../dirt-core" }
 
@@ -40,15 +33,9 @@ libsql.workspace = true
 # normal == comparisons.
 subtle = "2"
 
-tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 dotenvy = "0.15"
 base64 = "0.22"
-
-# Vercel Rust runtime adapter. Only used by `api/axum.rs`; the local dev
-# binary doesn't touch it. The `axum` feature pulls in VercelLayer so the
-# Router we already build can be dropped straight into vercel_runtime::run.
-vercel_runtime = { version = "2", features = ["axum"] }
 
 [lints]
 workspace = true
