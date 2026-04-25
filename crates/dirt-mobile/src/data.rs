@@ -8,7 +8,7 @@ use dirt_core::services::DatabaseService as CoreDatabaseService;
 use dirt_core::{Error, Result};
 
 #[cfg(target_os = "android")]
-use crate::config::{default_mobile_data_directory, resolve_sync_config};
+use crate::config::default_mobile_data_directory;
 
 const DEFAULT_NOTES_LIMIT: usize = 100;
 const EXPORT_NOTES_PAGE_SIZE: usize = 500;
@@ -27,10 +27,7 @@ impl MobileNoteStore {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let resolved_sync_config =
-            resolve_sync_config().map_err(|error| Error::InvalidInput(error.to_string()))?;
-
-        let db = CoreDatabaseService::open_path(db_path, resolved_sync_config.sync_config).await?;
+        let db = CoreDatabaseService::open_local_path(db_path).await?;
         Ok(Self { db })
     }
 
@@ -80,16 +77,6 @@ impl MobileNoteStore {
     /// Soft delete a note.
     pub async fn delete_note(&self, id: &NoteId) -> Result<()> {
         self.db.delete_note(id).await
-    }
-
-    /// Sync with remote database (if configured).
-    pub async fn sync(&self) -> Result<()> {
-        self.db.sync().await
-    }
-
-    /// Check whether remote sync is enabled.
-    pub async fn is_sync_enabled(&self) -> bool {
-        self.db.is_sync_enabled().await
     }
 }
 
@@ -152,18 +139,6 @@ mod tests {
 
         let notes = store.list_all_notes().await.unwrap();
         assert_eq!(notes.len(), 3);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn in_memory_store_sync_is_disabled() {
-        let store = MobileNoteStore::open_in_memory().await.unwrap();
-        assert!(!store.is_sync_enabled().await);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn in_memory_store_sync_is_noop() {
-        let store = MobileNoteStore::open_in_memory().await.unwrap();
-        store.sync().await.unwrap();
     }
 
 }

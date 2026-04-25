@@ -37,9 +37,9 @@ mod tests {
     }
 
     #[test]
-    fn managed_api_base_url_falls_back_to_sync_endpoint_prefix() {
+    fn managed_api_base_url_returns_configured_value() {
         let config = MobileBootstrapConfig {
-            turso_sync_token_endpoint: Some("https://api.example.com/v1/sync/token".to_string()),
+            dirt_api_base_url: Some("https://api.example.com".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -49,43 +49,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_manifest_rejects_unknown_fields() {
-        let payload = r#"
-        {
-          "schema_version": 1,
-          "manifest_version": "v1",
-          "supabase_url": "https://project.supabase.co",
-          "supabase_anon_key": "anon",
-          "api_base_url": "https://api.example.com",
-          "feature_flags": {
-            "managed_sync": true,
-            "managed_media": true,
-            "unexpected": true
-          }
-        }
-        "#;
-
-        let error = dirt_core::config::parse_bootstrap_manifest(
-            payload,
-            "https://api.example.com/v1/bootstrap",
-        )
-        .unwrap_err();
-        assert!(error.contains("unknown field"));
-    }
-
-    #[test]
     fn parse_manifest_rejects_invalid_schema_version() {
         let payload = r#"
         {
-          "schema_version": 2,
+          "schema_version": 9,
           "manifest_version": "v1",
-          "supabase_url": "https://project.supabase.co",
-          "supabase_anon_key": "anon",
-          "api_base_url": "https://api.example.com",
-          "feature_flags": {
-            "managed_sync": true,
-            "managed_media": true
-          }
+          "api_base_url": "https://api.example.com"
         }
         "#;
 
@@ -98,18 +67,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_manifest_derives_sync_endpoint_when_missing() {
+    fn parse_manifest_returns_api_base_url() {
         let payload = r#"
         {
-          "schema_version": 1,
+          "schema_version": 2,
           "manifest_version": "v2",
-          "supabase_url": "https://project.supabase.co",
-          "supabase_anon_key": "anon",
-          "api_base_url": "https://api.example.com",
-          "feature_flags": {
-            "managed_sync": true,
-            "managed_media": false
-          }
+          "api_base_url": "https://api.example.com"
         }
         "#;
 
@@ -118,10 +81,6 @@ mod tests {
             "https://api.example.com/v1/bootstrap",
         )
         .expect("manifest should parse");
-        assert_eq!(
-            parsed.turso_sync_token_endpoint.as_deref(),
-            Some("https://api.example.com/v1/sync/token")
-        );
         assert_eq!(
             parsed.dirt_api_base_url.as_deref(),
             Some("https://api.example.com")

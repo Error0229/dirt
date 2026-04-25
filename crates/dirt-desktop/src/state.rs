@@ -9,9 +9,7 @@ use dioxus::prelude::*;
 use dirt_core::models::{Note, NoteId, Settings};
 pub use dirt_core::state::SyncState as SyncStatus;
 
-use crate::services::{
-    AuthSession, DatabaseService, DesktopAuthService, MediaApiClient, TranscriptionService,
-};
+use crate::services::{DatabaseService, TranscriptionService};
 use crate::theme::ResolvedTheme;
 
 /// Global application state
@@ -31,18 +29,8 @@ pub struct AppState {
     pub theme: Signal<ResolvedTheme>,
     /// Database service (wrapped in Arc for sharing)
     pub db_service: Signal<Option<Arc<DatabaseService>>>,
-    /// Auth service if cloud auth is configured
-    pub auth_service: Signal<Option<Arc<DesktopAuthService>>>,
-    /// Managed media API client, if configured
-    pub media_api_client: Signal<Option<Arc<MediaApiClient>>>,
     /// Optional transcription service.
     pub transcription_service: Signal<Option<Arc<TranscriptionService>>>,
-    /// Active auth session, if signed in
-    pub auth_session: Signal<Option<AuthSession>>,
-    /// Last auth initialization/sign-in error for UI display
-    pub auth_error: Signal<Option<String>>,
-    /// Monotonic reconnect trigger for db reinitialization flows.
-    pub db_reconnect_version: Signal<u64>,
     /// Current sync status
     pub sync_status: Signal<SyncStatus>,
     /// Last sync subsystem error shown in settings diagnostics

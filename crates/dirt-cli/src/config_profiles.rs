@@ -1,4 +1,10 @@
 //! Persistent CLI profile configuration.
+//!
+//! Post-Supabase shape: a profile is just a friendly name pointing at a
+//! `dirt_api_base_url`. The bearer token lives in the OS keychain, not in
+//! this JSON file. Phase 2 wiring of the keychain layer is tracked
+//! separately; for now the config persists nothing more sensitive than a
+//! URL.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -19,12 +25,6 @@ pub struct CliProfilesConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CliProfile {
-    #[serde(default)]
-    pub supabase_url: Option<String>,
-    #[serde(default)]
-    pub supabase_anon_key: Option<String>,
-    #[serde(default)]
-    pub turso_sync_token_endpoint: Option<String>,
     #[serde(default)]
     pub dirt_api_base_url: Option<String>,
 }
@@ -47,16 +47,7 @@ pub fn normalize_text_option(value: Option<String>) -> Option<String> {
 pub fn normalize_profile_name(value: Option<&str>) -> Option<String> {
     let value = value?;
     let value = value.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
-
-pub fn is_http_url(value: &str) -> bool {
-    let value = value.trim();
-    value.starts_with("https://") || value.starts_with("http://")
+    if value.is_empty() { None } else { Some(value.to_string()) }
 }
 
 impl CliProfilesConfig {
@@ -133,23 +124,11 @@ impl CliProfilesConfig {
 }
 
 impl CliProfile {
-    pub fn managed_sync_endpoint(&self) -> Option<String> {
-        normalize_text_option(self.turso_sync_token_endpoint.clone())
-    }
-
-    pub fn supabase_url(&self) -> Option<String> {
-        normalize_text_option(self.supabase_url.clone())
-    }
-
-    pub fn supabase_anon_key(&self) -> Option<String> {
-        normalize_text_option(self.supabase_anon_key.clone())
+    pub fn dirt_api_base_url(&self) -> Option<String> {
+        normalize_text_option(self.dirt_api_base_url.clone())
     }
 
     fn normalize(&mut self) {
-        self.supabase_url = normalize_text_option(self.supabase_url.clone());
-        self.supabase_anon_key = normalize_text_option(self.supabase_anon_key.clone());
-        self.turso_sync_token_endpoint =
-            normalize_text_option(self.turso_sync_token_endpoint.clone());
         self.dirt_api_base_url = normalize_text_option(self.dirt_api_base_url.clone());
     }
 }
@@ -187,12 +166,7 @@ mod tests {
         config.profiles.insert(
             "default".to_string(),
             CliProfile {
-                supabase_url: Some(" https://project.supabase.co ".to_string()),
-                supabase_anon_key: Some(" anon-key ".to_string()),
-                turso_sync_token_endpoint: Some(
-                    " https://api.example.com/v1/sync/token ".to_string(),
-                ),
-                dirt_api_base_url: None,
+                dirt_api_base_url: Some(" https://api.example.com ".to_string()),
             },
         );
 
@@ -200,13 +174,8 @@ mod tests {
         let loaded = CliProfilesConfig::load_from_path(&path).unwrap();
         let profile = loaded.profiles.get("default").unwrap();
         assert_eq!(
-            profile.supabase_url.as_deref(),
-            Some("https://project.supabase.co")
-        );
-        assert_eq!(profile.supabase_anon_key.as_deref(), Some("anon-key"));
-        assert_eq!(
-            profile.turso_sync_token_endpoint.as_deref(),
-            Some("https://api.example.com/v1/sync/token")
+            profile.dirt_api_base_url.as_deref(),
+            Some("https://api.example.com")
         );
 
         let _ = std::fs::remove_file(path);

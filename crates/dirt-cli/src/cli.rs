@@ -89,11 +89,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: ConfigCommands,
     },
-    /// Authenticate CLI profile with Supabase
-    Auth {
-        #[command(subcommand)]
-        command: AuthCommands,
-    },
     /// Open TUI interface
     Tui,
 }
@@ -119,51 +114,11 @@ pub enum ConfigCommands {
         /// Profile name to initialize
         #[arg(long, value_name = "NAME")]
         profile: Option<String>,
-        /// Supabase project URL
-        #[arg(long, value_name = "URL")]
-        supabase_url: Option<String>,
-        /// Supabase anon/public key
-        #[arg(long, value_name = "KEY")]
-        supabase_anon_key: Option<String>,
-        /// Backend sync token exchange endpoint
-        #[arg(long, value_name = "URL")]
-        sync_token_endpoint: Option<String>,
-        /// Optional managed API base URL
+        /// Backend API base URL (e.g. <https://dirt-api.vercel.app>)
         #[arg(long, value_name = "URL")]
         api_base_url: Option<String>,
-        /// Optional bootstrap manifest URL (e.g. <https://api.example.com/v1/bootstrap>)
-        #[arg(long, value_name = "URL")]
-        bootstrap_url: Option<String>,
         /// Keep current active profile instead of activating this one
         #[arg(long)]
         no_activate: bool,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum AuthCommands {
-    /// Login with Supabase email/password and store session in keychain
-    Login {
-        /// Optional profile override
-        #[arg(long, value_name = "NAME")]
-        profile: Option<String>,
-        /// Supabase account email
-        #[arg(long, value_name = "EMAIL")]
-        email: String,
-        /// Supabase account password
-        #[arg(long, value_name = "PASSWORD")]
-        password: String,
-    },
-    /// Show auth status for profile
-    Status {
-        /// Optional profile override
-        #[arg(long, value_name = "NAME")]
-        profile: Option<String>,
-    },
-    /// Logout profile and clear stored session
-    Logout {
-        /// Optional profile override
-        #[arg(long, value_name = "NAME")]
-        profile: Option<String>,
     },
 }

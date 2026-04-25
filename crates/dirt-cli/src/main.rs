@@ -2,13 +2,10 @@
 //!
 //! Quick capture from the terminal with minimal friction.
 
-mod auth;
-mod bootstrap_manifest;
 mod cli;
 mod commands;
 mod config_profiles;
 mod error;
-mod managed_sync;
 #[cfg(test)]
 mod tests;
 
@@ -60,10 +57,7 @@ async fn run() -> Result<(), CliError> {
         }
         Some(Commands::Sync) => commands::sync::run_sync(&db_path).await?,
         Some(Commands::Config { command }) => {
-            commands::config::run_config(command, global_profile.as_deref()).await?;
-        }
-        Some(Commands::Auth { command }) => {
-            commands::auth_cmd::run_auth(command, global_profile.as_deref()).await?;
+            commands::config::run_config(command, global_profile.as_deref())?;
         }
         Some(Commands::Tui) => {
             println!("Opening TUI...");

@@ -13,7 +13,6 @@ use crate::commands::common::{
     normalize_search_query, note_preview, open_database, resolve_note_for_edit, search_notes,
 };
 use crate::commands::completions::run_completions;
-use crate::commands::config::{normalize_bootstrap_url, resolve_bootstrap_url};
 use crate::commands::delete::run_delete;
 use crate::commands::export::run_export;
 use crate::commands::sync::run_sync;
@@ -36,36 +35,6 @@ fn normalize_content_keeps_multiline_text() {
 #[test]
 fn default_editor_is_defined() {
     assert!(!default_editor().is_empty());
-}
-
-#[test]
-fn normalize_bootstrap_url_requires_http_scheme() {
-    assert!(normalize_bootstrap_url("https://api.example.com/v1/bootstrap".to_string()).is_ok());
-    assert!(normalize_bootstrap_url("api.example.com/v1/bootstrap".to_string()).is_err());
-}
-
-#[test]
-fn resolve_bootstrap_url_prefers_explicit_manifest_url() {
-    let resolved = resolve_bootstrap_url(
-        Some("https://api.example.com/v1/bootstrap".to_string()),
-        Some("https://ignored.example.com".to_string()),
-        Some("https://also-ignored.example.com".to_string()),
-    )
-    .unwrap();
-    assert_eq!(
-        resolved.as_deref(),
-        Some("https://api.example.com/v1/bootstrap")
-    );
-}
-
-#[test]
-fn resolve_bootstrap_url_derives_from_api_base() {
-    let resolved =
-        resolve_bootstrap_url(None, Some("https://api.example.com/".to_string()), None).unwrap();
-    assert_eq!(
-        resolved.as_deref(),
-        Some("https://api.example.com/v1/bootstrap")
-    );
 }
 
 #[test]

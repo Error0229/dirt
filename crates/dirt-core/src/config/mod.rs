@@ -1,7 +1,9 @@
 //! Bootstrap configuration for client apps.
 //!
-//! Provides a unified `BootstrapConfig` struct used by desktop, mobile, and CLI
-//! to discover Supabase auth, Turso sync, and media API endpoints.
+//! `BootstrapConfig` carries the safe-to-ship public endpoints clients
+//! need at startup. Post-Supabase the only meaningful field is
+//! `dirt_api_base_url`; bearer-token secrets live in the OS keychain
+//! (clients) or in `DIRT_SERVER_TOKEN` (server), never here.
 
 use std::time::Duration;
 
@@ -9,42 +11,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::util::{compact_text, is_http_url, normalize_text_option};
 
-const BOOTSTRAP_SCHEMA_VERSION: u32 = 1;
+const BOOTSTRAP_SCHEMA_VERSION: u32 = 2;
 const BOOTSTRAP_HTTP_TIMEOUT_SECS: u64 = 4;
 
 /// Build-provisioned client configuration.
 ///
-/// These values are safe-to-ship public endpoints/keys required to bootstrap
-/// auth, sync, and media flows. Secret credentials must never be stored here.
+/// Safe-to-ship public endpoints required to bootstrap the API client.
+/// Secret credentials must never be stored here.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct BootstrapConfig {
     #[serde(default)]
     pub bootstrap_manifest_url: Option<String>,
     #[serde(default)]
-    pub supabase_url: Option<String>,
-    #[serde(default)]
-    pub supabase_anon_key: Option<String>,
-    #[serde(default)]
-    pub turso_sync_token_endpoint: Option<String>,
-    #[serde(default)]
     pub dirt_api_base_url: Option<String>,
 }
 
 impl BootstrapConfig {
-    /// Returns the managed API base URL for authenticated operations.
-    ///
-    /// Prefers `dirt_api_base_url` when present; otherwise derives the base URL
-    /// from `turso_sync_token_endpoint` by stripping `/v1/sync/token`.
+    /// Returns the dirt-api base URL when configured.
     pub fn managed_api_base_url(&self) -> Option<String> {
-        if let Some(url) = normalize_text_option(self.dirt_api_base_url.clone()) {
-            return Some(url);
-        }
-
-        let endpoint = normalize_text_option(self.turso_sync_token_endpoint.clone())?;
-        endpoint
-            .strip_suffix("/v1/sync/token")
-            .map(std::string::ToString::to_string)
+        normalize_text_option(self.dirt_api_base_url.clone())
     }
 }
 
@@ -83,19 +69,7 @@ pub fn parse_bootstrap_manifest(
 struct ManagedBootstrapManifest {
     schema_version: u32,
     manifest_version: String,
-    supabase_url: String,
-    supabase_anon_key: String,
     api_base_url: String,
-    #[serde(default)]
-    turso_sync_token_endpoint: Option<String>,
-    feature_flags: ManagedFeatureFlags,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-struct ManagedFeatureFlags {
-    managed_sync: bool,
-    managed_media: bool,
 }
 
 impl ManagedBootstrapManifest {
@@ -110,36 +84,11 @@ impl ManagedBootstrapManifest {
             return Err("bootstrap manifest_version must not be empty".to_string());
         }
 
-        let supabase_url = normalize_required_http_url(self.supabase_url, "supabase_url")?;
-        let supabase_anon_key =
-            normalize_required_value(self.supabase_anon_key, "supabase_anon_key")?;
         let api_base_url = normalize_required_http_url(self.api_base_url, "api_base_url")?;
-
-        let sync_endpoint = if self.feature_flags.managed_sync {
-            match normalize_text_option(self.turso_sync_token_endpoint) {
-                Some(endpoint) => Some(normalize_required_http_url(
-                    endpoint,
-                    "turso_sync_token_endpoint",
-                )?),
-                None => Some(format!("{api_base_url}/v1/sync/token")),
-            }
-        } else {
-            None
-        };
-
-        let api_base_for_clients =
-            if self.feature_flags.managed_sync || self.feature_flags.managed_media {
-                Some(api_base_url)
-            } else {
-                None
-            };
 
         Ok(BootstrapConfig {
             bootstrap_manifest_url: Some(manifest_url.to_string()),
-            supabase_url: Some(supabase_url),
-            supabase_anon_key: Some(supabase_anon_key),
-            turso_sync_token_endpoint: sync_endpoint,
-            dirt_api_base_url: api_base_for_clients,
+            dirt_api_base_url: Some(api_base_url),
         })
     }
 }
@@ -196,9 +145,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn managed_api_base_url_falls_back_to_sync_endpoint_prefix() {
+    fn managed_api_base_url_returns_configured_value() {
         let config = BootstrapConfig {
-            turso_sync_token_endpoint: Some("https://api.example.com/v1/sync/token".to_string()),
+            dirt_api_base_url: Some("https://api.example.com".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -211,16 +160,10 @@ mod tests {
     fn parse_manifest_rejects_unknown_fields() {
         let payload = r#"
         {
-          "schema_version": 1,
+          "schema_version": 2,
           "manifest_version": "v1",
-          "supabase_url": "https://project.supabase.co",
-          "supabase_anon_key": "anon",
           "api_base_url": "https://api.example.com",
-          "feature_flags": {
-            "managed_sync": true,
-            "managed_media": true,
-            "unexpected": true
-          }
+          "supabase_url": "https://leftover.example.com"
         }
         "#;
 
@@ -235,13 +178,7 @@ mod tests {
         {
           "schema_version": 9,
           "manifest_version": "v1",
-          "supabase_url": "https://project.supabase.co",
-          "supabase_anon_key": "anon",
-          "api_base_url": "https://api.example.com",
-          "feature_flags": {
-            "managed_sync": true,
-            "managed_media": true
-          }
+          "api_base_url": "https://api.example.com"
         }
         "#;
 
@@ -251,27 +188,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_manifest_derives_sync_endpoint_when_missing() {
+    fn parse_manifest_returns_api_base_url() {
         let payload = r#"
         {
-          "schema_version": 1,
+          "schema_version": 2,
           "manifest_version": "v2",
-          "supabase_url": "https://project.supabase.co",
-          "supabase_anon_key": "anon",
-          "api_base_url": "https://api.example.com",
-          "feature_flags": {
-            "managed_sync": true,
-            "managed_media": false
-          }
+          "api_base_url": "https://api.example.com"
         }
         "#;
 
         let parsed = parse_bootstrap_manifest(payload, "https://api.example.com/v1/bootstrap")
             .expect("manifest should parse");
-        assert_eq!(
-            parsed.turso_sync_token_endpoint.as_deref(),
-            Some("https://api.example.com/v1/sync/token")
-        );
         assert_eq!(
             parsed.dirt_api_base_url.as_deref(),
             Some("https://api.example.com")

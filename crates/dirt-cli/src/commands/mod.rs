@@ -1,5 +1,4 @@
 pub mod add;
-pub mod auth_cmd;
 pub mod common;
 pub mod completions;
 pub mod config;

@@ -1,25 +1,26 @@
 //! Main application component
+//!
+//! Local-only since the Supabase teardown. The new sync path goes through
+//! `dirt_core::sync::api_client::ApiClient`, driven by a per-client sync
+//! worker that lands in a follow-up commit. Until then the desktop app
+//! runs against the local `SQLite` database with sync UI showing
+//! `Offline`.
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use dioxus::desktop::{window, LogicalPosition, LogicalSize};
+use dioxus::desktop::{LogicalPosition, LogicalSize, window};
 use dioxus::prelude::*;
-use dirt_core::db::SyncConfig;
 use dirt_core::models::Note;
 
 use crate::bootstrap_config::{load_bootstrap_config, resolve_bootstrap_config};
 use crate::components::{QuickCapture, SettingsPanel};
 use crate::queries::use_notes_query;
-use crate::services::{
-    auth_service_from_bootstrap, media_client_from_bootstrap, sync_auth_from_bootstrap,
-    AuthSession, DatabaseService, DesktopAuthService, MediaApiClient, TranscriptionService,
-    TursoSyncAuthClient,
-};
+use crate::services::{DatabaseService, TranscriptionService};
 use crate::state::{AppState, SyncStatus};
-use crate::theme::{resolve_theme, ResolvedTheme};
-use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
+use crate::theme::{ResolvedTheme, resolve_theme};
+use crate::tray::{QUIT_REQUESTED, SHOW_MAIN_WINDOW, process_tray_events};
 use crate::views::Home;
 use crate::{HOTKEY_TRIGGERED, TRAY_ENABLED};
 
@@ -37,9 +38,6 @@ pub fn App() -> Element {
     let mut quick_capture_open = use_signal(|| false);
     let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
     let mut db_service: Signal<Option<Arc<DatabaseService>>> = use_signal(|| None);
-    let mut auth_service: Signal<Option<Arc<DesktopAuthService>>> = use_signal(|| None);
-    let mut sync_auth_client: Signal<Option<Arc<TursoSyncAuthClient>>> = use_signal(|| None);
-    let mut media_api_client: Signal<Option<Arc<MediaApiClient>>> = use_signal(|| None);
     let transcription_service: Signal<Option<Arc<TranscriptionService>>> =
         use_signal(|| match TranscriptionService::new() {
             Ok(service) => Some(Arc::new(service)),
@@ -48,144 +46,51 @@ pub fn App() -> Element {
                 None
             }
         });
-    let mut auth_session: Signal<Option<AuthSession>> = use_signal(|| None);
-    let mut auth_error: Signal<Option<String>> = use_signal(|| None);
-    let mut db_reconnect_version = use_signal(|| 0u64);
-    let mut auth_initialized = use_signal(|| false);
     let mut bootstrap_ready = use_signal(|| false);
-    let mut sync_status = use_signal(|| SyncStatus::Offline);
-    let mut sync_issue = use_signal(|| None::<String>);
-    let mut last_sync_at = use_signal(|| None::<i64>);
-    let mut pending_sync_count = use_signal(|| 0usize);
-    let mut pending_sync_note_ids = use_signal(Vec::new);
-    let mut sync_token_expires_at = use_signal(|| None::<i64>);
+    let sync_status = use_signal(|| SyncStatus::Offline);
+    let sync_issue = use_signal(|| None::<String>);
+    let last_sync_at = use_signal(|| None::<i64>);
+    let pending_sync_count = use_signal(|| 0usize);
+    let pending_sync_note_ids = use_signal(Vec::new);
     let embedded_bootstrap_config = load_bootstrap_config();
 
-    // Initialize authentication service and restore persisted session.
+    // Resolve runtime bootstrap manifest. The media + auth + sync wiring
+    // that used to live here was torn down with Supabase; the dirt-api
+    // ApiClient takes its place in the next commit.
     use_effect(move || {
-        if auth_initialized() {
+        if bootstrap_ready() {
             return;
         }
-        auth_initialized.set(true);
         let fallback_bootstrap = embedded_bootstrap_config.clone();
 
         spawn(async move {
-            let bootstrap = match resolve_bootstrap_config(fallback_bootstrap.clone()).await {
-                Ok(config) => config,
+            match resolve_bootstrap_config(fallback_bootstrap.clone()).await {
+                Ok(_config) => {}
                 Err(error) => {
                     tracing::warn!(
                         "Failed to resolve runtime bootstrap manifest ({}). Falling back to embedded desktop bootstrap values.",
                         error
                     );
-                    fallback_bootstrap
-                }
-            };
-
-            match sync_auth_from_bootstrap(&bootstrap) {
-                Ok(Some(client)) => sync_auth_client.set(Some(Arc::new(client))),
-                Ok(None) => sync_auth_client.set(None),
-                Err(error) => {
-                    tracing::warn!("Managed sync auth bootstrap is invalid: {}", error);
-                    sync_auth_client.set(None);
                 }
             }
-
-            match media_client_from_bootstrap(&bootstrap) {
-                Ok(Some(client)) => media_api_client.set(Some(Arc::new(client))),
-                Ok(None) => media_api_client.set(None),
-                Err(error) => {
-                    tracing::warn!("Managed media bootstrap is invalid: {}", error);
-                    media_api_client.set(None);
-                }
-            }
-
-            let service_result = auth_service_from_bootstrap(&bootstrap);
-
-            match service_result {
-                Ok(Some(service)) => {
-                    let service = Arc::new(service);
-                    match service.restore_session().await {
-                        Ok(session) => {
-                            auth_session.set(session);
-                            auth_error.set(None);
-                            db_reconnect_version.set(db_reconnect_version().saturating_add(1));
-                        }
-                        Err(error) => {
-                            tracing::error!("Failed to restore auth session: {}", error);
-                            auth_error.set(Some(error.to_string()));
-                        }
-                    }
-                    auth_service.set(Some(service));
-                }
-                Ok(None) => {
-                    auth_service.set(None);
-                }
-                Err(error) => {
-                    tracing::error!("Failed to initialize auth service: {}", error);
-                    auth_service.set(None);
-                    auth_error.set(Some(error.to_string()));
-                }
-            }
-
             bootstrap_ready.set(true);
         });
     });
 
-    // Initialize or reconnect database when auth/session context changes.
-    // `use_resource` reruns when read signals change.
+    // Initialize the local database.
     let _db_init_task = use_resource(move || async move {
-        let _db_reconnect_version = db_reconnect_version();
         if !bootstrap_ready() {
             return;
         }
 
-        let current_session = auth_session.peek().clone();
-        let managed_sync_client = sync_auth_client.peek().clone();
-        let managed_sync_expected = managed_sync_client.is_some() && current_session.is_some();
-        let had_existing_db = db_service.peek().is_some();
-
-        // Force-drop the previous local connection before opening a sync replica.
-        // libsql remote replicas can fail to initialize when the same db file is still held.
-        if managed_sync_expected && had_existing_db {
-            db_service.set(None);
-            tokio::time::sleep(Duration::from_millis(120)).await;
-        }
-
-        if !managed_sync_expected {
-            sync_issue.set(None);
-        }
-
-        let db_result =
-            if let (Some(client), Some(session)) = (managed_sync_client, current_session) {
-                match client.exchange_token(&session.access_token).await {
-                    Ok(token) => {
-                        sync_token_expires_at.set(Some(token.expires_at));
-                        let sync_config = SyncConfig::new(token.database_url, token.token);
-                        DatabaseService::new_with_sync(sync_config).await
-                    }
-                    Err(error) => {
-                        sync_token_expires_at.set(None);
-                        let message = format!("Managed sync token exchange failed: {error}");
-                        sync_issue.set(Some(message.clone()));
-                        Err(dirt_core::Error::Storage(message))
-                    }
-                }
-            } else {
-                sync_token_expires_at.set(None);
-                DatabaseService::new().await
-            };
-
-        match db_result {
+        match DatabaseService::new().await {
             Ok(db) => {
                 let db = Arc::new(db);
 
                 let loaded_settings = match db.load_settings_with_large_stack().await {
                     Ok(settings) => settings,
                     Err(error) => {
-                        let message = format!("Failed to load desktop settings: {error}");
-                        tracing::error!("{message}");
-                        sync_issue.set(Some(message));
-                        sync_status.set(SyncStatus::Error);
+                        tracing::error!("Failed to load desktop settings: {error}");
                         db_service.set(None);
                         return;
                     }
@@ -194,143 +99,11 @@ pub fn App() -> Element {
                 settings.set(loaded_settings);
                 theme.set(resolved_theme);
 
-                if db.is_sync_enabled().await {
-                    sync_status.set(SyncStatus::Syncing);
-                    match db.sync_with_large_stack().await {
-                        Ok(()) => {
-                            sync_status.set(SyncStatus::Synced);
-                            sync_issue.set(None);
-                            last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
-                            pending_sync_count.set(0);
-                            pending_sync_note_ids.write().clear();
-                        }
-                        Err(error) => {
-                            let message = format!("Initial sync failed: {error}");
-                            tracing::error!("{message}");
-                            sync_issue.set(Some(message));
-                            sync_status.set(SyncStatus::Error);
-                        }
-                    }
-                } else if managed_sync_expected {
-                    let message = "Signed in, but this database connection is running without managed sync credentials.".to_string();
-                    tracing::error!("{message}");
-                    sync_issue.set(Some(message));
-                    sync_status.set(SyncStatus::Error);
-                } else {
-                    sync_issue.set(None);
-                    sync_status.set(SyncStatus::Offline);
-                }
-
                 db_service.set(Some(db));
             }
             Err(error) => {
-                let message = format!("Failed to initialize database: {error}");
-                tracing::error!("{message}");
-                sync_issue.set(Some(message));
-                sync_status.set(SyncStatus::Error);
+                tracing::error!("Failed to initialize database: {error}");
                 db_service.set(None);
-            }
-        }
-    });
-
-    // Periodically sync and update sync status metadata.
-    use_future(move || async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(30)).await;
-            let cloud_sync_expected = sync_auth_client.read().is_some() && auth_session().is_some();
-
-            // Proactively refresh the sync token before it expires.
-            // Turso tokens are short-lived (~15min) and libSQL bakes them
-            // into the connection at construction time, so we must re-open
-            // the database with fresh credentials before the token lapses.
-            if let Some(expires_at) = sync_token_expires_at() {
-                let now = chrono::Utc::now().timestamp();
-                if now >= expires_at - 120 {
-                    tracing::info!(
-                        "Sync token expires in {}s, triggering credential refresh",
-                        expires_at - now
-                    );
-                    db_reconnect_version.set(db_reconnect_version() + 1);
-                    continue;
-                }
-            }
-
-            let db = db_service.read().clone();
-            let Some(db) = db else {
-                if cloud_sync_expected {
-                    sync_status.set(SyncStatus::Error);
-                    if sync_issue().is_none() {
-                        sync_issue.set(Some(
-                            "Signed in, but sync database service is not initialized.".to_string(),
-                        ));
-                    }
-                } else {
-                    sync_issue.set(None);
-                    sync_status.set(SyncStatus::Offline);
-                }
-                continue;
-            };
-
-            if !db.is_sync_enabled().await {
-                if cloud_sync_expected {
-                    sync_status.set(SyncStatus::Error);
-                    if sync_issue().is_none() {
-                        sync_issue.set(Some(
-                            "Cloud sync is expected for this session, but the database is running local-only."
-                                .to_string(),
-                        ));
-                    }
-                } else {
-                    sync_issue.set(None);
-                    sync_status.set(SyncStatus::Offline);
-                }
-                continue;
-            }
-
-            sync_status.set(SyncStatus::Syncing);
-            match db.sync_with_large_stack().await {
-                Ok(()) => {
-                    sync_status.set(SyncStatus::Synced);
-                    sync_issue.set(None);
-                    last_sync_at.set(Some(chrono::Utc::now().timestamp_millis()));
-                    pending_sync_count.set(0);
-                    pending_sync_note_ids.write().clear();
-                }
-                Err(error) => {
-                    let message = format!("{error}");
-
-                    // Detect expired/revoked tokens and trigger credential refresh
-                    // instead of staying stuck in an error loop.
-                    if message.contains("401")
-                        || message.contains("Unauthorized")
-                        || message.contains("token expired")
-                    {
-                        tracing::warn!(
-                            "Sync rejected with auth error, triggering credential refresh: {message}"
-                        );
-                        db_reconnect_version.set(db_reconnect_version() + 1);
-                        continue;
-                    }
-
-                    // Detect corrupted local replica and trigger database
-                    // reconnection so the startup recovery can quarantine the
-                    // bad file and pull a fresh copy from Turso.
-                    let lower = message.to_ascii_lowercase();
-                    if lower.contains("file is not a database")
-                        || lower.contains("wal frame insert conflict")
-                    {
-                        tracing::warn!(
-                            "Sync detected corrupted local replica, triggering reconnection: {message}"
-                        );
-                        db_reconnect_version.set(db_reconnect_version() + 1);
-                        continue;
-                    }
-
-                    let message = format!("Periodic sync failed: {error}");
-                    tracing::error!("{message}");
-                    sync_issue.set(Some(message));
-                    sync_status.set(SyncStatus::Error);
-                }
             }
         }
     });
@@ -448,12 +221,7 @@ pub fn App() -> Element {
         settings,
         theme,
         db_service,
-        auth_service,
-        media_api_client,
         transcription_service,
-        auth_session,
-        auth_error,
-        db_reconnect_version,
         sync_status,
         sync_issue,
         last_sync_at,

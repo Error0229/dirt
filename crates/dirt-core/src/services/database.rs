@@ -1,13 +1,18 @@
 //! Shared database service wrapper used across clients.
+//!
+//! Local-only since the Supabase removal: clients sync through the
+//! `dirt-api` HTTP backend, not Turso embedded replicas. The recovery
+//! plumbing for corrupt local-replica state lived here while embedded
+//! replicas were the sync mechanism; with the new design there is no
+//! remote replica file to recover from, just a local `SQLite` database.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
 use crate::db::{
     Database, LibSqlNoteRepository, LibSqlSettingsRepository, NoteRepository, SettingsRepository,
-    SyncConfig,
 };
 use crate::models::{Note, Settings};
 use crate::{NoteId, Result};
@@ -19,33 +24,17 @@ pub struct DatabaseService {
 }
 
 impl DatabaseService {
-    /// Open a database service at the given filesystem path.
-    pub async fn open_path(
-        db_path: impl Into<PathBuf>,
-        sync_config: Option<SyncConfig>,
-    ) -> Result<Self> {
+    /// Open a local-only database service at the given path.
+    pub async fn open_local_path(db_path: impl Into<PathBuf>) -> Result<Self> {
         let db_path = db_path.into();
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        let db = Self::open_database(db_path, sync_config).await?;
+        let db = Database::open(&db_path).await?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
         })
-    }
-
-    /// Open a local-only database service at the given path.
-    pub async fn open_local_path(db_path: impl Into<PathBuf>) -> Result<Self> {
-        Self::open_path(db_path, None).await
-    }
-
-    /// Open a sync-enabled database service at the given path.
-    pub async fn open_sync_path(
-        db_path: impl Into<PathBuf>,
-        sync_config: SyncConfig,
-    ) -> Result<Self> {
-        Self::open_path(db_path, Some(sync_config)).await
     }
 
     /// Open an in-memory database service (primarily for tests).
@@ -54,179 +43,6 @@ impl DatabaseService {
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
         })
-    }
-
-    async fn open_database(db_path: PathBuf, sync_config: Option<SyncConfig>) -> Result<Database> {
-        if let Some(config) = sync_config {
-            Self::open_database_with_sync_recovery(&db_path, config)
-        } else {
-            tracing::info!("Running in local-only mode (no sync config)");
-            Database::open(&db_path).await
-        }
-    }
-
-    #[allow(clippy::cognitive_complexity)]
-    fn open_database_with_sync_recovery(
-        db_path: &Path,
-        sync_config: SyncConfig,
-    ) -> Result<Database> {
-        tracing::info!(
-            "Sync enabled with Turso: {}",
-            sync_config.url.as_deref().unwrap_or("unknown")
-        );
-        match Self::open_database_with_sync_thread(db_path.to_path_buf(), sync_config.clone()) {
-            Ok(db) => Ok(db),
-            Err(error) if Self::is_recoverable_local_replica_error(&error) => {
-                tracing::warn!(
-                    "Detected inconsistent local replica state at {}: {}. Resetting local replica files and retrying once.",
-                    db_path.display(),
-                    error
-                );
-                match Self::quarantine_corrupted_db_files(db_path) {
-                    Ok(()) => match Self::open_database_with_sync_thread(
-                        db_path.to_path_buf(),
-                        sync_config.clone(),
-                    ) {
-                        Ok(db) => Ok(db),
-                        Err(retry_error) if Self::is_file_in_use_error(&retry_error) => {
-                            let fallback_path = Self::sync_replica_fallback_path(db_path);
-                            tracing::warn!(
-                                "Primary replica file is locked at {} ({}). Switching sync replica to {}.",
-                                db_path.display(),
-                                retry_error,
-                                fallback_path.display()
-                            );
-                            Self::open_database_with_sync_thread(fallback_path, sync_config)
-                        }
-                        Err(retry_error) => Err(retry_error),
-                    },
-                    Err(quarantine_error) if Self::is_file_in_use_error(&quarantine_error) => {
-                        let fallback_path = Self::sync_replica_fallback_path(db_path);
-                        tracing::warn!(
-                            "Primary replica file is locked at {} ({}). Switching sync replica to {}.",
-                            db_path.display(),
-                            quarantine_error,
-                            fallback_path.display()
-                        );
-                        Self::open_database_with_sync_thread(fallback_path, sync_config)
-                    }
-                    Err(quarantine_error) => Err(quarantine_error),
-                }
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    fn open_database_with_sync_thread(
-        db_path: PathBuf,
-        sync_config: SyncConfig,
-    ) -> Result<Database> {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(move || {
-                tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|error| crate::Error::Database(error.to_string()))?
-                    .block_on(Database::open_with_sync(&db_path, sync_config))
-            })
-            .map_err(|error| crate::Error::Database(error.to_string()))?
-            .join()
-            .map_err(|_| crate::Error::Database("Thread panicked".to_string()))?
-    }
-
-    fn is_corrupted_db_error(error: &crate::Error) -> bool {
-        error
-            .to_string()
-            .to_ascii_lowercase()
-            .contains("file is not a database")
-    }
-
-    fn is_recoverable_local_replica_error(error: &crate::Error) -> bool {
-        if Self::is_corrupted_db_error(error) {
-            return true;
-        }
-
-        let message = error.to_string().to_ascii_lowercase();
-        message.contains("invalid local state")
-            || message.contains("metadata file exists but db file does not")
-            || message.contains("wal frame insert conflict")
-    }
-
-    fn is_file_in_use_error(error: &crate::Error) -> bool {
-        let message = error.to_string().to_ascii_lowercase();
-        message.contains("os error 32")
-            || message.contains("being used by another process")
-            || message.contains("sharing violation")
-    }
-
-    fn sync_replica_fallback_path(db_path: &Path) -> PathBuf {
-        let parent = db_path
-            .parent()
-            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        let stem = db_path
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .unwrap_or("dirt");
-        let extension = db_path.extension().and_then(|ext| ext.to_str());
-
-        let file_name = extension.map_or_else(
-            || format!("{stem}-sync"),
-            |ext| format!("{stem}-sync.{ext}"),
-        );
-
-        parent.join(file_name)
-    }
-
-    fn quarantine_corrupted_db_files(db_path: &Path) -> Result<()> {
-        if db_path.exists() {
-            let timestamp = chrono::Utc::now().timestamp_millis();
-            let backup_name = format!("dirt.db.corrupt-{timestamp}");
-            let backup_path = db_path.with_file_name(backup_name);
-
-            std::fs::rename(db_path, &backup_path)?;
-            tracing::warn!(
-                "Moved corrupted local DB file from {} to {}",
-                db_path.display(),
-                backup_path.display()
-            );
-        }
-
-        let Some(parent) = db_path.parent() else {
-            return Ok(());
-        };
-        let Some(base_name) = db_path.file_name().and_then(|name| name.to_str()) else {
-            return Ok(());
-        };
-        let sidecar_prefix = format!("{base_name}-");
-
-        for entry in std::fs::read_dir(parent)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_file() {
-                continue;
-            }
-            let file_name = entry.file_name();
-            let file_name = file_name.to_string_lossy();
-            if file_name.starts_with(&sidecar_prefix) {
-                let path = entry.path();
-                std::fs::remove_file(&path)?;
-                tracing::warn!("Removed stale local replica file {}", path.display());
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Sync with remote DB when sync is enabled.
-    pub async fn sync(&self) -> Result<()> {
-        let db = self.db.lock().await;
-        db.sync().await
-    }
-
-    /// Returns whether sync is configured for this DB.
-    pub async fn is_sync_enabled(&self) -> bool {
-        let db = self.db.lock().await;
-        db.is_sync_enabled()
     }
 
     /// List notes newest-first.
@@ -245,7 +61,7 @@ impl DatabaseService {
 
     /// Find recent non-deleted note IDs by id prefix.
     pub async fn list_note_ids_by_prefix(&self, prefix: &str, limit: usize) -> Result<Vec<String>> {
-        let limit = i64::try_from(limit).map_or(i64::MAX, |value| value);
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         let db = self.db.lock().await;
         let mut rows = db
             .connection()
@@ -349,78 +165,5 @@ mod tests {
         let notes = service.list_notes(10, 0).await.unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].content, "hello core");
-    }
-
-    #[test]
-    fn detects_recoverable_local_replica_errors() {
-        assert!(DatabaseService::is_recoverable_local_replica_error(
-            &crate::Error::Database("SQLite failure: file is not a database".to_string())
-        ));
-        assert!(DatabaseService::is_recoverable_local_replica_error(
-            &crate::Error::Database(
-                "sync error: invalid local state: metadata file exists but db file does not"
-                    .to_string()
-            )
-        ));
-        assert!(DatabaseService::is_recoverable_local_replica_error(
-            &crate::Error::Database("libSQL error: WAL frame insert conflict".to_string())
-        ));
-        assert!(!DatabaseService::is_recoverable_local_replica_error(
-            &crate::Error::InvalidInput("note content cannot be empty".to_string())
-        ));
-    }
-
-    #[test]
-    fn detects_file_in_use_io_errors() {
-        assert!(DatabaseService::is_file_in_use_error(&crate::Error::Io(
-            std::io::Error::from_raw_os_error(32),
-        )));
-        assert!(!DatabaseService::is_file_in_use_error(
-            &crate::Error::InvalidInput("no lock".to_string())
-        ));
-    }
-
-    #[test]
-    fn builds_sync_replica_fallback_path() {
-        let path = PathBuf::from("C:/tmp/dirt.db");
-        let fallback = DatabaseService::sync_replica_fallback_path(&path);
-        assert_eq!(fallback, PathBuf::from("C:/tmp/dirt-sync.db"));
-    }
-
-    #[test]
-    fn quarantine_local_replica_files_moves_db_and_removes_sidecars() {
-        let test_dir = std::env::temp_dir().join(format!(
-            "dirt-core-recovery-test-{}",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        std::fs::create_dir_all(&test_dir).unwrap();
-
-        let db_path = test_dir.join("dirt.db");
-        let info_path = test_dir.join("dirt.db-info");
-        let wal_path = test_dir.join("dirt.db-wal");
-
-        std::fs::write(&db_path, b"bad-db").unwrap();
-        std::fs::write(&info_path, b"meta").unwrap();
-        std::fs::write(&wal_path, b"wal").unwrap();
-
-        DatabaseService::quarantine_corrupted_db_files(&db_path).unwrap();
-
-        assert!(!db_path.exists());
-        assert!(!info_path.exists());
-        assert!(!wal_path.exists());
-
-        let mut found_backup = false;
-        for entry in std::fs::read_dir(&test_dir).unwrap() {
-            let entry = entry.unwrap();
-            let file_name = entry.file_name();
-            let file_name = file_name.to_string_lossy();
-            if file_name.starts_with("dirt.db.corrupt-") {
-                found_backup = true;
-                break;
-            }
-        }
-        assert!(found_backup);
-
-        let _ = std::fs::remove_dir_all(test_dir);
     }
 }

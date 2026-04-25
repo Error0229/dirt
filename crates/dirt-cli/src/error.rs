@@ -28,12 +28,10 @@ pub enum CliError {
     EditorFailed(String),
     #[error("Configuration error: {0}")]
     Config(String),
-    #[error("Authentication error: {0}")]
-    Auth(String),
-    #[error("Managed sync error: {0}")]
-    ManagedSync(String),
     #[error(
-        "Sync is not configured. Run `dirt config init` + `dirt auth login`, or set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN for advanced env mode."
+        "Sync via the new dirt-api backend is not yet wired into the CLI. \
+         Run `dirt config init --api-base-url <URL>` and watch for the \
+         follow-up commit that adds the ApiClient-driven sync worker."
     )]
     SyncNotConfigured,
 }
