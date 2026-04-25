@@ -43,6 +43,59 @@ pub trait NoteRepository {
     /// local copy. Re-populates `note_tags` when the note is live and clears
     /// them on tombstone.
     async fn upsert_from_server(&self, note: &Note) -> Result<()>;
+
+    /// Fetch a note by id, *including* tombstones.
+    ///
+    /// `get` filters out `deleted_at IS NOT NULL` because UI consumers
+    /// want only live rows. The pull-merge path needs the row regardless
+    /// of its tombstone state so it can compare `server_updated_at` and
+    /// detect un-tombstones.
+    async fn get_with_tombstone(&self, id: &NoteId) -> Result<Option<Note>>;
+
+    /// True if `(user_id, note_id)` has an unpushed local mutation.
+    async fn is_pending(&self, user_id: &str, note_id: &NoteId) -> Result<bool>;
+
+    /// Record that the named note has unpushed local mutations.
+    ///
+    /// Idempotent — last-write-wins on `dirty_at`. Called from the
+    /// `create_with_note` / `update` / `delete` paths whenever a local
+    /// change diverges from the server copy.
+    async fn enqueue_pending(
+        &self,
+        user_id: &str,
+        note_id: &NoteId,
+        dirty_at_ms: i64,
+    ) -> Result<()>;
+
+    /// List up to `limit` notes (live or tombstoned) that have unpushed
+    /// mutations, oldest-pending first.
+    async fn list_pending_notes(&self, user_id: &str, limit: usize) -> Result<Vec<Note>>;
+
+    /// Stamp `server_updated_at` from the server response and clear the
+    /// note's `pending_sync` row. Called after the server accepts a push.
+    async fn mark_pushed(
+        &self,
+        user_id: &str,
+        note_id: &NoteId,
+        server_updated_at_ms: i64,
+    ) -> Result<()>;
+
+    /// Read the pull cursor for the given user, or `None` for "start
+    /// from the beginning".
+    async fn read_sync_cursor(&self, user_id: &str) -> Result<Option<SyncCursor>>;
+
+    /// Persist the pull cursor for the given user.
+    async fn write_sync_cursor(&self, user_id: &str, cursor: &SyncCursor) -> Result<()>;
+}
+
+/// Pull cursor stored in `sync_state`.
+///
+/// `sua` is the last-seen `server_updated_at` from a pull response; `id`
+/// is the tie-break for rows sharing that timestamp.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncCursor {
+    pub sua: i64,
+    pub id: String,
 }
 
 /// libSQL implementation of `NoteRepository`
@@ -158,6 +211,15 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
             self.sync_tags(&note.id, &note.content).await?;
         }
 
+        // A locally-created note is never server-acknowledged yet, so it
+        // must enter the push queue. Skip when the caller is replaying a
+        // server-stamped note (server_updated_at present) — that's the
+        // pull-merge path going through `upsert_from_server` instead.
+        if note.server_updated_at.is_none() {
+            self.enqueue_pending(&note.user_id, &note.id, note.updated_at)
+                .await?;
+        }
+
         Ok(note.clone())
     }
 
@@ -214,9 +276,12 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
 
         self.sync_tags(id, content).await?;
 
-        self.get(id)
+        let note = self
+            .get(id)
             .await?
-            .ok_or_else(|| Error::NotFound(id.to_string()))
+            .ok_or_else(|| Error::NotFound(id.to_string()))?;
+        self.enqueue_pending(&note.user_id, id, now).await?;
+        Ok(note)
     }
 
     async fn delete(&self, id: &NoteId) -> Result<()> {
@@ -242,6 +307,13 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
                 [id.as_str()],
             )
             .await?;
+
+        // The tombstone needs to reach the server too. Look up the
+        // user_id on the now-tombstoned row so we can scope the
+        // pending entry correctly.
+        if let Some(tombstoned) = self.get_with_tombstone(id).await? {
+            self.enqueue_pending(&tombstoned.user_id, id, now).await?;
+        }
 
         Ok(())
     }
@@ -372,6 +444,137 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
             self.sync_tags(&note.id, &note.content).await?;
         }
 
+        Ok(())
+    }
+
+    async fn get_with_tombstone(&self, id: &NoteId) -> Result<Option<Note>> {
+        let sql = format!("SELECT {NOTE_COLUMNS} FROM notes WHERE id = ?");
+        let mut rows = self.conn.query(&sql, [id.as_str()]).await?;
+
+        if let Some(row) = rows.next().await? {
+            Ok(Some(Self::parse_note(&row)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn is_pending(&self, user_id: &str, note_id: &NoteId) -> Result<bool> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT 1 FROM pending_sync WHERE user_id = ? AND note_id = ? LIMIT 1",
+                libsql::params![user_id, note_id.as_str()],
+            )
+            .await?;
+        Ok(rows.next().await?.is_some())
+    }
+
+    async fn enqueue_pending(
+        &self,
+        user_id: &str,
+        note_id: &NoteId,
+        dirty_at_ms: i64,
+    ) -> Result<()> {
+        // Latest mutation wins on dirty_at. Push order is by dirty_at,
+        // so refreshing it lets repeated edits coalesce into a single
+        // push of the final state without losing FIFO across distinct
+        // notes.
+        self.conn
+            .execute(
+                "INSERT INTO pending_sync (user_id, note_id, dirty_at)
+                 VALUES (?, ?, ?)
+                 ON CONFLICT(user_id, note_id) DO UPDATE SET dirty_at = excluded.dirty_at",
+                libsql::params![user_id, note_id.as_str(), dirty_at_ms],
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn list_pending_notes(&self, user_id: &str, limit: usize) -> Result<Vec<Note>> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let sql = format!(
+            "SELECT {}
+             FROM notes n
+             JOIN pending_sync p ON p.note_id = n.id AND p.user_id = n.user_id
+             WHERE p.user_id = ?
+             ORDER BY p.dirty_at ASC, n.id ASC
+             LIMIT ?",
+            NOTE_COLUMNS
+                .split(", ")
+                .map(|c| format!("n.{c}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
+        let mut rows = self
+            .conn
+            .query(&sql, libsql::params![user_id, limit])
+            .await?;
+
+        let mut notes = Vec::new();
+        while let Some(row) = rows.next().await? {
+            notes.push(Self::parse_note(&row)?);
+        }
+        Ok(notes)
+    }
+
+    async fn mark_pushed(
+        &self,
+        user_id: &str,
+        note_id: &NoteId,
+        server_updated_at_ms: i64,
+    ) -> Result<()> {
+        // Stamp the server timestamp first so the pending row's removal is
+        // the *last* effect — on crash between the two, `is_pending` will
+        // still return true and the next sync will retry the push, which
+        // the server treats idempotently.
+        self.conn
+            .execute(
+                "UPDATE notes SET server_updated_at = ? WHERE id = ? AND user_id = ?",
+                libsql::params![server_updated_at_ms, note_id.as_str(), user_id],
+            )
+            .await?;
+        self.conn
+            .execute(
+                "DELETE FROM pending_sync WHERE user_id = ? AND note_id = ?",
+                libsql::params![user_id, note_id.as_str()],
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn read_sync_cursor(&self, user_id: &str) -> Result<Option<SyncCursor>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT cursor_sua, cursor_id FROM sync_state WHERE user_id = ?",
+                [user_id],
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+        let sua: i64 = row.get(0)?;
+        let id: Option<String> = row.get(1).ok();
+        // Treat (0, NULL) as "no cursor yet" so the first pull starts at
+        // the beginning. Anything else is a real cursor.
+        match id {
+            Some(id) if sua > 0 => Ok(Some(SyncCursor { sua, id })),
+            _ => Ok(None),
+        }
+    }
+
+    async fn write_sync_cursor(&self, user_id: &str, cursor: &SyncCursor) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO sync_state (user_id, cursor_sua, cursor_id)
+                 VALUES (?, ?, ?)
+                 ON CONFLICT(user_id) DO UPDATE SET
+                     cursor_sua = excluded.cursor_sua,
+                     cursor_id  = excluded.cursor_id",
+                libsql::params![user_id, cursor.sua, cursor.id.as_str()],
+            )
+            .await?;
         Ok(())
     }
 }
@@ -577,5 +780,148 @@ mod tests {
         assert!(repo.get(&existing.id).await.unwrap().is_none());
         // Tag listing no longer surfaces it.
         assert_eq!(repo.list_by_tag("work", 10, 0).await.unwrap().len(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn create_enqueues_pending_sync() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let note = repo.create("hello sync").await.unwrap();
+        assert!(repo.is_pending(SOLO_USER_ID, &note.id).await.unwrap());
+
+        let pending = repo.list_pending_notes(SOLO_USER_ID, 10).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, note.id);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn upsert_from_server_does_not_enqueue_pending() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let note = Note {
+            id: NoteId::new(),
+            user_id: SOLO_USER_ID.to_string(),
+            content: "from server".to_string(),
+            created_at: 1,
+            updated_at: 2,
+            server_updated_at: Some(3),
+            deleted_at: None,
+        };
+        repo.upsert_from_server(&note).await.unwrap();
+
+        assert!(!repo.is_pending(SOLO_USER_ID, &note.id).await.unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn update_refreshes_pending_dirty_at() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let note = repo.create("first").await.unwrap();
+        // Pretend we pushed it so the pending flag is gone, mimicking the
+        // post-push state.
+        repo.mark_pushed(SOLO_USER_ID, &note.id, 1_000)
+            .await
+            .unwrap();
+        assert!(!repo.is_pending(SOLO_USER_ID, &note.id).await.unwrap());
+
+        repo.update(&note.id, "second").await.unwrap();
+        assert!(repo.is_pending(SOLO_USER_ID, &note.id).await.unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn delete_enqueues_tombstone_for_push() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let note = repo.create("doomed").await.unwrap();
+        repo.mark_pushed(SOLO_USER_ID, &note.id, 100).await.unwrap();
+        repo.delete(&note.id).await.unwrap();
+
+        assert!(repo.is_pending(SOLO_USER_ID, &note.id).await.unwrap());
+
+        let pending = repo.list_pending_notes(SOLO_USER_ID, 10).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert!(pending[0].is_deleted());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mark_pushed_stamps_sua_and_clears_pending() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let note = repo.create("hello").await.unwrap();
+        assert!(repo.is_pending(SOLO_USER_ID, &note.id).await.unwrap());
+
+        repo.mark_pushed(SOLO_USER_ID, &note.id, 12_345)
+            .await
+            .unwrap();
+
+        assert!(!repo.is_pending(SOLO_USER_ID, &note.id).await.unwrap());
+        let stored = repo.get(&note.id).await.unwrap().unwrap();
+        assert_eq!(stored.server_updated_at, Some(12_345));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn list_pending_notes_orders_by_dirty_at() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let a = repo.create("a").await.unwrap();
+        let b = repo.create("b").await.unwrap();
+        let c = repo.create("c").await.unwrap();
+
+        // Re-stamp dirty_at on `b` to a far-future value so it becomes the
+        // newest dirty row regardless of how close create()'s wall-clock
+        // timestamps end up to each other.
+        repo.enqueue_pending(SOLO_USER_ID, &b.id, i64::MAX / 2)
+            .await
+            .unwrap();
+
+        let pending = repo.list_pending_notes(SOLO_USER_ID, 10).await.unwrap();
+        let ids: Vec<NoteId> = pending.iter().map(|n| n.id).collect();
+        // a and c keep their original (smaller) dirty_at, b is newest.
+        assert_eq!(ids.last().copied(), Some(b.id));
+        assert!(ids.contains(&a.id));
+        assert!(ids.contains(&c.id));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn get_with_tombstone_returns_deleted_rows() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        let note = repo.create("doomed").await.unwrap();
+        repo.delete(&note.id).await.unwrap();
+
+        assert!(repo.get(&note.id).await.unwrap().is_none());
+        let tombstone = repo
+            .get_with_tombstone(&note.id)
+            .await
+            .unwrap()
+            .expect("tombstoned row should still be visible to sync");
+        assert!(tombstone.is_deleted());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync_cursor_roundtrips() {
+        let db = setup().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+
+        assert!(
+            repo.read_sync_cursor(SOLO_USER_ID).await.unwrap().is_none(),
+            "fresh DB has no cursor"
+        );
+
+        let cursor = SyncCursor {
+            sua: 1_700_000_000_000,
+            id: "01932aaa-0000-7000-8000-000000000abc".to_string(),
+        };
+        repo.write_sync_cursor(SOLO_USER_ID, &cursor).await.unwrap();
+
+        let restored = repo.read_sync_cursor(SOLO_USER_ID).await.unwrap().unwrap();
+        assert_eq!(restored, cursor);
     }
 }

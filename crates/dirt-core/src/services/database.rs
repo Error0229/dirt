@@ -13,6 +13,7 @@ use tokio::sync::Mutex;
 
 use crate::db::{
     Database, LibSqlNoteRepository, LibSqlSettingsRepository, NoteRepository, SettingsRepository,
+    SyncCursor,
 };
 use crate::models::{Note, Settings};
 use crate::{NoteId, Result};
@@ -150,6 +151,68 @@ impl DatabaseService {
         let db = self.db.lock().await;
         let repo = LibSqlSettingsRepository::new(db.connection());
         repo.save(settings).await
+    }
+
+    // ---- Sync-driver helpers ----
+    //
+    // The sync engine needs to read/write `pending_sync`, `sync_state`,
+    // and stamp server-authoritative timestamps. Each helper takes the
+    // mutex briefly so HTTP work can run between calls without holding
+    // the DB lock.
+
+    /// Apply a server-authoritative note from a pull response.
+    pub async fn upsert_from_server(&self, note: &Note) -> Result<()> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.upsert_from_server(note).await
+    }
+
+    /// Look up a note's local row, including tombstones.
+    pub async fn get_with_tombstone(&self, id: &NoteId) -> Result<Option<Note>> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.get_with_tombstone(id).await
+    }
+
+    /// Whether `(user_id, note_id)` has an unpushed local mutation.
+    pub async fn is_pending(&self, user_id: &str, note_id: &NoteId) -> Result<bool> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.is_pending(user_id, note_id).await
+    }
+
+    /// List up to `limit` dirty notes for `user_id`, oldest-first.
+    pub async fn list_pending_notes(&self, user_id: &str, limit: usize) -> Result<Vec<Note>> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.list_pending_notes(user_id, limit).await
+    }
+
+    /// Stamp `server_updated_at` and clear the note's `pending_sync` row.
+    pub async fn mark_pushed(
+        &self,
+        user_id: &str,
+        note_id: &NoteId,
+        server_updated_at_ms: i64,
+    ) -> Result<()> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.mark_pushed(user_id, note_id, server_updated_at_ms)
+            .await
+    }
+
+    /// Read the persisted pull cursor for `user_id`.
+    pub async fn read_sync_cursor(&self, user_id: &str) -> Result<Option<SyncCursor>> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.read_sync_cursor(user_id).await
+    }
+
+    /// Persist the pull cursor for `user_id`.
+    pub async fn write_sync_cursor(&self, user_id: &str, cursor: &SyncCursor) -> Result<()> {
+        let db = self.db.lock().await;
+        let repo = LibSqlNoteRepository::new(db.connection());
+        repo.write_sync_cursor(user_id, cursor).await
     }
 }
 

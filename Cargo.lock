@@ -2252,6 +2252,7 @@ dependencies = [
  "aws-credential-types",
  "aws-sdk-s3",
  "aws-types",
+ "base64 0.22.1",
  "chrono",
  "dotenvy",
  "hound",

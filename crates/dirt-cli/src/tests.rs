@@ -271,12 +271,32 @@ async fn run_delete_soft_deletes_note_by_exact_and_prefix_id() {
 
 #[cfg_attr(windows, ignore = "libsql integration is flaky on windows CI")]
 #[tokio::test(flavor = "current_thread")]
+#[allow(unsafe_code)]
 async fn run_sync_requires_sync_configuration() {
     let db_path = unique_test_db_path();
 
-    let error = run_sync(&db_path).await.unwrap_err();
-    assert!(matches!(error, CliError::SyncNotConfigured));
+    // Force the unconfigured paths so the test doesn't accidentally pick
+    // up a developer's real DIRT_API_BASE_URL or DIRT_CLIENT_TOKEN.
+    // SAFETY: tests in this module run on a current_thread runtime, so
+    // there's no concurrent reader of these vars within the process.
+    unsafe {
+        std::env::remove_var("DIRT_API_BASE_URL");
+        std::env::remove_var("DIRT_CLIENT_TOKEN");
+        std::env::set_var("DIRT_PROFILE", "this-profile-does-not-exist");
+    }
 
+    let error = run_sync(&db_path).await.unwrap_err();
+    // Either "no api_base_url configured" or "no DIRT_CLIENT_TOKEN" —
+    // the contract is that `dirt sync` refuses to run rather than
+    // silently no-oping.
+    assert!(
+        matches!(error, CliError::SyncNotConfigured | CliError::Config(_)),
+        "unexpected error variant: {error:?}",
+    );
+
+    unsafe {
+        std::env::remove_var("DIRT_PROFILE");
+    }
     cleanup_db_files(&db_path);
 }
 
