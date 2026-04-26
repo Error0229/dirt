@@ -1,10 +1,13 @@
-//! Main application component
+//! Main application component.
 //!
-//! Local-only since the Supabase teardown. The new sync path goes through
-//! `dirt_core::sync::api_client::ApiClient`, driven by a per-client sync
-//! worker that lands in a follow-up commit. Until then the desktop app
-//! runs against the local `SQLite` database with sync UI showing
-//! `Offline`.
+//! Sync runs in the background — there is no manual "Sync now" button.
+//! The worker (see `services::sync_worker`) handles startup-pull,
+//! 30 s periodic, and post-mutation kicks; mutation sites call
+//! `AppState::trigger_sync()` after a successful DB write.
+//!
+//! `DIRT_API_BASE_URL` and `DIRT_CLIENT_TOKEN` must be set when the
+//! app launches. If either is missing or invalid, we surface a loud
+//! `SyncStatus::Error` instead of silently running offline.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -13,11 +16,14 @@ use std::time::Duration;
 use dioxus::desktop::{LogicalPosition, LogicalSize, window};
 use dioxus::prelude::*;
 use dirt_core::models::Note;
+use dirt_core::sync::api_client::ApiClient;
 
-use crate::bootstrap_config::{load_bootstrap_config, resolve_bootstrap_config};
+use crate::bootstrap_config::{BootstrapConfig, load_bootstrap_config, resolve_bootstrap_config};
 use crate::components::{QuickCapture, SettingsPanel};
 use crate::queries::use_notes_query;
-use crate::services::{DatabaseService, TranscriptionService};
+use crate::services::{
+    DatabaseService, SyncEvent, SyncWorkerHandle, TranscriptionService, spawn_sync_worker,
+};
 use crate::state::{AppState, SyncStatus};
 use crate::theme::{ResolvedTheme, resolve_theme};
 use crate::tray::{QUIT_REQUESTED, SHOW_MAIN_WINDOW, process_tray_events};
@@ -38,6 +44,8 @@ pub fn App() -> Element {
     let mut quick_capture_open = use_signal(|| false);
     let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
     let mut db_service: Signal<Option<Arc<DatabaseService>>> = use_signal(|| None);
+    let mut sync_worker: Signal<Option<SyncWorkerHandle>> = use_signal(|| None);
+    let mut sync_worker_started = use_signal(|| false);
     let transcription_service: Signal<Option<Arc<TranscriptionService>>> =
         use_signal(|| match TranscriptionService::new() {
             Ok(service) => Some(Arc::new(service)),
@@ -47,6 +55,7 @@ pub fn App() -> Element {
             }
         });
     let mut bootstrap_ready = use_signal(|| false);
+    let mut bootstrap_config: Signal<Option<BootstrapConfig>> = use_signal(|| None);
     let sync_status = use_signal(|| SyncStatus::Offline);
     let sync_issue = use_signal(|| None::<String>);
     let last_sync_at = use_signal(|| None::<i64>);
@@ -54,9 +63,8 @@ pub fn App() -> Element {
     let pending_sync_note_ids = use_signal(Vec::new);
     let embedded_bootstrap_config = load_bootstrap_config();
 
-    // Resolve runtime bootstrap manifest. The media + auth + sync wiring
-    // that used to live here was torn down with Supabase; the dirt-api
-    // ApiClient takes its place in the next commit.
+    // Resolve runtime bootstrap manifest. The auto-sync worker reads
+    // the resolved config (or the embedded fallback) below.
     use_effect(move || {
         if bootstrap_ready() {
             return;
@@ -64,20 +72,34 @@ pub fn App() -> Element {
         let fallback_bootstrap = embedded_bootstrap_config.clone();
 
         spawn(async move {
-            match resolve_bootstrap_config(fallback_bootstrap.clone()).await {
-                Ok(_config) => {}
+            let resolved = match resolve_bootstrap_config(fallback_bootstrap.clone()).await {
+                Ok(config) => config,
                 Err(error) => {
                     tracing::warn!(
                         "Failed to resolve runtime bootstrap manifest ({}). Falling back to embedded desktop bootstrap values.",
                         error
                     );
+                    fallback_bootstrap
                 }
-            }
+            };
+            bootstrap_config.set(Some(resolved));
             bootstrap_ready.set(true);
         });
     });
 
-    // Initialize the local database.
+    let mut sync_status_signal = sync_status;
+    let mut sync_issue_signal = sync_issue;
+    let mut last_sync_at_signal = last_sync_at;
+
+    // Initialize the local database, then spawn the auto-sync worker
+    // exactly once. The worker is misconfigured-loud: a missing
+    // DIRT_API_BASE_URL or DIRT_CLIENT_TOKEN leaves `sync_status` in
+    // `Error` and `sync_issue` populated so the user notices.
+    //
+    // Status flows worker → UI via an unbounded mpsc channel and a
+    // dioxus `use_future` consumer (see below). Dioxus signals can't
+    // be captured into a Send closure on a tokio task, so the channel
+    // is the bridge.
     let _db_init_task = use_resource(move || async move {
         if !bootstrap_ready() {
             return;
@@ -99,7 +121,42 @@ pub fn App() -> Element {
                 settings.set(loaded_settings);
                 theme.set(resolved_theme);
 
-                db_service.set(Some(db));
+                db_service.set(Some(db.clone()));
+
+                if !sync_worker_started() {
+                    sync_worker_started.set(true);
+                    let bootstrap = bootstrap_config().unwrap_or_default();
+                    match build_api_client(&bootstrap) {
+                        Ok(api) => {
+                            let (tx, mut rx) =
+                                tokio::sync::mpsc::unbounded_channel::<SyncEvent>();
+                            let handle = spawn_sync_worker(db, Arc::new(api), tx);
+                            sync_worker.set(Some(handle));
+                            // Drain status events into UI signals.
+                            spawn(async move {
+                                while let Some(event) = rx.recv().await {
+                                    match event {
+                                        SyncEvent::Status(status) => {
+                                            sync_status_signal.set(status);
+                                        }
+                                        SyncEvent::Issue(issue) => {
+                                            sync_issue_signal.set(issue);
+                                        }
+                                        SyncEvent::LastSync(ts) => {
+                                            last_sync_at_signal.set(Some(ts));
+                                        }
+                                    }
+                                }
+                            });
+                            tracing::info!("Sync worker spawned");
+                        }
+                        Err(error) => {
+                            tracing::error!("Sync worker not started: {error}");
+                            sync_status_signal.set(SyncStatus::Error);
+                            sync_issue_signal.set(Some(error));
+                        }
+                    }
+                }
             }
             Err(error) => {
                 tracing::error!("Failed to initialize database: {error}");
@@ -222,6 +279,7 @@ pub fn App() -> Element {
         theme,
         db_service,
         transcription_service,
+        sync_worker,
         sync_status,
         sync_issue,
         last_sync_at,
@@ -268,4 +326,32 @@ pub fn App() -> Element {
             }
         }
     }
+}
+
+/// Resolve API base URL + client token at app launch.
+///
+/// `DIRT_API_BASE_URL` falls back to the build-baked bootstrap value
+/// (so a packaged binary works without env config), but
+/// `DIRT_CLIENT_TOKEN` is runtime-only — it must never get baked into a
+/// binary that ships to users. A missing or empty token is a hard
+/// error: the worker won't start, the UI shows `Error`, and the user
+/// has to fix their environment rather than the app silently running
+/// without sync.
+fn build_api_client(bootstrap: &BootstrapConfig) -> Result<ApiClient, String> {
+    let base_url = std::env::var("DIRT_API_BASE_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| bootstrap.dirt_api_base_url.clone())
+        .ok_or_else(|| {
+            "DIRT_API_BASE_URL is not configured (set it in the environment or in .env.client at build time).".to_string()
+        })?;
+
+    let token = std::env::var("DIRT_CLIENT_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            "DIRT_CLIENT_TOKEN is not set in the environment — sync cannot run without a bearer token.".to_string()
+        })?;
+
+    ApiClient::new(base_url, token).map_err(|err| format!("invalid sync configuration: {err}"))
 }

@@ -21,6 +21,7 @@ pub fn create_note_optimistic(state: &mut AppState) {
 
     // Persist in background
     let db = state.db_service.read().clone();
+    let worker = state.sync_worker.read().clone();
     spawn(async move {
         if let Some(db) = db {
             if let Err(e) = db.create_note_with_id(&optimistic_note).await {
@@ -29,6 +30,9 @@ pub fn create_note_optimistic(state: &mut AppState) {
             } else {
                 // Invalidate query to sync state
                 invalidate_notes_query().await;
+                if let Some(worker) = worker {
+                    worker.trigger();
+                }
             }
         }
     });

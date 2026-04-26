@@ -38,6 +38,7 @@ pub fn Toolbar() -> Element {
 
             // Persist in background
             let db = state.db_service.read().clone();
+            let worker = state.sync_worker.read().clone();
             spawn(async move {
                 if let Some(db) = db {
                     if let Err(e) = db.delete_note(&id).await {
@@ -45,6 +46,9 @@ pub fn Toolbar() -> Element {
                     } else {
                         // Invalidate query to sync state
                         invalidate_notes_query().await;
+                        if let Some(worker) = worker {
+                            worker.trigger();
+                        }
                     }
                 }
             });

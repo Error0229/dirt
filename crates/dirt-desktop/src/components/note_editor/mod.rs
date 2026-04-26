@@ -73,6 +73,7 @@ pub fn NoteEditor() -> Element {
                             tracing::debug!("Auto-saved note: {}", id);
                             last_saved_version.set(current_version);
                             invalidate_notes_query().await;
+                            state.trigger_sync();
                         }
                         Err(error) => {
                             tracing::error!("Failed to save note: {}", error);
@@ -105,6 +106,7 @@ pub fn NoteEditor() -> Element {
                             tracing::debug!("Saved note on blur/shortcut: {}", id);
                             last_saved_version.set(current_version);
                             invalidate_notes_query().await;
+                            state.trigger_sync();
                         }
                         Err(error) => {
                             tracing::error!("Failed to save note: {}", error);

@@ -7,7 +7,10 @@
 
 mod database;
 mod export;
+mod sync_worker;
 mod transcription;
+
+pub use sync_worker::{SyncEvent, SyncWorkerHandle, spawn_sync_worker};
 
 // Re-export desktop-specific services
 pub use database::DatabaseService;
