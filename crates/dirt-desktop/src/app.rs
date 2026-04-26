@@ -42,6 +42,7 @@ pub fn App() -> Element {
     let mut theme = use_signal(|| resolve_theme(dirt_core::models::ThemeMode::System));
     let settings_open = use_signal(|| false);
     let mut quick_capture_open = use_signal(|| false);
+    let note_list_visible = use_signal(|| true);
     let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
     let mut db_service: Signal<Option<Arc<DatabaseService>>> = use_signal(|| None);
     let mut sync_worker: Signal<Option<SyncWorkerHandle>> = use_signal(|| None);
@@ -287,6 +288,7 @@ pub fn App() -> Element {
         pending_sync_note_ids,
         settings_open,
         quick_capture_open,
+        note_list_visible,
     });
 
     let current_theme = theme();

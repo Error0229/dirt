@@ -105,7 +105,7 @@ pub fn SettingsPanel() -> Element {
     let mut export_busy = use_signal(|| false);
     let mut export_message = use_signal(|| None::<String>);
 
-    let export_json = move |_: MouseEvent| {
+    let mut export_notes = move |format: NotesExportFormat| {
         if export_busy() {
             return;
         }
@@ -123,10 +123,8 @@ pub fn SettingsPanel() -> Element {
                 return;
             };
 
-            let default_name = suggested_export_file_name(
-                NotesExportFormat::Json,
-                chrono::Utc::now().timestamp_millis(),
-            );
+            let default_name =
+                suggested_export_file_name(format, chrono::Utc::now().timestamp_millis());
             let Some(file) = AsyncFileDialog::new()
                 .set_file_name(&default_name)
                 .save_file()
@@ -136,7 +134,7 @@ pub fn SettingsPanel() -> Element {
                 return;
             };
 
-            match export_notes_to_path(db.as_ref(), NotesExportFormat::Json, file.path()).await {
+            match export_notes_to_path(db.as_ref(), format, file.path()).await {
                 Ok(count) => {
                     export_message_signal.set(Some(format!(
                         "Exported {count} notes to {}",
@@ -151,52 +149,8 @@ pub fn SettingsPanel() -> Element {
         });
     };
 
-    let export_markdown = move |_: MouseEvent| {
-        if export_busy() {
-            return;
-        }
-
-        export_busy.set(true);
-        export_message.set(None);
-
-        let db = state.db_service.read().clone();
-        let mut export_busy_signal = export_busy;
-        let mut export_message_signal = export_message;
-        spawn(async move {
-            let Some(db) = db else {
-                export_message_signal.set(Some("Database service is not available.".to_string()));
-                export_busy_signal.set(false);
-                return;
-            };
-
-            let default_name = suggested_export_file_name(
-                NotesExportFormat::Markdown,
-                chrono::Utc::now().timestamp_millis(),
-            );
-            let Some(file) = AsyncFileDialog::new()
-                .set_file_name(&default_name)
-                .save_file()
-                .await
-            else {
-                export_busy_signal.set(false);
-                return;
-            };
-
-            match export_notes_to_path(db.as_ref(), NotesExportFormat::Markdown, file.path()).await
-            {
-                Ok(count) => {
-                    export_message_signal.set(Some(format!(
-                        "Exported {count} notes to {}",
-                        file.path().display()
-                    )));
-                }
-                Err(error) => {
-                    export_message_signal.set(Some(format!("Export failed: {error}")));
-                }
-            }
-            export_busy_signal.set(false);
-        });
-    };
+    let export_json = move |_: MouseEvent| export_notes(NotesExportFormat::Json);
+    let export_markdown = move |_: MouseEvent| export_notes(NotesExportFormat::Markdown);
 
     let save_openai_api_key = move |_: MouseEvent| {
         let api_key = openai_api_key_input().trim().to_string();
@@ -292,55 +246,81 @@ pub fn SettingsPanel() -> Element {
             },
 
             DialogContent {
-                style: "width: 400px; max-width: 90vw; text-align: left;",
+                style: "text-align: left; width: 480px; max-width: 92vw; height: 520px; max-height: 80vh; padding: 0; gap: 0; border-radius: 12px; overflow: hidden;",
 
-                // Header with close button
+                // Fixed header: title + tabs
                 div {
-                    style: "
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        margin-bottom: 8px;
-                    ",
-                    DialogTitle { "Settings" }
-                    Button {
-                        variant: ButtonVariant::Ghost,
-                        onclick: close_settings,
-                        style: "padding: 4px 8px; font-size: 18px;",
-                        "×"
+                    class: "settings-header",
+
+                    // Title row
+                    div {
+                        style: "
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            margin-bottom: 12px;
+                        ",
+                        DialogTitle {
+                            "Settings"
+                        }
+                        Button {
+                            variant: ButtonVariant::Ghost,
+                            onclick: close_settings,
+                            style: "width: 28px; height: 28px; padding: 0; font-size: 18px; display: flex; align-items: center; justify-content: center; border-radius: 6px;",
+                            "×"
+                        }
+                    }
+
+                    // Tab bar
+                    div {
+                        style: "
+                            display: flex;
+                            gap: 0;
+                            border-bottom: 1px solid {colors.border};
+                        ",
+                        {
+                            let tabs = [
+                                (SettingsTab::Appearance, "Appearance"),
+                                (SettingsTab::Media, "Media"),
+                                (SettingsTab::Sync, "Sync"),
+                            ];
+                            rsx! {
+                                for (tab, label) in tabs {
+                                    {
+                                        let is_active = active_tab() == tab;
+                                        let text_color = if is_active { colors.text_primary } else { colors.text_muted };
+                                        let border_bottom = if is_active {
+                                            format!("2px solid {}", colors.accent)
+                                        } else {
+                                            "2px solid transparent".to_string()
+                                        };
+                                        rsx! {
+                                            button {
+                                                style: "
+                                                    background: none;
+                                                    border: none;
+                                                    border-bottom: {border_bottom};
+                                                    color: {text_color};
+                                                    font-size: 13px;
+                                                    font-weight: 500;
+                                                    padding: 8px 14px;
+                                                    cursor: pointer;
+                                                    transition: color 0.1s;
+                                                ",
+                                                onclick: move |_| active_tab.set(tab),
+                                                "{label}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
+                // Scrollable body
                 div {
-                    style: "display: flex; gap: 8px; margin-bottom: 12px;",
-                    Button {
-                        variant: if active_tab() == SettingsTab::Appearance {
-                            ButtonVariant::Secondary
-                        } else {
-                            ButtonVariant::Ghost
-                        },
-                        onclick: move |_| active_tab.set(SettingsTab::Appearance),
-                        "Appearance"
-                    }
-                    Button {
-                        variant: if active_tab() == SettingsTab::Media {
-                            ButtonVariant::Secondary
-                        } else {
-                            ButtonVariant::Ghost
-                        },
-                        onclick: move |_| active_tab.set(SettingsTab::Media),
-                        "Media"
-                    }
-                    Button {
-                        variant: if active_tab() == SettingsTab::Sync {
-                            ButtonVariant::Secondary
-                        } else {
-                            ButtonVariant::Ghost
-                        },
-                        onclick: move |_| active_tab.set(SettingsTab::Sync),
-                        "Sync"
-                    }
-                }
+                    class: "settings-body",
 
                 match active_tab() {
                     SettingsTab::Appearance => rsx! {
@@ -391,6 +371,8 @@ pub fn SettingsPanel() -> Element {
                         }
                     },
                 }
+
+                } // settings-body
             }
         }
     }
