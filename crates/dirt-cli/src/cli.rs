@@ -89,6 +89,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: ConfigCommands,
     },
+    /// Inspect or manage authentication state
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommands,
+    },
     /// Open TUI interface
     Tui,
 }
@@ -106,6 +111,21 @@ pub enum CompletionShell {
     Fish,
 }
 
+
+#[derive(Subcommand)]
+pub enum AuthCommands {
+    /// Print connectivity status against the configured `dirt-api`.
+    ///
+    /// Solo phase: the auth surface only exists so the CLI's command
+    /// shape is stable across phases. There's no login state to report;
+    /// `status` instead reports whether the CLI's env is configured and
+    /// whether the configured token reaches the server.
+    Status,
+    /// Placeholder. Phase 2 (magic-link auth) will implement login.
+    Login,
+    /// Placeholder. Phase 2 (magic-link auth) will implement logout.
+    Logout,
+}
 
 #[derive(Subcommand)]
 pub enum ConfigCommands {

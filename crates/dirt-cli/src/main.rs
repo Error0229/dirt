@@ -59,6 +59,9 @@ async fn run() -> Result<(), CliError> {
         Some(Commands::Config { command }) => {
             commands::config::run_config(command, global_profile.as_deref())?;
         }
+        Some(Commands::Auth { command }) => {
+            commands::auth_cmd::run_auth(command).await?;
+        }
         Some(Commands::Tui) => {
             println!("Opening TUI...");
         }
