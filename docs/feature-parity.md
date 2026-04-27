@@ -1,28 +1,35 @@
 # Feature Parity Matrix
 
-Last updated: 2026-02-10
-
-This matrix tracks product parity across active Dirt clients.
+Tracks product parity across active Dirt clients during Phase 1.
 
 | Capability | Desktop (`dirt-desktop`) | CLI (`dirt-cli`) | Mobile (`dirt-mobile`) |
 | --- | --- | --- | --- |
-| Create note | Yes | Yes | Yes |
-| List notes | Yes | Yes | Yes |
-| Search notes | Yes | Yes | No (`#117`) |
-| Tag filtering | Yes | Yes (`dirt list --tag`) | No (`#117`) |
-| Edit/delete notes | Yes | Yes | Yes |
-| Quick capture | Yes (global hotkey + tray) | Yes (`dirt add ...`) | Partial (widget-style entry intent parsed in app; native Android widget wiring pending `#119`) |
-| Share-intent capture | N/A | N/A | Partial (app-side payload support exists; native Android share-sheet integration pending `#119`) |
-| Settings (theme/font/hotkey) | Yes | N/A | Partial (sync/auth/runtime settings and diagnostics available; no theme/font/hotkey parity) |
-| Auth + sync status UI | Yes | Partial (`sync` command only, env-driven) | Yes (Supabase auth/session controls + sync diagnostics/status) |
-| Attachments | Yes | No | Partial (metadata list only; add/open/delete UX pending `#118`) |
-| Export JSON | Yes | Yes | No (`#120`) |
-| Export Markdown | Yes | Yes | No (`#120`) |
+| Create note | Yes | Yes | Pending — shell rewrite for Phase 1 |
+| List notes | Yes | Yes | Pending |
+| Search notes | Yes | Yes | Pending (`#117`) |
+| Tag filtering | Yes | Yes (`dirt list --tag`) | Pending (`#117`) |
+| Edit/delete notes | Yes | Yes | Pending |
+| Quick capture | Yes (global hotkey + tray) | Yes (`dirt add ...`) | Pending — native Android widget (`#119`) |
+| Share-intent capture | N/A | N/A | Pending — Android share-sheet (`#119`) |
+| Settings (theme/font/hotkey) | Yes | N/A | Pending |
+| Sync status UI | Yes (toolbar dot + Settings → Sync tab) | Partial (`dirt sync` exit code + stdout summary) | Pending |
+| Auto-sync (background) | Yes (startup + 30 s timer + post-mutation, with exponential backoff on errors) | No (manual `dirt sync` only) | Pending |
+| Attachments | Pending — UI deferred until R2 backend lands | No | Pending |
+| Export JSON | Yes | Yes | Pending (`#120`) |
+| Export Markdown | Yes | Yes | Pending (`#120`) |
 
-## Follow-up gaps
+## Phase 1 deferred work
 
-- Mobile search and tag-filter parity: `#117`
-- Mobile attachment UX parity (picker/open/delete): `#118`
-- Android-native share-intent and widget launch plumbing: `#119`
-- Mobile JSON/Markdown export parity: `#120`
-- CLI still has no attachment workflow.
+- **Mobile shell rewrite.** The Android `app_shell.rs` is
+  `cfg(target_os = "android")`-only and does not compile against the
+  post-Supabase `dirt-core` shape. The mobile sync worker rebuild is
+  the next milestone.
+- **Attachments UI.** The desktop `AttachmentPanel` was removed in
+  the Supabase teardown because it depended on `MediaApiClient` /
+  `auth_session` / `dirt_core::media::*`, all of which were deleted
+  with R2 support. Reintroducing attachments is a separate later PR.
+- **Mobile parity tickets:** search/tag filter (`#117`), attachments
+  (`#118`), Android share-intent and widget plumbing (`#119`),
+  JSON/Markdown export (`#120`).
+- **CLI**: still has no attachment workflow. Will follow whatever
+  shape the desktop attachments PR lands.
