@@ -246,13 +246,19 @@ async fn migrate_v3(conn: &Connection) -> Result<()> {
 /// 7. Add `idx_notes_deleted_at` and `idx_notes_sua` for the new query paths.
 /// 8. Create `pending_sync` and `sync_state` tables the client-side sync
 ///    worker will read and write.
+/// 9. Backfill `pending_sync` from every existing row in `notes`. Pre-v4
+///    rows have no `server_updated_at` and have never been seen by the new
+///    backend, so they all need to be queued for first push (live notes
+///    *and* tombstones — the server has to learn about deletions too).
+///    Without this step, upgraded databases would silently leave all
+///    historical notes unsynced until the user re-edited them.
 async fn migrate_v4(conn: &Connection) -> Result<()> {
     conn.execute("BEGIN TRANSACTION", ()).await?;
 
     let add_user_id =
         format!("ALTER TABLE notes ADD COLUMN user_id TEXT NOT NULL DEFAULT '{SOLO_USER_ID}'");
 
-    let statements: [&str; 17] = [
+    let statements: [&str; 18] = [
         // 1. Drop old FTS triggers before touching notes.
         "DROP TRIGGER IF EXISTS notes_ai",
         "DROP TRIGGER IF EXISTS notes_au",
@@ -296,6 +302,9 @@ async fn migrate_v4(conn: &Connection) -> Result<()> {
              cursor_sua INTEGER NOT NULL DEFAULT 0,
              cursor_id TEXT
          )",
+        // 9. Queue every pre-v4 note for first push.
+        "INSERT INTO pending_sync (user_id, note_id, dirty_at)
+             SELECT user_id, id, updated_at FROM notes",
         "INSERT INTO schema_version (version) VALUES (4)",
     ];
 
@@ -504,9 +513,43 @@ mod tests {
         assert!(!table_exists(&conn, "sync_conflicts").await);
         assert!(!trigger_exists(&conn, "notes_lww_conflict_guard").await);
 
-        // New sync tables present and empty.
+        // New sync tables present.
         assert!(table_exists(&conn, "pending_sync").await);
         assert!(table_exists(&conn, "sync_state").await);
+
+        // pending_sync was backfilled from existing notes — both the live
+        // and the tombstoned row need to be queued for first push.
+        let mut rows = conn
+            .query("SELECT COUNT(*) FROM pending_sync", ())
+            .await
+            .unwrap();
+        let count: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        assert_eq!(
+            count, 2,
+            "pending_sync should be backfilled with both notes"
+        );
+
+        // Confirm each note id is present, paired with the right dirty_at
+        // (the row's pre-migration `updated_at`).
+        let mut rows = conn
+            .query(
+                "SELECT dirty_at FROM pending_sync WHERE note_id = ?",
+                [live_id],
+            )
+            .await
+            .unwrap();
+        let live_dirty: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        assert_eq!(live_dirty, 1_699_999_500_000_i64);
+
+        let mut rows = conn
+            .query(
+                "SELECT dirty_at FROM pending_sync WHERE note_id = ?",
+                [dead_id],
+            )
+            .await
+            .unwrap();
+        let dead_dirty: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        assert_eq!(dead_dirty, dead_ts);
     }
 
     #[tokio::test(flavor = "multi_thread")]

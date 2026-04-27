@@ -15,7 +15,7 @@ use subtle::ConstantTimeEq;
 use crate::error::AppError;
 use crate::AppState;
 
-const BEARER_PREFIX: &str = "Bearer ";
+const BEARER_PREFIX_LEN: usize = "Bearer ".len();
 
 pub async fn require_bearer_token(
     State(state): State<AppState>,
@@ -31,11 +31,17 @@ pub async fn require_bearer_token(
         .to_str()
         .map_err(|_| AppError::unauthorized("Authorization header is not valid UTF-8"))?;
 
-    let Some(token) = header_str.strip_prefix(BEARER_PREFIX) else {
+    // RFC 7235 §2.1: auth-scheme names are case-insensitive. Match the
+    // prefix on a lowercased copy, then slice the original at the same
+    // offset so the token's own case is preserved for ConstantTimeEq.
+    if header_str.len() < BEARER_PREFIX_LEN
+        || !header_str[..BEARER_PREFIX_LEN].eq_ignore_ascii_case("Bearer ")
+    {
         return Err(AppError::unauthorized(
             "Authorization header must start with 'Bearer '",
         ));
-    };
+    }
+    let token = &header_str[BEARER_PREFIX_LEN..];
 
     let token_bytes = token.as_bytes();
     let expected = state.config.server_token.0.as_slice();
@@ -138,6 +144,56 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn accepts_lowercase_scheme() {
+        let token = "abcdef1234567890";
+        let router = build_test_router(token);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/guarded")
+                    .header("authorization", format!("bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn accepts_uppercase_scheme() {
+        let token = "abcdef1234567890";
+        let router = build_test_router(token);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/guarded")
+                    .header("authorization", format!("BEARER {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejects_short_header() {
+        let router = build_test_router("abcdef1234567890");
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/guarded")
+                    .header("authorization", "Bear")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test(flavor = "current_thread")]

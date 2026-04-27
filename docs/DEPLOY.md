@@ -17,9 +17,10 @@ binaries; they're server-only.
 | `TURSO_AUTH_TOKEN` | `turso db tokens create <name> --expiration none` | Long-lived database-scoped token (NOT a platform token) |
 | `DIRT_SERVER_TOKEN` | `openssl rand -base64 32 \| tr -d '=' \| tr '+/' '-_'` | Shared bearer that every client must present |
 
-`DIRT_SERVER_TOKEN` must be at least 16 characters. Server comparison
-is constant-time (`subtle::ConstantTimeEq`) so the length only matters
-for entropy.
+`DIRT_SERVER_TOKEN` must be at least 32 characters
+(`openssl rand -hex 32` produces a 64-char hex string with ~256 bits of
+entropy). Server comparison is constant-time (`subtle::ConstantTimeEq`)
+so the length only matters for entropy.
 
 ## Vercel deploy
 

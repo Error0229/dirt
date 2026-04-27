@@ -109,7 +109,11 @@ impl<'a> SyncEngine<'a> {
                 cursor = Some(next_cursor);
             }
 
-            if !page.has_more {
+            // Empty page is always terminal regardless of `has_more`. A
+            // server bug returning `{"notes": [], "has_more": true}` would
+            // otherwise spin forever inside `run_once` with no error to
+            // trigger the worker's backoff.
+            if !page.has_more || page.notes.is_empty() {
                 break;
             }
         }
@@ -502,6 +506,33 @@ mod tests {
         assert!(!db.is_pending(SOLO_USER_ID, &n1.id).await.unwrap());
         assert!(!db.is_pending(SOLO_USER_ID, &n2.id).await.unwrap());
         assert!(!db.is_pending(SOLO_USER_ID, &n3.id).await.unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pull_breaks_on_empty_page_even_when_has_more_is_true() {
+        // Regression guard: if the server ever returns `notes: []` with
+        // `has_more: true`, the cursor can't advance (no last note) and
+        // the pull loop must terminate rather than spin.
+        let (db, server, api) = setup().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/notes/pull"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "notes": [],
+                "server_time_ms": 1,
+                "has_more": true,
+                "next_cursor": null,
+            })))
+            // If the engine looped, it would call this endpoint many
+            // times; capping at 1 forces the bug to surface as a 404
+            // mismatch on the second request.
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let engine = SyncEngine::new(&db, &api, SOLO_USER_ID);
+        let report = engine.run_once().await.unwrap();
+        assert_eq!(report.pulled_applied, 0);
+        assert_eq!(report.pulled_skipped, 0);
     }
 
     #[tokio::test(flavor = "current_thread")]

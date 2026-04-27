@@ -12,7 +12,7 @@ echo "Running security guardrails..."
 # TURSO_AUTH_TOKEN format), and `sk-`-prefixed API keys (OpenAI etc).
 if rg --line-number --pcre2 \
   "AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,}|eyJ[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}" \
-  crates .github \
+  crates .github docs vercel.json \
   -g '!target/**'; then
   echo "ERROR: potential secret literal detected in repository files."
   exit 1

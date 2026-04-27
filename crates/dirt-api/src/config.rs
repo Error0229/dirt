@@ -56,9 +56,10 @@ impl AppConfig {
         let turso_database_url = require_env("TURSO_DATABASE_URL")?;
         let turso_auth_token = require_env("TURSO_AUTH_TOKEN")?;
         let server_token_raw = require_env("DIRT_SERVER_TOKEN")?;
-        if server_token_raw.len() < 16 {
+        if server_token_raw.len() < 32 {
             return Err(AppError::config(
-                "DIRT_SERVER_TOKEN must be at least 16 characters",
+                "DIRT_SERVER_TOKEN must be at least 32 characters \
+                 (generate with: openssl rand -hex 32)",
             ));
         }
         let bind_addr = env::var("DIRT_API_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
@@ -75,8 +76,12 @@ impl AppConfig {
 fn require_env(key: &str) -> Result<String, AppError> {
     let value =
         env::var(key).map_err(|_| AppError::config(format!("missing required env var: {key}")))?;
-    if value.trim().is_empty() {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
         return Err(AppError::config(format!("env var {key} must not be empty")));
     }
-    Ok(value)
+    // Trim before returning. `cat token.txt` and many .env loaders leave
+    // a trailing newline; if the server stored the raw value, every
+    // request would 401 because the client always trims.
+    Ok(trimmed.to_string())
 }
