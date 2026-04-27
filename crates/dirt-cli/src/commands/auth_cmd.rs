@@ -11,7 +11,7 @@ use std::env;
 use dirt_core::sync::api_client::{ApiClient, ApiClientError};
 
 use crate::cli::AuthCommands;
-use crate::config_profiles::{CliProfilesConfig, normalize_text_option};
+use crate::config_profiles::{normalize_text_option, CliProfilesConfig};
 use crate::error::CliError;
 
 const PHASE_TWO_NOT_APPLICABLE: &str =
@@ -38,8 +38,7 @@ pub async fn status_line() -> Result<String, CliError> {
 
     let Some(api_base_url) = resolve_api_base_url()? else {
         return Ok(
-            "offline: DIRT_API_BASE_URL not set — local capture works, sync disabled"
-                .to_string(),
+            "offline: DIRT_API_BASE_URL not set — local capture works, sync disabled".to_string(),
         );
     };
 
@@ -81,7 +80,7 @@ fn describe(err: &ApiClientError) -> (String, &'static str) {
     match err {
         ApiClientError::Unauthorized(_) => (
             "401 unauthorized".to_string(),
-            "rotate DIRT_CLIENT_TOKEN to match the server's DIRT_SERVER_TOKEN",
+            "rotate DIRT_CLIENT_TOKEN to match the bearer token the server is configured with",
         ),
         ApiClientError::Network(msg) => (
             format!("network error: {msg}"),

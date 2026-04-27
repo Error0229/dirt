@@ -32,9 +32,9 @@ use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::SOLO_USER_ID;
 use crate::models::{Note, NoteId};
 use crate::util::{is_http_url, normalize_text_option};
+use crate::SOLO_USER_ID;
 
 const PUSH_PATH: &str = "/v1/notes/push";
 const PULL_PATH: &str = "/v1/notes/pull";
@@ -166,10 +166,7 @@ impl ApiClient {
     /// Trims trailing slashes so callers can pass either `https://host` or
     /// `https://host/`. Rejects non-http(s) URLs and empty tokens loudly;
     /// silent fallback would mask a misconfigured client as "offline".
-    pub fn new(
-        base_url: impl Into<String>,
-        token: impl Into<String>,
-    ) -> ApiClientResult<Self> {
+    pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> ApiClientResult<Self> {
         let base_url = normalize_base_url(base_url.into())?;
         let token = normalize_text_option(Some(token.into())).ok_or_else(|| {
             ApiClientError::InvalidConfiguration("DIRT_CLIENT_TOKEN must not be empty".into())
@@ -261,9 +258,7 @@ impl TryFrom<PullNote> for Note {
 
 // ---- Helpers ----
 
-async fn parse_response<T: serde::de::DeserializeOwned>(
-    resp: Response,
-) -> ApiClientResult<T> {
+async fn parse_response<T: serde::de::DeserializeOwned>(resp: Response) -> ApiClientResult<T> {
     let status = resp.status();
     if status.is_success() {
         return resp

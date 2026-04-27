@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use dirt_api::{AppConfig, AppState, TursoRepo, build_router};
+use dirt_api::{build_router, AppConfig, AppState, TursoRepo};
 
 const STACK_SIZE: usize = 8 * 1024 * 1024;
 

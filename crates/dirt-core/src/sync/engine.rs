@@ -25,7 +25,7 @@ use crate::db::SyncCursor;
 use crate::models::Note;
 use crate::services::DatabaseService;
 use crate::sync::api_client::{ApiClient, ApiClientError, PullNote, PushNote};
-use crate::sync::merge::{MergeAction, resolve};
+use crate::sync::merge::{resolve, MergeAction};
 
 /// Maximum notes per `/v1/notes/push` batch. Mirrors the server-side
 /// `PUSH_BATCH_LIMIT`; oversized batches are rejected with
@@ -188,8 +188,8 @@ impl SyncCursor {
     /// Encode this cursor in the opaque `base64url(JSON)` form the server
     /// expects for the `?cursor=` query parameter.
     fn encode(&self) -> String {
-        use base64::Engine as _;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine as _;
         let body = serde_json::json!({ "sua": self.sua, "id": self.id });
         URL_SAFE_NO_PAD.encode(serde_json::to_vec(&body).expect("CursorBody serializes"))
     }
@@ -198,8 +198,8 @@ impl SyncCursor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SOLO_USER_ID;
     use crate::models::NoteId;
+    use crate::SOLO_USER_ID;
     use serde_json::json;
     use wiremock::matchers::{bearer_token, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -213,7 +213,12 @@ mod tests {
         (db, server, client)
     }
 
-    fn server_note_json(id: &str, content: &str, sua: i64, deleted_at: Option<i64>) -> serde_json::Value {
+    fn server_note_json(
+        id: &str,
+        content: &str,
+        sua: i64,
+        deleted_at: Option<i64>,
+    ) -> serde_json::Value {
         json!({
             "id": id,
             "content": content,
@@ -517,13 +522,16 @@ mod tests {
 
         let engine = SyncEngine::new(&db, &api, SOLO_USER_ID);
         let err = engine.run_once().await.unwrap_err();
-        assert!(matches!(err, SyncEngineError::Api(ApiClientError::Unauthorized(_))));
+        assert!(matches!(
+            err,
+            SyncEngineError::Api(ApiClientError::Unauthorized(_))
+        ));
     }
 
     #[test]
     fn sync_cursor_encode_matches_server_codec() {
-        use base64::Engine as _;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine as _;
 
         // The server's decode_cursor in dirt-api expects this exact
         // shape: base64url(JSON{"sua":i64,"id":string}). Drift here

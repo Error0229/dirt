@@ -1,7 +1,7 @@
 //! Database migrations
 
-use crate::SOLO_USER_ID;
 use crate::error::Result;
+use crate::SOLO_USER_ID;
 use libsql::Connection;
 
 /// Run all pending migrations
@@ -249,9 +249,8 @@ async fn migrate_v3(conn: &Connection) -> Result<()> {
 async fn migrate_v4(conn: &Connection) -> Result<()> {
     conn.execute("BEGIN TRANSACTION", ()).await?;
 
-    let add_user_id = format!(
-        "ALTER TABLE notes ADD COLUMN user_id TEXT NOT NULL DEFAULT '{SOLO_USER_ID}'"
-    );
+    let add_user_id =
+        format!("ALTER TABLE notes ADD COLUMN user_id TEXT NOT NULL DEFAULT '{SOLO_USER_ID}'");
 
     let statements: [&str; 17] = [
         // 1. Drop old FTS triggers before touching notes.
@@ -438,7 +437,12 @@ mod tests {
         conn.execute(
             "INSERT INTO notes (id, content, created_at, updated_at, is_deleted)
              VALUES (?, ?, ?, ?, 0)",
-            libsql::params![live_id, "live content #tag", 1_699_999_000_000_i64, 1_699_999_500_000_i64],
+            libsql::params![
+                live_id,
+                "live content #tag",
+                1_699_999_000_000_i64,
+                1_699_999_500_000_i64
+            ],
         )
         .await
         .unwrap();
@@ -531,12 +535,9 @@ mod tests {
         assert_eq!(count, 1, "live note must appear in FTS");
 
         // Tombstoning removes it from FTS via the updated AU trigger.
-        conn.execute(
-            "UPDATE notes SET deleted_at = 2 WHERE id = ?",
-            [live_id],
-        )
-        .await
-        .unwrap();
+        conn.execute("UPDATE notes SET deleted_at = 2 WHERE id = ?", [live_id])
+            .await
+            .unwrap();
 
         let mut rows = conn
             .query(

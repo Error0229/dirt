@@ -1,13 +1,10 @@
 use std::env;
 
 use crate::cli::ConfigCommands;
-use crate::config_profiles::{CliProfile, CliProfilesConfig, normalize_text_option};
+use crate::config_profiles::{normalize_text_option, CliProfile, CliProfilesConfig};
 use crate::error::CliError;
 
-pub fn run_config(
-    command: ConfigCommands,
-    global_profile: Option<&str>,
-) -> Result<(), CliError> {
+pub fn run_config(command: ConfigCommands, global_profile: Option<&str>) -> Result<(), CliError> {
     match command {
         ConfigCommands::Init {
             profile,

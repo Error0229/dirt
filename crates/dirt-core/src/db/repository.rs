@@ -3,7 +3,7 @@
 #![allow(clippy::cast_possible_wrap)] // SQLite uses i64 for LIMIT/OFFSET
 
 use crate::error::{Error, Result};
-use crate::models::{Note, NoteId, Tag, TagId, extract_tags};
+use crate::models::{extract_tags, Note, NoteId, Tag, TagId};
 use libsql::Connection;
 
 /// Trait for note storage operations (async)
@@ -224,9 +224,7 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
     }
 
     async fn get(&self, id: &NoteId) -> Result<Option<Note>> {
-        let sql = format!(
-            "SELECT {NOTE_COLUMNS} FROM notes WHERE id = ? AND deleted_at IS NULL"
-        );
+        let sql = format!("SELECT {NOTE_COLUMNS} FROM notes WHERE id = ? AND deleted_at IS NULL");
         let mut rows = self.conn.query(&sql, [id.as_str()]).await?;
 
         if let Some(row) = rows.next().await? {
@@ -302,10 +300,7 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
         }
 
         self.conn
-            .execute(
-                "DELETE FROM note_tags WHERE note_id = ?",
-                [id.as_str()],
-            )
+            .execute("DELETE FROM note_tags WHERE note_id = ?", [id.as_str()])
             .await?;
 
         // The tombstone needs to reach the server too. Look up the
@@ -582,8 +577,8 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SOLO_USER_ID;
     use crate::db::Database;
+    use crate::SOLO_USER_ID;
 
     async fn setup() -> Database {
         Database::open_in_memory().await.unwrap()

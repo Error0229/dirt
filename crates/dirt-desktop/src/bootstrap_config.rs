@@ -4,7 +4,7 @@
 //! the desktop-specific `load_bootstrap_config` function that reads the
 //! embedded build-time JSON.
 
-pub use dirt_core::config::{BootstrapConfig, resolve_bootstrap_config};
+pub use dirt_core::config::{resolve_bootstrap_config, BootstrapConfig};
 
 /// Loads the generated desktop bootstrap JSON from `OUT_DIR`.
 pub fn load_bootstrap_config() -> BootstrapConfig {

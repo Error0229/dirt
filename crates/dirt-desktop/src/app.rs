@@ -9,24 +9,24 @@
 //! app launches. If either is missing or invalid, we surface a loud
 //! `SyncStatus::Error` instead of silently running offline.
 
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
-use dioxus::desktop::{LogicalPosition, LogicalSize, window};
+use dioxus::desktop::{window, LogicalPosition, LogicalSize};
 use dioxus::prelude::*;
 use dirt_core::models::Note;
 use dirt_core::sync::api_client::ApiClient;
 
-use crate::bootstrap_config::{BootstrapConfig, load_bootstrap_config, resolve_bootstrap_config};
+use crate::bootstrap_config::{load_bootstrap_config, resolve_bootstrap_config, BootstrapConfig};
 use crate::components::{QuickCapture, SettingsPanel};
 use crate::queries::use_notes_query;
 use crate::services::{
-    DatabaseService, SyncEvent, SyncWorkerHandle, TranscriptionService, spawn_sync_worker,
+    spawn_sync_worker, DatabaseService, SyncEvent, SyncWorkerHandle, TranscriptionService,
 };
 use crate::state::{AppState, SyncStatus};
-use crate::theme::{ResolvedTheme, resolve_theme};
-use crate::tray::{QUIT_REQUESTED, SHOW_MAIN_WINDOW, process_tray_events};
+use crate::theme::{resolve_theme, ResolvedTheme};
+use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
 use crate::views::Home;
 use crate::{HOTKEY_TRIGGERED, TRAY_ENABLED};
 
@@ -129,8 +129,7 @@ pub fn App() -> Element {
                     let bootstrap = bootstrap_config().unwrap_or_default();
                     match build_api_client(&bootstrap) {
                         Ok(api) => {
-                            let (tx, mut rx) =
-                                tokio::sync::mpsc::unbounded_channel::<SyncEvent>();
+                            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SyncEvent>();
                             let handle = spawn_sync_worker(db, Arc::new(api), tx);
                             sync_worker.set(Some(handle));
                             // Drain status events into UI signals.

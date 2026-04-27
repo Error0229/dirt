@@ -6,9 +6,9 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::thread;
 
-use dirt_core::Result;
 use dirt_core::models::Settings;
 use dirt_core::services::DatabaseService as CoreDatabaseService;
+use dirt_core::Result;
 
 /// Desktop database service preserving desktop path defaults.
 #[derive(Clone)]

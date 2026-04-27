@@ -5,17 +5,17 @@
 //! solo-phase `SOLO_USER_ID`. Server timestamps are always stamped from the
 //! handler's `now_ms()` — clients never drive `server_updated_at`.
 
-use axum::Json;
 use axum::extract::{Query, State};
-use base64::Engine;
+use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use dirt_core::SOLO_USER_ID;
+use base64::Engine;
 use dirt_core::models::NoteId;
+use dirt_core::SOLO_USER_ID;
 use serde::{Deserialize, Serialize};
 
-use crate::AppState;
 use crate::error::AppError;
-use crate::turso::{PULL_DEFAULT_LIMIT, PULL_MAX_LIMIT, PUSH_BATCH_LIMIT, PushNote};
+use crate::turso::{PushNote, PULL_DEFAULT_LIMIT, PULL_MAX_LIMIT, PUSH_BATCH_LIMIT};
+use crate::AppState;
 
 pub async fn healthz() -> &'static str {
     "ok"
@@ -69,10 +69,7 @@ pub async fn push_notes(
     for (idx, note) in body.notes.iter().enumerate() {
         seen.insert(note.id.clone(), idx);
     }
-    let mut ordered: Vec<&PushRequestNote> = seen
-        .values()
-        .map(|&idx| &body.notes[idx])
-        .collect();
+    let mut ordered: Vec<&PushRequestNote> = seen.values().map(|&idx| &body.notes[idx]).collect();
     // Keep output order stable on id for predictable test assertions.
     ordered.sort_by(|a, b| a.id.cmp(&b.id));
 
@@ -144,7 +141,10 @@ pub async fn pull_notes(
     Query(params): Query<PullQuery>,
 ) -> Result<Json<PullResponse>, AppError> {
     let (cursor_sua, cursor_id) = decode_cursor(params.cursor.as_deref())?;
-    let limit = params.limit.unwrap_or(PULL_DEFAULT_LIMIT).clamp(1, PULL_MAX_LIMIT);
+    let limit = params
+        .limit
+        .unwrap_or(PULL_DEFAULT_LIMIT)
+        .clamp(1, PULL_MAX_LIMIT);
 
     let rows = state
         .repo

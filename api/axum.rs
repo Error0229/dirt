@@ -13,16 +13,15 @@
 
 use std::sync::Arc;
 
-use dirt_api::{AppConfig, AppState, TursoRepo, build_router};
+use dirt_api::{build_router, AppConfig, AppState, TursoRepo};
 use tower::ServiceBuilder;
-use vercel_runtime::Error;
 use vercel_runtime::axum::VercelLayer;
+use vercel_runtime::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let config = Arc::new(
-        AppConfig::from_env()
-            .map_err(|e| Error::from(format!("failed to load config: {e}")))?,
+        AppConfig::from_env().map_err(|e| Error::from(format!("failed to load config: {e}")))?,
     );
     let repo = Arc::new(
         TursoRepo::connect(&config.turso_database_url, &config.turso_auth_token)

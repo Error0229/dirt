@@ -26,11 +26,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use dirt_core::SOLO_USER_ID;
 use dirt_core::sync::api_client::ApiClient;
 use dirt_core::sync::engine::SyncEngine;
-use tokio::sync::Notify;
+use dirt_core::SOLO_USER_ID;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::Notify;
 
 use crate::services::DatabaseService;
 use crate::state::SyncStatus;
@@ -158,8 +158,7 @@ fn backoff_for(consecutive_failures: u32) -> Duration {
     // First failure (n=1) → BACKOFF_SCHEDULE[0]; clamps at the last entry.
     let idx = consecutive_failures
         .saturating_sub(1)
-        .min(u32::try_from(BACKOFF_SCHEDULE.len() - 1).unwrap_or(u32::MAX))
-        as usize;
+        .min(u32::try_from(BACKOFF_SCHEDULE.len() - 1).unwrap_or(u32::MAX)) as usize;
     BACKOFF_SCHEDULE[idx]
 }
 
@@ -184,9 +183,7 @@ async fn sync_once(
             );
             let _ = events.send(SyncEvent::Status(SyncStatus::Synced));
             let _ = events.send(SyncEvent::Issue(None));
-            let _ = events.send(SyncEvent::LastSync(
-                chrono::Utc::now().timestamp_millis(),
-            ));
+            let _ = events.send(SyncEvent::LastSync(chrono::Utc::now().timestamp_millis()));
             SyncOutcome::Ok
         }
         Err(err) => {

@@ -10,12 +10,12 @@
 use std::env;
 use std::path::Path;
 
-use dirt_core::SOLO_USER_ID;
 use dirt_core::sync::api_client::ApiClient;
 use dirt_core::sync::engine::{SyncEngine, SyncReport};
+use dirt_core::SOLO_USER_ID;
 
 use crate::commands::common::open_database;
-use crate::config_profiles::{CliProfilesConfig, normalize_text_option};
+use crate::config_profiles::{normalize_text_option, CliProfilesConfig};
 use crate::error::CliError;
 
 pub async fn run_sync(db_path: &Path) -> Result<(), CliError> {

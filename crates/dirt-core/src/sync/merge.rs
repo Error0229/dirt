@@ -43,11 +43,7 @@ pub enum MergeAction {
 /// `updated_at`. A server-stamped timestamp is the only tie-break that's
 /// safe across devices whose wall clocks drift.
 #[must_use]
-pub fn resolve(
-    local: Option<&Note>,
-    remote: Option<&Note>,
-    is_dirty: bool,
-) -> MergeAction {
+pub fn resolve(local: Option<&Note>, remote: Option<&Note>, is_dirty: bool) -> MergeAction {
     let Some(remote) = remote else {
         // No remote row. Nothing to merge in.
         return MergeAction::Skip;
@@ -112,8 +108,8 @@ const fn remote_is_newer(local: &Note, remote: &Note) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SOLO_USER_ID;
     use crate::models::NoteId;
+    use crate::SOLO_USER_ID;
 
     fn note(id: &str, content: &str, sua: Option<i64>, deleted_at: Option<i64>) -> Note {
         Note {

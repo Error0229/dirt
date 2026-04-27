@@ -12,8 +12,8 @@ use axum::middleware::Next;
 use axum::response::Response;
 use subtle::ConstantTimeEq;
 
-use crate::AppState;
 use crate::error::AppError;
+use crate::AppState;
 
 const BEARER_PREFIX: &str = "Bearer ";
 
@@ -58,12 +58,12 @@ pub async fn require_bearer_token(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TursoRepo;
     use crate::config::{AppConfig, ServerToken};
+    use crate::TursoRepo;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use axum::routing::get;
-    use axum::{Router, middleware};
+    use axum::{middleware, Router};
     use std::sync::Arc;
     use tower::ServiceExt;
 
@@ -96,7 +96,12 @@ mod tests {
     async fn rejects_missing_header() {
         let router = build_test_router("abcdef1234567890");
         let resp = router
-            .oneshot(Request::builder().uri("/guarded").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/guarded")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);

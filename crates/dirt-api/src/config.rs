@@ -73,8 +73,8 @@ impl AppConfig {
 }
 
 fn require_env(key: &str) -> Result<String, AppError> {
-    let value = env::var(key)
-        .map_err(|_| AppError::config(format!("missing required env var: {key}")))?;
+    let value =
+        env::var(key).map_err(|_| AppError::config(format!("missing required env var: {key}")))?;
     if value.trim().is_empty() {
         return Err(AppError::config(format!("env var {key} must not be empty")));
     }

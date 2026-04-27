@@ -111,7 +111,6 @@ pub enum CompletionShell {
     Fish,
 }
 
-
 #[derive(Subcommand)]
 pub enum AuthCommands {
     /// Print connectivity status against the configured `dirt-api`.

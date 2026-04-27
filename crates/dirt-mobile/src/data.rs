@@ -140,5 +140,4 @@ mod tests {
         let notes = store.list_all_notes().await.unwrap();
         assert_eq!(notes.len(), 3);
     }
-
 }
