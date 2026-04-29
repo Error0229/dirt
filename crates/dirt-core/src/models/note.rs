@@ -14,6 +14,8 @@ fn tag_regex() -> &'static Regex {
 }
 use uuid::Uuid;
 
+use crate::SOLO_USER_ID;
+
 /// A unique identifier for a note, using UUID v7 (time-sortable)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NoteId(Uuid);
@@ -52,32 +54,45 @@ impl FromStr for NoteId {
     }
 }
 
-/// A note in the system
+/// A note in the system.
+///
+/// `updated_at` is the client's wall clock at the moment of a local mutation,
+/// kept as a hint for the UI (sorting, "edited X ago"). `server_updated_at`
+/// is the authoritative timestamp stamped by the server on accept; it drives
+/// pull cursors and conflict resolution. `deleted_at` doubles as a tombstone
+/// marker and the moment of deletion (replaces the prior `is_deleted` boolean).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Note {
     /// Unique identifier
     pub id: NoteId,
+    /// Owning tenant. Solo phase: always `SOLO_USER_ID`.
+    pub user_id: String,
     /// Plain text content
     pub content: String,
-    /// Creation timestamp (Unix ms)
+    /// Creation timestamp (Unix ms, client clock)
     pub created_at: i64,
-    /// Last update timestamp (Unix ms)
+    /// Last local update timestamp (Unix ms, client clock) — hint only
     pub updated_at: i64,
-    /// Soft delete flag for sync
-    pub is_deleted: bool,
+    /// Server-authoritative update timestamp (Unix ms). `None` until the note
+    /// has been successfully pushed or pulled.
+    pub server_updated_at: Option<i64>,
+    /// Tombstone timestamp (Unix ms). `None` = live note.
+    pub deleted_at: Option<i64>,
 }
 
 impl Note {
-    /// Create a new note with the given content
+    /// Create a new note with the given content, scoped to the solo-phase user.
     #[must_use]
     pub fn new(content: impl Into<String>) -> Self {
         let now = chrono::Utc::now().timestamp_millis();
         Self {
             id: NoteId::new(),
+            user_id: SOLO_USER_ID.to_string(),
             content: content.into(),
             created_at: now,
             updated_at: now,
-            is_deleted: false,
+            server_updated_at: None,
+            deleted_at: None,
         }
     }
 
@@ -103,6 +118,12 @@ impl Note {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.content.trim().is_empty()
+    }
+
+    /// True if this note has been tombstoned (locally or pulled as deleted).
+    #[must_use]
+    pub const fn is_deleted(&self) -> bool {
+        self.deleted_at.is_some()
     }
 }
 
@@ -152,9 +173,20 @@ mod tests {
     fn test_note_new() {
         let note = Note::new("Hello world");
         assert_eq!(note.content, "Hello world");
-        assert!(!note.is_deleted);
+        assert_eq!(note.user_id, SOLO_USER_ID);
+        assert!(!note.is_deleted());
+        assert!(note.deleted_at.is_none());
+        assert!(note.server_updated_at.is_none());
         assert!(note.created_at > 0);
         assert_eq!(note.created_at, note.updated_at);
+    }
+
+    #[test]
+    fn test_is_deleted_reflects_tombstone() {
+        let mut note = Note::new("Delete me");
+        assert!(!note.is_deleted());
+        note.deleted_at = Some(1_700_000_000_000);
+        assert!(note.is_deleted());
     }
 
     #[test]

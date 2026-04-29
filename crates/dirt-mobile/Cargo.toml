@@ -19,7 +19,6 @@ chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 dirs = "6"
-keyring-core = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 thiserror.workspace = true
 base64 = "0.22"
@@ -29,7 +28,6 @@ urlencoding = "2.1"
 [target.'cfg(target_os = "android")'.dependencies]
 dioxus = { workspace = true, features = ["mobile"] }
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
-android-native-keyring-store = "0.5"
 
 [build-dependencies]
 dotenvy = "0.15"

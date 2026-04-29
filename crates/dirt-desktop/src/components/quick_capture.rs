@@ -52,6 +52,7 @@ pub fn QuickCapture() -> Element {
                     Ok(note) => {
                         tracing::info!("Quick captured note: {}", note.id);
                         invalidate_notes_query().await;
+                        state.trigger_sync();
                     }
                     Err(e) => {
                         tracing::error!("Failed to create note: {}", e);

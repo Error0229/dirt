@@ -9,9 +9,7 @@ use dioxus::prelude::*;
 use dirt_core::models::{Note, NoteId, Settings};
 pub use dirt_core::state::SyncState as SyncStatus;
 
-use crate::services::{
-    AuthSession, DatabaseService, DesktopAuthService, MediaApiClient, TranscriptionService,
-};
+use crate::services::{DatabaseService, SyncWorkerHandle, TranscriptionService};
 use crate::theme::ResolvedTheme;
 
 /// Global application state
@@ -31,18 +29,12 @@ pub struct AppState {
     pub theme: Signal<ResolvedTheme>,
     /// Database service (wrapped in Arc for sharing)
     pub db_service: Signal<Option<Arc<DatabaseService>>>,
-    /// Auth service if cloud auth is configured
-    pub auth_service: Signal<Option<Arc<DesktopAuthService>>>,
-    /// Managed media API client, if configured
-    pub media_api_client: Signal<Option<Arc<MediaApiClient>>>,
     /// Optional transcription service.
     pub transcription_service: Signal<Option<Arc<TranscriptionService>>>,
-    /// Active auth session, if signed in
-    pub auth_session: Signal<Option<AuthSession>>,
-    /// Last auth initialization/sign-in error for UI display
-    pub auth_error: Signal<Option<String>>,
-    /// Monotonic reconnect trigger for db reinitialization flows.
-    pub db_reconnect_version: Signal<u64>,
+    /// Sync worker handle. `None` means sync is misconfigured and the
+    /// worker isn't running — the UI shows `sync_issue` so the user
+    /// notices instead of getting silent staleness.
+    pub sync_worker: Signal<Option<SyncWorkerHandle>>,
     /// Current sync status
     pub sync_status: Signal<SyncStatus>,
     /// Last sync subsystem error shown in settings diagnostics
@@ -75,6 +67,16 @@ impl AppState {
         if !pending_notes.contains(&note_id) {
             pending_notes.push(note_id);
             self.pending_sync_count.set(pending_notes.len());
+        }
+    }
+
+    /// Kick the sync worker so a pending mutation reaches the server
+    /// quickly. No-op when the worker isn't running (misconfigured
+    /// env). Mutation sites call this after a successful DB write so
+    /// the worker debounces local edits into a single sync cycle.
+    pub fn trigger_sync(&self) {
+        if let Some(handle) = (self.sync_worker)().as_ref() {
+            handle.trigger();
         }
     }
 }

@@ -2,13 +2,10 @@
 //!
 //! Quick capture from the terminal with minimal friction.
 
-mod auth;
-mod bootstrap_manifest;
 mod cli;
 mod commands;
 mod config_profiles;
 mod error;
-mod managed_sync;
 #[cfg(test)]
 mod tests;
 
@@ -16,7 +13,7 @@ use std::env;
 
 use clap::{CommandFactory, Parser};
 
-use crate::cli::{Cli, Commands, SyncCommands};
+use crate::cli::{Cli, Commands};
 use crate::error::CliError;
 
 #[tokio::main]
@@ -58,17 +55,12 @@ async fn run() -> Result<(), CliError> {
         Some(Commands::Completions { shell, output }) => {
             commands::completions::run_completions(shell, output.as_deref())?;
         }
-        Some(Commands::Sync { command }) => match command {
-            Some(SyncCommands::Conflicts { limit, json }) => {
-                commands::sync::run_sync_conflicts(limit, json, &db_path).await?;
-            }
-            None => commands::sync::run_sync(&db_path).await?,
-        },
+        Some(Commands::Sync) => commands::sync::run_sync(&db_path).await?,
         Some(Commands::Config { command }) => {
-            commands::config::run_config(command, global_profile.as_deref()).await?;
+            commands::config::run_config(command, global_profile.as_deref())?;
         }
         Some(Commands::Auth { command }) => {
-            commands::auth_cmd::run_auth(command, global_profile.as_deref()).await?;
+            commands::auth_cmd::run_auth(command).await?;
         }
         Some(Commands::Tui) => {
             println!("Opening TUI...");

@@ -22,12 +22,16 @@ pub fn create_note_optimistic(state: &mut AppState) {
 
     // Persist in background
     let db = state.db_service.read().clone();
+    let worker = state.sync_worker.read().clone();
     spawn(async move {
         if let Some(db) = db {
             if let Err(e) = db.create_note_with_id(&optimistic_note).await {
                 tracing::error!("Failed to persist note: {}", e);
             } else {
                 invalidate_notes_query().await;
+                if let Some(worker) = worker {
+                    worker.trigger();
+                }
             }
         }
     });
@@ -50,12 +54,18 @@ pub fn delete_note_optimistic(state: &mut AppState, note_id: NoteId) {
     tracing::info!("Deleted note (optimistic): {}", note_id);
 
     let db = state.db_service.read().clone();
+    let worker = state.sync_worker.read().clone();
     spawn(async move {
         if let Some(db) = db {
             if let Err(e) = db.delete_note(&note_id).await {
                 tracing::error!("Failed to persist delete: {}", e);
+            } else if let Some(worker) = worker {
+                // Push the tombstone now so other devices see the
+                // delete promptly. Sync trigger only fires on success;
+                // a failed delete has nothing to push.
+                worker.trigger();
             }
-            // Always re-sync: on success to confirm, on failure to rollback the optimistic removal
+            // Always re-sync the query: on success to confirm, on failure to rollback the optimistic removal.
             invalidate_notes_query().await;
         }
     });

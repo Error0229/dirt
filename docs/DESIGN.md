@@ -3,8 +3,17 @@
 > "Do I Remember That?" - A cross-platform app for capturing fleeting thoughts.
 
 **Version**: 0.1.0 (Pre-release)
-**Last Updated**: 2026-02-11
 **Status**: Active Development
+
+> **Note** — Phase 1 of the architecture (Supabase teardown, bearer-authed
+> `dirt-api`, no embedded replicas, no R2) is the current shipping shape.
+> The Phase 1 contract lives in [BACKEND_API.md](./BACKEND_API.md) and
+> [DEPLOY.md](./DEPLOY.md); the top-level [../README.md](../README.md)
+> is the entry point. The Tech Stack and Architecture sections below
+> have been updated to match. The Feature Roadmap further down is
+> historical/aspirational and references infrastructure that no longer
+> exists (Supabase Auth, embedded replicas, R2). Treat that section as
+> a record of past plans, not the current truth.
 
 ---
 
@@ -49,63 +58,80 @@ Ideas flash in the mind and disappear. The friction of opening an app, finding t
 
 ## Tech Stack
 
-| Layer | Technology | Version | Rationale |
-|-------|------------|---------|-----------|
-| **Desktop/Mobile UI** | Dioxus | 0.7.x | Native Rust, shared UI model/components with core logic |
-| **CLI** | Ratatui + clap | latest | Pure Rust, shares data layer with GUI |
-| **Local Storage** | SQLite (libSQL local file) | latest | Proven, portable, offline foundation with embedded replica support |
-| **Sync Layer** | Turso Embedded Replicas | latest | Native libSQL sync, Rust-first |
-| **Backend DB** | Turso (libSQL) | latest | Edge SQLite, embedded replicas |
-| **Backend API** | Dirt API (token broker + media signing) | latest | Keeps long-lived secrets off clients; mints short-lived tokens and presigned URLs |
-| **Media Storage** | Cloudflare R2 | - | Zero egress fees, S3-compatible |
-| **Auth** | Supabase Auth | latest | Email/password auth with JWT sessions |
+| Layer | Technology | Rationale |
+|-------|------------|-----------|
+| **Desktop/Mobile UI** | Dioxus 0.7 | Native Rust, shared models/sync logic across GUI + CLI |
+| **CLI** | clap | Same Rust crate set as the GUI |
+| **Local Storage** | libSQL (SQLite local file) | Proven, portable, offline foundation |
+| **Sync** | HTTP push/pull to `dirt-api` | Bearer-authed, server-stamped timestamps, opaque cursors. Replaces Turso embedded replicas. |
+| **Server** | axum, behind Vercel's Rust runtime | Single small binary; cold-starts in ~500 ms |
+| **Server DB** | Turso (libSQL) | Same database engine as the client; the server is just an authoritative push/pull endpoint |
+| **Auth (Phase 1)** | Shared bearer token (`DIRT_SERVER_TOKEN` ↔ `DIRT_CLIENT_TOKEN`) | Solo-phase only; Phase 2 replaces with magic-link sessions |
 
 ### Why This Stack?
 
-- **Dioxus over Tauri**: Full Rust enables sharing models, sync logic, and utilities between GUI and CLI. Single language, single build system.
-- **Turso Embedded Replicas over PowerSync**: PowerSync has no Rust SDK and doesn't support Turso as a backend. Turso's native embedded replicas provide local SQLite reads with microsecond latency, automatic background sync to cloud, and offline capability—all with first-class Rust support via the `libsql` crate.
-- **Turso over raw Postgres**: SQLite everywhere means same queries work locally and in cloud. Embedded replicas for edge performance.
-- **Backend token broker for production clients**: Desktop/mobile apps should ship only public bootstrap config (Supabase URL, anon key, API endpoint). Long-lived Turso/R2 credentials remain server-side.
+- **Dioxus over Tauri**: full Rust enables sharing models, sync logic, and the merge resolver between GUI and CLI.
+- **Turso (server-side only) over raw Postgres**: SQLite-flavored libSQL on both ends means migrations, queries, and types are uniform.
+- **HTTP push/pull over Turso embedded replicas**: the embedded-replica path required minting short-lived per-user Turso tokens via Supabase JWT exchange. Phase 1 cuts that whole stack — the server holds the only Turso credential, clients only know about `dirt-api`.
+- **No long-lived secrets in client binaries**: `DIRT_CLIENT_TOKEN` is read from the runtime env, never baked into a shipped artifact.
 
 ---
 
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        User Interfaces                          │
-├─────────────┬─────────────┬─────────────┬─────────────┬────────┤
-│   Desktop   │   Android   │     iOS     │     CLI     │   TUI  │
-│  (Dioxus)   │  (Dioxus)   │  (Dioxus)   │   (clap)    │(ratatui)│
-└──────┬──────┴──────┬──────┴──────┬──────┴──────┬──────┴───┬────┘
-       │             │             │             │          │
-       └─────────────┴──────┬──────┴─────────────┴──────────┘
-                            │
-                    ┌───────▼───────┐
-                    │   dirt-core   │  ← Shared Rust library
-                    │  (lib crate)  │
-                    ├───────────────┤
-                    │ • Note CRUD   │
-                    │ • Search      │
-                    │ • Tag mgmt    │
-                    │ • Sync logic  │
-                    │ • Config      │
-                    └───────┬───────┘
-                            │
-              ┌─────────────┼─────────────┐
-              │             │             │
-       ┌──────▼──────┐            ┌──────▼──────┐
-       │   libSQL    │            │ Cloudflare  │
-       │  (local +   │◄──sync───► │     R2      │
-       │  embedded   │            │  (media)    │
-       │  replica)   │            └─────────────┘
-       └──────┬──────┘
-              │
-         ┌────▼────┐
-         │  Turso  │
-         │ (cloud) │
-         └─────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                       User Interfaces                        │
+├─────────────┬──────────────────────┬─────────────────────────┤
+│   Desktop   │       Android        │           CLI           │
+│  (Dioxus)   │      (Dioxus)        │         (clap)          │
+└──────┬──────┴──────────┬───────────┴───────────┬─────────────┘
+       │                 │                       │
+       └─────────────────┴───────────────────────┘
+                                │
+                        ┌───────▼───────┐
+                        │   dirt-core   │  ← Shared Rust library
+                        │  (lib crate)  │
+                        ├───────────────┤
+                        │ • Note CRUD   │
+                        │ • Search      │
+                        │ • Tag mgmt    │
+                        │ • Migrations  │
+                        │ • SyncEngine  │
+                        │ • merge       │
+                        │ • ApiClient   │
+                        └───────┬───────┘
+                                │
+                                │   reads/writes
+                                ▼
+                       ┌────────────────┐
+                       │  libSQL local  │
+                       │  SQLite file   │
+                       └────────────────┘
+
+                            ┌──────────────────────────┐
+                            │       sync triggers      │
+                            │  (startup / 30s / kick)  │
+                            └────────────┬─────────────┘
+                                         │
+                                         ▼
+                       SyncEngine ─── HTTPS ───▶  dirt-api
+                       run_once()                 (axum on Vercel)
+                                                       │
+                                                       ▼
+                                                  libsql remote
+                                                       │
+                                                       ▼
+                                                  Turso (cloud)
 ```
+
+The sync path is one-way HTTPS in each direction:
+**push** = client→server upload of locally-mutated rows;
+**pull** = client←server fetch of newer-than-cursor rows. There is no
+embedded replica anywhere — the local SQLite file is just the local
+SQLite file. `dirt-api` is the only thing that holds Turso
+credentials; clients only ever see the `dirt-api` URL and a bearer
+token.
 
 ### Crate Structure
 

@@ -1,496 +1,266 @@
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+//! HTTP handlers for `/healthz`, `/v1/notes/push`, `/v1/notes/pull`.
+//!
+//! The bearer-token middleware runs before the push/pull handlers; here we
+//! trust the request is authorized and every accepted note maps to the
+//! solo-phase `SOLO_USER_ID`. Server timestamps are always stamped from the
+//! handler's `now_ms()` — clients never drive `server_updated_at`.
 
-use axum::extract::{Query, Request, State};
-use axum::http::header::{self, HeaderValue};
-use axum::http::{HeaderMap, StatusCode};
-use axum::middleware::{self, Next};
-use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{Extension, Json, Router};
-use chrono::Utc;
+use axum::extract::{Query, State};
+use axum::Json;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use dirt_core::models::NoteId;
+use dirt_core::SOLO_USER_ID;
 use serde::{Deserialize, Serialize};
-use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::TraceLayer;
 
-use crate::auth::{extract_bearer_token, AuthenticatedUser, SupabaseJwtVerifier};
-use crate::config::AppConfig;
 use crate::error::AppError;
-use crate::media::{PresignedOperation, R2PresignService};
-use crate::rate_limit::{EndpointRateLimiter, ProtectedEndpoint, RateLimitMetricsSnapshot};
-use crate::turso::{MintedSyncToken, TursoTokenBroker};
+use crate::turso::{PushNote, PULL_DEFAULT_LIMIT, PULL_MAX_LIMIT, PUSH_BATCH_LIMIT};
+use crate::AppState;
 
-const BOOTSTRAP_SCHEMA_VERSION: u32 = 1;
+/// Per-note content cap.
+///
+/// The push body limit (`PUSH_BODY_LIMIT`, 8 MiB) already bounds total
+/// payload, but a single oversized note can still fill Turso while
+/// staying under the body limit. 64 KiB is comfortably above any
+/// human-typed quick capture and well under the cell-level `SQLite`
+/// default.
+const MAX_NOTE_CONTENT_BYTES: usize = 64 * 1024;
 
-#[derive(Clone)]
-pub struct AppState {
-    pub config: Arc<AppConfig>,
-    jwt_verifier: Arc<SupabaseJwtVerifier>,
-    turso_broker: Arc<TursoTokenBroker>,
-    r2_presign: Option<Arc<R2PresignService>>,
-    endpoint_rate_limiter: Arc<EndpointRateLimiter>,
+pub async fn healthz() -> &'static str {
+    "ok"
 }
 
-impl AppState {
-    pub fn from_config(config: Arc<AppConfig>) -> Self {
-        Self {
-            jwt_verifier: Arc::new(SupabaseJwtVerifier::new(config.clone())),
-            turso_broker: Arc::new(TursoTokenBroker::new(config.clone())),
-            r2_presign: R2PresignService::from_config(&config).map(Arc::new),
-            endpoint_rate_limiter: Arc::new(EndpointRateLimiter::from_config(config.as_ref())),
-            config,
+// ---- POST /v1/notes/push ----
+
+#[derive(Debug, Deserialize)]
+pub struct PushRequest {
+    pub notes: Vec<PushRequestNote>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PushRequestNote {
+    pub id: String,
+    pub content: String,
+    pub created_at_ms: i64,
+    pub client_updated_at_ms: i64,
+    #[serde(default)]
+    pub deleted_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PushResponse {
+    pub results: Vec<PushResult>,
+    pub server_time_ms: i64,
+}
+
+/// Per-note outcome stamped by the server.
+///
+/// Presence of an entry here means the server accepted and committed
+/// the note. There is no per-note rejection signal: the whole batch
+/// either succeeds with every id stamped, or the request fails with a
+/// 4xx/5xx and the client retries.
+#[derive(Debug, Serialize)]
+pub struct PushResult {
+    pub id: String,
+    pub server_updated_at_ms: i64,
+}
+
+pub async fn push_notes(
+    State(state): State<AppState>,
+    Json(body): Json<PushRequest>,
+) -> Result<Json<PushResponse>, AppError> {
+    if body.notes.len() > PUSH_BATCH_LIMIT {
+        return Err(AppError::batch_too_large(format!(
+            "batch has {} notes; limit is {PUSH_BATCH_LIMIT}",
+            body.notes.len()
+        )));
+    }
+
+    for note in &body.notes {
+        if note.content.len() > MAX_NOTE_CONTENT_BYTES {
+            return Err(AppError::bad_request(format!(
+                "note {} content exceeds {MAX_NOTE_CONTENT_BYTES} bytes",
+                note.id
+            )));
         }
     }
+
+    // Collapse intra-batch duplicates to the last occurrence so we apply
+    // each id exactly once. The spec documents this as "last-occurrence
+    // wins within a batch".
+    let mut seen = std::collections::HashMap::<String, usize>::new();
+    for (idx, note) in body.notes.iter().enumerate() {
+        seen.insert(note.id.clone(), idx);
+    }
+    let mut ordered: Vec<&PushRequestNote> = seen.values().map(|&idx| &body.notes[idx]).collect();
+    // Keep output order stable on id for predictable test assertions.
+    ordered.sort_by(|a, b| a.id.cmp(&b.id));
+
+    let server_now_ms = now_ms();
+    let mut results = Vec::with_capacity(ordered.len());
+
+    for note in ordered {
+        let id = note
+            .id
+            .parse::<NoteId>()
+            .map_err(|_| AppError::bad_request(format!("invalid note id: {}", note.id)))?;
+
+        let push_note = PushNote {
+            id: &id,
+            content: note.content.as_str(),
+            created_at_ms: note.created_at_ms,
+            client_updated_at_ms: note.client_updated_at_ms,
+            deleted_at_ms: note.deleted_at_ms,
+        };
+
+        let stamped = state
+            .repo
+            .upsert(SOLO_USER_ID, &push_note, server_now_ms)
+            .await?;
+
+        results.push(PushResult {
+            id: note.id.clone(),
+            server_updated_at_ms: stamped,
+        });
+    }
+
+    Ok(Json(PushResponse {
+        results,
+        server_time_ms: server_now_ms,
+    }))
 }
 
-pub fn app_router(state: AppState) -> Router {
-    let protected_routes = Router::new()
-        .route("/sync/token", post(mint_sync_token))
-        .route("/media/presign/upload", post(presign_upload))
-        .route("/media/presign/download", get(presign_download))
-        .route("/media/presign/delete", post(presign_delete))
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
+// ---- GET /v1/notes/pull?cursor=...&limit=... ----
 
-    Router::new()
-        .route("/healthz", get(healthz))
-        .route("/v1/bootstrap", get(bootstrap_manifest))
-        .nest("/v1", protected_routes)
-        .layer(TraceLayer::new_for_http())
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_headers(Any)
-                .allow_methods(Any),
-        )
-        .with_state(state)
+#[derive(Debug, Deserialize)]
+pub struct PullQuery {
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    timestamp: i64,
-    rate_limit: RateLimitMetricsSnapshot,
+pub struct PullResponse {
+    pub notes: Vec<PullNote>,
+    pub server_time_ms: i64,
+    pub has_more: bool,
+    pub next_cursor: Option<String>,
 }
 
-async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "ok",
-        timestamp: Utc::now().timestamp(),
-        rate_limit: state.endpoint_rate_limiter.metrics_snapshot(),
+#[derive(Debug, Serialize)]
+pub struct PullNote {
+    pub id: String,
+    pub content: String,
+    pub created_at_ms: i64,
+    pub client_updated_at_ms: i64,
+    pub server_updated_at_ms: i64,
+    pub deleted_at_ms: Option<i64>,
+}
+
+pub async fn pull_notes(
+    State(state): State<AppState>,
+    Query(params): Query<PullQuery>,
+) -> Result<Json<PullResponse>, AppError> {
+    let (cursor_sua, cursor_id) = decode_cursor(params.cursor.as_deref())?;
+    let limit = params
+        .limit
+        .unwrap_or(PULL_DEFAULT_LIMIT)
+        .clamp(1, PULL_MAX_LIMIT);
+
+    // Fetch one extra row as a probe so `has_more` is exactly correct
+    // even on an exact page-boundary multiple. Without this, a client
+    // whose total note count is a multiple of `limit` makes one extra
+    // empty round-trip per sync cycle.
+    let probe_limit = limit.saturating_add(1);
+    let mut rows = state
+        .repo
+        .pull_page(SOLO_USER_ID, cursor_sua, cursor_id.as_deref(), probe_limit)
+        .await?;
+
+    let has_more = rows.len() > limit;
+    if has_more {
+        rows.truncate(limit);
+    }
+    let next_cursor = rows
+        .last()
+        .and_then(|note| note.server_updated_at.map(|sua| (sua, note.id.to_string())))
+        .map(|(sua, id)| encode_cursor(sua, &id));
+
+    let notes = rows
+        .into_iter()
+        .map(|note| PullNote {
+            id: note.id.to_string(),
+            content: note.content,
+            created_at_ms: note.created_at,
+            client_updated_at_ms: note.updated_at,
+            server_updated_at_ms: note.server_updated_at.unwrap_or_default(),
+            deleted_at_ms: note.deleted_at,
+        })
+        .collect();
+
+    Ok(Json(PullResponse {
+        notes,
+        server_time_ms: now_ms(),
+        has_more,
+        next_cursor,
+    }))
+}
+
+// ---- Cursor codec ----
+
+#[derive(Serialize, Deserialize)]
+struct CursorBody {
+    sua: i64,
+    id: String,
+}
+
+fn decode_cursor(raw: Option<&str>) -> Result<(i64, Option<String>), AppError> {
+    let Some(raw) = raw else {
+        return Ok((0, None));
+    };
+    let bytes = URL_SAFE_NO_PAD
+        .decode(raw.trim())
+        .map_err(|_| AppError::bad_request("cursor is not valid base64url"))?;
+    let body: CursorBody = serde_json::from_slice(&bytes)
+        .map_err(|_| AppError::bad_request("cursor payload is not valid JSON"))?;
+    Ok((body.sua, Some(body.id)))
+}
+
+fn encode_cursor(sua: i64, id: &str) -> String {
+    let json = serde_json::to_vec(&CursorBody {
+        sua,
+        id: id.to_string(),
     })
+    .expect("CursorBody is always serializable");
+    URL_SAFE_NO_PAD.encode(json)
 }
 
-#[derive(Debug, Serialize)]
-struct BootstrapFeatureFlags {
-    managed_sync: bool,
-    managed_media: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct BootstrapManifest {
-    schema_version: u32,
-    manifest_version: String,
-    supabase_url: String,
-    supabase_anon_key: String,
-    api_base_url: String,
-    turso_sync_token_endpoint: String,
-    feature_flags: BootstrapFeatureFlags,
-}
-
-async fn bootstrap_manifest(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Response, AppError> {
-    let api_base_url = resolve_public_api_base_url(state.config.as_ref(), &headers);
-    let manifest = BootstrapManifest {
-        schema_version: BOOTSTRAP_SCHEMA_VERSION,
-        manifest_version: state.config.bootstrap_manifest_version.clone(),
-        supabase_url: state.config.supabase_url.clone(),
-        supabase_anon_key: state.config.supabase_anon_key.clone(),
-        turso_sync_token_endpoint: format!("{api_base_url}/v1/sync/token"),
-        api_base_url,
-        feature_flags: BootstrapFeatureFlags {
-            managed_sync: true,
-            managed_media: state.r2_presign.is_some(),
-        },
-    };
-
-    let payload = serde_json::to_vec(&manifest).map_err(|error| {
-        AppError::internal(format!("Failed to serialize bootstrap manifest: {error}"))
-    })?;
-    let etag = build_etag(&payload);
-    if if_none_match_hit(headers.get(header::IF_NONE_MATCH), &etag) {
-        let mut response = StatusCode::NOT_MODIFIED.into_response();
-        apply_bootstrap_cache_headers(
-            response.headers_mut(),
-            &etag,
-            state.config.bootstrap_cache_max_age_secs,
-        );
-        return Ok(response);
-    }
-
-    let mut response = (StatusCode::OK, payload).into_response();
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
-    apply_bootstrap_cache_headers(
-        response.headers_mut(),
-        &etag,
-        state.config.bootstrap_cache_max_age_secs,
-    );
-    Ok(response)
-}
-
-fn resolve_public_api_base_url(config: &AppConfig, request_headers: &HeaderMap) -> String {
-    config
-        .bootstrap_public_api_base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.trim_end_matches('/').to_string())
-        .or_else(|| resolve_public_url_from_request_headers(request_headers))
-        .unwrap_or_else(|| format!("http://{}", config.bind_addr.trim_end_matches('/')))
-}
-
-fn resolve_public_url_from_request_headers(headers: &HeaderMap) -> Option<String> {
-    let host = extract_first_header_value(headers, "x-forwarded-host")
-        .or_else(|| extract_first_header_value(headers, header::HOST.as_str()))?;
-    let proto = extract_first_header_value(headers, "x-forwarded-proto")
-        .unwrap_or_else(|| "http".to_string());
-    Some(
-        format!("{}://{}", proto.trim(), host.trim())
-            .trim_end_matches('/')
-            .to_string(),
-    )
-}
-
-fn extract_first_header_value(headers: &HeaderMap, name: &str) -> Option<String> {
-    let raw = headers.get(name)?.to_str().ok()?;
-    raw.split(',')
-        .map(str::trim)
-        .find(|value| !value.is_empty())
-        .map(std::string::ToString::to_string)
-}
-
-fn build_etag(payload: &[u8]) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    payload.hash(&mut hasher);
-    format!("W/\"{:016x}\"", hasher.finish())
-}
-
-fn if_none_match_hit(header_value: Option<&HeaderValue>, etag: &str) -> bool {
-    let Some(header_value) = header_value else {
-        return false;
-    };
-    let Ok(raw) = header_value.to_str() else {
-        return false;
-    };
-    raw.split(',')
-        .map(str::trim)
-        .any(|candidate| candidate == "*" || candidate == etag)
-}
-
-fn apply_bootstrap_cache_headers(headers: &mut HeaderMap, etag: &str, max_age_secs: u64) {
-    if let Ok(value) = HeaderValue::from_str(etag) {
-        headers.insert(header::ETAG, value);
-    }
-
-    let cache_control = format!("public, max-age={max_age_secs}, must-revalidate");
-    if let Ok(value) = HeaderValue::from_str(&cache_control) {
-        headers.insert(header::CACHE_CONTROL, value);
-    }
-}
-
-async fn require_auth(
-    State(state): State<AppState>,
-    mut request: Request,
-    next: Next,
-) -> Result<Response, AppError> {
-    let token = extract_bearer_token(request.headers())?;
-    let user = state.jwt_verifier.verify_access_token(token).await?;
-    request.extensions_mut().insert(user);
-    Ok(next.run(request).await)
-}
-
-async fn mint_sync_token(
-    State(state): State<AppState>,
-    Extension(user): Extension<AuthenticatedUser>,
-) -> Result<Json<MintedSyncToken>, AppError> {
-    state
-        .endpoint_rate_limiter
-        .check(ProtectedEndpoint::SyncToken, &user.user_id)
-        .await?;
-
-    let user_hash = user_fingerprint(&user.user_id);
-    let token = state.turso_broker.mint_sync_token(&user.user_id).await?;
-    tracing::info!(
-        endpoint = "sync_token",
-        user = user_hash,
-        session = user.session_id.as_deref().unwrap_or("none"),
-        expires_at = token.expires_at,
-        "Issued managed sync token"
-    );
-    Ok(Json(token))
-}
-
-#[derive(Debug, Deserialize)]
-struct UploadPresignRequest {
-    object_key: String,
-    content_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DeletePresignRequest {
-    object_key: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct DownloadPresignQuery {
-    object_key: String,
-}
-
-#[derive(Debug, Serialize)]
-struct PresignResponse {
-    operation: PresignedOperation,
-}
-
-async fn presign_upload(
-    State(state): State<AppState>,
-    Extension(user): Extension<AuthenticatedUser>,
-    Json(request): Json<UploadPresignRequest>,
-) -> Result<Json<PresignResponse>, AppError> {
-    state
-        .endpoint_rate_limiter
-        .check(ProtectedEndpoint::MediaPresign, &user.user_id)
-        .await?;
-
-    let user_hash = user_fingerprint(&user.user_id);
-    let signer = state.r2_presign.as_ref().ok_or_else(|| {
-        AppError::Config("R2 presign service is not configured on the backend".to_string())
-    })?;
-    let operation = signer
-        .presign_upload(&request.object_key, request.content_type.as_deref())
-        .await?;
-    tracing::info!(
-        endpoint = "media_presign_upload",
-        user = user_hash,
-        object_key_len = request.object_key.len(),
-        "Issued presigned upload URL"
-    );
-    Ok(Json(PresignResponse { operation }))
-}
-
-async fn presign_download(
-    State(state): State<AppState>,
-    Extension(user): Extension<AuthenticatedUser>,
-    Query(query): Query<DownloadPresignQuery>,
-) -> Result<Json<PresignResponse>, AppError> {
-    state
-        .endpoint_rate_limiter
-        .check(ProtectedEndpoint::MediaPresign, &user.user_id)
-        .await?;
-
-    let user_hash = user_fingerprint(&user.user_id);
-    let signer = state.r2_presign.as_ref().ok_or_else(|| {
-        AppError::Config("R2 presign service is not configured on the backend".to_string())
-    })?;
-    let operation = signer.presign_download(&query.object_key).await?;
-    tracing::info!(
-        endpoint = "media_presign_download",
-        user = user_hash,
-        object_key_len = query.object_key.len(),
-        "Issued presigned download URL"
-    );
-    Ok(Json(PresignResponse { operation }))
-}
-
-async fn presign_delete(
-    State(state): State<AppState>,
-    Extension(user): Extension<AuthenticatedUser>,
-    Json(request): Json<DeletePresignRequest>,
-) -> Result<Json<PresignResponse>, AppError> {
-    state
-        .endpoint_rate_limiter
-        .check(ProtectedEndpoint::MediaPresign, &user.user_id)
-        .await?;
-
-    let user_hash = user_fingerprint(&user.user_id);
-    let signer = state.r2_presign.as_ref().ok_or_else(|| {
-        AppError::Config("R2 presign service is not configured on the backend".to_string())
-    })?;
-    let operation = signer.presign_delete(&request.object_key).await?;
-    tracing::info!(
-        endpoint = "media_presign_delete",
-        user = user_hash,
-        object_key_len = request.object_key.len(),
-        "Issued presigned delete URL"
-    );
-    Ok(Json(PresignResponse { operation }))
-}
-
-fn user_fingerprint(user_id: &str) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    user_id.hash(&mut hasher);
-    hasher.finish()
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    use axum::body::to_bytes;
-    use axum::http::header;
-    use axum::http::HeaderMap;
-
     use super::*;
-    use crate::config::{AppConfig, R2RuntimeConfig};
 
-    fn test_config() -> AppConfig {
-        AppConfig {
-            bind_addr: "127.0.0.1:8080".to_string(),
-            supabase_url: "https://example.supabase.co".to_string(),
-            supabase_anon_key: "public-anon".to_string(),
-            supabase_jwks_url: "https://example.supabase.co/auth/v1/.well-known/jwks.json"
-                .to_string(),
-            supabase_jwt_issuer: "https://example.supabase.co/auth/v1".to_string(),
-            supabase_jwt_audience: "authenticated".to_string(),
-            jwks_cache_ttl: Duration::from_secs(300),
-            bootstrap_manifest_version: "v1".to_string(),
-            bootstrap_cache_max_age_secs: 300,
-            bootstrap_public_api_base_url: Some("https://api.example.com".to_string()),
-            turso_api_url: "https://api.turso.tech".to_string(),
-            turso_organization_slug: "org".to_string(),
-            turso_database_name: "db".to_string(),
-            turso_database_url: "libsql://db.turso.io".to_string(),
-            turso_platform_api_token: Some("secret".to_string()),
-            turso_static_auth_token: None,
-            turso_token_ttl: Duration::from_secs(900),
-            media_url_ttl: Duration::from_secs(600),
-            auth_clock_skew: Duration::from_secs(60),
-            rate_limit_window: Duration::from_secs(60),
-            sync_token_rate_limit_per_window: 20,
-            media_presign_rate_limit_per_window: 120,
-            r2: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn bootstrap_manifest_returns_schema_and_cache_headers() {
-        let state = AppState::from_config(Arc::new(test_config()));
-        let response = bootstrap_manifest(State(state), HeaderMap::new())
-            .await
-            .expect("bootstrap response");
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let headers = response.headers();
-        assert!(headers.contains_key(header::ETAG));
-        assert_eq!(
-            headers
-                .get(header::CACHE_CONTROL)
-                .and_then(|value| value.to_str().ok()),
-            Some("public, max-age=300, must-revalidate")
-        );
-
-        let body_bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("read body");
-        let payload: serde_json::Value =
-            serde_json::from_slice(&body_bytes).expect("valid bootstrap JSON");
-        assert_eq!(
-            payload
-                .get("schema_version")
-                .and_then(serde_json::Value::as_u64),
-            Some(1)
-        );
-        assert_eq!(
-            payload
-                .get("turso_sync_token_endpoint")
-                .and_then(|v| v.as_str()),
-            Some("https://api.example.com/v1/sync/token")
-        );
-    }
-
-    #[tokio::test]
-    async fn bootstrap_manifest_supports_if_none_match() {
-        let state = AppState::from_config(Arc::new(test_config()));
-        let first = bootstrap_manifest(State(state.clone()), HeaderMap::new())
-            .await
-            .expect("bootstrap response");
-        let etag = first
-            .headers()
-            .get(header::ETAG)
-            .and_then(|value| value.to_str().ok())
-            .expect("etag header")
-            .to_string();
-
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::IF_NONE_MATCH,
-            HeaderValue::from_str(&etag).expect("valid etag"),
-        );
-        let second = bootstrap_manifest(State(state), headers)
-            .await
-            .expect("304 response");
-        assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+    #[test]
+    fn cursor_roundtrip() {
+        let encoded = encode_cursor(1_700_000_000_000, "01932aaa-0000-7000-8000-000000000001");
+        let (sua, id) = decode_cursor(Some(&encoded)).unwrap();
+        assert_eq!(sua, 1_700_000_000_000);
+        assert_eq!(id.as_deref(), Some("01932aaa-0000-7000-8000-000000000001"));
     }
 
     #[test]
-    fn resolve_public_api_base_url_falls_back_to_bind_addr() {
-        let mut config = test_config();
-        config.bootstrap_public_api_base_url = None;
-        config.bind_addr = "0.0.0.0:9999".to_string();
-        assert_eq!(
-            resolve_public_api_base_url(&config, &HeaderMap::new()),
-            "http://0.0.0.0:9999".to_string()
-        );
+    fn cursor_none_decodes_to_zero() {
+        let (sua, id) = decode_cursor(None).unwrap();
+        assert_eq!(sua, 0);
+        assert!(id.is_none());
     }
 
     #[test]
-    fn resolve_public_api_base_url_uses_forwarded_headers_when_available() {
-        let mut config = test_config();
-        config.bootstrap_public_api_base_url = None;
-        config.bind_addr = "0.0.0.0:9999".to_string();
-
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-forwarded-host",
-            HeaderValue::from_static("api.example.com"),
-        );
-        headers.insert("x-forwarded-proto", HeaderValue::from_static("https"));
-
-        assert_eq!(
-            resolve_public_api_base_url(&config, &headers),
-            "https://api.example.com".to_string()
-        );
-    }
-
-    #[test]
-    fn resolve_public_api_base_url_uses_host_header_when_forwarded_host_missing() {
-        let mut config = test_config();
-        config.bootstrap_public_api_base_url = None;
-        config.bind_addr = "0.0.0.0:9999".to_string();
-
-        let mut headers = HeaderMap::new();
-        headers.insert(header::HOST, HeaderValue::from_static("localhost:8080"));
-
-        assert_eq!(
-            resolve_public_api_base_url(&config, &headers),
-            "http://localhost:8080".to_string()
-        );
-    }
-
-    #[test]
-    fn managed_media_feature_reflects_r2_config() {
-        let mut config = test_config();
-        config.r2 = Some(R2RuntimeConfig {
-            account_id: "acc".to_string(),
-            bucket: "bucket".to_string(),
-            access_key_id: "access".to_string(),
-            secret_access_key: "secret".to_string(),
-        });
-        let state = AppState::from_config(Arc::new(config));
-        assert!(state.r2_presign.is_some());
+    fn cursor_rejects_garbage() {
+        assert!(decode_cursor(Some("not-base64!!!")).is_err());
     }
 }

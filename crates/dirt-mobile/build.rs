@@ -19,17 +19,11 @@ const QUICK_CAPTURE_WIDGET_XML: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 #[derive(Debug, Default, Serialize)]
 struct MobileBootstrapConfig {
     bootstrap_manifest_url: Option<String>,
-    supabase_url: Option<String>,
-    supabase_anon_key: Option<String>,
-    turso_sync_token_endpoint: Option<String>,
     dirt_api_base_url: Option<String>,
 }
 
 fn main() {
     println!("cargo:rerun-if-env-changed=WRY_ANDROID_KOTLIN_FILES_OUT_DIR");
-    println!("cargo:rerun-if-env-changed=SUPABASE_URL");
-    println!("cargo:rerun-if-env-changed=SUPABASE_ANON_KEY");
-    println!("cargo:rerun-if-env-changed=TURSO_SYNC_TOKEN_ENDPOINT");
     println!("cargo:rerun-if-env-changed=DIRT_MOBILE_API_BASE_URL");
     println!("cargo:rerun-if-env-changed=DIRT_MOBILE_BOOTSTRAP_URL");
     println!("cargo:rerun-if-env-changed=DIRT_API_BASE_URL");
@@ -110,9 +104,6 @@ fn write_mobile_bootstrap_config() -> io::Result<()> {
 
     let config = MobileBootstrapConfig {
         bootstrap_manifest_url,
-        supabase_url: env_var_trimmed("SUPABASE_URL"),
-        supabase_anon_key: env_var_trimmed("SUPABASE_ANON_KEY"),
-        turso_sync_token_endpoint: env_var_trimmed("TURSO_SYNC_TOKEN_ENDPOINT"),
         dirt_api_base_url,
     };
 

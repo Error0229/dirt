@@ -1,4 +1,9 @@
 //! Note editor component
+//!
+//! Attachment UI was removed during the Supabase teardown — the
+//! `AttachmentPanel` from main relied on `media_api_client` and
+//! `auth_session`, both of which are gone with the R2/Supabase work
+//! that's deferred to a future commit. The plain-text editor stays.
 
 use std::time::Duration;
 
@@ -6,15 +11,9 @@ use dioxus::prelude::*;
 
 use dirt_core::NoteId;
 
-use self::attachment_panel::AttachmentPanel;
 use crate::components::update_note_content;
 use crate::queries::invalidate_notes_query;
 use crate::state::AppState;
-
-mod attachment_panel;
-mod attachment_preview;
-mod attachment_utils;
-mod transcription;
 
 /// Idle save delay - save after 2 seconds of no typing
 const IDLE_SAVE_MS: u64 = 2000;
@@ -29,7 +28,6 @@ pub fn NoteEditor() -> Element {
     // Local editor state for the selected note.
     let mut content = use_signal(String::new);
     let mut current_note_id = use_signal(|| None::<NoteId>);
-    let mut attachments_expanded = use_signal(|| false);
 
     // Version-based save tracking to debounce writes.
     let mut save_version = use_signal(|| 0u64);
@@ -49,7 +47,6 @@ pub fn NoteEditor() -> Element {
             current_note_id.set(selected_id);
             save_version.set(0);
             last_saved_version.set(0);
-            attachments_expanded.set(false);
         }
     });
 
@@ -68,6 +65,7 @@ pub fn NoteEditor() -> Element {
                             tracing::debug!("Saved note: {}", id);
                             last_saved_version.set(version);
                             invalidate_notes_query().await;
+                            state.trigger_sync();
                         }
                         Err(error) => {
                             tracing::error!("Failed to save note: {}", error);
@@ -130,8 +128,6 @@ pub fn NoteEditor() -> Element {
         }
     };
 
-    let is_expanded = attachments_expanded();
-
     rsx! {
         div {
             class: "note-editor",
@@ -166,88 +162,6 @@ pub fn NoteEditor() -> Element {
                     oninput: on_input,
                     onblur: on_blur,
                     onkeydown: on_keydown,
-                }
-
-                // Paperclip toggle — bottom right
-                if !is_expanded {
-                    button {
-                        style: "
-                            position: absolute;
-                            bottom: 12px;
-                            right: 12px;
-                            width: 28px;
-                            height: 28px;
-                            border: none;
-                            border-radius: 6px;
-                            background: {colors.bg_secondary};
-                            color: {colors.text_muted};
-                            cursor: pointer;
-                            display: flex;
-                            align-items: center;
-                            justify-content: center;
-                            font-size: 16px;
-                            z-index: 10;
-                        ",
-                        title: "Attachments",
-                        onclick: move |_| attachments_expanded.set(true),
-                        "📎"
-                    }
-                }
-
-                // Collapsible attachment panel
-                if is_expanded {
-                    div {
-                        style: "
-                            border-top: 1px solid {colors.border};
-                            background: {colors.bg_secondary};
-                            flex-shrink: 0;
-                            position: relative;
-                        ",
-
-                        // Close button — fixed outside the scroll container
-                        button {
-                            style: "
-                                position: absolute;
-                                top: 4px;
-                                right: 8px;
-                                width: 24px;
-                                height: 24px;
-                                background: {colors.bg_secondary};
-                                border: none;
-                                border-radius: 4px;
-                                color: {colors.text_secondary};
-                                cursor: pointer;
-                                font-size: 16px;
-                                font-weight: 600;
-                                display: flex;
-                                align-items: center;
-                                justify-content: center;
-                                z-index: 2;
-                            ",
-                            onclick: move |_| attachments_expanded.set(false),
-                            "×"
-                        }
-
-                        // Scrollable attachment list
-                        div {
-                            style: "
-                                max-height: 200px;
-                                overflow-y: auto;
-                                padding: 4px 12px 6px;
-                            ",
-
-                            AttachmentPanel {
-                                note_id: current_note_id(),
-                                editor_content: content(),
-                                on_editor_content_change: move |updated_content: String| {
-                                    content.set(updated_content.clone());
-                                    if let Some(id) = current_note_id() {
-                                        update_note_content(&mut state, id, updated_content);
-                                    }
-                                },
-                            }
-                        }
-                    }
                 }
             } else {
                 div {

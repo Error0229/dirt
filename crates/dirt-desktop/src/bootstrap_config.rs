@@ -19,10 +19,6 @@ fn normalize_desktop_bootstrap(mut config: BootstrapConfig) -> BootstrapConfig {
         .bootstrap_manifest_url
         .as_deref()
         .map(normalize_desktop_url);
-    config.turso_sync_token_endpoint = config
-        .turso_sync_token_endpoint
-        .as_deref()
-        .map(normalize_desktop_url);
     config.dirt_api_base_url = config
         .dirt_api_base_url
         .as_deref()
@@ -45,19 +41,13 @@ mod tests {
     fn normalize_desktop_bootstrap_rewrites_emulator_hosts() {
         let config = BootstrapConfig {
             bootstrap_manifest_url: Some("http://10.0.2.2:8080/v1/bootstrap".to_string()),
-            turso_sync_token_endpoint: Some("http://localhost:8080/v1/sync/token".to_string()),
             dirt_api_base_url: Some("http://10.0.2.2:8080".to_string()),
-            ..BootstrapConfig::default()
         };
 
         let normalized = normalize_desktop_bootstrap(config);
         assert_eq!(
             normalized.bootstrap_manifest_url.as_deref(),
             Some("http://127.0.0.1:8080/v1/bootstrap")
-        );
-        assert_eq!(
-            normalized.turso_sync_token_endpoint.as_deref(),
-            Some("http://127.0.0.1:8080/v1/sync/token")
         );
         assert_eq!(
             normalized.dirt_api_base_url.as_deref(),

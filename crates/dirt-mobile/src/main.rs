@@ -7,10 +7,6 @@ mod app;
 #[cfg(any(target_os = "android", test))]
 mod attachments;
 #[cfg(any(target_os = "android", test))]
-mod auth;
-#[cfg(any(target_os = "android", test))]
-mod bootstrap_config;
-#[cfg(any(target_os = "android", test))]
 mod config;
 #[cfg(any(target_os = "android", test))]
 mod data;
@@ -20,12 +16,6 @@ mod export;
 mod filters;
 #[cfg(any(target_os = "android", test))]
 mod launch;
-#[cfg(any(target_os = "android", test))]
-mod media_api;
-#[cfg(any(target_os = "android", test))]
-mod secret_store;
-#[cfg(any(target_os = "android", test))]
-mod sync_auth;
 #[cfg(target_os = "android")]
 mod ui;
 #[cfg(any(target_os = "android", test))]

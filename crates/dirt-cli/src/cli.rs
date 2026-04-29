@@ -83,16 +83,13 @@ pub enum Commands {
         output: Option<PathBuf>,
     },
     /// Sync local replica with remote Turso database
-    Sync {
-        #[command(subcommand)]
-        command: Option<SyncCommands>,
-    },
+    Sync,
     /// Configure CLI managed profiles
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
     },
-    /// Authenticate CLI profile with Supabase
+    /// Inspect or manage authentication state
     Auth {
         #[command(subcommand)]
         command: AuthCommands,
@@ -115,16 +112,18 @@ pub enum CompletionShell {
 }
 
 #[derive(Subcommand)]
-pub enum SyncCommands {
-    /// List recently resolved sync conflicts
-    Conflicts {
-        /// Number of conflicts to show
-        #[arg(short, long, default_value = "10")]
-        limit: usize,
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-    },
+pub enum AuthCommands {
+    /// Print connectivity status against the configured `dirt-api`.
+    ///
+    /// Solo phase: the auth surface only exists so the CLI's command
+    /// shape is stable across phases. There's no login state to report;
+    /// `status` instead reports whether the CLI's env is configured and
+    /// whether the configured token reaches the server.
+    Status,
+    /// Placeholder. Phase 2 (magic-link auth) will implement login.
+    Login,
+    /// Placeholder. Phase 2 (magic-link auth) will implement logout.
+    Logout,
 }
 
 #[derive(Subcommand)]
@@ -134,51 +133,11 @@ pub enum ConfigCommands {
         /// Profile name to initialize
         #[arg(long, value_name = "NAME")]
         profile: Option<String>,
-        /// Supabase project URL
-        #[arg(long, value_name = "URL")]
-        supabase_url: Option<String>,
-        /// Supabase anon/public key
-        #[arg(long, value_name = "KEY")]
-        supabase_anon_key: Option<String>,
-        /// Backend sync token exchange endpoint
-        #[arg(long, value_name = "URL")]
-        sync_token_endpoint: Option<String>,
-        /// Optional managed API base URL
+        /// Backend API base URL (e.g. <https://dirt-api.vercel.app>)
         #[arg(long, value_name = "URL")]
         api_base_url: Option<String>,
-        /// Optional bootstrap manifest URL (e.g. <https://api.example.com/v1/bootstrap>)
-        #[arg(long, value_name = "URL")]
-        bootstrap_url: Option<String>,
         /// Keep current active profile instead of activating this one
         #[arg(long)]
         no_activate: bool,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum AuthCommands {
-    /// Login with Supabase email/password and store session in keychain
-    Login {
-        /// Optional profile override
-        #[arg(long, value_name = "NAME")]
-        profile: Option<String>,
-        /// Supabase account email
-        #[arg(long, value_name = "EMAIL")]
-        email: String,
-        /// Supabase account password
-        #[arg(long, value_name = "PASSWORD")]
-        password: String,
-    },
-    /// Show auth status for profile
-    Status {
-        /// Optional profile override
-        #[arg(long, value_name = "NAME")]
-        profile: Option<String>,
-    },
-    /// Logout profile and clear stored session
-    Logout {
-        /// Optional profile override
-        #[arg(long, value_name = "NAME")]
-        profile: Option<String>,
     },
 }

@@ -45,3 +45,5 @@ dx.lock
 
 # Documentation build
 /docs/book/
+
+.vercel

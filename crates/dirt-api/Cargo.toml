@@ -4,13 +4,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Backend API for secure credential brokering and media signing"
+description = "Dirt sync backend — bearer-authed push/pull over Turso"
 
+[lib]
+name = "dirt_api"
+path = "src/lib.rs"
+
+# Local dev server: `cargo run -p dirt-api`.
 [[bin]]
 name = "dirt-api"
 path = "src/main.rs"
 
 [dependencies]
+dirt-core = { path = "../dirt-core" }
+
 axum = { version = "0.8", features = ["macros", "json"] }
 tokio.workspace = true
 serde.workspace = true
@@ -18,17 +25,22 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 chrono.workspace = true
-jsonwebtoken = "9.3"
-base64 = "0.22"
-http = "1"
+libsql.workspace = true
+
+# Constant-time byte compare for the shared bearer token — prevents timing
+# side-channels that would leak the token one character at a time through
+# normal == comparisons.
+subtle = "2"
+
 tower-http = { version = "0.6", features = ["cors", "trace"] }
-aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
-aws-types = "1"
-aws-credential-types = "1"
-url = "2"
 dotenvy = "0.15"
+base64 = "0.22"
+
+[dev-dependencies]
+# `ServiceExt::oneshot` lets the auth-middleware tests drive the axum
+# Router in-process without spinning up a TCP listener.
+tower = { version = "0.5", features = ["util"] }
 
 [lints]
 workspace = true

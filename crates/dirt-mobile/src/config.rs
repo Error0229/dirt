@@ -1,57 +1,13 @@
 //! Runtime configuration handling for mobile.
+//!
+//! Post-Supabase shape: just the data directory plumbing. The sync URL
+//! and Turso auth-token persistence that lived here previously are gone
+//! along with the embedded-replica sync path; the new ApiClient-driven
+//! flow keeps the bearer token in the OS secure-storage layer that lands
+//! with the mobile sync worker (next commit).
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
-use std::path::{Path, PathBuf};
-
-use dirt_core::db::SyncConfig;
-use dirt_core::util::normalize_text_option;
-use dirt_core::Result;
-use serde::{Deserialize, Serialize};
-
-use crate::secret_store;
-
-const RUNTIME_CONFIG_FILE: &str = "mobile-config.json";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SyncConfigSource {
-    RuntimeSettings,
-    None,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// Status of a runtime secret in secure storage.
-pub enum SecretStatus {
-    /// Secret exists and can be read.
-    Present,
-    /// Secret is not present.
-    Missing,
-    /// Secret read failed.
-    Error(String),
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvedSyncConfig {
-    pub sync_config: Option<SyncConfig>,
-    pub source: SyncConfigSource,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MobileRuntimeConfig {
-    #[serde(default)]
-    pub turso_database_url: Option<String>,
-}
-
-impl MobileRuntimeConfig {
-    pub fn from_raw(url: Option<String>) -> Self {
-        Self {
-            turso_database_url: normalize_text_option(url),
-        }
-    }
-
-    pub const fn has_sync_url(&self) -> bool {
-        self.turso_database_url.is_some()
-    }
-}
+use std::path::PathBuf;
 
 pub fn default_mobile_data_directory() -> PathBuf {
     dirs::data_local_dir().or_else(dirs::data_dir).map_or_else(
@@ -65,114 +21,6 @@ pub fn default_mobile_data_directory() -> PathBuf {
         },
         |dir| dir.join("dirt"),
     )
-}
-
-pub fn default_runtime_config_path() -> PathBuf {
-    default_mobile_data_directory().join(RUNTIME_CONFIG_FILE)
-}
-
-pub fn load_runtime_config() -> MobileRuntimeConfig {
-    load_runtime_config_from_path(&default_runtime_config_path())
-}
-
-pub fn load_runtime_config_from_path(path: &Path) -> MobileRuntimeConfig {
-    if !path.exists() {
-        return MobileRuntimeConfig::default();
-    }
-
-    let content = match std::fs::read_to_string(path) {
-        Ok(content) => content,
-        Err(error) => {
-            tracing::warn!(
-                "Failed to read mobile runtime config at {}: {}",
-                path.display(),
-                error
-            );
-            return MobileRuntimeConfig::default();
-        }
-    };
-
-    match serde_json::from_str::<MobileRuntimeConfig>(&content) {
-        Ok(config) => config,
-        Err(error) => {
-            tracing::warn!(
-                "Failed to parse mobile runtime config at {}: {}",
-                path.display(),
-                error
-            );
-            MobileRuntimeConfig::default()
-        }
-    }
-}
-
-pub fn save_runtime_config(config: &MobileRuntimeConfig) -> Result<()> {
-    save_runtime_config_to_path(config, &default_runtime_config_path())
-}
-
-pub fn save_runtime_config_to_path(config: &MobileRuntimeConfig, path: &Path) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let normalized = MobileRuntimeConfig::from_raw(config.turso_database_url.clone());
-    let content = serde_json::to_string_pretty(&normalized)?;
-    std::fs::write(path, content)?;
-    Ok(())
-}
-
-pub fn resolve_sync_config() -> std::result::Result<ResolvedSyncConfig, String> {
-    let runtime_config = load_runtime_config();
-    let runtime_secret = secret_store::read_secret(secret_store::SECRET_TURSO_AUTH_TOKEN);
-    resolve_sync_config_from_sources(runtime_config.turso_database_url, runtime_secret)
-}
-
-/// Report secure-storage status for the runtime Turso auth token.
-pub fn runtime_turso_token_status() -> SecretStatus {
-    match secret_store::read_secret(secret_store::SECRET_TURSO_AUTH_TOKEN) {
-        Ok(Some(_)) => SecretStatus::Present,
-        Ok(None) => SecretStatus::Missing,
-        Err(error) => SecretStatus::Error(error),
-    }
-}
-
-fn resolve_sync_config_from_sources(
-    runtime_url: Option<String>,
-    runtime_secret: std::result::Result<Option<String>, String>,
-) -> std::result::Result<ResolvedSyncConfig, String> {
-    let runtime_url = normalize_text_option(runtime_url);
-    let Some(runtime_url) = runtime_url else {
-        return Ok(ResolvedSyncConfig {
-            sync_config: None,
-            source: SyncConfigSource::None,
-        });
-    };
-
-    let runtime_token = match runtime_secret {
-        Ok(Some(token)) => normalize_text_option(Some(token))
-            .ok_or_else(|| "Turso URL is configured but sync auth token is empty.".to_string())?,
-        Ok(None) => {
-            return Err(
-                "Turso URL is configured but sync auth token is missing. Sign in and refresh sync settings."
-                    .to_string(),
-            );
-        }
-        Err(error) => {
-            return Err(format!(
-                "Failed to read Turso auth token from secure storage: {error}"
-            ));
-        }
-    };
-
-    Ok(ResolvedSyncConfig {
-        sync_config: Some(SyncConfig::new(runtime_url, runtime_token)),
-        source: SyncConfigSource::RuntimeSettings,
-    })
-}
-
-pub fn parse_sync_config(url: Option<String>, auth_token: Option<String>) -> Option<SyncConfig> {
-    let url = normalize_text_option(url)?;
-    let auth_token = normalize_text_option(auth_token)?;
-    Some(SyncConfig::new(url, auth_token))
 }
 
 #[cfg(target_os = "android")]
@@ -217,67 +65,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_sync_config_requires_both_values() {
-        assert!(parse_sync_config(None, Some("token".to_string())).is_none());
-        assert!(parse_sync_config(Some("libsql://db.turso.io".to_string()), None).is_none());
-    }
-
-    #[test]
-    fn parse_sync_config_rejects_empty_values() {
-        assert!(parse_sync_config(Some("   ".to_string()), Some("token".to_string())).is_none());
-        assert!(parse_sync_config(
-            Some("libsql://db.turso.io".to_string()),
-            Some("   ".to_string()),
-        )
-        .is_none());
-    }
-
-    #[test]
-    fn parse_sync_config_accepts_valid_values() {
-        let config = parse_sync_config(
-            Some(" libsql://db.turso.io ".to_string()),
-            Some(" token ".to_string()),
-        )
-        .unwrap();
-
-        assert_eq!(config.url.as_deref(), Some("libsql://db.turso.io"));
-        assert_eq!(config.auth_token.as_deref(), Some("token"));
-        assert!(config.is_configured());
-    }
-
-    #[test]
-    fn save_and_load_runtime_config_roundtrip() {
-        let test_dir = std::env::temp_dir().join(format!(
-            "dirt-mobile-config-test-{}",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        let config_path = test_dir.join("mobile-config.json");
-
-        let config = MobileRuntimeConfig::from_raw(Some(" libsql://runtime.turso.io ".to_string()));
-        save_runtime_config_to_path(&config, &config_path).unwrap();
-
-        let loaded = load_runtime_config_from_path(&config_path);
-        assert_eq!(
-            loaded.turso_database_url.as_deref(),
-            Some("libsql://runtime.turso.io")
-        );
-
-        let _ = std::fs::remove_file(config_path);
-        let _ = std::fs::remove_dir_all(test_dir);
-    }
-
-    #[test]
-    fn runtime_url_without_secret_yields_error() {
-        let error = resolve_sync_config_from_sources(
-            Some("libsql://runtime.turso.io".to_string()),
-            Ok(None),
-        )
-        .unwrap_err();
-
-        assert!(error.contains("auth token is missing"));
-    }
-
-    #[test]
     fn parse_cmdline_process_name_handles_terminator() {
         let name = parse_cmdline_process_name(b"com.example.DirtMobile\0ignored");
         assert_eq!(name.as_deref(), Some("com.example.DirtMobile"));
@@ -287,22 +74,5 @@ mod tests {
     fn parse_cmdline_process_name_rejects_blank_values() {
         assert!(parse_cmdline_process_name(b"   \0").is_none());
         assert!(parse_cmdline_process_name(&[]).is_none());
-    }
-
-    #[test]
-    fn load_runtime_config_invalid_json_returns_default() {
-        let test_dir = std::env::temp_dir().join(format!(
-            "dirt-mobile-config-invalid-test-{}",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        let config_path = test_dir.join("mobile-config.json");
-        std::fs::create_dir_all(&test_dir).unwrap();
-        std::fs::write(&config_path, "{ this is invalid json ").unwrap();
-
-        let loaded = load_runtime_config_from_path(&config_path);
-        assert_eq!(loaded, MobileRuntimeConfig::default());
-
-        let _ = std::fs::remove_file(config_path);
-        let _ = std::fs::remove_dir_all(test_dir);
     }
 }

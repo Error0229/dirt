@@ -1,182 +1,165 @@
-use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
+//! Sliding-window rate limiter for the bearer-authed endpoints.
+//!
+//! Solo phase has a single shared bearer token, so the meaningful unit
+//! of throttling is "requests reaching this server" rather than per-user
+//! accounting. A single in-process sliding window is enough — once we
+//! grow to multiple tokens we'll key the window map by token hash, but
+//! that's premature today.
+//!
+//! The window itself is a `VecDeque<Instant>` of recent request times.
+//! Each request prunes anything older than `WINDOW`, then either inserts
+//! the new timestamp or returns a 429 with a `Retry-After` derived from
+//! the oldest still-in-window request. No external state, no extra
+//! dependencies, no thread-pool concerns: protected by a tokio
+//! `Mutex` whose hold time is microseconds.
+
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::extract::{Request, State};
+use axum::middleware::Next;
+use axum::response::Response;
 use tokio::sync::Mutex;
 
-use crate::config::AppConfig;
 use crate::error::AppError;
 
-#[derive(Clone)]
-pub struct EndpointRateLimiter {
-    state: Arc<Mutex<HashMap<String, RateWindow>>>,
-    window: Duration,
-    sync_limit: u32,
-    media_limit: u32,
-    metrics: Arc<RateLimitMetrics>,
+/// How far back the sliding window looks. Combined with the cap below
+/// this approximates ten requests per second sustained, with bursts up
+/// to the cap.
+pub const WINDOW: Duration = Duration::from_secs(60);
+
+/// Maximum requests allowed within `WINDOW`.
+///
+/// Sized for the auto-sync worker's expected load (one push + one pull
+/// every 30 s plus post-mutation kicks) with comfortable headroom for
+/// occasional bursts during heavy editing sessions.
+pub const MAX_REQUESTS_PER_WINDOW: usize = 600;
+
+#[derive(Clone, Default)]
+pub struct RateLimiter {
+    state: Arc<Mutex<VecDeque<Instant>>>,
 }
 
-#[derive(Clone, Copy)]
-pub enum ProtectedEndpoint {
-    SyncToken,
-    MediaPresign,
+impl RateLimiter {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
-#[derive(Default)]
-struct RateLimitMetrics {
-    sync_allowed: AtomicU64,
-    sync_limited: AtomicU64,
-    media_allowed: AtomicU64,
-    media_limited: AtomicU64,
-}
+pub async fn enforce_rate_limit(
+    State(limiter): State<RateLimiter>,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    let now = Instant::now();
+    let cutoff = now.checked_sub(WINDOW).unwrap_or(now);
 
-#[derive(Debug, Clone, Copy, serde::Serialize)]
-pub struct RateLimitMetricsSnapshot {
-    pub sync_allowed: u64,
-    pub sync_limited: u64,
-    pub media_allowed: u64,
-    pub media_limited: u64,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct RateWindow {
-    started_at: Instant,
-    count: u32,
-}
-
-impl EndpointRateLimiter {
-    pub fn from_config(config: &AppConfig) -> Self {
-        Self {
-            state: Arc::new(Mutex::new(HashMap::new())),
-            window: config.rate_limit_window,
-            sync_limit: config.sync_token_rate_limit_per_window,
-            media_limit: config.media_presign_rate_limit_per_window,
-            metrics: Arc::new(RateLimitMetrics::default()),
+    let mut queue = limiter.state.lock().await;
+    while let Some(&front) = queue.front() {
+        if front <= cutoff {
+            queue.pop_front();
+        } else {
+            break;
         }
     }
 
-    pub async fn check(&self, endpoint: ProtectedEndpoint, user_id: &str) -> Result<(), AppError> {
-        let limit = match endpoint {
-            ProtectedEndpoint::SyncToken => self.sync_limit,
-            ProtectedEndpoint::MediaPresign => self.media_limit,
-        };
-
-        let key = format!("{}:{user_id}", endpoint.label());
-        let now = Instant::now();
-        let mut guard = self.state.lock().await;
-        let entry = guard.entry(key).or_insert(RateWindow {
-            started_at: now,
-            count: 0,
+    if queue.len() >= MAX_REQUESTS_PER_WINDOW {
+        // The oldest in-window request leaves the window at
+        // `oldest + WINDOW`. The client should wait at least that long
+        // before retrying (rounded up to the nearest second so 0 doesn't
+        // sneak through).
+        let retry_after_secs = queue.front().map_or(1, |oldest| {
+            let elapsed = now.saturating_duration_since(*oldest);
+            WINDOW.saturating_sub(elapsed).as_secs().max(1)
         });
-
-        if now.duration_since(entry.started_at) >= self.window {
-            entry.started_at = now;
-            entry.count = 0;
-        }
-
-        if entry.count >= limit {
-            let retry_after_secs = self
-                .window
-                .saturating_sub(now.duration_since(entry.started_at))
-                .as_secs();
-            self.mark_limited(endpoint);
-            tracing::warn!(
-                endpoint = endpoint.label(),
-                user = user_fingerprint(user_id),
-                retry_after_secs,
-                "Rate limit exceeded"
-            );
-            return Err(AppError::too_many_requests(
-                "Rate limit exceeded for protected endpoint",
-                retry_after_secs,
-            ));
-        }
-
-        entry.count += 1;
-        self.mark_allowed(endpoint);
-        Ok(())
+        return Err(AppError::rate_limited(
+            format!(
+                "exceeded {MAX_REQUESTS_PER_WINDOW} requests per {} s",
+                WINDOW.as_secs()
+            ),
+            retry_after_secs,
+        ));
     }
 
-    pub fn metrics_snapshot(&self) -> RateLimitMetricsSnapshot {
-        RateLimitMetricsSnapshot {
-            sync_allowed: self.metrics.sync_allowed.load(Ordering::Relaxed),
-            sync_limited: self.metrics.sync_limited.load(Ordering::Relaxed),
-            media_allowed: self.metrics.media_allowed.load(Ordering::Relaxed),
-            media_limited: self.metrics.media_limited.load(Ordering::Relaxed),
-        }
-    }
-
-    fn mark_allowed(&self, endpoint: ProtectedEndpoint) {
-        match endpoint {
-            ProtectedEndpoint::SyncToken => {
-                self.metrics.sync_allowed.fetch_add(1, Ordering::Relaxed);
-            }
-            ProtectedEndpoint::MediaPresign => {
-                self.metrics.media_allowed.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    }
-
-    fn mark_limited(&self, endpoint: ProtectedEndpoint) {
-        match endpoint {
-            ProtectedEndpoint::SyncToken => {
-                self.metrics.sync_limited.fetch_add(1, Ordering::Relaxed);
-            }
-            ProtectedEndpoint::MediaPresign => {
-                self.metrics.media_limited.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    }
-}
-
-impl ProtectedEndpoint {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::SyncToken => "sync_token",
-            Self::MediaPresign => "media_presign",
-        }
-    }
-}
-
-fn user_fingerprint(user_id: &str) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    user_id.hash(&mut hasher);
-    hasher.finish()
+    queue.push_back(now);
+    drop(queue);
+    Ok(next.run(request).await)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn rate_limiter_blocks_after_limit() {
-        let limiter = EndpointRateLimiter {
-            state: Arc::new(Mutex::new(HashMap::new())),
-            window: Duration::from_secs(60),
-            sync_limit: 2,
-            media_limit: 2,
-            metrics: Arc::new(RateLimitMetrics::default()),
-        };
+    use axum::body::Body;
+    use axum::http::{Request as HttpRequest, StatusCode};
+    use axum::middleware;
+    use axum::routing::get;
+    use axum::Router;
+    use tower::ServiceExt;
 
-        limiter
-            .check(ProtectedEndpoint::SyncToken, "user-a")
+    fn build_router(limiter: RateLimiter) -> Router {
+        Router::new()
+            .route("/probe", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                limiter.clone(),
+                enforce_rate_limit,
+            ))
+            .with_state(limiter)
+    }
+
+    async fn hit(router: &Router) -> StatusCode {
+        let resp = router
+            .clone()
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
-        limiter
-            .check(ProtectedEndpoint::SyncToken, "user-a")
+        resp.status()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn under_cap_requests_pass() {
+        let limiter = RateLimiter::new();
+        let router = build_router(limiter);
+        for _ in 0..10 {
+            assert_eq!(hit(&router).await, StatusCode::OK);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn requests_above_cap_get_429() {
+        let limiter = RateLimiter::new();
+        let router = build_router(limiter.clone());
+
+        // Pre-fill the queue to capacity by hand so the test doesn't
+        // have to fire MAX_REQUESTS_PER_WINDOW real requests.
+        {
+            let mut queue = limiter.state.lock().await;
+            let now = Instant::now();
+            for i in 0..MAX_REQUESTS_PER_WINDOW {
+                queue.push_back(
+                    now.checked_sub(Duration::from_millis(i as u64))
+                        .unwrap_or(now),
+                );
+            }
+        }
+
+        let resp = router
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/probe")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
-
-        let err = limiter
-            .check(ProtectedEndpoint::SyncToken, "user-a")
-            .await
-            .unwrap_err();
-        assert!(matches!(err, AppError::TooManyRequests(_, _)));
-
-        let metrics = limiter.metrics_snapshot();
-        assert_eq!(metrics.sync_allowed, 2);
-        assert_eq!(metrics.sync_limited, 1);
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(resp.headers().contains_key("retry-after"));
     }
 }

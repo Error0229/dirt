@@ -4,17 +4,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository};
 use dirt_core::export::render_markdown_export;
-use dirt_core::{Note, SyncConflict};
+use dirt_core::Note;
 use tokio::time::sleep;
 
 use crate::cli::{CompletionShell, ExportFormat};
 use crate::commands::common::{
-    default_editor, format_relative_time, format_sync_conflict_lines, format_sync_timestamp,
-    list_notes, normalize_content, normalize_note_identifier, normalize_search_query, note_preview,
-    open_database, resolve_note_for_edit, search_notes,
+    default_editor, format_relative_time, list_notes, normalize_content, normalize_note_identifier,
+    normalize_search_query, note_preview, open_database, resolve_note_for_edit, search_notes,
 };
 use crate::commands::completions::run_completions;
-use crate::commands::config::{normalize_bootstrap_url, resolve_bootstrap_url};
 use crate::commands::delete::run_delete;
 use crate::commands::export::run_export;
 use crate::commands::sync::run_sync;
@@ -40,36 +38,6 @@ fn default_editor_is_defined() {
 }
 
 #[test]
-fn normalize_bootstrap_url_requires_http_scheme() {
-    assert!(normalize_bootstrap_url("https://api.example.com/v1/bootstrap".to_string()).is_ok());
-    assert!(normalize_bootstrap_url("api.example.com/v1/bootstrap".to_string()).is_err());
-}
-
-#[test]
-fn resolve_bootstrap_url_prefers_explicit_manifest_url() {
-    let resolved = resolve_bootstrap_url(
-        Some("https://api.example.com/v1/bootstrap".to_string()),
-        Some("https://ignored.example.com".to_string()),
-        Some("https://also-ignored.example.com".to_string()),
-    )
-    .unwrap();
-    assert_eq!(
-        resolved.as_deref(),
-        Some("https://api.example.com/v1/bootstrap")
-    );
-}
-
-#[test]
-fn resolve_bootstrap_url_derives_from_api_base() {
-    let resolved =
-        resolve_bootstrap_url(None, Some("https://api.example.com/".to_string()), None).unwrap();
-    assert_eq!(
-        resolved.as_deref(),
-        Some("https://api.example.com/v1/bootstrap")
-    );
-}
-
-#[test]
 fn format_relative_time_units() {
     let now = 10_000_000;
     assert_eq!(format_relative_time(now - 30_000, now), "just now");
@@ -82,30 +50,6 @@ fn note_preview_truncates_with_ellipsis() {
     let note = dirt_core::Note::new("This is a very long sentence that should be shortened");
     let preview = note_preview(&note, 20);
     assert_eq!(preview, "This is a very lo...");
-}
-
-#[test]
-fn format_sync_timestamp_returns_utc_label() {
-    assert_eq!(format_sync_timestamp(0), "1970-01-01 00:00:00 UTC");
-}
-
-#[test]
-fn format_sync_conflict_lines_include_key_fields() {
-    let conflicts = vec![SyncConflict {
-        id: 1,
-        note_id: "11111111-1111-7111-8111-111111111111".to_string(),
-        local_updated_at: 200,
-        incoming_updated_at: 100,
-        resolved_at: 300,
-        strategy: "lww".to_string(),
-    }];
-
-    let rendered = format_sync_conflict_lines(&conflicts);
-    assert_eq!(rendered.len(), 1);
-    assert!(rendered[0].contains("lww"));
-    assert!(rendered[0].contains("note=11111111-1111-7111-8111-111111111111"));
-    assert!(rendered[0].contains("local=200"));
-    assert!(rendered[0].contains("incoming=100"));
 }
 
 #[cfg_attr(windows, ignore = "libsql integration is flaky on windows CI")]
@@ -190,14 +134,18 @@ async fn resolve_note_for_edit_supports_exact_and_prefix_id() {
         content: "Note A".to_string(),
         created_at: 1000,
         updated_at: 1000,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
     let note_b = Note {
         id: "11111111-1111-7111-8111-222222222222".parse().unwrap(),
         content: "Note B".to_string(),
         created_at: 1001,
         updated_at: 1001,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
     repo.create_with_note(&note_a).await.unwrap();
     repo.create_with_note(&note_b).await.unwrap();
@@ -230,14 +178,18 @@ async fn resolve_note_for_edit_rejects_ambiguous_prefix() {
         content: "Left".to_string(),
         created_at: 1000,
         updated_at: 1000,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
     let note_b = Note {
         id: "aaaaaaaa-aaaa-7aaa-8aaa-bbbbbbbbbbbb".parse().unwrap(),
         content: "Right".to_string(),
         created_at: 1001,
         updated_at: 1001,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
     repo.create_with_note(&note_a).await.unwrap();
     repo.create_with_note(&note_b).await.unwrap();
@@ -279,14 +231,18 @@ async fn run_delete_soft_deletes_note_by_exact_and_prefix_id() {
         content: "Keep me".to_string(),
         created_at: 1000,
         updated_at: 1000,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
     let note_b = Note {
         id: "bbbbbbbb-bbbb-7bbb-8bbb-222222222222".parse().unwrap(),
         content: "Delete me".to_string(),
         created_at: 1001,
         updated_at: 1001,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
     repo.create_with_note(&note_a).await.unwrap();
     repo.create_with_note(&note_b).await.unwrap();
@@ -315,12 +271,32 @@ async fn run_delete_soft_deletes_note_by_exact_and_prefix_id() {
 
 #[cfg_attr(windows, ignore = "libsql integration is flaky on windows CI")]
 #[tokio::test(flavor = "current_thread")]
+#[allow(unsafe_code)]
 async fn run_sync_requires_sync_configuration() {
     let db_path = unique_test_db_path();
 
-    let error = run_sync(&db_path).await.unwrap_err();
-    assert!(matches!(error, CliError::SyncNotConfigured));
+    // Force the unconfigured paths so the test doesn't accidentally pick
+    // up a developer's real DIRT_API_BASE_URL or DIRT_CLIENT_TOKEN.
+    // SAFETY: tests in this module run on a current_thread runtime, so
+    // there's no concurrent reader of these vars within the process.
+    unsafe {
+        std::env::remove_var("DIRT_API_BASE_URL");
+        std::env::remove_var("DIRT_CLIENT_TOKEN");
+        std::env::set_var("DIRT_PROFILE", "this-profile-does-not-exist");
+    }
 
+    let error = run_sync(&db_path).await.unwrap_err();
+    // Either "no api_base_url configured" or "no DIRT_CLIENT_TOKEN" —
+    // the contract is that `dirt sync` refuses to run rather than
+    // silently no-oping.
+    assert!(
+        matches!(error, CliError::SyncNotConfigured | CliError::Config(_)),
+        "unexpected error variant: {error:?}",
+    );
+
+    unsafe {
+        std::env::remove_var("DIRT_PROFILE");
+    }
     cleanup_db_files(&db_path);
 }
 
@@ -339,7 +315,9 @@ fn render_markdown_export_includes_frontmatter_and_content() {
         content: "Hello export #tag".to_string(),
         created_at: 123,
         updated_at: 456,
-        is_deleted: false,
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+        server_updated_at: None,
+        deleted_at: None,
     };
 
     let rendered = render_markdown_export(&[note]);
