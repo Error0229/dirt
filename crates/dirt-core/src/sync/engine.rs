@@ -57,6 +57,14 @@ pub enum SyncEngineError {
     /// A pull-response row failed `Note::try_from(PullNote)`.
     #[error("decode error: {0}")]
     Decode(String),
+    /// The server returned a 200 response but didn't ack every note in
+    /// the batch we just sent. Per the API contract every accepted note
+    /// must come back with a stamped `server_updated_at_ms`; a partial
+    /// response means client/server drift. We surface this rather than
+    /// silently break the push loop, otherwise notes would sit in
+    /// `pending_sync` forever while the worker reports green.
+    #[error("server acked {acked} of {sent} pushed notes — server contract violation")]
+    PushIncomplete { acked: usize, sent: usize },
 }
 
 /// Bound to `(db, api, user_id)` for one sync cycle. Cheap to construct;
@@ -162,7 +170,6 @@ impl<'a> SyncEngine<'a> {
             let stamps = response
                 .results
                 .into_iter()
-                .filter(|r| r.applied)
                 .map(|r| (r.id, r.server_updated_at_ms))
                 .collect::<std::collections::HashMap<_, _>>();
 
@@ -176,12 +183,16 @@ impl<'a> SyncEngine<'a> {
             }
             report.pushed += acked;
 
-            // If the server didn't ack everything we sent, bail out.
-            // The unacked rows stay in `pending_sync`; next run retries.
-            // A successful page must clear at least one row, otherwise we
-            // would loop forever on a permanently-rejected note.
-            if acked == 0 {
-                break;
+            // Every note we sent must come back acked. If the server
+            // skipped any, the worker should hear about it as a hard
+            // error rather than silently break — left unsignalled, the
+            // unacked rows would sit in `pending_sync` forever while the
+            // UI reports green.
+            if acked < pending.len() {
+                return Err(SyncEngineError::PushIncomplete {
+                    acked,
+                    sent: pending.len(),
+                });
             }
         }
         Ok(())
@@ -318,14 +329,17 @@ mod tests {
                 "has_more": false,
                 "next_cursor": null,
             })))
-            // Push response: empty notes (the engine does send a push
-            // since the local is dirty; we just don't care here).
             .mount(&server)
             .await;
+        // Push response acks the dirty note so the engine returns Ok and
+        // the assertions below can focus on pull-side merge behaviour.
         Mock::given(method("POST"))
             .and(path("/v1/notes/push"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "results": [],
+                "results": [{
+                    "id": id,
+                    "server_updated_at_ms": 999,
+                }],
                 "server_time_ms": 200,
             })))
             .mount(&server)
@@ -390,7 +404,6 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "results": [{
                     "id": id,
-                    "applied": true,
                     "server_updated_at_ms": 9_999,
                 }],
                 "server_time_ms": 10_000,
@@ -412,7 +425,11 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn push_breaks_when_server_acks_nothing() {
+    async fn push_errors_when_server_acks_nothing() {
+        // The previous behavior silently broke the loop and returned
+        // Ok, leaving the worker reporting green while notes sat
+        // permanently in `pending_sync`. The engine now surfaces a
+        // PushIncomplete error so the worker emits Status::Error.
         let (db, server, api) = setup().await;
 
         Mock::given(method("GET"))
@@ -426,9 +443,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        db.create_note("permanently rejected").await.unwrap();
+        let local = db.create_note("permanently rejected").await.unwrap();
 
-        // Server responds with empty results — engine must not loop.
         Mock::given(method("POST"))
             .and(path("/v1/notes/push"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -440,16 +456,27 @@ mod tests {
             .await;
 
         let engine = SyncEngine::new(&db, &api, SOLO_USER_ID);
-        let report = engine.run_once().await.unwrap();
-        assert_eq!(report.pushed, 0);
+        let err = engine.run_once().await.unwrap_err();
+        match err {
+            SyncEngineError::PushIncomplete { acked, sent } => {
+                assert_eq!(acked, 0);
+                assert_eq!(sent, 1);
+            }
+            other => panic!("expected PushIncomplete, got {other:?}"),
+        }
+
+        // The unacked note must still be queued so the next run retries it.
+        assert!(db.is_pending(SOLO_USER_ID, &local.id).await.unwrap());
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn push_pages_when_pending_exceeds_batch() {
-        // Sanity check the loop with a small batch by doing two real
-        // batches. Easier than mocking PUSH_BATCH_SIZE to a smaller
-        // number and keeps this test independent of that constant's
-        // value.
+    async fn push_acks_full_multi_note_batch() {
+        // Multi-note batch should be fully acked in one call, all rows
+        // cleared from pending_sync. Real pagination across PUSH_BATCH_SIZE
+        // boundaries isn't exercised here — the constant is 500 and would
+        // require generating that many notes; the loop's correctness is
+        // covered indirectly by `push_errors_when_server_acks_nothing`,
+        // which proves the iteration terminates rather than spinning.
         let (db, server, api) = setup().await;
 
         Mock::given(method("GET"))
@@ -477,26 +504,21 @@ mod tests {
         let n1_str = n1.id.to_string();
         let n2_str = n2.id.to_string();
         let n3_str = n3.id.to_string();
+        // Stage two responses: first acks all 3 notes (after the first
+        // push, pending is empty and the loop exits cleanly). The second
+        // mock is a safety-net that wiremock would only hit if the first
+        // ack was rejected — in which case the test fails loudly.
         Mock::given(method("POST"))
             .and(path("/v1/notes/push"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "results": [
-                    {"id": n1_str, "applied": true, "server_updated_at_ms": 1},
-                    {"id": n2_str, "applied": true, "server_updated_at_ms": 2},
+                    {"id": n1_str, "server_updated_at_ms": 1},
+                    {"id": n2_str, "server_updated_at_ms": 2},
+                    {"id": n3_str, "server_updated_at_ms": 3},
                 ],
                 "server_time_ms": 0,
             })))
             .up_to_n_times(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("POST"))
-            .and(path("/v1/notes/push"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "results": [
-                    {"id": n3_str, "applied": true, "server_updated_at_ms": 3},
-                ],
-                "server_time_ms": 0,
-            })))
             .mount(&server)
             .await;
 

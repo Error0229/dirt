@@ -100,10 +100,13 @@ pub struct PushResponse {
 }
 
 /// Per-note outcome stamped by the server.
+///
+/// Presence in the response means the server accepted and committed
+/// the note; absence means it didn't, and the engine treats that as a
+/// contract violation rather than a silent skip.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PushResult {
     pub id: String,
-    pub applied: bool,
     pub server_updated_at_ms: i64,
 }
 
@@ -299,6 +302,17 @@ fn normalize_base_url(raw: String) -> ApiClientResult<String> {
             "DIRT_API_BASE_URL must start with http:// or https://".into(),
         ));
     }
+    if normalized.starts_with("http://") {
+        // The bearer token is the only credential, so plaintext HTTP
+        // means anyone on the path can read and replay it. We allow
+        // http:// for local dev (loopback addresses, the Android
+        // emulator's 10.0.2.2 forward) but warn loudly so a misconfigured
+        // staging or production deploy doesn't silently leak the token.
+        tracing::warn!(
+            "DIRT_API_BASE_URL uses plain HTTP — bearer token will be sent in plaintext. \
+             Use HTTPS for any non-loopback environment."
+        );
+    }
     Ok(normalized.trim_end_matches('/').to_string())
 }
 
@@ -411,7 +425,6 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "results": [{
                     "id": note.id,
-                    "applied": true,
                     "server_updated_at_ms": 99,
                 }],
                 "server_time_ms": 100,
@@ -425,7 +438,6 @@ mod tests {
         assert_eq!(resp.server_time_ms, 100);
         assert_eq!(resp.results.len(), 1);
         assert_eq!(resp.results[0].id, note.id);
-        assert!(resp.results[0].applied);
         assert_eq!(resp.results[0].server_updated_at_ms, 99);
     }
 

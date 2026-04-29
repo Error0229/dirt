@@ -405,41 +405,58 @@ impl NoteRepository for LibSqlNoteRepository<'_> {
     }
 
     async fn upsert_from_server(&self, note: &Note) -> Result<()> {
-        self.conn
-            .execute(
-                "INSERT INTO notes (id, user_id, content, created_at, updated_at, server_updated_at, deleted_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(id) DO UPDATE SET
-                     user_id = excluded.user_id,
-                     content = excluded.content,
-                     created_at = excluded.created_at,
-                     updated_at = excluded.updated_at,
-                     server_updated_at = excluded.server_updated_at,
-                     deleted_at = excluded.deleted_at",
-                libsql::params![
-                    note.id.as_str(),
-                    note.user_id.as_str(),
-                    note.content.as_str(),
-                    note.created_at,
-                    note.updated_at,
-                    note.server_updated_at,
-                    note.deleted_at,
-                ],
-            )
-            .await?;
+        // The note row and its tag links must land together or not at
+        // all — a crash between them would leave FTS / tag-listing views
+        // pointing at the previous content's tags. The next pull would
+        // re-deliver the same row and reconcile, but a transaction
+        // closes the inconsistency window outright at the cost of a
+        // single extra round-trip.
+        let result: Result<()> = async {
+            self.conn.execute("BEGIN", ()).await?;
 
-        if note.deleted_at.is_some() {
             self.conn
                 .execute(
-                    "DELETE FROM note_tags WHERE note_id = ?",
-                    [note.id.as_str()],
+                    "INSERT INTO notes (id, user_id, content, created_at, updated_at, server_updated_at, deleted_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(id) DO UPDATE SET
+                         user_id = excluded.user_id,
+                         content = excluded.content,
+                         created_at = excluded.created_at,
+                         updated_at = excluded.updated_at,
+                         server_updated_at = excluded.server_updated_at,
+                         deleted_at = excluded.deleted_at",
+                    libsql::params![
+                        note.id.as_str(),
+                        note.user_id.as_str(),
+                        note.content.as_str(),
+                        note.created_at,
+                        note.updated_at,
+                        note.server_updated_at,
+                        note.deleted_at,
+                    ],
                 )
                 .await?;
-        } else {
-            self.sync_tags(&note.id, &note.content).await?;
-        }
 
-        Ok(())
+            if note.deleted_at.is_some() {
+                self.conn
+                    .execute(
+                        "DELETE FROM note_tags WHERE note_id = ?",
+                        [note.id.as_str()],
+                    )
+                    .await?;
+            } else {
+                self.sync_tags(&note.id, &note.content).await?;
+            }
+
+            self.conn.execute("COMMIT", ()).await?;
+            Ok(())
+        }
+        .await;
+
+        if result.is_err() {
+            self.conn.execute("ROLLBACK", ()).await.ok();
+        }
+        result
     }
 
     async fn get_with_tombstone(&self, id: &NoteId) -> Result<Option<Note>> {

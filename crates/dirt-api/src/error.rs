@@ -27,6 +27,11 @@ pub enum AppError {
     BadRequest { code: &'static str, message: String },
     #[error("payload too large: {message}")]
     PayloadTooLarge { message: String },
+    #[error("rate limited: {message}")]
+    RateLimited {
+        message: String,
+        retry_after_secs: u64,
+    },
     #[error("turso unreachable: {message}")]
     TursoUnreachable { message: String },
     #[error("config error: {0}")]
@@ -78,6 +83,13 @@ impl AppError {
         }
     }
 
+    pub fn rate_limited(message: impl Into<String>, retry_after_secs: u64) -> Self {
+        Self::RateLimited {
+            message: message.into(),
+            retry_after_secs,
+        }
+    }
+
     pub fn turso_unreachable(message: impl Into<String>) -> Self {
         Self::TursoUnreachable {
             message: message.into(),
@@ -96,6 +108,7 @@ impl AppError {
         match self {
             Self::Unauthorized { code, .. } | Self::BadRequest { code, .. } => code,
             Self::PayloadTooLarge { .. } => "PAYLOAD_TOO_LARGE",
+            Self::RateLimited { .. } => "RATE_LIMITED",
             Self::TursoUnreachable { .. } => "TURSO_UNREACHABLE",
             Self::Config(_) | Self::Internal(_) => "INTERNAL",
         }
@@ -106,6 +119,7 @@ impl AppError {
             Self::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
             Self::BadRequest { .. } => StatusCode::BAD_REQUEST,
             Self::PayloadTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::TursoUnreachable { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::Config(_) | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -116,8 +130,18 @@ impl AppError {
             Self::Unauthorized { message, .. }
             | Self::BadRequest { message, .. }
             | Self::PayloadTooLarge { message }
+            | Self::RateLimited { message, .. }
             | Self::TursoUnreachable { message } => message.clone(),
             Self::Config(msg) | Self::Internal(msg) => msg.clone(),
+        }
+    }
+
+    const fn retry_after_secs(&self) -> Option<u64> {
+        match self {
+            Self::RateLimited {
+                retry_after_secs, ..
+            } => Some(*retry_after_secs),
+            _ => None,
         }
     }
 
@@ -132,6 +156,9 @@ impl AppError {
             },
             Self::PayloadTooLarge { .. } => {
                 "Reduce the request body size (<= 8 MiB) or split the batch."
+            }
+            Self::RateLimited { .. } => {
+                "Slow down requests; honour the retry_after_secs hint before retrying."
             }
             Self::TursoUnreachable { .. } => {
                 "Retry shortly. If it persists, check TURSO_DATABASE_URL/TURSO_AUTH_TOKEN on the server."
@@ -152,15 +179,24 @@ impl From<libsql::Error> for AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = self.status();
+        let retry_after = self.retry_after_secs();
         let body = ErrorEnvelope {
             error: ErrorBody {
                 code: self.code(),
                 message: self.to_string(),
                 cause: self.cause(),
                 fix: self.fix().to_string(),
-                retry_after_secs: None,
+                retry_after_secs: retry_after,
             },
         };
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        if let Some(secs) = retry_after {
+            // Standard `Retry-After` header so clients don't have to
+            // parse the body to back off.
+            if let Ok(value) = axum::http::HeaderValue::from_str(&secs.to_string()) {
+                response.headers_mut().insert("retry-after", value);
+            }
+        }
+        response
     }
 }

@@ -114,7 +114,11 @@ pub fn App() -> Element {
                     Ok(settings) => settings,
                     Err(error) => {
                         tracing::error!("Failed to load desktop settings: {error}");
+                        sync_status_signal.set(SyncStatus::Error);
+                        sync_issue_signal
+                            .set(Some(format!("Failed to load desktop settings: {error}")));
                         db_service.set(None);
+                        sync_worker_started.set(false);
                         return;
                     }
                 };
@@ -160,7 +164,16 @@ pub fn App() -> Element {
             }
             Err(error) => {
                 tracing::error!("Failed to initialize database: {error}");
+                // Surface the failure on the same channel a sync error
+                // would use. Without this the user sees a blank app and
+                // no indication of what's wrong.
+                sync_status_signal.set(SyncStatus::Error);
+                sync_issue_signal.set(Some(format!("Database failed to open: {error}")));
                 db_service.set(None);
+                // Allow another bootstrap pass to retry — the
+                // `use_resource` only re-runs if its read state changes,
+                // so we have to release the gate ourselves.
+                sync_worker_started.set(false);
             }
         }
     });

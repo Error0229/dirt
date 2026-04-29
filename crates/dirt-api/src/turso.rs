@@ -102,11 +102,13 @@ impl TursoRepo {
         limit: usize,
     ) -> Result<Vec<Note>, AppError> {
         let conn = self.conn()?;
-        // Clamp range is [1, PULL_MAX_LIMIT=1000]; the conversion is
-        // infallible on every target, but `try_from` keeps the lint quiet
-        // without a blanket allow.
-        let clamped_limit = i64::try_from(limit.clamp(1, PULL_MAX_LIMIT))
-            .expect("PULL_MAX_LIMIT always fits in i64");
+        // Defensive backstop. The routes layer clamps user input to
+        // PULL_MAX_LIMIT and adds 1 as a "is there more?" probe row, so
+        // we accept up to PULL_MAX_LIMIT + 1 here. Anything wilder
+        // collapses back to the cap.
+        let probe_ceiling = PULL_MAX_LIMIT.saturating_add(1);
+        let clamped_limit =
+            i64::try_from(limit.clamp(1, probe_ceiling)).expect("probe_ceiling always fits in i64");
 
         let mut rows = if let Some(id) = cursor_id {
             conn.query(

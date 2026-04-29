@@ -73,10 +73,19 @@ fn resolve_clean(local: &Note, remote: &Note) -> MergeAction {
         if local.is_deleted() {
             // Row 9: both tombstoned → no-op.
             MergeAction::Skip
-        } else {
-            // Row 6: live local + tombstoned remote → hard-tombstone locally.
-            // upsert_from_server will also clear this note's note_tags rows.
+        } else if remote_is_newer(local, remote) {
+            // Row 6: live local + tombstoned remote, server timestamp is
+            // newer → hard-tombstone locally. upsert_from_server will
+            // also clear this note's note_tags rows.
             MergeAction::Apply(remote.clone())
+        } else {
+            // Stale tombstone: cursor=0 replay (fresh install / backup
+            // restore) or any other path that delivers a tombstone older
+            // than the local row's last-seen server_updated_at. Skip
+            // rather than silently destroy a more-recently-synced live
+            // row. The next live re-sync of the same id will arrive
+            // with sua > local.sua and update the row normally.
+            MergeAction::Skip
         }
     } else if remote_is_newer(local, remote) {
         // Rows 3 + 8: remote is newer by server_updated_at.
@@ -176,6 +185,30 @@ mod tests {
         let remote = note(ID, "alive", Some(200), Some(210));
         let action = resolve(Some(&local), Some(&remote), false);
         assert_eq!(action, MergeAction::Apply(remote));
+    }
+
+    // --- Row 6 (guard): Live clean local + Stale tombstoned remote → Skip ---
+    // A cursor=0 replay (e.g. fresh install / backup restore) can deliver
+    // a tombstone whose server_updated_at predates the local row's last
+    // synced sua. Applying it would silently destroy live data — the
+    // explicit guard skips instead.
+    #[test]
+    fn row_6_stale_tombstone_skips() {
+        let local = note(ID, "still alive", Some(300), None);
+        let remote = note(ID, "old delete", Some(150), Some(200));
+        let action = resolve(Some(&local), Some(&remote), false);
+        assert_eq!(action, MergeAction::Skip);
+    }
+
+    // --- Row 6 (guard): Live clean local + Equal-sua tombstone → Skip ---
+    // Equality should not flip a live row to a tombstone; the live row
+    // already represents the latest accepted state at that timestamp.
+    #[test]
+    fn row_6_equal_sua_tombstone_skips() {
+        let local = note(ID, "alive", Some(200), None);
+        let remote = note(ID, "delete", Some(200), Some(210));
+        let action = resolve(Some(&local), Some(&remote), false);
+        assert_eq!(action, MergeAction::Skip);
     }
 
     // --- Row 7: Live dirty local + any remote → Skip ---

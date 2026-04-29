@@ -252,6 +252,16 @@ async fn migrate_v3(conn: &Connection) -> Result<()> {
 ///    *and* tombstones — the server has to learn about deletions too).
 ///    Without this step, upgraded databases would silently leave all
 ///    historical notes unsynced until the user re-edited them.
+///
+/// FTS purge note: pre-v4 the FTS triggers had no `deleted_at` filter,
+/// so `notes_fts` indexed tombstones too. We do *not* try to scrub them
+/// here — the FTS5 external-content + libsql transaction interaction
+/// produces `SQLITE_LOCKED` on every approach we tried (delete-all +
+/// re-insert, no-op self-UPDATE to fire the new trigger, rebuild). The
+/// search query already filters `deleted_at IS NULL`, so phantom rows
+/// stay invisible to users; any future code path that joins FTS *must*
+/// repeat that guard. If FTS ever needs to be authoritative on its own,
+/// do the cleanup in app-side code outside the migration transaction.
 async fn migrate_v4(conn: &Connection) -> Result<()> {
     conn.execute("BEGIN TRANSACTION", ()).await?;
 

@@ -26,8 +26,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use dirt_core::sync::api_client::ApiClient;
-use dirt_core::sync::engine::SyncEngine;
+use dirt_core::sync::api_client::{ApiClient, ApiClientError};
+use dirt_core::sync::engine::{SyncEngine, SyncEngineError};
 use dirt_core::SOLO_USER_ID;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Notify;
@@ -113,9 +113,14 @@ async fn run_loop(
     events: UnboundedSender<SyncEvent>,
 ) {
     // Trigger 1: startup sync.
-    let mut consecutive_failures = match sync_once(&db, &api, &events).await {
+    let initial = sync_once(&db, &api, &events).await;
+    let mut consecutive_failures = match initial {
         SyncOutcome::Ok => 0,
         SyncOutcome::Failed => 1,
+        SyncOutcome::Permanent => {
+            park_until_kick(&notify).await;
+            0
+        }
     };
 
     loop {
@@ -144,14 +149,33 @@ async fn run_loop(
         consecutive_failures = match outcome {
             SyncOutcome::Ok => 0,
             SyncOutcome::Failed => consecutive_failures.saturating_add(1),
+            SyncOutcome::Permanent => {
+                // The error is not going to clear with retry (e.g.
+                // 401 — the token is wrong). Park until something kicks
+                // the worker explicitly; that gives the user a chance
+                // to fix config and trigger a mutation, and avoids
+                // hammering the server every 5 minutes forever.
+                park_until_kick(&notify).await;
+                0
+            }
         };
     }
+}
+
+async fn park_until_kick(notify: &Notify) {
+    notify.notified().await;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SyncOutcome {
     Ok,
     Failed,
+    /// The error will keep failing under retry — surface to the user
+    /// and stop scheduling automatic attempts. Currently triggered by
+    /// `Unauthorized`; new cases should be added with care, since
+    /// dropping into Permanent removes the worker's ability to recover
+    /// without an explicit notify.
+    Permanent,
 }
 
 fn backoff_for(consecutive_failures: u32) -> Duration {
@@ -190,14 +214,49 @@ async fn sync_once(
             tracing::error!("Sync failed: {err}");
             let _ = events.send(SyncEvent::Status(SyncStatus::Error));
             let _ = events.send(SyncEvent::Issue(Some(err.to_string())));
-            SyncOutcome::Failed
+            if is_permanent(&err) {
+                SyncOutcome::Permanent
+            } else {
+                SyncOutcome::Failed
+            }
         }
     }
+}
+
+/// Return true for errors that will not resolve under retry. The whole
+/// point of separating `Permanent` from `Failed` is that some failures
+/// — wrong token, contract drift — only resolve when the user fixes
+/// something. Burning backoff cycles on those just hammers the server.
+const fn is_permanent(err: &SyncEngineError) -> bool {
+    matches!(err, SyncEngineError::Api(ApiClientError::Unauthorized(_)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unauthorized_classifies_as_permanent() {
+        let err = SyncEngineError::Api(ApiClientError::Unauthorized("bad token".into()));
+        assert!(is_permanent(&err));
+    }
+
+    #[test]
+    fn transient_errors_stay_failed() {
+        let cases = [
+            SyncEngineError::Api(ApiClientError::Network("timeout".into())),
+            SyncEngineError::Api(ApiClientError::ServerUnavailable("turso down".into())),
+            SyncEngineError::Api(ApiClientError::ServerError {
+                status: 500,
+                message: "boom".into(),
+            }),
+            SyncEngineError::PushIncomplete { acked: 0, sent: 1 },
+            SyncEngineError::Decode("contract drift".into()),
+        ];
+        for err in cases {
+            assert!(!is_permanent(&err), "{err} should not be permanent");
+        }
+    }
 
     #[test]
     fn backoff_walks_schedule_then_clamps() {

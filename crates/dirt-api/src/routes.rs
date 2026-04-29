@@ -17,6 +17,15 @@ use crate::error::AppError;
 use crate::turso::{PushNote, PULL_DEFAULT_LIMIT, PULL_MAX_LIMIT, PUSH_BATCH_LIMIT};
 use crate::AppState;
 
+/// Per-note content cap.
+///
+/// The push body limit (`PUSH_BODY_LIMIT`, 8 MiB) already bounds total
+/// payload, but a single oversized note can still fill Turso while
+/// staying under the body limit. 64 KiB is comfortably above any
+/// human-typed quick capture and well under the cell-level `SQLite`
+/// default.
+const MAX_NOTE_CONTENT_BYTES: usize = 64 * 1024;
+
 pub async fn healthz() -> &'static str {
     "ok"
 }
@@ -44,10 +53,15 @@ pub struct PushResponse {
     pub server_time_ms: i64,
 }
 
+/// Per-note outcome stamped by the server.
+///
+/// Presence of an entry here means the server accepted and committed
+/// the note. There is no per-note rejection signal: the whole batch
+/// either succeeds with every id stamped, or the request fails with a
+/// 4xx/5xx and the client retries.
 #[derive(Debug, Serialize)]
 pub struct PushResult {
     pub id: String,
-    pub applied: bool,
     pub server_updated_at_ms: i64,
 }
 
@@ -60,6 +74,15 @@ pub async fn push_notes(
             "batch has {} notes; limit is {PUSH_BATCH_LIMIT}",
             body.notes.len()
         )));
+    }
+
+    for note in &body.notes {
+        if note.content.len() > MAX_NOTE_CONTENT_BYTES {
+            return Err(AppError::bad_request(format!(
+                "note {} content exceeds {MAX_NOTE_CONTENT_BYTES} bytes",
+                note.id
+            )));
+        }
     }
 
     // Collapse intra-batch duplicates to the last occurrence so we apply
@@ -97,7 +120,6 @@ pub async fn push_notes(
 
         results.push(PushResult {
             id: note.id.clone(),
-            applied: true,
             server_updated_at_ms: stamped,
         });
     }
@@ -146,12 +168,20 @@ pub async fn pull_notes(
         .unwrap_or(PULL_DEFAULT_LIMIT)
         .clamp(1, PULL_MAX_LIMIT);
 
-    let rows = state
+    // Fetch one extra row as a probe so `has_more` is exactly correct
+    // even on an exact page-boundary multiple. Without this, a client
+    // whose total note count is a multiple of `limit` makes one extra
+    // empty round-trip per sync cycle.
+    let probe_limit = limit.saturating_add(1);
+    let mut rows = state
         .repo
-        .pull_page(SOLO_USER_ID, cursor_sua, cursor_id.as_deref(), limit)
+        .pull_page(SOLO_USER_ID, cursor_sua, cursor_id.as_deref(), probe_limit)
         .await?;
 
-    let has_more = rows.len() == limit;
+    let has_more = rows.len() > limit;
+    if has_more {
+        rows.truncate(limit);
+    }
     let next_cursor = rows
         .last()
         .and_then(|note| note.server_updated_at.map(|sua| (sua, note.id.to_string())))
