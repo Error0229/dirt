@@ -1874,22 +1874,18 @@ dependencies = [
 name = "dirt-mobile"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "chrono",
  "dioxus",
  "dioxus-primitives",
  "dirs",
  "dirt-core",
  "dotenvy",
- "mime_guess",
- "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "urlencoding",
 ]
 
 [[package]]

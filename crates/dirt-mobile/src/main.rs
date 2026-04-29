@@ -7,8 +7,6 @@ mod app;
 #[cfg(target_os = "android")]
 mod app_shell;
 #[cfg(any(target_os = "android", test))]
-mod attachments;
-#[cfg(any(target_os = "android", test))]
 mod bootstrap_config;
 #[cfg(any(target_os = "android", test))]
 mod config;
@@ -28,8 +26,6 @@ mod state;
 mod ui;
 #[cfg(target_os = "android")]
 mod views;
-#[cfg(any(target_os = "android", test))]
-mod voice_memo;
 
 #[cfg(target_os = "android")]
 fn main() {
