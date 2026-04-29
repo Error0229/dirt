@@ -3,6 +3,8 @@
 #[cfg(target_os = "android")]
 use std::path::PathBuf;
 
+use std::ops::Deref;
+
 use dirt_core::models::{Note, NoteId};
 use dirt_core::services::DatabaseService as CoreDatabaseService;
 use dirt_core::{Error, Result};
@@ -14,9 +16,22 @@ const DEFAULT_NOTES_LIMIT: usize = 100;
 const EXPORT_NOTES_PAGE_SIZE: usize = 500;
 
 /// Thin async wrapper around shared core database service APIs.
+///
+/// Derefs to the inner `CoreDatabaseService` so that consumers like
+/// `SyncEngine::new(&store, ..)` work without an explicit getter — the
+/// engine wants the core type, and the mobile-specific surface here is
+/// just sugar over it.
 #[derive(Clone)]
 pub struct MobileNoteStore {
     db: CoreDatabaseService,
+}
+
+impl Deref for MobileNoteStore {
+    type Target = CoreDatabaseService;
+
+    fn deref(&self) -> &Self::Target {
+        &self.db
+    }
 }
 
 impl MobileNoteStore {

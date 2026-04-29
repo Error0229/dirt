@@ -4,8 +4,12 @@
 
 #[cfg(target_os = "android")]
 mod app;
+#[cfg(target_os = "android")]
+mod app_shell;
 #[cfg(any(target_os = "android", test))]
 mod attachments;
+#[cfg(any(target_os = "android", test))]
+mod bootstrap_config;
 #[cfg(any(target_os = "android", test))]
 mod config;
 #[cfg(any(target_os = "android", test))]
@@ -16,8 +20,14 @@ mod export;
 mod filters;
 #[cfg(any(target_os = "android", test))]
 mod launch;
+#[cfg(any(target_os = "android", test))]
+mod services;
+#[cfg(any(target_os = "android", test))]
+mod state;
 #[cfg(target_os = "android")]
 mod ui;
+#[cfg(target_os = "android")]
+mod views;
 #[cfg(any(target_os = "android", test))]
 mod voice_memo;
 
