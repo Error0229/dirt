@@ -20,12 +20,13 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::AppError;
-use crate::turso::{ConsumeFailure, SessionRow};
+use crate::turso::SessionRow;
 use crate::AppState;
 
 /// Magic-code lifetime. 15 minutes is long enough to switch tabs, deal
@@ -111,25 +112,25 @@ pub async fn verify_magic_code(
     let code_hash = hash_code(request_id, &body.code);
     let now_ms = now_ms();
 
+    // Every failure mode collapses to INVALID_CODE on the wire.
+    // Distinct error codes (EXPIRED / TOO_MANY_ATTEMPTS) would let a
+    // probing attacker tell "this request_id never existed" from "this
+    // request_id existed but expired/locked" — which is exactly the
+    // signal the catch-all is meant to deny.
+    //
+    // The repo still distinguishes these for server-side log
+    // diagnostics, but the user-facing error is one shape with a fix
+    // message that covers all three branches.
     let email = match state
         .repo
         .consume_magic_code(request_id, &code_hash, now_ms)
         .await?
     {
         Ok(email) => email,
-        Err(ConsumeFailure::InvalidCode) => {
+        Err(failure) => {
+            tracing::debug!(target: "dirt_api::auth", "consume_magic_code failed: {failure:?}");
             return Err(AppError::invalid_code(
-                "request_id and code do not match an outstanding magic code",
-            ));
-        }
-        Err(ConsumeFailure::Expired) => {
-            return Err(AppError::expired_code(
-                "this magic code has expired; request a new one",
-            ));
-        }
-        Err(ConsumeFailure::TooManyAttempts) => {
-            return Err(AppError::too_many_attempts(
-                "this request_id is locked after too many failed attempts; request a new code",
+                "request_id + code do not match a usable magic code (it may be wrong, expired, or locked after too many attempts)",
             ));
         }
     };
@@ -271,7 +272,15 @@ fn normalize_email(raw: &str) -> Result<String, AppError> {
 }
 
 fn generate_six_digit_code() -> String {
-    let n = rand::Rng::gen_range(&mut rand::thread_rng(), 0..1_000_000);
+    // OsRng for auth-critical randomness — explicit about going to the
+    // OS CSPRNG rather than relying on `thread_rng`'s seeding being
+    // cryptographically secure on every target.
+    //
+    // `next_u32() % 1_000_000` has a small modulo bias (about 0.024%)
+    // since 2^32 isn't a multiple of 1e6. For a 6-digit auth code the
+    // bias is well below the 1-in-200,000 floor that the 5-attempt cap
+    // already enforces, so it's not worth a rejection-sampling loop.
+    let n = OsRng.next_u32() % 1_000_000;
     format!("{n:06}")
 }
 
@@ -281,7 +290,7 @@ fn is_six_digit_code(s: &str) -> bool {
 
 fn generate_session_token() -> String {
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    OsRng.fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
@@ -310,21 +319,36 @@ mod tests {
 
     use super::*;
     use crate::config::{AppConfig, ServerToken};
-    use crate::email::EmailSender;
+    use crate::email::{CapturedSends, EmailSender};
+    use crate::turso::TempDb;
     use crate::TursoRepo;
 
-    async fn build_test_router() -> (Router, AppState) {
+    /// Test fixture. Holds the `TempDb` guard so the scratch DB file is
+    /// removed when the test scope exits.
+    struct Fixture {
+        router: Router,
+        state: AppState,
+        captured: CapturedSends,
+        _temp_db: TempDb,
+    }
+
+    async fn build_test_router() -> Fixture {
         let config = AppConfig {
             bind_addr: "127.0.0.1:0".into(),
             turso_database_url: "libsql://unused.test".into(),
             turso_auth_token: "unused".into(),
             server_token: ServerToken(b"unused-32-byte-server-token-abcdef".to_vec()),
         };
-        let repo = Arc::new(TursoRepo::connect_in_memory().await.unwrap());
-        let email = Arc::new(EmailSender::log_only());
-        let state = AppState::new(Arc::new(config), repo, email);
+        let temp_db = TursoRepo::connect_temp_db().await.unwrap();
+        let (sender, captured) = EmailSender::capture();
+        let state = AppState::new(Arc::new(config), temp_db.repo.clone(), Arc::new(sender));
         let router = crate::build_router(state.clone());
-        (router, state)
+        Fixture {
+            router,
+            state,
+            captured,
+            _temp_db: temp_db,
+        }
     }
 
     // Kept `async` even though the body never awaits, so the call sites
@@ -367,12 +391,14 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn request_then_verify_round_trip() {
-        let (router, state) = build_test_router().await;
+        let fx = build_test_router().await;
 
-        // Step 1: client requests a code. Response carries an opaque
-        // request_id and an expiry; the actual code is in the email
-        // (here: tracing log). We seed via repo for the verify step.
-        let resp = router
+        // Step 1: client requests a code. The capture-mode EmailSender
+        // stashes the (email, code) pair for us so we can submit the
+        // *real* code that /v1/auth/request minted, instead of seeding
+        // a parallel one.
+        let resp = fx
+            .router
             .clone()
             .oneshot(
                 json_request(
@@ -386,18 +412,25 @@ mod tests {
             .unwrap();
         let (status, body) = read_json(resp).await;
         assert_eq!(status, StatusCode::OK);
-        assert!(body.get("request_id").and_then(Value::as_str).is_some());
+        let request_id = body["request_id"].as_str().unwrap().to_string();
+        assert!(uuid::Uuid::parse_str(&request_id).is_ok());
         assert!(body.get("expires_at_ms").and_then(Value::as_i64).is_some());
 
-        // Step 2: seed a known code and verify with it.
-        let request_id = seed_code(&state, "user@example.com", "424242").await;
-        let resp = router
+        let captured = fx.captured.lock().unwrap().clone();
+        assert_eq!(captured.len(), 1, "expected exactly one captured send");
+        let (sent_to, code) = captured.into_iter().next().unwrap();
+        assert_eq!(sent_to, "user@example.com");
+        assert!(is_six_digit_code(&code), "captured code wasn't 6 digits");
+
+        // Step 2: verify with the actual minted code.
+        let resp = fx
+            .router
             .clone()
             .oneshot(
                 json_request(
                     "POST",
                     "/v1/auth/verify",
-                    json!({ "request_id": request_id, "code": "424242" }),
+                    json!({ "request_id": request_id, "code": code }),
                 )
                 .await,
             )
@@ -406,17 +439,18 @@ mod tests {
         let (status, body) = read_json(resp).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["email"], "user@example.com");
-        assert!(body["session_token"].as_str().unwrap().len() == 43);
+        assert_eq!(body["session_token"].as_str().unwrap().len(), 43);
         assert!(uuid::Uuid::parse_str(body["user_id"].as_str().unwrap()).is_ok());
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn verify_with_wrong_code_returns_invalid_code_and_locks_after_max_attempts() {
-        let (router, state) = build_test_router().await;
-        let request_id = seed_code(&state, "user@example.com", "111111").await;
+        let fx = build_test_router().await;
+        let request_id = seed_code(&fx.state, "user@example.com", "111111").await;
 
         for _ in 0..crate::turso::MAX_CODE_ATTEMPTS {
-            let resp = router
+            let resp = fx
+                .router
                 .clone()
                 .oneshot(
                     json_request(
@@ -433,9 +467,13 @@ mod tests {
             assert_eq!(body["error"]["code"], "INVALID_CODE");
         }
 
-        // Sixth try (with the now-correct code) fails with TOO_MANY_ATTEMPTS,
-        // proving the attempts counter actually locked the row.
-        let resp = router
+        // Sixth try (with the now-correct code) still fails — the
+        // INVALID_CODE catch-all now covers "locked after too many
+        // attempts" too, so the attacker can't tell why their code
+        // didn't work. The row IS locked: the only way out is a fresh
+        // /v1/auth/request.
+        let resp = fx
+            .router
             .clone()
             .oneshot(
                 json_request(
@@ -449,23 +487,24 @@ mod tests {
             .unwrap();
         let (status, body) = read_json(resp).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(body["error"]["code"], "TOO_MANY_ATTEMPTS");
+        assert_eq!(body["error"]["code"], "INVALID_CODE");
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn verify_expired_code_returns_expired_code() {
-        let (router, state) = build_test_router().await;
+    async fn verify_expired_code_returns_invalid_code() {
+        let fx = build_test_router().await;
         // Seed a row with expires_at already past.
         let request_id = uuid::Uuid::now_v7().to_string();
         let code = "222222";
         let code_hash = hash_code(&request_id, code);
-        state
+        fx.state
             .repo
             .insert_magic_code(&request_id, "user@example.com", &code_hash, 0, 1)
             .await
             .unwrap();
 
-        let resp = router
+        let resp = fx
+            .router
             .oneshot(
                 json_request(
                     "POST",
@@ -478,16 +517,79 @@ mod tests {
             .unwrap();
         let (status, body) = read_json(resp).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(body["error"]["code"], "EXPIRED_CODE");
+        // Expired collapses to INVALID_CODE so an attacker can't
+        // distinguish "this request_id never existed" from "it existed
+        // but expired".
+        assert_eq!(body["error"]["code"], "INVALID_CODE");
+    }
+
+    /// Replaying a successfully-consumed code on the same `request_id`
+    /// must come back as `INVALID_CODE`. The `consumed_at` guard in the
+    /// success-path UPDATE is what enforces this.
+    #[tokio::test(flavor = "current_thread")]
+    async fn verify_replay_after_success_returns_invalid_code() {
+        let fx = build_test_router().await;
+        let request_id = seed_code(&fx.state, "user@example.com", "555555").await;
+
+        let body = json!({ "request_id": request_id, "code": "555555" });
+
+        let resp = fx
+            .router
+            .clone()
+            .oneshot(json_request("POST", "/v1/auth/verify", body.clone()).await)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = fx
+            .router
+            .oneshot(json_request("POST", "/v1/auth/verify", body).await)
+            .await
+            .unwrap();
+        let (status, body) = read_json(resp).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "INVALID_CODE");
+    }
+
+    /// Logging in twice with the same email must return the same
+    /// `user_id`. Guards the `ON CONFLICT(email)` path on the users
+    /// upsert from a regression that minted a fresh user per login.
+    #[tokio::test(flavor = "current_thread")]
+    async fn upsert_user_by_email_is_idempotent_across_logins() {
+        let fx = build_test_router().await;
+
+        let mut user_ids = Vec::new();
+        for code in ["666666", "777777"] {
+            let request_id = seed_code(&fx.state, "twice@example.com", code).await;
+            let resp = fx
+                .router
+                .clone()
+                .oneshot(
+                    json_request(
+                        "POST",
+                        "/v1/auth/verify",
+                        json!({ "request_id": request_id, "code": code }),
+                    )
+                    .await,
+                )
+                .await
+                .unwrap();
+            let (status, body) = read_json(resp).await;
+            assert_eq!(status, StatusCode::OK);
+            user_ids.push(body["user_id"].as_str().unwrap().to_string());
+        }
+
+        assert_eq!(user_ids[0], user_ids[1], "same email yielded a new user_id");
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn refresh_rotates_session_and_revokes_old_token() {
-        let (router, state) = build_test_router().await;
-        let request_id = seed_code(&state, "user@example.com", "333333").await;
+        let fx = build_test_router().await;
+        let request_id = seed_code(&fx.state, "user@example.com", "333333").await;
 
         // verify → first session token
-        let resp = router
+        let resp = fx
+            .router
             .clone()
             .oneshot(
                 json_request(
@@ -503,7 +605,8 @@ mod tests {
         let token_a = body["session_token"].as_str().unwrap().to_string();
 
         // refresh → second session token
-        let resp = router
+        let resp = fx
+            .router
             .clone()
             .oneshot(
                 Request::builder()
@@ -521,7 +624,8 @@ mod tests {
         assert_ne!(token_a, token_b);
 
         // The old token should now be SESSION_EXPIRED on logout.
-        let resp = router
+        let resp = fx
+            .router
             .clone()
             .oneshot(
                 Request::builder()
@@ -538,7 +642,8 @@ mod tests {
         assert_eq!(body["error"]["code"], "SESSION_EXPIRED");
 
         // The new token still works (logout it).
-        let resp = router
+        let resp = fx
+            .router
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -554,10 +659,11 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn logout_then_reuse_returns_session_expired() {
-        let (router, state) = build_test_router().await;
-        let request_id = seed_code(&state, "user@example.com", "444444").await;
+        let fx = build_test_router().await;
+        let request_id = seed_code(&fx.state, "user@example.com", "444444").await;
 
-        let resp = router
+        let resp = fx
+            .router
             .clone()
             .oneshot(
                 json_request(
@@ -572,7 +678,8 @@ mod tests {
         let (_, body) = read_json(resp).await;
         let token = body["session_token"].as_str().unwrap().to_string();
 
-        let resp = router
+        let resp = fx
+            .router
             .clone()
             .oneshot(
                 Request::builder()
@@ -586,7 +693,8 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-        let resp = router
+        let resp = fx
+            .router
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -604,8 +712,9 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn refresh_without_authorization_header_returns_session_expired() {
-        let (router, _) = build_test_router().await;
-        let resp = router
+        let fx = build_test_router().await;
+        let resp = fx
+            .router
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -622,8 +731,9 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn request_with_garbage_email_returns_invalid_email() {
-        let (router, _) = build_test_router().await;
-        let resp = router
+        let fx = build_test_router().await;
+        let resp = fx
+            .router
             .oneshot(
                 json_request(
                     "POST",
@@ -641,9 +751,10 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn verify_with_malformed_code_returns_invalid_code() {
-        let (router, _) = build_test_router().await;
+        let fx = build_test_router().await;
         let request_id = uuid::Uuid::now_v7().to_string();
-        let resp = router
+        let resp = fx
+            .router
             .oneshot(
                 json_request(
                     "POST",

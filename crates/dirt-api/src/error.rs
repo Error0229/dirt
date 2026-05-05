@@ -40,13 +40,14 @@ pub enum AppError {
     Internal(String),
 }
 
-// Phase 2 magic-link auth: distinct error codes so clients can tell
-// "wrong code" from "expired code" from "too many tries" without parsing
-// human-readable messages.
-//
-// `SESSION_EXPIRED` is a 401 (the session middleware peels it off the
-// Authorization header). The other three are 400s — they describe a
-// client-supplied request body that the server rejected.
+// Phase 2 magic-link auth error codes:
+//   - `SESSION_EXPIRED` (401) — peeled off by the session middleware;
+//     covers missing / malformed / revoked / expired bearer headers.
+//   - `INVALID_EMAIL`  (400) — the email shape is unparseable.
+//   - `INVALID_CODE`   (400) — catch-all for magic-code verification
+//     failure (wrong code, unknown / expired / consumed / locked
+//     request_id). Deliberately one signal so probing for live
+//     request_ids doesn't work.
 
 #[derive(Debug, Serialize)]
 struct ErrorEnvelope {
@@ -92,23 +93,13 @@ impl AppError {
         }
     }
 
+    /// Catch-all for every magic-code verification failure: wrong code,
+    /// unknown `request_id`, consumed-already, expired, or attempt-locked.
+    /// We deliberately don't distinguish them on the wire — see
+    /// `routes_auth::verify_magic_code` for the rationale.
     pub fn invalid_code(message: impl Into<String>) -> Self {
         Self::BadRequest {
             code: "INVALID_CODE",
-            message: message.into(),
-        }
-    }
-
-    pub fn expired_code(message: impl Into<String>) -> Self {
-        Self::BadRequest {
-            code: "EXPIRED_CODE",
-            message: message.into(),
-        }
-    }
-
-    pub fn too_many_attempts(message: impl Into<String>) -> Self {
-        Self::BadRequest {
-            code: "TOO_MANY_ATTEMPTS",
             message: message.into(),
         }
     }
@@ -204,13 +195,7 @@ impl AppError {
                     "Send a syntactically valid email address (RFC-5322-ish)."
                 }
                 "INVALID_CODE" => {
-                    "Re-check the code from the email and retry; if it keeps failing, request a new one."
-                }
-                "EXPIRED_CODE" => {
-                    "Magic codes are valid for 15 minutes. Request a new code via /v1/auth/request."
-                }
-                "TOO_MANY_ATTEMPTS" => {
-                    "This request_id is locked. Request a fresh code via /v1/auth/request."
+                    "Re-check the code; if it keeps failing, has been more than 15 minutes, or you've tried several times, request a new one via /v1/auth/request."
                 }
                 _ => "Fix the request body or parameters and retry.",
             },

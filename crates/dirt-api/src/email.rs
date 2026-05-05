@@ -11,6 +11,9 @@
 
 use crate::error::AppError;
 
+#[cfg(test)]
+use std::sync::{Arc, Mutex};
+
 /// Sender mode picked at startup. Kept private — callers go through
 /// `EmailSender::send_magic_code`, not the variant directly.
 enum Mode {
@@ -18,7 +21,16 @@ enum Mode {
     /// The right default for `cargo run` and tests; explicit because
     /// "I'm not actually emailing this" should be a deliberate choice.
     Log,
+    /// Test-only: stash every (email, code) pair into a shared `Vec`
+    /// the test can inspect. Lets the round-trip test parse the actual
+    /// code that `/v1/auth/request` minted, instead of seeding a
+    /// parallel one and pretending.
+    #[cfg(test)]
+    Capture(CapturedSends),
 }
+
+#[cfg(test)]
+pub type CapturedSends = Arc<Mutex<Vec<(String, String)>>>;
 
 pub struct EmailSender {
     mode: Mode,
@@ -29,6 +41,19 @@ impl EmailSender {
     #[must_use]
     pub const fn log_only() -> Self {
         Self { mode: Mode::Log }
+    }
+
+    /// Test-only: build a sender that records every send into the
+    /// returned `Arc<Mutex<Vec>>`, alongside the sender itself.
+    #[cfg(test)]
+    pub fn capture() -> (Self, CapturedSends) {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                mode: Mode::Capture(captured.clone()),
+            },
+            captured,
+        )
     }
 
     /// Pick a mode from the process environment.
@@ -56,6 +81,14 @@ impl EmailSender {
         match &self.mode {
             Mode::Log => {
                 tracing::info!(target: "dirt_api::email", "[dev email] to={email} code={code}");
+                Ok(())
+            }
+            #[cfg(test)]
+            Mode::Capture(captured) => {
+                captured
+                    .lock()
+                    .expect("CapturedSends mutex poisoned")
+                    .push((email.to_string(), code.to_string()));
                 Ok(())
             }
         }

@@ -54,19 +54,26 @@ impl TursoRepo {
     /// in-memory backend gives each new `connect()` a fresh, empty
     /// schema; `TursoRepo::conn()` opens a new connection per query,
     /// which would mean every query after `bootstrap` saw an empty DB.
+    ///
+    /// Wrapped by `TempDb` so the file is cleaned up on drop — without
+    /// the guard, every `cargo test` invocation litters `$TMPDIR` with
+    /// `.db` and `.db-wal` files.
     #[cfg(test)]
-    pub async fn connect_in_memory() -> Result<Self, AppError> {
+    pub async fn connect_temp_db() -> Result<TempDb, AppError> {
         let path = std::env::temp_dir().join(format!(
             "dirt-api-test-{}.db",
             uuid::Uuid::now_v7().simple()
         ));
-        let db = Builder::new_local(path)
+        let db = Builder::new_local(&path)
             .build()
             .await
             .map_err(|e| AppError::config(format!("failed to build local libsql: {e}")))?;
         let conn = db.connect()?;
         bootstrap(&conn).await?;
-        Ok(Self { db: Some(db) })
+        Ok(TempDb {
+            repo: std::sync::Arc::new(Self { db: Some(db) }),
+            path,
+        })
     }
 
     fn conn(&self) -> Result<Connection, AppError> {
@@ -271,7 +278,38 @@ impl TursoRepo {
             return Ok(Ok(email));
         }
 
-        // Failure path: figure out *why* the UPDATE missed.
+        // Failure path. Bump the attempt counter atomically *before*
+        // diagnosing why the success UPDATE missed — folding the
+        // "is the row still live?" predicate and the "did we fit
+        // under the cap?" predicate into one statement so two
+        // concurrent wrong-code requests can't both slip past the
+        // attempts cap. SQLite-flavored libsql serializes write
+        // statements on the same row, so the atomic predicate
+        // `attempts < MAX_CODE_ATTEMPTS` is honoured exactly once
+        // even under concurrent attempts.
+        //
+        // `affected_increment > 0` ⇒ the row was live (not consumed,
+        //   not expired) and under the cap; the only way the success
+        //   UPDATE could miss while this one hits is a wrong code.
+        // `affected_increment == 0` ⇒ the row is in some terminal
+        //   state — fall through to a SELECT to disambiguate.
+        let affected_increment = conn
+            .execute(
+                "UPDATE magic_codes
+                    SET attempts = attempts + 1
+                  WHERE request_id = ?
+                    AND consumed_at IS NULL
+                    AND expires_at >= ?
+                    AND attempts < ?",
+                libsql::params![request_id, now_ms, MAX_CODE_ATTEMPTS],
+            )
+            .await?;
+
+        if affected_increment > 0 {
+            return Ok(Err(ConsumeFailure::InvalidCode));
+        }
+
+        // Increment missed → row is missing, consumed, expired, or locked.
         let mut rows = conn
             .query(
                 "SELECT consumed_at, expires_at, attempts FROM magic_codes WHERE request_id = ?",
@@ -294,13 +332,10 @@ impl TursoRepo {
         if attempts >= MAX_CODE_ATTEMPTS {
             return Ok(Err(ConsumeFailure::TooManyAttempts));
         }
-        // Reaching here means the code itself was wrong. Bump the
-        // attempt counter so repeated guesses lock out the row.
-        conn.execute(
-            "UPDATE magic_codes SET attempts = attempts + 1 WHERE request_id = ? AND consumed_at IS NULL",
-            libsql::params![request_id],
-        )
-        .await?;
+        // Should be unreachable: increment missed for a row that's
+        // live and under the cap implies a libsql transactional
+        // inconsistency. Treat as an invalid code rather than
+        // silently leaking a 500.
         Ok(Err(ConsumeFailure::InvalidCode))
     }
 
@@ -413,6 +448,34 @@ pub struct SessionRow {
     pub id: String,
     pub user_id: String,
     pub expires_at_ms: i64,
+}
+
+/// Test-only RAII handle around a tempfile-backed `TursoRepo`. Removes
+/// the file (and libsql's `-shm` / `-wal` siblings, if any) on drop so
+/// `cargo test` doesn't accumulate scratch DBs in `$TMPDIR`.
+#[cfg(test)]
+pub struct TempDb {
+    pub repo: std::sync::Arc<TursoRepo>,
+    path: std::path::PathBuf,
+}
+
+#[cfg(test)]
+impl Drop for TempDb {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+        let mut shm = self.path.clone();
+        shm.set_file_name(format!(
+            "{}-shm",
+            self.path.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        let _ = std::fs::remove_file(&shm);
+        let mut wal = self.path.clone();
+        wal.set_file_name(format!(
+            "{}-wal",
+            self.path.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        let _ = std::fs::remove_file(&wal);
+    }
 }
 
 fn parse_pulled_note(row: &libsql::Row) -> Result<Note, AppError> {
