@@ -1790,8 +1790,10 @@ dependencies = [
  "dirt-core",
  "dotenvy",
  "libsql",
+ "rand 0.8.5",
  "serde",
  "serde_json",
+ "sha2",
  "subtle",
  "thiserror 2.0.18",
  "tokio",
@@ -1799,6 +1801,7 @@ dependencies = [
  "tower-http 0.6.8",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

@@ -47,6 +47,28 @@ impl TursoRepo {
         Self { db: None }
     }
 
+    /// Test-only constructor backed by an in-process libSQL database so
+    /// route + repo logic can be exercised without a real Turso target.
+    ///
+    /// Uses a per-test tempfile rather than `:memory:` because libsql's
+    /// in-memory backend gives each new `connect()` a fresh, empty
+    /// schema; `TursoRepo::conn()` opens a new connection per query,
+    /// which would mean every query after `bootstrap` saw an empty DB.
+    #[cfg(test)]
+    pub async fn connect_in_memory() -> Result<Self, AppError> {
+        let path = std::env::temp_dir().join(format!(
+            "dirt-api-test-{}.db",
+            uuid::Uuid::now_v7().simple()
+        ));
+        let db = Builder::new_local(path)
+            .build()
+            .await
+            .map_err(|e| AppError::config(format!("failed to build local libsql: {e}")))?;
+        let conn = db.connect()?;
+        bootstrap(&conn).await?;
+        Ok(Self { db: Some(db) })
+    }
+
     fn conn(&self) -> Result<Connection, AppError> {
         let db = self
             .db
@@ -152,6 +174,247 @@ pub struct PushNote<'a> {
     pub deleted_at_ms: Option<i64>,
 }
 
+// ---- Phase 2 magic-link auth repo methods ----
+
+/// Why a `consume_magic_code` call rejected the code. Routes layer maps
+/// these onto user-facing error codes.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ConsumeFailure {
+    /// No row for that `request_id`, or `request_id` + code don't match,
+    /// or the row has already been consumed. Treated identically by the
+    /// caller — distinguishing them would let an attacker probe for valid
+    /// `request_id`s.
+    InvalidCode,
+    /// Row exists but `expires_at` is past.
+    Expired,
+    /// `attempts >= MAX_CODE_ATTEMPTS`. The row stays in the table so a
+    /// fresh `auth/request` can replace it; we don't auto-revive.
+    TooManyAttempts,
+}
+
+/// Maximum failed verifications per magic-code row.
+///
+/// Five gives a fat-fingering user three real retries on a typo while
+/// making bruteforcing 6-digit codes hopeless (1e6 / 5 ≈ 200 000 fresh
+/// codes per success). Past this we stop accepting any code on the row.
+pub const MAX_CODE_ATTEMPTS: i64 = 5;
+
+impl TursoRepo {
+    /// Insert a fresh magic-code row. `code_hash` is the sha256 hex of
+    /// `format!("{request_id}:{code}")` — never the raw code.
+    pub async fn insert_magic_code(
+        &self,
+        request_id: &str,
+        email: &str,
+        code_hash: &str,
+        created_at_ms: i64,
+        expires_at_ms: i64,
+    ) -> Result<(), AppError> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO magic_codes (request_id, email, code_hash, created_at, expires_at, consumed_at, attempts)
+             VALUES (?, ?, ?, ?, ?, NULL, 0)",
+            libsql::params![request_id, email, code_hash, created_at_ms, expires_at_ms],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Atomically check + consume a magic code. On success returns the
+    /// email tied to the row (caller uses it to upsert the user). On
+    /// failure returns the structured `ConsumeFailure`.
+    ///
+    /// The success path is a single conditional UPDATE so two concurrent
+    /// verifies can't both win. The failure path issues a second SELECT
+    /// only to give the user a useful error.
+    pub async fn consume_magic_code(
+        &self,
+        request_id: &str,
+        expected_code_hash: &str,
+        now_ms: i64,
+    ) -> Result<Result<String, ConsumeFailure>, AppError> {
+        let conn = self.conn()?;
+
+        // Fast path: a single conditional UPDATE guards every check at once.
+        let affected = conn
+            .execute(
+                "UPDATE magic_codes
+                    SET consumed_at = ?
+                  WHERE request_id = ?
+                    AND consumed_at IS NULL
+                    AND expires_at >= ?
+                    AND code_hash = ?
+                    AND attempts < ?",
+                libsql::params![
+                    now_ms,
+                    request_id,
+                    now_ms,
+                    expected_code_hash,
+                    MAX_CODE_ATTEMPTS
+                ],
+            )
+            .await?;
+
+        if affected > 0 {
+            let mut rows = conn
+                .query(
+                    "SELECT email FROM magic_codes WHERE request_id = ?",
+                    libsql::params![request_id],
+                )
+                .await?;
+            let Some(row) = rows.next().await? else {
+                return Err(AppError::internal(
+                    "magic code row vanished between consume and email lookup",
+                ));
+            };
+            let email: String = row.get(0)?;
+            return Ok(Ok(email));
+        }
+
+        // Failure path: figure out *why* the UPDATE missed.
+        let mut rows = conn
+            .query(
+                "SELECT consumed_at, expires_at, attempts FROM magic_codes WHERE request_id = ?",
+                libsql::params![request_id],
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Ok(Err(ConsumeFailure::InvalidCode));
+        };
+        let consumed_at: Option<i64> = row.get(0)?;
+        let expires_at: i64 = row.get(1)?;
+        let attempts: i64 = row.get(2)?;
+
+        if consumed_at.is_some() {
+            return Ok(Err(ConsumeFailure::InvalidCode));
+        }
+        if expires_at < now_ms {
+            return Ok(Err(ConsumeFailure::Expired));
+        }
+        if attempts >= MAX_CODE_ATTEMPTS {
+            return Ok(Err(ConsumeFailure::TooManyAttempts));
+        }
+        // Reaching here means the code itself was wrong. Bump the
+        // attempt counter so repeated guesses lock out the row.
+        conn.execute(
+            "UPDATE magic_codes SET attempts = attempts + 1 WHERE request_id = ? AND consumed_at IS NULL",
+            libsql::params![request_id],
+        )
+        .await?;
+        Ok(Err(ConsumeFailure::InvalidCode))
+    }
+
+    /// Get-or-insert a user row keyed on email. Returns the canonical
+    /// `user_id`. `email` must already be normalized (trimmed, lowercase).
+    pub async fn upsert_user_by_email(&self, email: &str, now_ms: i64) -> Result<String, AppError> {
+        let conn = self.conn()?;
+        let new_id = uuid::Uuid::now_v7().to_string();
+        // ON CONFLICT(email) returns the existing row's id, so the caller
+        // gets a stable user_id regardless of whether this was the first
+        // login or the hundredth.
+        let mut rows = conn
+            .query(
+                "INSERT INTO users (id, email, created_at, last_login_at)
+                 VALUES (?, ?, ?, ?)
+                 ON CONFLICT(email) DO UPDATE SET last_login_at = excluded.last_login_at
+                 RETURNING id",
+                libsql::params![new_id, email, now_ms, now_ms],
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Err(AppError::internal("user upsert returned no row"));
+        };
+        Ok(row.get(0)?)
+    }
+
+    /// Insert a new session row and return its public `session_id` (the
+    /// caller owns the raw token).
+    pub async fn insert_auth_session(
+        &self,
+        user_id: &str,
+        token_hash: &str,
+        created_at_ms: i64,
+        expires_at_ms: i64,
+    ) -> Result<String, AppError> {
+        let conn = self.conn()?;
+        let session_id = uuid::Uuid::now_v7().to_string();
+        conn.execute(
+            "INSERT INTO auth_sessions (id, user_id, token_hash, created_at, last_used_at, expires_at, revoked_at)
+             VALUES (?, ?, ?, ?, ?, ?, NULL)",
+            libsql::params![
+                session_id.clone(),
+                user_id,
+                token_hash,
+                created_at_ms,
+                created_at_ms,
+                expires_at_ms,
+            ],
+        )
+        .await?;
+        Ok(session_id)
+    }
+
+    /// Resolve a session token (by its sha256 hash) to its session row.
+    /// Returns None when the session is missing, revoked, or past
+    /// `expires_at`.
+    ///
+    /// Bumps `last_used_at` as a side effect so the session-token TTL
+    /// rolls forward with use; the row's `expires_at` is *not* touched
+    /// here — refresh is the explicit way to extend a session.
+    pub async fn lookup_session_by_token_hash(
+        &self,
+        token_hash: &str,
+        now_ms: i64,
+    ) -> Result<Option<SessionRow>, AppError> {
+        let conn = self.conn()?;
+        let mut rows = conn
+            .query(
+                "SELECT id, user_id, expires_at FROM auth_sessions
+                  WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+                libsql::params![token_hash, now_ms],
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+        let id: String = row.get(0)?;
+        let user_id: String = row.get(1)?;
+        let expires_at: i64 = row.get(2)?;
+
+        conn.execute(
+            "UPDATE auth_sessions SET last_used_at = ? WHERE id = ?",
+            libsql::params![now_ms, id.clone()],
+        )
+        .await?;
+
+        Ok(Some(SessionRow {
+            id,
+            user_id,
+            expires_at_ms: expires_at,
+        }))
+    }
+
+    /// Mark a session row revoked. Idempotent — re-revoking is fine.
+    pub async fn revoke_session(&self, session_id: &str, now_ms: i64) -> Result<(), AppError> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE auth_sessions SET revoked_at = ?
+              WHERE id = ? AND revoked_at IS NULL",
+            libsql::params![now_ms, session_id],
+        )
+        .await?;
+        Ok(())
+    }
+}
+
+/// Session-row projection used by middleware + refresh handlers.
+#[derive(Debug, Clone)]
+pub struct SessionRow {
+    pub id: String,
+    pub user_id: String,
+    pub expires_at_ms: i64,
+}
+
 fn parse_pulled_note(row: &libsql::Row) -> Result<Note, AppError> {
     let id: String = row.get(0)?;
     let id = id
@@ -183,6 +446,44 @@ async fn bootstrap(conn: &Connection) -> Result<(), AppError> {
              deleted_at INTEGER
          )",
         "CREATE INDEX IF NOT EXISTS idx_notes_user_sua ON notes(user_id, server_updated_at, id)",
+        // Phase 2 magic-link auth: per-user identities replace the shared
+        // bearer token in Phase 1.
+        "CREATE TABLE IF NOT EXISTS users (
+             id TEXT PRIMARY KEY,
+             email TEXT NOT NULL UNIQUE,
+             created_at INTEGER NOT NULL,
+             last_login_at INTEGER
+         )",
+        // One row per outstanding magic-code request. `code_hash` is
+        // sha256(request_id || ':' || code) hex — binding the code to its
+        // request_id stops a code from one request being replayed against
+        // another.
+        "CREATE TABLE IF NOT EXISTS magic_codes (
+             request_id TEXT PRIMARY KEY,
+             email TEXT NOT NULL,
+             code_hash TEXT NOT NULL,
+             created_at INTEGER NOT NULL,
+             expires_at INTEGER NOT NULL,
+             consumed_at INTEGER,
+             attempts INTEGER NOT NULL DEFAULT 0
+         )",
+        "CREATE INDEX IF NOT EXISTS idx_magic_codes_email_active
+             ON magic_codes(email, consumed_at, expires_at)",
+        // `token_hash` is sha256 of the random session token. We never
+        // store the raw token. `revoked_at` doubles as the logout marker.
+        "CREATE TABLE IF NOT EXISTS auth_sessions (
+             id TEXT PRIMARY KEY,
+             user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+             token_hash TEXT NOT NULL UNIQUE,
+             created_at INTEGER NOT NULL,
+             last_used_at INTEGER NOT NULL,
+             expires_at INTEGER NOT NULL,
+             revoked_at INTEGER
+         )",
+        "CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
+             ON auth_sessions(user_id, revoked_at, expires_at)",
+        "CREATE INDEX IF NOT EXISTS idx_auth_sessions_token
+             ON auth_sessions(token_hash)",
     ];
     for stmt in statements {
         conn.execute(stmt, ()).await?;
