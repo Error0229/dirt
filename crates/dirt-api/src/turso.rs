@@ -1,14 +1,30 @@
 //! Server-side libSQL client and schema bootstrap.
 //!
-//! One long-lived `libsql::Database` per process. `bootstrap` creates the
-//! server schema on first run, matching the shape in the design doc. Push
-//! and pull both stamp `server_updated_at` with `now_ms()` — clients never
-//! write that column.
+//! One long-lived `libsql::Connection` per process. `bootstrap` creates
+//! the server schema on first run, matching the shape in the design doc.
+//! Push and pull both stamp `server_updated_at` with `now_ms()` —
+//! clients never write that column.
+//!
+//! ## Why a single shared connection
+//!
+//! `PRAGMA foreign_keys = ON` is a per-connection setting in `SQLite` /
+//! libsql, and the auth schema's `auth_sessions.user_id REFERENCES
+//! users(id) ON DELETE CASCADE` clause silently no-ops without it.
+//! Setting the pragma once on a single long-lived connection avoids the
+//! per-query round-trip the P2.1 implementation paid (and which P2.2
+//! would have hit on every authenticated push/pull). `libsql::Connection`
+//! is `Clone` and serializes statements internally, so cloning it for
+//! each handler call is essentially free.
+//!
+//! Trade-off: writes serialize through one Connection. For solo-phase
+//! Turso deploys this is not a meaningful change — Turso single-writes
+//! at the cluster level anyway, so a per-process connection pool would
+//! not buy concurrency on writes.
 
 use std::sync::Arc;
 
 use dirt_core::models::{Note, NoteId};
-use libsql::{Builder, Connection, Database, TransactionBehavior};
+use libsql::{Builder, Connection, TransactionBehavior};
 
 use crate::error::AppError;
 
@@ -22,21 +38,40 @@ pub const PULL_DEFAULT_LIMIT: usize = 500;
 /// Hard ceiling to bound memory even if a malicious client asks for more.
 pub const PULL_MAX_LIMIT: usize = 1000;
 
+/// Minimum gap between `last_used_at` writes on the same session.
+///
+/// Sessions are touched on every authenticated request. Without
+/// throttling, a steady-state syncer (push + pull every 30 s, plus a
+/// post-mutation kick) would fire two writes per minute against the
+/// same row forever. Five minutes is fine for what this column is
+/// actually for — coarse "is this session still alive?" telemetry —
+/// and cuts the write load on the hot path by ~10× at typical sync
+/// cadence.
+pub const LAST_USED_THROTTLE_MS: i64 = 5 * 60 * 1000;
+
 pub struct TursoRepo {
-    db: Option<Database>,
+    /// Single shared libsql connection. `None` only in the test-only
+    /// `dangling()` constructor used by middleware tests that never
+    /// reach the repo. `PRAGMA foreign_keys = ON` is set once at
+    /// `connect()` time and inherited by every clone.
+    connection: Option<Connection>,
 }
 
 impl TursoRepo {
-    /// Connect to a Turso remote database and run the server-side schema
-    /// bootstrap. Idempotent: running twice against a seeded DB is a no-op.
+    /// Connect to a Turso remote database, arm FK enforcement, and run
+    /// the server-side schema bootstrap. Idempotent: running twice
+    /// against a seeded DB is a no-op.
     pub async fn connect(url: &str, auth_token: &str) -> Result<Self, AppError> {
         let db = Builder::new_remote(url.to_string(), auth_token.to_string())
             .build()
             .await
             .map_err(|e| AppError::config(format!("failed to build Turso client: {e}")))?;
-        let conn = db.connect()?;
-        bootstrap(&conn).await?;
-        Ok(Self { db: Some(db) })
+        let connection = db.connect()?;
+        arm_foreign_keys(&connection).await?;
+        bootstrap(&connection).await?;
+        Ok(Self {
+            connection: Some(connection),
+        })
     }
 
     /// Test-only constructor that holds no real database. Any handler that
@@ -44,7 +79,7 @@ impl TursoRepo {
     /// don't touch the repo.
     #[cfg(test)]
     pub const fn dangling() -> Self {
-        Self { db: None }
+        Self { connection: None }
     }
 
     /// Test-only constructor backed by an in-process libSQL database so
@@ -52,8 +87,10 @@ impl TursoRepo {
     ///
     /// Uses a per-test tempfile rather than `:memory:` because libsql's
     /// in-memory backend gives each new `connect()` a fresh, empty
-    /// schema; `TursoRepo::conn()` opens a new connection per query,
-    /// which would mean every query after `bootstrap` saw an empty DB.
+    /// schema; if anything ever opened a second connection it would see
+    /// nothing. The shared-connection design here makes that mostly
+    /// irrelevant, but the tempfile is still preferred so manual probes
+    /// in tests (which open their own connection) see the same data.
     ///
     /// Wrapped by `TempDb` so the file is cleaned up on drop — without
     /// the guard, every `cargo test` invocation litters `$TMPDIR` with
@@ -68,41 +105,32 @@ impl TursoRepo {
             .build()
             .await
             .map_err(|e| AppError::config(format!("failed to build local libsql: {e}")))?;
-        let conn = db.connect()?;
-        bootstrap(&conn).await?;
+        let connection = db.connect()?;
+        arm_foreign_keys(&connection).await?;
+        bootstrap(&connection).await?;
         Ok(TempDb {
-            repo: std::sync::Arc::new(Self { db: Some(db) }),
+            repo: Arc::new(Self {
+                connection: Some(connection),
+            }),
+            // Hold the Database so the tempfile can't be dropped from
+            // under the live Connection clones.
+            _db: Box::new(db),
             path,
         })
     }
 
-    /// Open a connection and turn on FK enforcement on it before
-    /// handing it back. `SQLite` (and libsql) default `foreign_keys`
-    /// to OFF — without this pragma the
-    /// `auth_sessions.user_id ... ON DELETE CASCADE` declaration is
-    /// silently ignored, leaving orphaned session rows when a user is
-    /// deleted. The pragma is per-connection, so since we open a fresh
-    /// connection per query, we re-arm it here every time.
+    /// Hand out a clone of the shared connection.
     ///
-    /// **P2.2 cost note:** the per-query PRAGMA is an extra Turso
-    /// WebSocket round-trip on remote; on the auth-only routes here it
-    /// barely matters, but P2.2 wires `lookup_session_by_token_hash`
-    /// into the push/pull hot path, where this would double effective
-    /// query latency. Before P2.2 ships, consider replacing this with
-    /// (a) a libsql connection-init hook if one is added upstream,
-    /// (b) a long-lived shared connection guarded by a
-    ///     `tokio::sync::Mutex` (one PRAGMA per process, not per query),
-    /// or (c) dropping FK enforcement and replacing the cascade with
-    ///     explicit `DELETE FROM auth_sessions WHERE user_id = ?` calls
-    ///     in whatever account-deletion path eventually exists.
-    async fn conn(&self) -> Result<Connection, AppError> {
-        let db = self
-            .db
-            .as_ref()
-            .ok_or_else(|| AppError::internal("TursoRepo used without a live connection"))?;
-        let conn = db.connect()?;
-        conn.execute("PRAGMA foreign_keys = ON", ()).await?;
-        Ok(conn)
+    /// `libsql::Connection` is reference-counted internally and
+    /// serializes statements over the same underlying socket / file
+    /// handle, so cloning is the intended way to share it across
+    /// handlers. The clone inherits the `PRAGMA foreign_keys = ON`
+    /// already set on the parent — pragmas are connection-state, not
+    /// per-handle.
+    fn conn(&self) -> Result<Connection, AppError> {
+        self.connection
+            .clone()
+            .ok_or_else(|| AppError::internal("TursoRepo used without a live connection"))
     }
 
     /// Upsert one note and stamp `server_updated_at` on the server clock.
@@ -116,7 +144,7 @@ impl TursoRepo {
         note: &PushNote<'_>,
         server_now_ms: i64,
     ) -> Result<i64, AppError> {
-        let conn = self.conn().await?;
+        let conn = self.conn()?;
         conn.execute(
             "INSERT INTO notes (id, user_id, content, created_at, client_updated_at, server_updated_at, deleted_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -151,7 +179,7 @@ impl TursoRepo {
         cursor_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<Note>, AppError> {
-        let conn = self.conn().await?;
+        let conn = self.conn()?;
         // Defensive backstop. The routes layer clamps user input to
         // PULL_MAX_LIMIT and adds 1 as a "is there more?" probe row, so
         // we accept up to PULL_MAX_LIMIT + 1 here. Anything wilder
@@ -255,7 +283,7 @@ impl TursoRepo {
         created_at_ms: i64,
         expires_at_ms: i64,
     ) -> Result<(), AppError> {
-        let conn = self.conn().await?;
+        let conn = self.conn()?;
         conn.execute(
             "DELETE FROM magic_codes
               WHERE email = ?
@@ -306,7 +334,7 @@ impl TursoRepo {
         expires_at_ms: i64,
         cooldown_ms: i64,
     ) -> Result<InsertMagicCodeOutcome, AppError> {
-        let conn = self.conn().await?;
+        let conn = self.conn()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await?;
@@ -385,7 +413,7 @@ impl TursoRepo {
         expected_code_hash: &str,
         now_ms: i64,
     ) -> Result<Result<String, ConsumeFailure>, AppError> {
-        let conn = self.conn().await?;
+        let conn = self.conn()?;
 
         // Fast path: a single conditional UPDATE guards every check at once
         // and pulls out the email atomically with `RETURNING`. A separate
@@ -485,7 +513,7 @@ impl TursoRepo {
     /// Get-or-insert a user row keyed on email. Returns the canonical
     /// `user_id`. `email` must already be normalized (trimmed, lowercase).
     pub async fn upsert_user_by_email(&self, email: &str, now_ms: i64) -> Result<String, AppError> {
-        let conn = self.conn().await?;
+        let conn = self.conn()?;
         let new_id = uuid::Uuid::now_v7().to_string();
         // ON CONFLICT(email) returns the existing row's id, so the caller
         // gets a stable user_id regardless of whether this was the first
@@ -514,7 +542,7 @@ impl TursoRepo {
         created_at_ms: i64,
         expires_at_ms: i64,
     ) -> Result<String, AppError> {
-        let conn = self.conn().await?;
+        let conn = self.conn()?;
         let session_id = uuid::Uuid::now_v7().to_string();
         conn.execute(
             "INSERT INTO auth_sessions (id, user_id, token_hash, created_at, last_used_at, expires_at, revoked_at)
@@ -533,29 +561,24 @@ impl TursoRepo {
     }
 
     /// Resolve a session token (by its sha256 hash) to its session row.
-    /// Returns None when the session is missing, revoked, or past
+    /// Returns `None` when the session is missing, revoked, or past
     /// `expires_at`.
     ///
-    /// **Write side-effect:** bumps `last_used_at` on every successful
-    /// lookup so the session's "actively used" telemetry stays current.
-    /// The row's `expires_at` is *not* touched here — `/v1/auth/refresh`
-    /// is the explicit way to extend a session.
-    ///
-    /// In P2.1 only `/v1/auth/refresh` and `/v1/auth/logout` call this,
-    /// so the write-per-call cost is trivial. P2.2 will wire this into
-    /// the `push`/`pull` middleware on every authenticated sync request,
-    /// and at that point the unconditional `last_used_at` UPDATE becomes
-    /// a hot-path write. The P2.2 author should decide whether to
-    /// (a) drop the touch, (b) only update once per N seconds via a
-    /// guarded UPDATE, or (c) batch via a worker task — anything is
-    /// fine, but blindly enabling this on push/pull is not.
-    #[allow(clippy::doc_markdown)]
+    /// **Throttled write side-effect:** the row's `last_used_at` is
+    /// bumped only when `now_ms - last_used_at >= LAST_USED_THROTTLE_MS`.
+    /// At typical sync cadence (push + pull every 30 s + post-mutation
+    /// kicks) this drops the write rate from ~2/min to ~12/hour while
+    /// keeping the column accurate enough for "session still alive?"
+    /// telemetry. A single conditional UPDATE handles the throttle so
+    /// two concurrent lookups can't both write inside the same window.
+    /// `expires_at` is *not* touched here — `/v1/auth/refresh` is the
+    /// explicit way to extend a session.
     pub async fn lookup_session_by_token_hash(
         &self,
         token_hash: &str,
         now_ms: i64,
     ) -> Result<Option<SessionRow>, AppError> {
-        let conn = self.conn().await?;
+        let conn = self.conn()?;
         let mut rows = conn
             .query(
                 "SELECT id, user_id, expires_at FROM auth_sessions
@@ -569,10 +592,19 @@ impl TursoRepo {
         let id: String = row.get(0)?;
         let user_id: String = row.get(1)?;
         let expires_at: i64 = row.get(2)?;
+        drop(rows);
 
+        // Conditional UPDATE: only writes when the existing
+        // `last_used_at` is older than the throttle window. Doing the
+        // gate in the WHERE clause (rather than reading first and then
+        // updating) means two concurrent middleware calls can't both
+        // pass a "stale enough" check and double-write.
         conn.execute(
-            "UPDATE auth_sessions SET last_used_at = ? WHERE id = ?",
-            libsql::params![now_ms, id.clone()],
+            "UPDATE auth_sessions
+                SET last_used_at = ?
+              WHERE id = ?
+                AND last_used_at <= ?",
+            libsql::params![now_ms, id.clone(), now_ms - LAST_USED_THROTTLE_MS],
         )
         .await?;
 
@@ -589,7 +621,7 @@ impl TursoRepo {
     /// detect concurrent refresh races: the caller that lost the race
     /// must abort instead of forking a second live session.
     pub async fn revoke_session(&self, session_id: &str, now_ms: i64) -> Result<bool, AppError> {
-        let conn = self.conn().await?;
+        let conn = self.conn()?;
         let affected = conn
             .execute(
                 "UPDATE auth_sessions SET revoked_at = ?
@@ -614,7 +646,10 @@ pub struct SessionRow {
 /// `cargo test` doesn't accumulate scratch DBs in `$TMPDIR`.
 #[cfg(test)]
 pub struct TempDb {
-    pub repo: std::sync::Arc<TursoRepo>,
+    pub repo: Arc<TursoRepo>,
+    /// Hold the parent `Database` for the test's lifetime so its
+    /// connection clones don't outlive their backing handle.
+    _db: Box<libsql::Database>,
     path: std::path::PathBuf,
 }
 
@@ -651,6 +686,16 @@ fn parse_pulled_note(row: &libsql::Row) -> Result<Note, AppError> {
         server_updated_at: row.get(5)?,
         deleted_at: row.get(6)?,
     })
+}
+
+/// `PRAGMA foreign_keys = ON` is per-connection in SQLite/libsql; the
+/// `auth_sessions.user_id ... ON DELETE CASCADE` declaration is silently
+/// ignored without it. We arm it once per `Connection` at startup, and
+/// every later clone inherits the setting because pragma state is
+/// connection-scoped, not handle-scoped.
+async fn arm_foreign_keys(conn: &Connection) -> Result<(), AppError> {
+    conn.execute("PRAGMA foreign_keys = ON", ()).await?;
+    Ok(())
 }
 
 async fn bootstrap(conn: &Connection) -> Result<(), AppError> {
@@ -719,6 +764,21 @@ async fn bootstrap(conn: &Connection) -> Result<(), AppError> {
     for stmt in statements {
         conn.execute(stmt, ()).await?;
     }
+
+    // P1 → P2.2 one-shot wipe. Phase 1 stamped every note with the
+    // shared placeholder `dirt_core::SOLO_USER_ID`; P2.2 binds notes to
+    // real users derived from the magic-code session, so any rows still
+    // wearing the placeholder are dev junk that nothing will ever claim.
+    // The DELETE is idempotent — running on a freshly-bootstrapped or
+    // already-cleaned DB is a no-op. Leave it in `bootstrap` for at
+    // least one production deploy cycle, then drop the line in a
+    // followup once we're confident every live server has run it.
+    conn.execute(
+        "DELETE FROM notes WHERE user_id = ?",
+        libsql::params![dirt_core::SOLO_USER_ID],
+    )
+    .await?;
+
     Ok(())
 }
 
@@ -736,9 +796,10 @@ mod tests {
     /// Foreign-key enforcement is OFF by default in SQLite/libsql; the
     /// `auth_sessions.user_id ... ON DELETE CASCADE` declaration only
     /// fires when `PRAGMA foreign_keys = ON` is set on the connection
-    /// running the DELETE. `conn()` arms it on every connection — this
-    /// test proves that's wired correctly. Without the pragma a `DELETE
-    /// FROM users` would silently leave orphaned `auth_sessions` rows.
+    /// running the DELETE. `connect_temp_db` arms it once at construct
+    /// time and every cloned connection inherits the pragma — this test
+    /// proves that's wired correctly. Without the pragma a `DELETE FROM
+    /// users` would silently leave orphaned `auth_sessions` rows.
     #[tokio::test(flavor = "current_thread")]
     async fn deleting_a_user_cascades_to_their_auth_sessions() {
         let temp_db = TursoRepo::connect_temp_db().await.unwrap();
@@ -754,14 +815,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Single connection for the rest of the test so SQLite WAL
-        // locking doesn't trip on multiple in-flight reader/writer
-        // connections to the same scratch DB. `conn()` already armed
-        // `PRAGMA foreign_keys = ON` on this one, which is what we're
-        // verifying.
-        let conn = repo.conn().await.unwrap();
+        let conn = repo.conn().unwrap();
 
-        // Sanity: session row exists before the delete.
         let session_count_before = count(
             &conn,
             "SELECT COUNT(*) FROM auth_sessions WHERE id = ?",
@@ -787,6 +842,104 @@ mod tests {
             session_count_after, 0,
             "auth_sessions row was not cascaded — FK enforcement is off"
         );
+    }
+
+    /// Rapid repeat lookups inside the throttle window must not bump
+    /// `last_used_at` — the conditional UPDATE only fires when the
+    /// existing `last_used_at` is at least `LAST_USED_THROTTLE_MS`
+    /// behind `now_ms`. Without the gate, the steady-state syncer
+    /// would write the column twice a minute against the same row.
+    #[tokio::test(flavor = "current_thread")]
+    async fn last_used_at_is_throttled_within_the_window() {
+        let temp_db = TursoRepo::connect_temp_db().await.unwrap();
+        let repo = &temp_db.repo;
+
+        let t0 = 1_700_000_000_000_i64;
+        let user_id = repo
+            .upsert_user_by_email("throttle@example.com", t0)
+            .await
+            .unwrap();
+        let token_hash = "test-token-hash-throttle";
+        repo.insert_auth_session(&user_id, token_hash, t0, t0 + 30 * 24 * 60 * 60 * 1000)
+            .await
+            .unwrap();
+
+        // First lookup at t0+1 ms is well inside the throttle window
+        // relative to the just-inserted `last_used_at = t0`. The gate
+        // requires `last_used_at <= now - 5min`, which is false here,
+        // so the UPDATE must miss.
+        let _ = repo
+            .lookup_session_by_token_hash(token_hash, t0 + 1)
+            .await
+            .unwrap();
+        let stored_after_first = read_last_used_at(repo, token_hash).await;
+        assert_eq!(
+            stored_after_first, t0,
+            "lookup inside throttle window must not bump last_used_at"
+        );
+
+        // Lookup well past the window — `last_used_at` should now move.
+        let later = t0 + LAST_USED_THROTTLE_MS + 1;
+        let _ = repo
+            .lookup_session_by_token_hash(token_hash, later)
+            .await
+            .unwrap();
+        let stored_after_window = read_last_used_at(repo, token_hash).await;
+        assert_eq!(
+            stored_after_window, later,
+            "lookup past the throttle window should bump last_used_at"
+        );
+    }
+
+    /// The bootstrap migration wipes every `notes` row stamped with
+    /// `dirt_core::SOLO_USER_ID`. This proves it actually fires —
+    /// without the DELETE, the 3 dev rows on the live server would
+    /// linger forever as orphans no real `user_id` can claim.
+    #[tokio::test(flavor = "current_thread")]
+    async fn bootstrap_wipes_solo_phase_notes() {
+        let temp_db = TursoRepo::connect_temp_db().await.unwrap();
+        let repo = &temp_db.repo;
+
+        let conn = repo.conn().unwrap();
+
+        // Seed a placeholder note as if Phase 1 had written it.
+        let phase1_id = "01932aaa-0000-7000-8000-000000000099";
+        let now = chrono::Utc::now().timestamp_millis();
+        conn.execute(
+            "INSERT INTO notes (id, user_id, content, created_at, client_updated_at, server_updated_at, deleted_at)
+             VALUES (?, ?, ?, ?, ?, ?, NULL)",
+            libsql::params![phase1_id, dirt_core::SOLO_USER_ID, "phase1 junk", now, now, now],
+        )
+        .await
+        .unwrap();
+
+        // Re-run bootstrap on the live connection — the migration must
+        // delete the row even though the schema is already in place.
+        bootstrap(&conn).await.unwrap();
+
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(*) FROM notes WHERE id = ?",
+                libsql::params![phase1_id],
+            )
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        let count: i64 = row.get(0).unwrap();
+        assert_eq!(count, 0, "Phase 1 placeholder note survived bootstrap");
+    }
+
+    async fn read_last_used_at(repo: &TursoRepo, token_hash: &str) -> i64 {
+        let conn = repo.conn().unwrap();
+        let mut rows = conn
+            .query(
+                "SELECT last_used_at FROM auth_sessions WHERE token_hash = ?",
+                libsql::params![token_hash.to_string()],
+            )
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        row.get::<i64>(0).unwrap()
     }
 
     async fn count(conn: &Connection, sql: &str, param: &str) -> i64 {

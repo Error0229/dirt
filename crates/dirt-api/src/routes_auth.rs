@@ -15,7 +15,7 @@
 //! response of the route that mints them. The DB stores sha256 hashes.
 
 use axum::extract::State;
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -23,8 +23,8 @@ use base64::Engine;
 use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
+use crate::auth::{extract_bearer, sha256_b64url};
 use crate::error::AppError;
 use crate::turso::{InsertMagicCodeOutcome, SessionRow};
 use crate::AppState;
@@ -46,8 +46,6 @@ const REQUEST_COOLDOWN_MS: i64 = 60 * 1000;
 /// session row's `last_used_at` rolls forward on every authed request,
 /// but `expires_at` only moves on an explicit refresh.
 const SESSION_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
-
-const BEARER_PREFIX_LEN: usize = "Bearer ".len();
 
 // ---- POST /v1/auth/request ----
 
@@ -280,23 +278,6 @@ async fn require_authed_session(
         .ok_or_else(|| AppError::session_expired("session token is invalid or expired"))
 }
 
-fn extract_bearer(headers: &HeaderMap) -> Result<String, AppError> {
-    let header_value = headers
-        .get(header::AUTHORIZATION)
-        .ok_or_else(|| AppError::session_expired("missing Authorization header"))?;
-    let header_str = header_value
-        .to_str()
-        .map_err(|_| AppError::session_expired("Authorization header is not valid UTF-8"))?;
-    if header_str.len() < BEARER_PREFIX_LEN
-        || !header_str[..BEARER_PREFIX_LEN].eq_ignore_ascii_case("Bearer ")
-    {
-        return Err(AppError::session_expired(
-            "Authorization header must start with 'Bearer '",
-        ));
-    }
-    Ok(header_str[BEARER_PREFIX_LEN..].to_string())
-}
-
 fn normalize_email(raw: &str) -> Result<String, AppError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -358,11 +339,6 @@ fn hash_code(request_id: &str, code: &str) -> String {
     sha256_b64url(format!("{request_id}:{code}").as_bytes())
 }
 
-fn sha256_b64url(input: &[u8]) -> String {
-    let digest = Sha256::digest(input);
-    URL_SAFE_NO_PAD.encode(digest)
-}
-
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -378,7 +354,7 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::config::{AppConfig, ServerToken};
+    use crate::config::AppConfig;
     use crate::email::{CapturedSends, EmailSender};
     use crate::turso::TempDb;
     use crate::TursoRepo;
@@ -397,7 +373,6 @@ mod tests {
             bind_addr: "127.0.0.1:0".into(),
             turso_database_url: "libsql://unused.test".into(),
             turso_auth_token: "unused".into(),
-            server_token: ServerToken(b"unused-32-byte-server-token-abcdef".to_vec()),
         };
         let temp_db = TursoRepo::connect_temp_db().await.unwrap();
         let (sender, captured) = EmailSender::capture();

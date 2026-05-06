@@ -1,18 +1,19 @@
 //! HTTP handlers for `/healthz`, `/v1/notes/push`, `/v1/notes/pull`.
 //!
-//! The bearer-token middleware runs before the push/pull handlers; here we
-//! trust the request is authorized and every accepted note maps to the
-//! solo-phase `SOLO_USER_ID`. Server timestamps are always stamped from the
-//! handler's `now_ms()` — clients never drive `server_updated_at`.
+//! The session middleware (`auth::require_session`) runs before the
+//! push/pull handlers and pins each request to a real `user_id` via
+//! the `AuthenticatedUser` extension. Server timestamps are always
+//! stamped from the handler's `now_ms()` — clients never drive
+//! `server_updated_at`.
 
-use axum::extract::{Query, State};
+use axum::extract::{Extension, Query, State};
 use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use dirt_core::models::NoteId;
-use dirt_core::SOLO_USER_ID;
 use serde::{Deserialize, Serialize};
 
+use crate::auth::AuthenticatedUser;
 use crate::error::AppError;
 use crate::turso::{PushNote, PULL_DEFAULT_LIMIT, PULL_MAX_LIMIT, PUSH_BATCH_LIMIT};
 use crate::AppState;
@@ -67,6 +68,7 @@ pub struct PushResult {
 
 pub async fn push_notes(
     State(state): State<AppState>,
+    Extension(user): Extension<AuthenticatedUser>,
     Json(body): Json<PushRequest>,
 ) -> Result<Json<PushResponse>, AppError> {
     if body.notes.len() > PUSH_BATCH_LIMIT {
@@ -115,7 +117,7 @@ pub async fn push_notes(
 
         let stamped = state
             .repo
-            .upsert(SOLO_USER_ID, &push_note, server_now_ms)
+            .upsert(&user.user_id, &push_note, server_now_ms)
             .await?;
 
         results.push(PushResult {
@@ -160,6 +162,7 @@ pub struct PullNote {
 
 pub async fn pull_notes(
     State(state): State<AppState>,
+    Extension(user): Extension<AuthenticatedUser>,
     Query(params): Query<PullQuery>,
 ) -> Result<Json<PullResponse>, AppError> {
     let (cursor_sua, cursor_id) = decode_cursor(params.cursor.as_deref())?;
@@ -175,7 +178,7 @@ pub async fn pull_notes(
     let probe_limit = limit.saturating_add(1);
     let mut rows = state
         .repo
-        .pull_page(SOLO_USER_ID, cursor_sua, cursor_id.as_deref(), probe_limit)
+        .pull_page(&user.user_id, cursor_sua, cursor_id.as_deref(), probe_limit)
         .await?;
 
     let has_more = rows.len() > limit;
