@@ -770,6 +770,51 @@ mod tests {
         assert_eq!(body["error"]["code"], "SESSION_EXPIRED");
     }
 
+    /// A session whose `expires_at` is in the past must come back as
+    /// `SESSION_EXPIRED` from `/v1/auth/refresh`. The lookup query
+    /// already filters `expires_at > ?`, so this is a regression
+    /// guard — collapsing the filter would silently let expired
+    /// sessions refresh themselves indefinitely.
+    #[tokio::test(flavor = "current_thread")]
+    async fn refresh_with_expired_session_returns_session_expired() {
+        let fx = build_test_router().await;
+
+        // Insert a session whose expires_at is way in the past, then
+        // forge an Authorization header for its token by hashing the
+        // raw token the way mint_session would.
+        let now = now_ms();
+        let user_id = fx
+            .state
+            .repo
+            .upsert_user_by_email("expired@example.com", now)
+            .await
+            .unwrap();
+        let raw_token = generate_session_token();
+        let token_hash = sha256_b64url(raw_token.as_bytes());
+        let _ = fx
+            .state
+            .repo
+            .insert_auth_session(&user_id, &token_hash, now - 1_000_000, now - 100)
+            .await
+            .unwrap();
+
+        let resp = fx
+            .router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/auth/refresh")
+                    .header("authorization", format!("Bearer {raw_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let (status, body) = read_json(resp).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"]["code"], "SESSION_EXPIRED");
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn refresh_without_authorization_header_returns_session_expired() {
         let fx = build_test_router().await;
@@ -812,7 +857,9 @@ mod tests {
     /// Two `/v1/auth/request` calls in quick succession against the
     /// same email must rate-limit the second. Without this guard a
     /// 600/min global budget could be spent entirely against one
-    /// victim's inbox once Resend lands.
+    /// victim's inbox once Resend lands. Also checks that the standard
+    /// `Retry-After` HTTP header is set (RFC 7231 §7.1.3) — proxies and
+    /// off-the-shelf retry libraries read the header, not the JSON.
     #[tokio::test(flavor = "current_thread")]
     async fn request_within_cooldown_returns_rate_limited() {
         let fx = build_test_router().await;
@@ -829,19 +876,32 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
 
         // Immediate second request must be rate-limited with a usable
-        // retry_after_secs.
+        // retry_after_secs in BOTH the body and the `Retry-After` header.
         let resp = fx
             .router
             .oneshot(json_request("POST", "/v1/auth/request", body).await)
             .await
             .unwrap();
-        let (status, body) = read_json(resp).await;
-        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-        assert_eq!(body["error"]["code"], "RATE_LIMITED");
-        let retry = body["error"]["retry_after_secs"].as_u64().unwrap();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let header_retry = resp
+            .headers()
+            .get("retry-after")
+            .expect("Retry-After header must be present on 429")
+            .to_str()
+            .unwrap()
+            .parse::<u64>()
+            .expect("Retry-After must be a number of seconds");
         assert!(
-            (1..=60).contains(&retry),
-            "retry_after_secs out of range: {retry}"
+            (1..=60).contains(&header_retry),
+            "Retry-After header out of range: {header_retry}"
+        );
+
+        let (_, body) = read_json(resp).await;
+        assert_eq!(body["error"]["code"], "RATE_LIMITED");
+        let body_retry = body["error"]["retry_after_secs"].as_u64().unwrap();
+        assert_eq!(
+            body_retry, header_retry,
+            "body and header must agree on retry-after"
         );
     }
 

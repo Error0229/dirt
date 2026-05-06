@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use dirt_core::models::{Note, NoteId};
-use libsql::{Builder, Connection, Database};
+use libsql::{Builder, Connection, Database, TransactionBehavior};
 
 use crate::error::AppError;
 
@@ -83,6 +83,18 @@ impl TursoRepo {
     /// silently ignored, leaving orphaned session rows when a user is
     /// deleted. The pragma is per-connection, so since we open a fresh
     /// connection per query, we re-arm it here every time.
+    ///
+    /// **P2.2 cost note:** the per-query PRAGMA is an extra Turso
+    /// WebSocket round-trip on remote; on the auth-only routes here it
+    /// barely matters, but P2.2 wires `lookup_session_by_token_hash`
+    /// into the push/pull hot path, where this would double effective
+    /// query latency. Before P2.2 ships, consider replacing this with
+    /// (a) a libsql connection-init hook if one is added upstream,
+    /// (b) a long-lived shared connection guarded by a
+    ///     `tokio::sync::Mutex` (one PRAGMA per process, not per query),
+    /// or (c) dropping FK enforcement and replacing the cascade with
+    ///     explicit `DELETE FROM auth_sessions WHERE user_id = ?` calls
+    ///     in whatever account-deletion path eventually exists.
     async fn conn(&self) -> Result<Connection, AppError> {
         let db = self
             .db
@@ -260,22 +272,31 @@ impl TursoRepo {
         Ok(())
     }
 
-    /// Atomically: check the per-email cooldown, reap expired/consumed
-    /// rows for this email, and insert the new row — all on one
-    /// connection inside a `BEGIN IMMEDIATE` / `COMMIT` transaction.
+    /// Atomically: check the per-email cooldown, reap expired /
+    /// consumed / locked rows for this email, and insert the new row
+    /// — all inside a `BEGIN IMMEDIATE` transaction obtained from
+    /// libsql's typed transaction API.
     ///
     /// Why a transaction: without it, two concurrent `/v1/auth/request`
     /// for the same email can both pass the cooldown SELECT, both reach
     /// the INSERT, and both produce a fresh magic code (and, once
     /// Resend ships in P2.3, two emails to the victim's inbox).
-    /// `BEGIN IMMEDIATE` takes a write lock at the start of the
-    /// transaction, so the second caller blocks behind the first and
-    /// then sees the freshly-inserted row when it runs its own SELECT.
+    /// `IMMEDIATE` takes a write lock at the start of the transaction,
+    /// so the second caller blocks behind the first and then sees the
+    /// freshly-inserted row when it runs its own SELECT.
+    ///
+    /// Why the typed `Transaction`: any error path on the DML below
+    /// causes `tx` to drop without commit, and libsql's `Transaction`
+    /// auto-rolls-back on drop on both backends — synchronously on
+    /// local, via a `tokio::spawn` rollback on Turso hrana — so a
+    /// `?`-propagated error can't leave the connection holding a
+    /// transaction open. (The Turso server also times out abandoned
+    /// transactions server-side as a backstop.)
     ///
     /// "Live" here means unconsumed AND unexpired AND **unlocked**
     /// (`attempts < MAX_CODE_ATTEMPTS`). A code that's been locked by
     /// 5 wrong guesses is functionally dead and should not block a
-    /// re-request.
+    /// re-request. The reaper picks them up too.
     pub async fn try_insert_magic_code_with_cooldown(
         &self,
         request_id: &str,
@@ -286,10 +307,12 @@ impl TursoRepo {
         cooldown_ms: i64,
     ) -> Result<InsertMagicCodeOutcome, AppError> {
         let conn = self.conn().await?;
-        conn.execute("BEGIN IMMEDIATE", ()).await?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await?;
 
         // Most recent live + unlocked row, if any.
-        let mut rows = conn
+        let mut rows = tx
             .query(
                 "SELECT created_at FROM magic_codes
                   WHERE email = ?
@@ -317,54 +340,36 @@ impl TursoRepo {
         drop(rows);
 
         if let Some(remaining_ms) = cooldown_remaining_ms {
-            conn.execute("ROLLBACK", ()).await?;
+            tx.rollback().await?;
             return Ok(InsertMagicCodeOutcome::OnCooldown {
                 retry_after_ms: remaining_ms,
             });
         }
 
-        // Wrap the post-cooldown DML in a closure-style block so a
-        // failure on DELETE / INSERT doesn't leave the transaction
-        // dangling. libsql remote (Turso WebSocket) doesn't auto-rollback
-        // on connection drop the way local file libsql does, so a stuck
-        // transaction can hold a write lock indefinitely.
-        //
-        // Reaper predicate also picks up locked rows
-        // (`attempts >= MAX_CODE_ATTEMPTS`) — a code that's been brute-
-        // forced into lockout is functionally dead, no point keeping it
-        // around for the rest of its 15-minute TTL.
-        let dml: Result<(), AppError> = async {
-            conn.execute(
-                "DELETE FROM magic_codes
-                  WHERE email = ?
-                    AND (expires_at < ? OR consumed_at IS NOT NULL OR attempts >= ?)",
-                libsql::params![email, created_at_ms, MAX_CODE_ATTEMPTS],
-            )
-            .await?;
+        // Reap and insert. A `?`-propagated error here drops `tx`
+        // without committing, which auto-rolls-back via libsql's
+        // `Transaction` Drop impl. Reaper picks up locked rows
+        // (`attempts >= MAX_CODE_ATTEMPTS`) too — a code that's been
+        // brute-forced into lockout is functionally dead, so it
+        // shouldn't keep its row alive for the rest of its 15-minute
+        // TTL.
+        tx.execute(
+            "DELETE FROM magic_codes
+              WHERE email = ?
+                AND (expires_at < ? OR consumed_at IS NOT NULL OR attempts >= ?)",
+            libsql::params![email, created_at_ms, MAX_CODE_ATTEMPTS],
+        )
+        .await?;
 
-            conn.execute(
-                "INSERT INTO magic_codes (request_id, email, code_hash, created_at, expires_at, consumed_at, attempts)
-                 VALUES (?, ?, ?, ?, ?, NULL, 0)",
-                libsql::params![request_id, email, code_hash, created_at_ms, expires_at_ms],
-            )
-            .await?;
+        tx.execute(
+            "INSERT INTO magic_codes (request_id, email, code_hash, created_at, expires_at, consumed_at, attempts)
+             VALUES (?, ?, ?, ?, ?, NULL, 0)",
+            libsql::params![request_id, email, code_hash, created_at_ms, expires_at_ms],
+        )
+        .await?;
 
-            conn.execute("COMMIT", ()).await?;
-            Ok(())
-        }
-        .await;
-
-        match dml {
-            Ok(()) => Ok(InsertMagicCodeOutcome::Inserted),
-            Err(err) => {
-                // Best-effort rollback. If ROLLBACK itself fails we
-                // still surface the original error — the connection is
-                // about to drop anyway and SQLite will tear down the
-                // transaction.
-                let _ = conn.execute("ROLLBACK", ()).await;
-                Err(err)
-            }
-        }
+        tx.commit().await?;
+        Ok(InsertMagicCodeOutcome::Inserted)
     }
 
     /// Atomically check + consume a magic code. On success returns the
@@ -706,8 +711,10 @@ async fn bootstrap(conn: &Connection) -> Result<(), AppError> {
          )",
         "CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
              ON auth_sessions(user_id, revoked_at, expires_at)",
-        "CREATE INDEX IF NOT EXISTS idx_auth_sessions_token
-             ON auth_sessions(token_hash)",
+        // No explicit index on `token_hash`: the `UNIQUE` constraint
+        // already creates an implicit B-tree on it, which is what
+        // `WHERE token_hash = ?` lookups use. A second index would just
+        // double the write cost on every session insert.
     ];
     for stmt in statements {
         conn.execute(stmt, ()).await?;
