@@ -76,12 +76,21 @@ impl TursoRepo {
         })
     }
 
-    fn conn(&self) -> Result<Connection, AppError> {
+    /// Open a connection and turn on FK enforcement on it before
+    /// handing it back. `SQLite` (and libsql) default `foreign_keys`
+    /// to OFF — without this pragma the
+    /// `auth_sessions.user_id ... ON DELETE CASCADE` declaration is
+    /// silently ignored, leaving orphaned session rows when a user is
+    /// deleted. The pragma is per-connection, so since we open a fresh
+    /// connection per query, we re-arm it here every time.
+    async fn conn(&self) -> Result<Connection, AppError> {
         let db = self
             .db
             .as_ref()
             .ok_or_else(|| AppError::internal("TursoRepo used without a live connection"))?;
-        db.connect().map_err(Into::into)
+        let conn = db.connect()?;
+        conn.execute("PRAGMA foreign_keys = ON", ()).await?;
+        Ok(conn)
     }
 
     /// Upsert one note and stamp `server_updated_at` on the server clock.
@@ -95,7 +104,7 @@ impl TursoRepo {
         note: &PushNote<'_>,
         server_now_ms: i64,
     ) -> Result<i64, AppError> {
-        let conn = self.conn()?;
+        let conn = self.conn().await?;
         conn.execute(
             "INSERT INTO notes (id, user_id, content, created_at, client_updated_at, server_updated_at, deleted_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -130,7 +139,7 @@ impl TursoRepo {
         cursor_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<Note>, AppError> {
-        let conn = self.conn()?;
+        let conn = self.conn().await?;
         // Defensive backstop. The routes layer clamps user input to
         // PULL_MAX_LIMIT and adds 1 as a "is there more?" probe row, so
         // we accept up to PULL_MAX_LIMIT + 1 here. Anything wilder
@@ -207,8 +216,9 @@ pub enum ConsumeFailure {
 pub const MAX_CODE_ATTEMPTS: i64 = 5;
 
 impl TursoRepo {
-    /// Insert a fresh magic-code row. `code_hash` is the sha256 hex of
-    /// `format!("{request_id}:{code}")` — never the raw code.
+    /// Insert a fresh magic-code row. `code_hash` is the sha256
+    /// base64url (no padding) of `format!("{request_id}:{code}")` —
+    /// never the raw code.
     pub async fn insert_magic_code(
         &self,
         request_id: &str,
@@ -217,7 +227,7 @@ impl TursoRepo {
         created_at_ms: i64,
         expires_at_ms: i64,
     ) -> Result<(), AppError> {
-        let conn = self.conn()?;
+        let conn = self.conn().await?;
         conn.execute(
             "INSERT INTO magic_codes (request_id, email, code_hash, created_at, expires_at, consumed_at, attempts)
              VALUES (?, ?, ?, ?, ?, NULL, 0)",
@@ -240,7 +250,7 @@ impl TursoRepo {
         expected_code_hash: &str,
         now_ms: i64,
     ) -> Result<Result<String, ConsumeFailure>, AppError> {
-        let conn = self.conn()?;
+        let conn = self.conn().await?;
 
         // Fast path: a single conditional UPDATE guards every check at once.
         let affected = conn
@@ -342,7 +352,7 @@ impl TursoRepo {
     /// Get-or-insert a user row keyed on email. Returns the canonical
     /// `user_id`. `email` must already be normalized (trimmed, lowercase).
     pub async fn upsert_user_by_email(&self, email: &str, now_ms: i64) -> Result<String, AppError> {
-        let conn = self.conn()?;
+        let conn = self.conn().await?;
         let new_id = uuid::Uuid::now_v7().to_string();
         // ON CONFLICT(email) returns the existing row's id, so the caller
         // gets a stable user_id regardless of whether this was the first
@@ -371,7 +381,7 @@ impl TursoRepo {
         created_at_ms: i64,
         expires_at_ms: i64,
     ) -> Result<String, AppError> {
-        let conn = self.conn()?;
+        let conn = self.conn().await?;
         let session_id = uuid::Uuid::now_v7().to_string();
         conn.execute(
             "INSERT INTO auth_sessions (id, user_id, token_hash, created_at, last_used_at, expires_at, revoked_at)
@@ -393,15 +403,26 @@ impl TursoRepo {
     /// Returns None when the session is missing, revoked, or past
     /// `expires_at`.
     ///
-    /// Bumps `last_used_at` as a side effect so the session-token TTL
-    /// rolls forward with use; the row's `expires_at` is *not* touched
-    /// here — refresh is the explicit way to extend a session.
+    /// **Write side-effect:** bumps `last_used_at` on every successful
+    /// lookup so the session's "actively used" telemetry stays current.
+    /// The row's `expires_at` is *not* touched here — `/v1/auth/refresh`
+    /// is the explicit way to extend a session.
+    ///
+    /// In P2.1 only `/v1/auth/refresh` and `/v1/auth/logout` call this,
+    /// so the write-per-call cost is trivial. P2.2 will wire this into
+    /// the `push`/`pull` middleware on every authenticated sync request,
+    /// and at that point the unconditional `last_used_at` UPDATE becomes
+    /// a hot-path write. The P2.2 author should decide whether to
+    /// (a) drop the touch, (b) only update once per N seconds via a
+    /// guarded UPDATE, or (c) batch via a worker task — anything is
+    /// fine, but blindly enabling this on push/pull is not.
+    #[allow(clippy::doc_markdown)]
     pub async fn lookup_session_by_token_hash(
         &self,
         token_hash: &str,
         now_ms: i64,
     ) -> Result<Option<SessionRow>, AppError> {
-        let conn = self.conn()?;
+        let conn = self.conn().await?;
         let mut rows = conn
             .query(
                 "SELECT id, user_id, expires_at FROM auth_sessions
@@ -431,7 +452,7 @@ impl TursoRepo {
 
     /// Mark a session row revoked. Idempotent — re-revoking is fine.
     pub async fn revoke_session(&self, session_id: &str, now_ms: i64) -> Result<(), AppError> {
-        let conn = self.conn()?;
+        let conn = self.conn().await?;
         conn.execute(
             "UPDATE auth_sessions SET revoked_at = ?
               WHERE id = ? AND revoked_at IS NULL",
@@ -518,9 +539,9 @@ async fn bootstrap(conn: &Connection) -> Result<(), AppError> {
              last_login_at INTEGER
          )",
         // One row per outstanding magic-code request. `code_hash` is
-        // sha256(request_id || ':' || code) hex — binding the code to its
-        // request_id stops a code from one request being replayed against
-        // another.
+        // sha256(request_id || ':' || code), encoded as base64url with
+        // no padding — binding the code to its request_id stops a code
+        // from one request being replayed against another.
         "CREATE TABLE IF NOT EXISTS magic_codes (
              request_id TEXT PRIMARY KEY,
              email TEXT NOT NULL,
@@ -532,8 +553,9 @@ async fn bootstrap(conn: &Connection) -> Result<(), AppError> {
          )",
         "CREATE INDEX IF NOT EXISTS idx_magic_codes_email_active
              ON magic_codes(email, consumed_at, expires_at)",
-        // `token_hash` is sha256 of the random session token. We never
-        // store the raw token. `revoked_at` doubles as the logout marker.
+        // `token_hash` is sha256 of the random session token, encoded
+        // as base64url with no padding. We never store the raw token.
+        // `revoked_at` doubles as the logout marker.
         "CREATE TABLE IF NOT EXISTS auth_sessions (
              id TEXT PRIMARY KEY,
              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -559,4 +581,74 @@ async fn bootstrap(conn: &Connection) -> Result<(), AppError> {
 #[must_use]
 pub fn arc(repo: TursoRepo) -> Arc<TursoRepo> {
     Arc::new(repo)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Foreign-key enforcement is OFF by default in SQLite/libsql; the
+    /// `auth_sessions.user_id ... ON DELETE CASCADE` declaration only
+    /// fires when `PRAGMA foreign_keys = ON` is set on the connection
+    /// running the DELETE. `conn()` arms it on every connection — this
+    /// test proves that's wired correctly. Without the pragma a `DELETE
+    /// FROM users` would silently leave orphaned `auth_sessions` rows.
+    #[tokio::test(flavor = "current_thread")]
+    async fn deleting_a_user_cascades_to_their_auth_sessions() {
+        let temp_db = TursoRepo::connect_temp_db().await.unwrap();
+        let repo = &temp_db.repo;
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let user_id = repo
+            .upsert_user_by_email("cascade@example.com", now)
+            .await
+            .unwrap();
+        let session_id = repo
+            .insert_auth_session(&user_id, "fake-token-hash", now, now + 1_000_000)
+            .await
+            .unwrap();
+
+        // Single connection for the rest of the test so SQLite WAL
+        // locking doesn't trip on multiple in-flight reader/writer
+        // connections to the same scratch DB. `conn()` already armed
+        // `PRAGMA foreign_keys = ON` on this one, which is what we're
+        // verifying.
+        let conn = repo.conn().await.unwrap();
+
+        // Sanity: session row exists before the delete.
+        let session_count_before = count(
+            &conn,
+            "SELECT COUNT(*) FROM auth_sessions WHERE id = ?",
+            &session_id,
+        )
+        .await;
+        assert_eq!(session_count_before, 1);
+
+        conn.execute(
+            "DELETE FROM users WHERE id = ?",
+            libsql::params![user_id.clone()],
+        )
+        .await
+        .unwrap();
+
+        let session_count_after = count(
+            &conn,
+            "SELECT COUNT(*) FROM auth_sessions WHERE id = ?",
+            &session_id,
+        )
+        .await;
+        assert_eq!(
+            session_count_after, 0,
+            "auth_sessions row was not cascaded — FK enforcement is off"
+        );
+    }
+
+    async fn count(conn: &Connection, sql: &str, param: &str) -> i64 {
+        let mut rows = conn
+            .query(sql, libsql::params![param.to_string()])
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        row.get::<i64>(0).unwrap()
+    }
 }

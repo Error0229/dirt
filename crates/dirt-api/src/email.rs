@@ -80,7 +80,13 @@ impl EmailSender {
     pub async fn send_magic_code(&self, email: &str, code: &str) -> Result<(), AppError> {
         match &self.mode {
             Mode::Log => {
-                tracing::info!(target: "dirt_api::email", "[dev email] to={email} code={code}");
+                // The "we tried to email you" record stays at info for
+                // observability; the raw code drops to debug so a
+                // RUST_LOG=info deploy doesn't write live magic codes
+                // into a log aggregator. RUST_LOG=debug is the explicit
+                // opt-in for "I want to see codes in the dev console."
+                tracing::info!(target: "dirt_api::email", "[dev email] to={email}");
+                tracing::debug!(target: "dirt_api::email", "[dev email] to={email} code={code}");
                 Ok(())
             }
             #[cfg(test)]
