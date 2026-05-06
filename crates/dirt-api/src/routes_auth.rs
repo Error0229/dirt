@@ -34,6 +34,14 @@ use crate::AppState;
 /// stolen email doesn't sit indefinitely as a usable login.
 const CODE_TTL_MS: i64 = 15 * 60 * 1000;
 
+/// Per-email cooldown between successful `/v1/auth/request` calls.
+/// Stops an attacker from email-flooding a victim's inbox once Resend
+/// is wired in P2.3. The cooldown is shorter than the code TTL because
+/// a legit user who fat-fingered their email needs to be able to
+/// re-request soon, and the existing 5-attempt cap already covers the
+/// typed-code-wrong case without a fresh send.
+const REQUEST_COOLDOWN_MS: i64 = 60 * 1000;
+
 /// Session lifetime. 30 days matches typical "stay signed in" UX. The
 /// session row's `last_used_at` rolls forward on every authed request,
 /// but `expires_at` only moves on an explicit refresh.
@@ -59,12 +67,38 @@ pub async fn request_magic_code(
     Json(body): Json<RequestBody>,
 ) -> Result<Json<RequestResponse>, AppError> {
     let email = normalize_email(&body.email)?;
+    let now_ms = now_ms();
+
+    // Per-email cooldown. The global auth_limiter caps total /v1/auth
+    // call volume (600/min); on its own that doesn't stop an attacker
+    // from spending the whole budget against one victim's inbox. Reject
+    // a re-request if we already have a live unconsumed code for this
+    // email that's less than REQUEST_COOLDOWN_MS old.
+    if let Some(last_created_ms) = state
+        .repo
+        .last_live_magic_code_created_at(&email, now_ms)
+        .await?
+    {
+        let elapsed_ms = now_ms.saturating_sub(last_created_ms);
+        if elapsed_ms < REQUEST_COOLDOWN_MS {
+            let retry_after_ms = REQUEST_COOLDOWN_MS - elapsed_ms;
+            // Round up to the nearest whole second — `(ms + 999) / 1000`
+            // — so a sub-1s wait doesn't round to 0 and look like
+            // "retry immediately".
+            let retry_after_secs = u64::try_from((retry_after_ms + 999) / 1000)
+                .unwrap_or(1)
+                .max(1);
+            return Err(AppError::rate_limited(
+                "a magic code was already sent to this email recently; wait before requesting another",
+                retry_after_secs,
+            ));
+        }
+    }
 
     let request_id = uuid::Uuid::now_v7().to_string();
     let code = generate_six_digit_code();
     let code_hash = hash_code(&request_id, &code);
 
-    let now_ms = now_ms();
     let expires_at_ms = now_ms + CODE_TTL_MS;
 
     state
@@ -163,7 +197,22 @@ pub async fn refresh_session(
     let now_ms = now_ms();
     let session = require_authed_session(&state, &headers, now_ms).await?;
 
-    state.repo.revoke_session(&session.id, now_ms).await?;
+    // Concurrent-refresh guard. Two clients carrying the same token
+    // can both pass the lookup above (revoked_at is still NULL on the
+    // shared row), then both call revoke_session, then both call
+    // mint_session — yielding two diverged live sessions. Make the
+    // revoke the synchronization point: only the caller whose UPDATE
+    // actually flipped revoked_at gets to mint. The loser sees
+    // SESSION_EXPIRED and re-logs-in (or, if a real client, retries
+    // the request and receives the winner's new token via whatever
+    // higher-level coordination it has).
+    let did_revoke = state.repo.revoke_session(&session.id, now_ms).await?;
+    if !did_revoke {
+        return Err(AppError::session_expired(
+            "session was concurrently refreshed by another caller",
+        ));
+    }
+
     let (session_token, session_id, expires_at_ms) =
         mint_session(&state, &session.user_id, now_ms).await?;
 
@@ -182,7 +231,10 @@ pub async fn logout_session(
 ) -> Result<Response, AppError> {
     let now_ms = now_ms();
     let session = require_authed_session(&state, &headers, now_ms).await?;
-    state.repo.revoke_session(&session.id, now_ms).await?;
+    // Idempotent: we're fine if a concurrent logout/refresh already
+    // flipped revoked_at — the user's intent ("I want this token dead")
+    // is satisfied either way.
+    let _ = state.repo.revoke_session(&session.id, now_ms).await?;
     Ok((StatusCode::NO_CONTENT, ()).into_response())
 }
 
@@ -749,6 +801,135 @@ mod tests {
         assert_eq!(body["error"]["code"], "INVALID_EMAIL");
     }
 
+    /// Two `/v1/auth/request` calls in quick succession against the
+    /// same email must rate-limit the second. Without this guard a
+    /// 600/min global budget could be spent entirely against one
+    /// victim's inbox once Resend lands.
+    #[tokio::test(flavor = "current_thread")]
+    async fn request_within_cooldown_returns_rate_limited() {
+        let fx = build_test_router().await;
+
+        let body = json!({ "email": "cooldown@example.com" });
+
+        // First request succeeds.
+        let resp = fx
+            .router
+            .clone()
+            .oneshot(json_request("POST", "/v1/auth/request", body.clone()).await)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Immediate second request must be rate-limited with a usable
+        // retry_after_secs.
+        let resp = fx
+            .router
+            .oneshot(json_request("POST", "/v1/auth/request", body).await)
+            .await
+            .unwrap();
+        let (status, body) = read_json(resp).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(body["error"]["code"], "RATE_LIMITED");
+        let retry = body["error"]["retry_after_secs"].as_u64().unwrap();
+        assert!(
+            (1..=60).contains(&retry),
+            "retry_after_secs out of range: {retry}"
+        );
+    }
+
+    /// `revoke_session` must be the synchronization point for
+    /// concurrent refresh: the first call wins, every subsequent call
+    /// for the same `session_id` returns false. Direct repo test (a
+    /// router-level test would need real concurrency to trigger).
+    #[tokio::test(flavor = "current_thread")]
+    async fn revoke_session_returns_true_only_for_the_first_caller() {
+        let fx = build_test_router().await;
+        let now = now_ms();
+        let user_id = fx
+            .state
+            .repo
+            .upsert_user_by_email("race@example.com", now)
+            .await
+            .unwrap();
+        let session_id = fx
+            .state
+            .repo
+            .insert_auth_session(&user_id, "fake-hash", now, now + 1_000_000)
+            .await
+            .unwrap();
+
+        assert!(fx
+            .state
+            .repo
+            .revoke_session(&session_id, now)
+            .await
+            .unwrap());
+        assert!(!fx
+            .state
+            .repo
+            .revoke_session(&session_id, now + 1)
+            .await
+            .unwrap());
+    }
+
+    /// `insert_magic_code` opportunistically reaps expired or consumed
+    /// rows for the same email. Without this the table grows without
+    /// bound for any active address.
+    #[tokio::test(flavor = "current_thread")]
+    async fn insert_magic_code_reaps_dead_rows_for_same_email() {
+        let fx = build_test_router().await;
+        let email = "reap@example.com";
+
+        // An expired row.
+        let stale_request_id = uuid::Uuid::now_v7().to_string();
+        fx.state
+            .repo
+            .insert_magic_code(
+                &stale_request_id,
+                email,
+                &hash_code(&stale_request_id, "111111"),
+                0,
+                1, // already past
+            )
+            .await
+            .unwrap();
+
+        // A second insert for the same email at "now" should reap the
+        // stale row before inserting the new one.
+        let fresh_request_id = uuid::Uuid::now_v7().to_string();
+        let now = now_ms();
+        fx.state
+            .repo
+            .insert_magic_code(
+                &fresh_request_id,
+                email,
+                &hash_code(&fresh_request_id, "222222"),
+                now,
+                now + CODE_TTL_MS,
+            )
+            .await
+            .unwrap();
+
+        // Verify the stale row no longer matches by trying to consume
+        // it — this also exercises the route layer's collapse-into-
+        // INVALID_CODE behaviour.
+        let resp = fx
+            .router
+            .oneshot(
+                json_request(
+                    "POST",
+                    "/v1/auth/verify",
+                    json!({ "request_id": stale_request_id, "code": "111111" }),
+                )
+                .await,
+            )
+            .await
+            .unwrap();
+        let (status, body) = read_json(resp).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "INVALID_CODE");
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn verify_with_malformed_code_returns_invalid_code() {
         let fx = build_test_router().await;
@@ -788,6 +969,20 @@ mod tests {
         assert!(normalize_email("nodomain@").is_err());
         assert!(normalize_email("two@@signs.com").is_err());
         assert!(normalize_email("nodot@localhost").is_err());
+    }
+
+    #[test]
+    fn normalize_email_rejects_over_254_chars() {
+        // RFC 5321 caps total email length at 254 octets — anything
+        // longer is automatically invalid.
+        let local = "a".repeat(243);
+        let too_long = format!("{local}@example.com"); // 243 + 1 + 11 = 255
+        assert_eq!(too_long.len(), 255);
+        assert!(normalize_email(&too_long).is_err());
+
+        let exactly_254 = format!("{}@example.com", "a".repeat(242));
+        assert_eq!(exactly_254.len(), 254);
+        assert!(normalize_email(&exactly_254).is_ok());
     }
 
     #[test]

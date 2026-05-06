@@ -219,6 +219,12 @@ impl TursoRepo {
     /// Insert a fresh magic-code row. `code_hash` is the sha256
     /// base64url (no padding) of `format!("{request_id}:{code}")` —
     /// never the raw code.
+    ///
+    /// Opportunistically reaps expired and consumed rows for the same
+    /// email before inserting, so the table can't grow without bound
+    /// per active address. Per-user reap uses the
+    /// `idx_magic_codes_email_active` index so the cleanup cost is
+    /// bounded by the (small) number of rows for one email.
     pub async fn insert_magic_code(
         &self,
         request_id: &str,
@@ -229,12 +235,47 @@ impl TursoRepo {
     ) -> Result<(), AppError> {
         let conn = self.conn().await?;
         conn.execute(
+            "DELETE FROM magic_codes
+              WHERE email = ?
+                AND (expires_at < ? OR consumed_at IS NOT NULL)",
+            libsql::params![email, created_at_ms],
+        )
+        .await?;
+        conn.execute(
             "INSERT INTO magic_codes (request_id, email, code_hash, created_at, expires_at, consumed_at, attempts)
              VALUES (?, ?, ?, ?, ?, NULL, 0)",
             libsql::params![request_id, email, code_hash, created_at_ms, expires_at_ms],
         )
         .await?;
         Ok(())
+    }
+
+    /// Returns the `created_at_ms` of the most recent live (unconsumed,
+    /// unexpired) magic-code row for `email`, if any. Used by
+    /// `/v1/auth/request` to enforce a per-email cooldown so an
+    /// attacker can't email-flood a victim's inbox once Resend lands
+    /// in P2.3.
+    pub async fn last_live_magic_code_created_at(
+        &self,
+        email: &str,
+        now_ms: i64,
+    ) -> Result<Option<i64>, AppError> {
+        let conn = self.conn().await?;
+        let mut rows = conn
+            .query(
+                "SELECT created_at FROM magic_codes
+                  WHERE email = ?
+                    AND consumed_at IS NULL
+                    AND expires_at > ?
+                  ORDER BY created_at DESC
+                  LIMIT 1",
+                libsql::params![email, now_ms],
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => Ok(Some(row.get::<i64>(0)?)),
+            None => Ok(None),
+        }
     }
 
     /// Atomically check + consume a magic code. On success returns the
@@ -450,16 +491,21 @@ impl TursoRepo {
         }))
     }
 
-    /// Mark a session row revoked. Idempotent — re-revoking is fine.
-    pub async fn revoke_session(&self, session_id: &str, now_ms: i64) -> Result<(), AppError> {
+    /// Mark a session row revoked. Returns `true` if this call flipped
+    /// `revoked_at` from `NULL` to `now_ms`, `false` if the row was
+    /// already revoked (or doesn't exist). Refresh uses the bool to
+    /// detect concurrent refresh races: the caller that lost the race
+    /// must abort instead of forking a second live session.
+    pub async fn revoke_session(&self, session_id: &str, now_ms: i64) -> Result<bool, AppError> {
         let conn = self.conn().await?;
-        conn.execute(
-            "UPDATE auth_sessions SET revoked_at = ?
-              WHERE id = ? AND revoked_at IS NULL",
-            libsql::params![now_ms, session_id],
-        )
-        .await?;
-        Ok(())
+        let affected = conn
+            .execute(
+                "UPDATE auth_sessions SET revoked_at = ?
+                  WHERE id = ? AND revoked_at IS NULL",
+                libsql::params![now_ms, session_id],
+            )
+            .await?;
+        Ok(affected > 0)
     }
 }
 
@@ -531,12 +577,18 @@ async fn bootstrap(conn: &Connection) -> Result<(), AppError> {
          )",
         "CREATE INDEX IF NOT EXISTS idx_notes_user_sua ON notes(user_id, server_updated_at, id)",
         // Phase 2 magic-link auth: per-user identities replace the shared
-        // bearer token in Phase 1.
+        // bearer token in Phase 1. `is_deleted` follows the soft-delete
+        // convention CLAUDE.md mandates for sync compatibility — once
+        // account deletion is wired, offline clients holding `notes`
+        // referencing a deactivated user_id won't trip on a hard-DELETE
+        // boundary. Today no path flips it; the column is here so we
+        // don't have to migrate live data later.
         "CREATE TABLE IF NOT EXISTS users (
              id TEXT PRIMARY KEY,
              email TEXT NOT NULL UNIQUE,
              created_at INTEGER NOT NULL,
-             last_login_at INTEGER
+             last_login_at INTEGER,
+             is_deleted INTEGER NOT NULL DEFAULT 0
          )",
         // One row per outstanding magic-code request. `code_hash` is
         // sha256(request_id || ':' || code), encoded as base64url with
