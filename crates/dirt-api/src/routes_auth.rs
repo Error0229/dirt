@@ -924,6 +924,83 @@ mod tests {
             .unwrap());
     }
 
+    /// Exercises the production transactional path
+    /// (`try_insert_magic_code_with_cooldown`) end-to-end on the repo.
+    /// Seeds an expired row, then calls the production method with the
+    /// cooldown disabled, and verifies (a) the new row is in place and
+    /// (b) the stale row was reaped — proving the reaper runs inside
+    /// the transaction the route relies on, not just in the test-only
+    /// `insert_magic_code` primitive.
+    #[tokio::test(flavor = "current_thread")]
+    async fn try_insert_with_cooldown_reaps_inside_transaction() {
+        let fx = build_test_router().await;
+        let email = "txn-reap@example.com";
+
+        // Stale row: expired.
+        let stale_id = uuid::Uuid::now_v7().to_string();
+        fx.state
+            .repo
+            .insert_magic_code(
+                &stale_id,
+                email,
+                &hash_code(&stale_id, "111111"),
+                0,
+                1, // expires_at way in the past
+            )
+            .await
+            .unwrap();
+
+        // Production path with cooldown=0 so the cooldown gate is a
+        // no-op; we only care about the reap+insert atomic block.
+        let now = now_ms();
+        let fresh_id = uuid::Uuid::now_v7().to_string();
+        let outcome = fx
+            .state
+            .repo
+            .try_insert_magic_code_with_cooldown(
+                &fresh_id,
+                email,
+                &hash_code(&fresh_id, "222222"),
+                now,
+                now + CODE_TTL_MS,
+                0,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, crate::turso::InsertMagicCodeOutcome::Inserted);
+
+        // Stale row must be gone (consume returns InvalidCode); fresh
+        // row is consumable.
+        let resp = fx
+            .router
+            .clone()
+            .oneshot(
+                json_request(
+                    "POST",
+                    "/v1/auth/verify",
+                    json!({ "request_id": stale_id, "code": "111111" }),
+                )
+                .await,
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let resp = fx
+            .router
+            .oneshot(
+                json_request(
+                    "POST",
+                    "/v1/auth/verify",
+                    json!({ "request_id": fresh_id, "code": "222222" }),
+                )
+                .await,
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
     /// `insert_magic_code` opportunistically reaps expired or consumed
     /// rows for the same email. Without this the table grows without
     /// bound for any active address.

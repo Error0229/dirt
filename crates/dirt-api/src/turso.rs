@@ -247,8 +247,8 @@ impl TursoRepo {
         conn.execute(
             "DELETE FROM magic_codes
               WHERE email = ?
-                AND (expires_at < ? OR consumed_at IS NOT NULL)",
-            libsql::params![email, created_at_ms],
+                AND (expires_at < ? OR consumed_at IS NOT NULL OR attempts >= ?)",
+            libsql::params![email, created_at_ms, MAX_CODE_ATTEMPTS],
         )
         .await?;
         conn.execute(
@@ -323,25 +323,48 @@ impl TursoRepo {
             });
         }
 
-        // Reap expired and consumed rows for this email so the table
-        // doesn't grow without bound for any active address.
-        conn.execute(
-            "DELETE FROM magic_codes
-              WHERE email = ?
-                AND (expires_at < ? OR consumed_at IS NOT NULL)",
-            libsql::params![email, created_at_ms],
-        )
-        .await?;
+        // Wrap the post-cooldown DML in a closure-style block so a
+        // failure on DELETE / INSERT doesn't leave the transaction
+        // dangling. libsql remote (Turso WebSocket) doesn't auto-rollback
+        // on connection drop the way local file libsql does, so a stuck
+        // transaction can hold a write lock indefinitely.
+        //
+        // Reaper predicate also picks up locked rows
+        // (`attempts >= MAX_CODE_ATTEMPTS`) — a code that's been brute-
+        // forced into lockout is functionally dead, no point keeping it
+        // around for the rest of its 15-minute TTL.
+        let dml: Result<(), AppError> = async {
+            conn.execute(
+                "DELETE FROM magic_codes
+                  WHERE email = ?
+                    AND (expires_at < ? OR consumed_at IS NOT NULL OR attempts >= ?)",
+                libsql::params![email, created_at_ms, MAX_CODE_ATTEMPTS],
+            )
+            .await?;
 
-        conn.execute(
-            "INSERT INTO magic_codes (request_id, email, code_hash, created_at, expires_at, consumed_at, attempts)
-             VALUES (?, ?, ?, ?, ?, NULL, 0)",
-            libsql::params![request_id, email, code_hash, created_at_ms, expires_at_ms],
-        )
-        .await?;
+            conn.execute(
+                "INSERT INTO magic_codes (request_id, email, code_hash, created_at, expires_at, consumed_at, attempts)
+                 VALUES (?, ?, ?, ?, ?, NULL, 0)",
+                libsql::params![request_id, email, code_hash, created_at_ms, expires_at_ms],
+            )
+            .await?;
 
-        conn.execute("COMMIT", ()).await?;
-        Ok(InsertMagicCodeOutcome::Inserted)
+            conn.execute("COMMIT", ()).await?;
+            Ok(())
+        }
+        .await;
+
+        match dml {
+            Ok(()) => Ok(InsertMagicCodeOutcome::Inserted),
+            Err(err) => {
+                // Best-effort rollback. If ROLLBACK itself fails we
+                // still surface the original error — the connection is
+                // about to drop anyway and SQLite will tear down the
+                // transaction.
+                let _ = conn.execute("ROLLBACK", ()).await;
+                Err(err)
+            }
+        }
     }
 
     /// Atomically check + consume a magic code. On success returns the
@@ -359,16 +382,24 @@ impl TursoRepo {
     ) -> Result<Result<String, ConsumeFailure>, AppError> {
         let conn = self.conn().await?;
 
-        // Fast path: a single conditional UPDATE guards every check at once.
-        let affected = conn
-            .execute(
+        // Fast path: a single conditional UPDATE guards every check at once
+        // and pulls out the email atomically with `RETURNING`. A separate
+        // SELECT after the UPDATE used to race with the per-email reaper
+        // in `try_insert_magic_code_with_cooldown` — a concurrent
+        // `/v1/auth/request` could delete the just-consumed row (the
+        // reaper targets `consumed_at IS NOT NULL`) before the SELECT,
+        // turning a legitimate verify into a 500. Folding into one
+        // `UPDATE … RETURNING` statement closes that window.
+        let mut rows = conn
+            .query(
                 "UPDATE magic_codes
                     SET consumed_at = ?
                   WHERE request_id = ?
                     AND consumed_at IS NULL
                     AND expires_at >= ?
                     AND code_hash = ?
-                    AND attempts < ?",
+                    AND attempts < ?
+                  RETURNING email",
                 libsql::params![
                     now_ms,
                     request_id,
@@ -379,21 +410,11 @@ impl TursoRepo {
             )
             .await?;
 
-        if affected > 0 {
-            let mut rows = conn
-                .query(
-                    "SELECT email FROM magic_codes WHERE request_id = ?",
-                    libsql::params![request_id],
-                )
-                .await?;
-            let Some(row) = rows.next().await? else {
-                return Err(AppError::internal(
-                    "magic code row vanished between consume and email lookup",
-                ));
-            };
+        if let Some(row) = rows.next().await? {
             let email: String = row.get(0)?;
             return Ok(Ok(email));
         }
+        drop(rows);
 
         // Failure path. Bump the attempt counter atomically *before*
         // diagnosing why the success UPDATE missed — folding the
