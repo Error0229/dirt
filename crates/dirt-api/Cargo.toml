@@ -37,6 +37,13 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 dotenvy = "0.15"
 base64 = "0.22"
 
+# Magic-link auth: cryptographically random codes/session tokens, plus
+# sha256 to hash them before storing in Turso. Hashing keeps a stolen DB
+# from immediately yielding active sessions.
+rand = "0.8"
+sha2 = "0.10"
+uuid.workspace = true
+
 [dev-dependencies]
 # `ServiceExt::oneshot` lets the auth-middleware tests drive the axum
 # Router in-process without spinning up a TCP listener.

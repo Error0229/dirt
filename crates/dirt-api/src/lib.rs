@@ -11,9 +11,11 @@
 
 pub mod auth;
 pub mod config;
+pub mod email;
 pub mod error;
 pub mod rate_limit;
 pub mod routes;
+pub mod routes_auth;
 pub mod turso;
 
 use std::sync::Arc;
@@ -27,6 +29,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 pub use config::AppConfig;
+pub use email::EmailSender;
 pub use error::AppError;
 pub use rate_limit::RateLimiter;
 pub use turso::TursoRepo;
@@ -44,12 +47,21 @@ pub const PUSH_BODY_LIMIT: usize = 8 * 1024 * 1024;
 pub struct AppState {
     pub config: Arc<AppConfig>,
     pub repo: Arc<TursoRepo>,
+    pub email: Arc<EmailSender>,
 }
 
 impl AppState {
     #[must_use]
-    pub const fn new(config: Arc<AppConfig>, repo: Arc<TursoRepo>) -> Self {
-        Self { config, repo }
+    pub const fn new(
+        config: Arc<AppConfig>,
+        repo: Arc<TursoRepo>,
+        email: Arc<EmailSender>,
+    ) -> Self {
+        Self {
+            config,
+            repo,
+            email,
+        }
     }
 }
 
@@ -62,16 +74,21 @@ pub fn build_router(state: AppState) -> Router {
     // noise.
     let push = post(routes::push_notes).layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT));
 
-    // The rate limiter is per-process; it lives behind the auth layer so
-    // unauthenticated probes don't fill the window. Solo phase has a
-    // single shared bearer token so a global limiter is sufficient.
-    let limiter = RateLimiter::new();
+    // Two independent limiters: one for the authenticated /v1/notes/*
+    // routes, one for the publicly-reachable /v1/auth/* routes. Sharing
+    // a single window would let an unauthenticated attacker spend the
+    // whole 600/min budget on /v1/auth/request and force 429s on the
+    // owner's sync traffic — a free DOS vector. Splitting them means a
+    // login-flood can lock out further login attempts but cannot block
+    // the existing sessions' push/pull cycle.
+    let notes_limiter = RateLimiter::new();
+    let auth_limiter = RateLimiter::new();
 
     let authed = Router::new()
         .route("/v1/notes/push", push)
         .route("/v1/notes/pull", get(routes::pull_notes))
         .layer(middleware::from_fn_with_state(
-            limiter,
+            notes_limiter,
             rate_limit::enforce_rate_limit,
         ))
         .layer(middleware::from_fn_with_state(
@@ -79,9 +96,24 @@ pub fn build_router(state: AppState) -> Router {
             auth::require_bearer_token,
         ));
 
+    // Magic-code auth routes. `request` and `verify` are pre-auth (no
+    // session yet); `refresh` and `logout` consume a session token in
+    // their own handler-level extractor. All four share a dedicated
+    // limiter so a login-flood doesn't exhaust the sync budget.
+    let auth_routes = Router::new()
+        .route("/v1/auth/request", post(routes_auth::request_magic_code))
+        .route("/v1/auth/verify", post(routes_auth::verify_magic_code))
+        .route("/v1/auth/refresh", post(routes_auth::refresh_session))
+        .route("/v1/auth/logout", post(routes_auth::logout_session))
+        .layer(middleware::from_fn_with_state(
+            auth_limiter,
+            rate_limit::enforce_rate_limit,
+        ));
+
     Router::new()
         .route("/healthz", get(routes::healthz))
         .merge(authed)
+        .merge(auth_routes)
         .layer(build_cors_layer())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -132,6 +164,7 @@ mod tests {
         AppState {
             config: Arc::new(config),
             repo: Arc::new(TursoRepo::dangling()),
+            email: Arc::new(EmailSender::log_only()),
         }
     }
 

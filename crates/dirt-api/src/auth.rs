@@ -82,8 +82,9 @@ mod tests {
         };
         AppState {
             config: Arc::new(config),
-            // Repo is never touched by the middleware itself.
+            // Repo and email are never touched by the middleware itself.
             repo: Arc::new(TursoRepo::dangling()),
+            email: Arc::new(crate::email::EmailSender::log_only()),
         }
     }
 

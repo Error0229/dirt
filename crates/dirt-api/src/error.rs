@@ -40,6 +40,15 @@ pub enum AppError {
     Internal(String),
 }
 
+// Phase 2 magic-link auth error codes:
+//   - `SESSION_EXPIRED` (401) — peeled off by the session middleware;
+//     covers missing / malformed / revoked / expired bearer headers.
+//   - `INVALID_EMAIL`  (400) — the email shape is unparseable.
+//   - `INVALID_CODE`   (400) — catch-all for magic-code verification
+//     failure (wrong code, unknown / expired / consumed / locked
+//     request_id). Deliberately one signal so probing for live
+//     request_ids doesn't work.
+
 #[derive(Debug, Serialize)]
 struct ErrorEnvelope {
     error: ErrorBody,
@@ -63,9 +72,34 @@ impl AppError {
         }
     }
 
+    pub fn session_expired(message: impl Into<String>) -> Self {
+        Self::Unauthorized {
+            code: "SESSION_EXPIRED",
+            message: message.into(),
+        }
+    }
+
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::BadRequest {
             code: "BAD_REQUEST",
+            message: message.into(),
+        }
+    }
+
+    pub fn invalid_email(message: impl Into<String>) -> Self {
+        Self::BadRequest {
+            code: "INVALID_EMAIL",
+            message: message.into(),
+        }
+    }
+
+    /// Catch-all for every magic-code verification failure: wrong code,
+    /// unknown `request_id`, consumed-already, expired, or attempt-locked.
+    /// We deliberately don't distinguish them on the wire — see
+    /// `routes_auth::verify_magic_code` for the rationale.
+    pub fn invalid_code(message: impl Into<String>) -> Self {
+        Self::BadRequest {
+            code: "INVALID_CODE",
             message: message.into(),
         }
     }
@@ -147,11 +181,22 @@ impl AppError {
 
     fn fix(&self) -> &'static str {
         match self {
-            Self::Unauthorized { .. } => {
-                "Include 'Authorization: Bearer <DIRT_CLIENT_TOKEN>' matching the server's DIRT_SERVER_TOKEN."
-            }
+            Self::Unauthorized { code, .. } => match *code {
+                "SESSION_EXPIRED" => {
+                    "Sign in again to obtain a fresh session token."
+                }
+                _ => {
+                    "Include 'Authorization: Bearer <session-token>' from the magic-code verify response."
+                }
+            },
             Self::BadRequest { code, .. } => match *code {
                 "BATCH_TOO_LARGE" => "Split the batch into groups of at most 500 notes and retry.",
+                "INVALID_EMAIL" => {
+                    "Send a syntactically valid email address (RFC-5322-ish)."
+                }
+                "INVALID_CODE" => {
+                    "Re-check the code; if it keeps failing, has been more than 15 minutes, or you've tried several times, request a new one via /v1/auth/request."
+                }
                 _ => "Fix the request body or parameters and retry.",
             },
             Self::PayloadTooLarge { .. } => {

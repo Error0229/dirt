@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use dirt_api::{build_router, AppConfig, AppState, TursoRepo};
+use dirt_api::{build_router, AppConfig, AppState, EmailSender, TursoRepo};
 use tower::ServiceBuilder;
 use vercel_runtime::axum::VercelLayer;
 use vercel_runtime::Error;
@@ -28,7 +28,8 @@ async fn main() -> Result<(), Error> {
             .await
             .map_err(|e| Error::from(format!("failed to connect to Turso: {e}")))?,
     );
-    let state = AppState::new(config, repo);
+    let email = Arc::new(EmailSender::from_env());
+    let state = AppState::new(config, repo, email);
     let router = build_router(state);
 
     let app = ServiceBuilder::new()

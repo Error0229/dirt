@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use dirt_api::{build_router, AppConfig, AppState, TursoRepo};
+use dirt_api::{build_router, AppConfig, AppState, EmailSender, TursoRepo};
 
 const STACK_SIZE: usize = 8 * 1024 * 1024;
 
@@ -55,7 +55,8 @@ fn run_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let repo = Arc::new(
             TursoRepo::connect(&config.turso_database_url, &config.turso_auth_token).await?,
         );
-        let state = AppState::new(config.clone(), repo);
+        let email = Arc::new(EmailSender::from_env());
+        let state = AppState::new(config.clone(), repo, email);
 
         let bind_addr = config.bind_addr.clone();
         let router = build_router(state);
