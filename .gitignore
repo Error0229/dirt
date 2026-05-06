@@ -47,3 +47,6 @@ dx.lock
 /docs/book/
 
 .vercel
+
+# Claude Code internal scheduling state
+.claude/
