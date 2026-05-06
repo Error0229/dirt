@@ -138,6 +138,24 @@ impl TursoRepo {
     /// Returns the stamped `server_updated_at_ms` so the caller can include
     /// it in the per-note result the client needs to update its local
     /// `server_updated_at` column and clear its `pending_sync` entry.
+    ///
+    /// ## Cross-user takeover guard
+    ///
+    /// `notes.id` is the table's primary key, so if user B sends a push
+    /// with an id user A already owns, the bare `ON CONFLICT(id) DO
+    /// UPDATE` would silently reassign the row to B (and overwrite its
+    /// content). The `WHERE notes.user_id = excluded.user_id` clause on
+    /// the conflict update only fires the UPDATE when the existing
+    /// owner matches the caller. The clauses left in `SET` no longer
+    /// touch `user_id`, so a takeover can't sneak in via the SET list
+    /// either. `RETURNING id` lets us detect the no-op case (existing
+    /// row owned by someone else, conflict short-circuited the INSERT,
+    /// WHERE skipped the UPDATE) and surface it as `NOTE_ID_CONFLICT`
+    /// so the client doesn't silently think the push succeeded.
+    ///
+    /// In practice `UUIDv7` collisions across users are vanishingly
+    /// unlikely; this guard is here to make a deliberate takeover
+    /// attempt fail loudly rather than steal the row.
     pub async fn upsert(
         &self,
         user_id: &str,
@@ -145,27 +163,36 @@ impl TursoRepo {
         server_now_ms: i64,
     ) -> Result<i64, AppError> {
         let conn = self.conn()?;
-        conn.execute(
-            "INSERT INTO notes (id, user_id, content, created_at, client_updated_at, server_updated_at, deleted_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET
-                 user_id = excluded.user_id,
-                 content = excluded.content,
-                 created_at = excluded.created_at,
-                 client_updated_at = excluded.client_updated_at,
-                 server_updated_at = excluded.server_updated_at,
-                 deleted_at = excluded.deleted_at",
-            libsql::params![
-                note.id.as_str(),
-                user_id,
-                note.content,
-                note.created_at_ms,
-                note.client_updated_at_ms,
-                server_now_ms,
-                note.deleted_at_ms,
-            ],
-        )
-        .await?;
+        let mut rows = conn
+            .query(
+                "INSERT INTO notes (id, user_id, content, created_at, client_updated_at, server_updated_at, deleted_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(id) DO UPDATE SET
+                     content = excluded.content,
+                     created_at = excluded.created_at,
+                     client_updated_at = excluded.client_updated_at,
+                     server_updated_at = excluded.server_updated_at,
+                     deleted_at = excluded.deleted_at
+                   WHERE notes.user_id = excluded.user_id
+                 RETURNING id",
+                libsql::params![
+                    note.id.as_str(),
+                    user_id,
+                    note.content,
+                    note.created_at_ms,
+                    note.client_updated_at_ms,
+                    server_now_ms,
+                    note.deleted_at_ms,
+                ],
+            )
+            .await?;
+
+        if rows.next().await?.is_none() {
+            return Err(AppError::note_id_conflict(format!(
+                "note id {} is owned by another account",
+                note.id.as_str()
+            )));
+        }
         Ok(server_now_ms)
     }
 
@@ -889,6 +916,69 @@ mod tests {
             stored_after_window, later,
             "lookup past the throttle window should bump last_used_at"
         );
+    }
+
+    /// A second push of an existing note id from a different account
+    /// must fail with `NOTE_ID_CONFLICT` and leave the original row
+    /// untouched. The Phase 1 schema's `ON CONFLICT(id) DO UPDATE SET
+    /// user_id = excluded.user_id` would have silently transferred
+    /// ownership, which is a takeover vector now that real users
+    /// share a primary-key namespace.
+    #[tokio::test(flavor = "current_thread")]
+    async fn upsert_rejects_cross_user_note_id_takeover() {
+        use dirt_core::models::NoteId;
+
+        let temp_db = TursoRepo::connect_temp_db().await.unwrap();
+        let repo = &temp_db.repo;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let alice = repo
+            .upsert_user_by_email("alice@example.com", now)
+            .await
+            .unwrap();
+        let bob = repo
+            .upsert_user_by_email("bob@example.com", now)
+            .await
+            .unwrap();
+
+        let note_id: NoteId = "01932aaa-0000-7000-8000-000000000123".parse().unwrap();
+        let alice_note = PushNote {
+            id: &note_id,
+            content: "alice's secret",
+            created_at_ms: now,
+            client_updated_at_ms: now,
+            deleted_at_ms: None,
+        };
+        repo.upsert(&alice, &alice_note, now).await.unwrap();
+
+        let bob_note = PushNote {
+            id: &note_id,
+            content: "stolen by bob",
+            created_at_ms: now,
+            client_updated_at_ms: now + 1,
+            deleted_at_ms: None,
+        };
+        let err = repo.upsert(&bob, &bob_note, now + 1).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("owned by another account"),
+            "expected NOTE_ID_CONFLICT message, got: {msg}"
+        );
+
+        // Alice's row is intact: same content, same user_id.
+        let conn = repo.conn().unwrap();
+        let mut rows = conn
+            .query(
+                "SELECT user_id, content FROM notes WHERE id = ?",
+                libsql::params![note_id.as_str()],
+            )
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        let owner: String = row.get(0).unwrap();
+        let content: String = row.get(1).unwrap();
+        assert_eq!(owner, alice, "row owner should not change");
+        assert_eq!(content, "alice's secret", "row content should not change");
     }
 
     /// The bootstrap migration wipes every `notes` row stamped with

@@ -111,6 +111,18 @@ impl AppError {
         }
     }
 
+    /// A push tried to apply a note id that already exists under a
+    /// different user. Distinct from a generic 400 because the client
+    /// surfaces it differently (warn the user that this id is taken
+    /// rather than a generic "fix the body" hint), and because the
+    /// server-side cause is non-obvious.
+    pub fn note_id_conflict(message: impl Into<String>) -> Self {
+        Self::BadRequest {
+            code: "NOTE_ID_CONFLICT",
+            message: message.into(),
+        }
+    }
+
     pub fn payload_too_large(message: impl Into<String>) -> Self {
         Self::PayloadTooLarge {
             message: message.into(),
@@ -196,6 +208,9 @@ impl AppError {
                 }
                 "INVALID_CODE" => {
                     "Re-check the code; if it keeps failing, has been more than 15 minutes, or you've tried several times, request a new one via /v1/auth/request."
+                }
+                "NOTE_ID_CONFLICT" => {
+                    "This note id is already in use by another account. Generate a fresh id (UUIDv7) on the client and retry."
                 }
                 _ => "Fix the request body or parameters and retry.",
             },

@@ -77,23 +77,35 @@ pub fn build_router(state: AppState) -> Router {
     // noise.
     let push = post(routes::push_notes).layer(DefaultBodyLimit::max(PUSH_BODY_LIMIT));
 
-    // Two limiters with different keying. The auth routes can't key by
-    // user yet (they mint sessions), so they share a single global
-    // window. The notes routes know who the user is once
-    // `auth::require_session` has run, so they get a per-user window —
-    // one chatty user can't 429 another. Splitting the limiters at all
-    // (rather than sharing one global pool) is what stops a login-flood
-    // from spending the whole budget and locking out the owner's sync.
+    // Three limiters across two route groups. The auth routes can't
+    // key by user yet (they mint sessions), so they share a single
+    // global window. The notes routes use two layers:
+    //
+    //   1. `notes_ingress_limiter` (global) wraps the route group as
+    //      the outermost layer. It bounds *all* traffic — including
+    //      requests with missing or garbage bearers — so an attacker
+    //      can't DOS Turso's session lookup with a flood of invalid
+    //      tokens. Without this, only authenticated traffic counts
+    //      against a budget.
+    //   2. `per_user_limiter` runs after `auth::require_session` and
+    //      keys by `user_id` so one chatty authenticated user can't
+    //      429 another's traffic.
+    //
+    // Splitting the auth and notes ingress limiters (rather than
+    // sharing one global pool) keeps a login-flood from spending the
+    // whole budget and locking out the owner's sync.
     let auth_limiter = RateLimiter::new();
+    let notes_ingress_limiter = RateLimiter::new();
     let per_user_limiter = PerUserRateLimiter::new();
 
     // axum applies layers outer-first: the **last** `.layer()` call
     // wraps as the outermost wrapper, i.e. it runs first on the way in.
     // Order on the way in needs to be:
-    //   require_session → enforce_per_user_rate_limit → handler
-    // because the per-user limiter reads the `AuthenticatedUser`
-    // extension that the session middleware just inserted. So we add
-    // them in the reverse order (innermost first).
+    //   notes_ingress_limiter (global)
+    //     → require_session (sets AuthenticatedUser)
+    //       → enforce_per_user_rate_limit (reads AuthenticatedUser)
+    //         → handler
+    // We add the layers in the reverse order (innermost first).
     let authed = Router::new()
         .route("/v1/notes/push", push)
         .route("/v1/notes/pull", get(routes::pull_notes))
@@ -104,6 +116,10 @@ pub fn build_router(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_session,
+        ))
+        .layer(middleware::from_fn_with_state(
+            notes_ingress_limiter,
+            rate_limit::enforce_rate_limit,
         ));
 
     // Magic-code auth routes. `request` and `verify` are pre-auth (no
@@ -214,6 +230,53 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// Floods of invalid bearers must be capped by the global notes
+    /// ingress limiter — without it, unauthenticated requests sail
+    /// through the auth middleware all the way to the Turso session
+    /// lookup, burning DB capacity that no per-user limiter can
+    /// account for. We pre-fill the ingress queue at the route layer
+    /// here rather than firing 600 real requests; this proves the
+    /// outer limiter is wired ahead of the auth check.
+    #[tokio::test(flavor = "current_thread")]
+    async fn invalid_bearer_flood_is_capped_by_ingress_limiter() {
+        use crate::rate_limit::enforce_rate_limit;
+
+        let temp_db = TursoRepo::connect_temp_db().await.unwrap();
+        let state = test_state(Arc::clone(&temp_db.repo));
+
+        // Build a tiny router that mirrors the real layering: ingress
+        // limiter outermost, then session auth. The ingress limiter is
+        // hand-saturated, so the request must 429 before the auth
+        // middleware even runs.
+        let saturated = RateLimiter::new();
+        saturated.saturate_for_test().await;
+        let router = Router::new()
+            .route("/v1/notes/push", axum::routing::post(routes::push_notes))
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::require_session,
+            ))
+            .layer(middleware::from_fn_with_state(
+                saturated,
+                enforce_rate_limit,
+            ))
+            .with_state(state);
+
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/notes/push")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer never-minted-this-token")
+                    .body(Body::from(r#"{"notes":[]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
     /// `/v1/notes/push` without a session token must 401 — proves the

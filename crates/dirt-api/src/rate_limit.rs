@@ -54,6 +54,21 @@ impl RateLimiter {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Test-only: prefill the window to capacity so the next call to
+    /// the middleware returns 429. Used by integration tests that
+    /// don't want to fire `MAX_REQUESTS_PER_WINDOW` real requests.
+    #[cfg(test)]
+    pub(crate) async fn saturate_for_test(&self) {
+        let mut queue = self.state.lock().await;
+        let now = Instant::now();
+        for i in 0..MAX_REQUESTS_PER_WINDOW {
+            queue.push_back(
+                now.checked_sub(Duration::from_millis(i as u64))
+                    .unwrap_or(now),
+            );
+        }
+    }
 }
 
 pub async fn enforce_rate_limit(
