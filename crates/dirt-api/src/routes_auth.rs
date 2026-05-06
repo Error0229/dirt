@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::AppError;
-use crate::turso::SessionRow;
+use crate::turso::{InsertMagicCodeOutcome, SessionRow};
 use crate::AppState;
 
 /// Magic-code lifetime. 15 minutes is long enough to switch tabs, deal
@@ -68,20 +68,39 @@ pub async fn request_magic_code(
 ) -> Result<Json<RequestResponse>, AppError> {
     let email = normalize_email(&body.email)?;
     let now_ms = now_ms();
+    let request_id = uuid::Uuid::now_v7().to_string();
+    let code = generate_six_digit_code();
+    let code_hash = hash_code(&request_id, &code);
+    let expires_at_ms = now_ms + CODE_TTL_MS;
 
-    // Per-email cooldown. The global auth_limiter caps total /v1/auth
-    // call volume (600/min); on its own that doesn't stop an attacker
-    // from spending the whole budget against one victim's inbox. Reject
-    // a re-request if we already have a live unconsumed code for this
-    // email that's less than REQUEST_COOLDOWN_MS old.
-    if let Some(last_created_ms) = state
+    // Per-email cooldown gate is folded into the repo method so the
+    // SELECT, reap, and INSERT all run inside a single
+    // `BEGIN IMMEDIATE` / `COMMIT` transaction — without that, two
+    // concurrent `/v1/auth/request` for the same email can both pass
+    // a separate-conn cooldown SELECT, both insert, and (post-Resend)
+    // both email the victim. Locked codes (5+ failed attempts) do not
+    // count as "live" here, so a user who exhausted their attempts can
+    // immediately request a fresh code.
+    //
+    // NOTE: the limiter behind this is per-process. On a multi-instance
+    // deployment (e.g. Vercel scaling out), a determined attacker could
+    // amplify across instances. Solo-phase deploy is single-process per
+    // invocation; revisit when we move beyond that.
+    let outcome = state
         .repo
-        .last_live_magic_code_created_at(&email, now_ms)
-        .await?
-    {
-        let elapsed_ms = now_ms.saturating_sub(last_created_ms);
-        if elapsed_ms < REQUEST_COOLDOWN_MS {
-            let retry_after_ms = REQUEST_COOLDOWN_MS - elapsed_ms;
+        .try_insert_magic_code_with_cooldown(
+            &request_id,
+            &email,
+            &code_hash,
+            now_ms,
+            expires_at_ms,
+            REQUEST_COOLDOWN_MS,
+        )
+        .await?;
+
+    match outcome {
+        InsertMagicCodeOutcome::Inserted => {}
+        InsertMagicCodeOutcome::OnCooldown { retry_after_ms } => {
             // Round up to the nearest whole second — `(ms + 999) / 1000`
             // — so a sub-1s wait doesn't round to 0 and look like
             // "retry immediately".
@@ -94,17 +113,6 @@ pub async fn request_magic_code(
             ));
         }
     }
-
-    let request_id = uuid::Uuid::now_v7().to_string();
-    let code = generate_six_digit_code();
-    let code_hash = hash_code(&request_id, &code);
-
-    let expires_at_ms = now_ms + CODE_TTL_MS;
-
-    state
-        .repo
-        .insert_magic_code(&request_id, &email, &code_hash, now_ms, expires_at_ms)
-        .await?;
 
     state.email.send_magic_code(&email, &code).await?;
 
@@ -834,6 +842,50 @@ mod tests {
         assert!(
             (1..=60).contains(&retry),
             "retry_after_secs out of range: {retry}"
+        );
+    }
+
+    /// A code that has been locked by 5 wrong guesses is functionally
+    /// dead, so the per-email cooldown must not treat it as a "live"
+    /// row — otherwise the user has to wait 60 s after lockout before
+    /// requesting a fresh code, which is confusing UX. The cooldown
+    /// SQL filters on `attempts < MAX_CODE_ATTEMPTS`; this test
+    /// verifies the route honours that.
+    #[tokio::test(flavor = "current_thread")]
+    async fn locked_code_does_not_block_immediate_re_request() {
+        let fx = build_test_router().await;
+        let email = "lock@example.com";
+        let request_id = seed_code(&fx.state, email, "111111").await;
+
+        // Exhaust the attempt cap with wrong codes.
+        for _ in 0..crate::turso::MAX_CODE_ATTEMPTS {
+            fx.router
+                .clone()
+                .oneshot(
+                    json_request(
+                        "POST",
+                        "/v1/auth/verify",
+                        json!({ "request_id": request_id, "code": "999999" }),
+                    )
+                    .await,
+                )
+                .await
+                .unwrap();
+        }
+
+        // The locked row's `consumed_at` is still NULL and `expires_at`
+        // is still in the future — but the cooldown query should skip
+        // it because `attempts >= MAX`. A fresh /v1/auth/request must
+        // succeed immediately rather than 429.
+        let resp = fx
+            .router
+            .oneshot(json_request("POST", "/v1/auth/request", json!({ "email": email })).await)
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "locked code blocked the re-request — cooldown SQL is missing the attempts filter"
         );
     }
 

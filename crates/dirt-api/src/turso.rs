@@ -215,16 +215,26 @@ pub enum ConsumeFailure {
 /// codes per success). Past this we stop accepting any code on the row.
 pub const MAX_CODE_ATTEMPTS: i64 = 5;
 
+/// Outcome of a `try_insert_magic_code_with_cooldown` call.
+#[derive(Debug, PartialEq, Eq)]
+pub enum InsertMagicCodeOutcome {
+    /// New row inserted (and any expired / consumed rows for the same
+    /// email opportunistically reaped).
+    Inserted,
+    /// A live, unlocked row for this email is younger than the
+    /// requested cooldown — caller must wait `retry_after_ms` before
+    /// requesting again.
+    OnCooldown { retry_after_ms: i64 },
+}
+
 impl TursoRepo {
-    /// Insert a fresh magic-code row. `code_hash` is the sha256
-    /// base64url (no padding) of `format!("{request_id}:{code}")` —
-    /// never the raw code.
-    ///
-    /// Opportunistically reaps expired and consumed rows for the same
-    /// email before inserting, so the table can't grow without bound
-    /// per active address. Per-user reap uses the
-    /// `idx_magic_codes_email_active` index so the cleanup cost is
-    /// bounded by the (small) number of rows for one email.
+    /// Test-only: insert a fresh magic-code row without any cooldown
+    /// check. Production goes through `try_insert_magic_code_with_cooldown`
+    /// which wraps the cooldown gate, the reaper, and the insert in a
+    /// single `BEGIN IMMEDIATE` / `COMMIT` transaction. Tests use this
+    /// primitive when they need to seed a row at a specific timestamp
+    /// (e.g. an already-expired row for the verify-expired test).
+    #[cfg(test)]
     pub async fn insert_magic_code(
         &self,
         request_id: &str,
@@ -250,32 +260,88 @@ impl TursoRepo {
         Ok(())
     }
 
-    /// Returns the `created_at_ms` of the most recent live (unconsumed,
-    /// unexpired) magic-code row for `email`, if any. Used by
-    /// `/v1/auth/request` to enforce a per-email cooldown so an
-    /// attacker can't email-flood a victim's inbox once Resend lands
-    /// in P2.3.
-    pub async fn last_live_magic_code_created_at(
+    /// Atomically: check the per-email cooldown, reap expired/consumed
+    /// rows for this email, and insert the new row — all on one
+    /// connection inside a `BEGIN IMMEDIATE` / `COMMIT` transaction.
+    ///
+    /// Why a transaction: without it, two concurrent `/v1/auth/request`
+    /// for the same email can both pass the cooldown SELECT, both reach
+    /// the INSERT, and both produce a fresh magic code (and, once
+    /// Resend ships in P2.3, two emails to the victim's inbox).
+    /// `BEGIN IMMEDIATE` takes a write lock at the start of the
+    /// transaction, so the second caller blocks behind the first and
+    /// then sees the freshly-inserted row when it runs its own SELECT.
+    ///
+    /// "Live" here means unconsumed AND unexpired AND **unlocked**
+    /// (`attempts < MAX_CODE_ATTEMPTS`). A code that's been locked by
+    /// 5 wrong guesses is functionally dead and should not block a
+    /// re-request.
+    pub async fn try_insert_magic_code_with_cooldown(
         &self,
+        request_id: &str,
         email: &str,
-        now_ms: i64,
-    ) -> Result<Option<i64>, AppError> {
+        code_hash: &str,
+        created_at_ms: i64,
+        expires_at_ms: i64,
+        cooldown_ms: i64,
+    ) -> Result<InsertMagicCodeOutcome, AppError> {
         let conn = self.conn().await?;
+        conn.execute("BEGIN IMMEDIATE", ()).await?;
+
+        // Most recent live + unlocked row, if any.
         let mut rows = conn
             .query(
                 "SELECT created_at FROM magic_codes
                   WHERE email = ?
                     AND consumed_at IS NULL
                     AND expires_at > ?
+                    AND attempts < ?
                   ORDER BY created_at DESC
                   LIMIT 1",
-                libsql::params![email, now_ms],
+                libsql::params![email, created_at_ms, MAX_CODE_ATTEMPTS],
             )
             .await?;
-        match rows.next().await? {
-            Some(row) => Ok(Some(row.get::<i64>(0)?)),
-            None => Ok(None),
+
+        let cooldown_remaining_ms = match rows.next().await? {
+            Some(row) => {
+                let last_created_at: i64 = row.get(0)?;
+                let elapsed = created_at_ms.saturating_sub(last_created_at);
+                if elapsed < cooldown_ms {
+                    Some(cooldown_ms - elapsed)
+                } else {
+                    None
+                }
+            }
+            None => None,
+        };
+        drop(rows);
+
+        if let Some(remaining_ms) = cooldown_remaining_ms {
+            conn.execute("ROLLBACK", ()).await?;
+            return Ok(InsertMagicCodeOutcome::OnCooldown {
+                retry_after_ms: remaining_ms,
+            });
         }
+
+        // Reap expired and consumed rows for this email so the table
+        // doesn't grow without bound for any active address.
+        conn.execute(
+            "DELETE FROM magic_codes
+              WHERE email = ?
+                AND (expires_at < ? OR consumed_at IS NOT NULL)",
+            libsql::params![email, created_at_ms],
+        )
+        .await?;
+
+        conn.execute(
+            "INSERT INTO magic_codes (request_id, email, code_hash, created_at, expires_at, consumed_at, attempts)
+             VALUES (?, ?, ?, ?, ?, NULL, 0)",
+            libsql::params![request_id, email, code_hash, created_at_ms, expires_at_ms],
+        )
+        .await?;
+
+        conn.execute("COMMIT", ()).await?;
+        Ok(InsertMagicCodeOutcome::Inserted)
     }
 
     /// Atomically check + consume a magic code. On success returns the
