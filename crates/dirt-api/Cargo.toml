@@ -44,10 +44,23 @@ rand = "0.8"
 sha2 = "0.10"
 uuid.workspace = true
 
+# Outbound HTTP for the Resend email backend (P2.3). `default-features =
+# false` drops the implicit `default-tls = native-tls` pull-in, which on
+# Vercel's Rust runtime drags OpenSSL into the build closure for no
+# benefit; `rustls-tls` is statically linked and CA-rooted via webpki so
+# it works the same in the local dev binary, on Vercel, and on the CI
+# Linux runners. `json` is the Serialize-payload helper used by
+# `EmailSender::send_via_resend`.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 [dev-dependencies]
 # `ServiceExt::oneshot` lets the auth-middleware tests drive the axum
 # Router in-process without spinning up a TCP listener.
 tower = { version = "0.5", features = ["util"] }
+# Mock HTTP server for the Resend email tests — the alternative is a
+# real Resend account in CI, which leaks an API key into the test
+# pipeline and exposes the test inbox to abuse.
+wiremock = "0.6"
 
 [lints]
 workspace = true

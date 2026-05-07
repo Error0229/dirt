@@ -55,7 +55,7 @@ fn run_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let repo = Arc::new(
             TursoRepo::connect(&config.turso_database_url, &config.turso_auth_token).await?,
         );
-        let email = Arc::new(EmailSender::from_env());
+        let email = Arc::new(EmailSender::from_env()?);
         let state = AppState::new(config.clone(), repo, email);
 
         let bind_addr = config.bind_addr.clone();
