@@ -109,10 +109,11 @@ impl EmailSender {
     }
 
     /// Same as [`resend`](Self::resend) but lets callers override the API
-    /// base URL. Used by the wiremock tests to point the sender at a
-    /// local mock; production callers should always go through
-    /// `resend`.
-    pub fn resend_with_base_url(
+    /// base URL. `pub(crate)` because this is a test seam — the wiremock
+    /// tests need to point the sender at a local mock, and we don't
+    /// want downstream crates building a production `EmailSender`
+    /// aimed at an arbitrary URL.
+    pub(crate) fn resend_with_base_url(
         api_key: String,
         from: String,
         base_url: String,
@@ -258,14 +259,20 @@ async fn send_via_resend(cfg: &ResendConfig, email: &str, code: &str) -> Result<
     // operator's life easier — but classify the failure on status only,
     // not on body. A 401 here is almost always a stale `RESEND_API_KEY`;
     // a 403 is an unverified `from`; a 5xx is Resend's problem.
+    //
+    // The client-facing string is intentionally generic and identical
+    // to the network-error path above. `AppError::Internal(msg)` is
+    // serialised verbatim into the JSON body's `message` and `cause`
+    // fields, so embedding the Resend status here would tell a probing
+    // client (a) that the backend is Resend, and (b) which kind of
+    // failure (401 vs 403 vs 5xx). The detail stays in the warn-level
+    // server log only.
     let body_text = response.text().await.unwrap_or_default();
     tracing::warn!(
         target: "dirt_api::email",
         "Resend rejected magic-code email status={status} body={body_text}"
     );
-    Err(AppError::internal(format!(
-        "Resend returned HTTP {status} when sending magic-code email"
-    )))
+    Err(AppError::internal("failed to dispatch magic-code email"))
 }
 
 fn trimmed_env(key: &str) -> Option<String> {
@@ -282,8 +289,25 @@ fn trimmed_env(key: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    use wiremock::matchers::{body_json, header, method, path};
+    use wiremock::matchers::{body_json, header, header_regex, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Serialises the `from_env_*` tests, which mutate process-wide
+    /// `RESEND_*` env vars. Without this, `cargo test --all` on Linux
+    /// (where CI doesn't pin `RUST_TEST_THREADS=1`) lets these tests
+    /// race each other and observe inconsistent state. Held as a
+    /// `MutexGuard` for the body of each env test.
+    ///
+    /// Poison handling: a panicking test poisons the lock, but we don't
+    /// care — the next test will see a fresh `EnvGuard::clear` call
+    /// regardless, and propagating the poison would just mask the real
+    /// failure further down the test list. `into_inner` recovers the
+    /// guard.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn log_mode_send_succeeds() {
@@ -302,7 +326,11 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/emails"))
             .and(header("authorization", "Bearer rs_test_key"))
-            .and(header("content-type", "application/json"))
+            // Regex on content-type so a future reqwest release that
+            // appends `; charset=utf-8` doesn't break the test without
+            // any production-code change. The `body_json` matcher
+            // below already proves the body is valid JSON.
+            .and(header_regex("content-type", "^application/json"))
             .and(body_json(serde_json::json!({
                 "from": "Dirt <noreply@catjam.dev>",
                 "to": ["user@example.com"],
@@ -366,12 +394,10 @@ mod tests {
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/emails"))
-            .respond_with(
-                ResponseTemplate::new(401).set_body_json(serde_json::json!({
-                    "name": "validation_error",
-                    "message": "Invalid `api_key`",
-                })),
-            )
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "name": "validation_error",
+                "message": "Invalid `api_key`",
+            })))
             .mount(&mock)
             .await;
 
@@ -418,13 +444,14 @@ mod tests {
             .unwrap();
     }
 
-    /// `from_env` defaults to Log when neither var is set. Snapshot the
-    /// existing values, clear, restore in a guard so other tests aren't
-    /// observable from this one. The whole crate's tests run on
-    /// `--test-threads=1` per the Windows libsql workaround anyway, so
-    /// the env-mutation isn't racing anything.
+    /// `from_env` defaults to Log when neither var is set. Each env
+    /// test grabs `lock_env()` first so concurrent tests on Linux CI
+    /// (which doesn't pin `RUST_TEST_THREADS=1`) can't observe each
+    /// other's set/clear sequences. `EnvGuard` then restores prior
+    /// values on drop so the rest of the suite isn't disturbed.
     #[test]
     fn from_env_defaults_to_log_when_neither_var_set() {
+        let _env_lock = lock_env();
         let _guard = EnvGuard::clear(&["RESEND_API_KEY", "RESEND_FROM_ADDRESS"]);
         let sender = EmailSender::from_env().unwrap();
         assert!(matches!(sender.mode, Mode::Log));
@@ -432,6 +459,7 @@ mod tests {
 
     #[test]
     fn from_env_picks_resend_when_both_set() {
+        let _env_lock = lock_env();
         let _guard = EnvGuard::set(&[
             ("RESEND_API_KEY", "rs_test_key"),
             ("RESEND_FROM_ADDRESS", "Dirt <noreply@catjam.dev>"),
@@ -442,6 +470,7 @@ mod tests {
 
     #[test]
     fn from_env_errors_when_only_api_key_set() {
+        let _env_lock = lock_env();
         let _guard = EnvGuard::set(&[("RESEND_API_KEY", "rs_test_key")])
             .extend_clear(&["RESEND_FROM_ADDRESS"]);
         // `EmailSender` deliberately does not implement Debug (the
@@ -456,6 +485,7 @@ mod tests {
 
     #[test]
     fn from_env_errors_when_only_from_set() {
+        let _env_lock = lock_env();
         let _guard = EnvGuard::set(&[("RESEND_FROM_ADDRESS", "Dirt <noreply@catjam.dev>")])
             .extend_clear(&["RESEND_API_KEY"]);
         match EmailSender::from_env() {
@@ -470,6 +500,7 @@ mod tests {
     /// for `TURSO_AUTH_TOKEN`.
     #[test]
     fn from_env_treats_whitespace_api_key_as_unset() {
+        let _env_lock = lock_env();
         let _guard = EnvGuard::set(&[
             ("RESEND_API_KEY", "   "),
             ("RESEND_FROM_ADDRESS", "Dirt <noreply@catjam.dev>"),
@@ -484,9 +515,29 @@ mod tests {
         }
     }
 
-    /// RAII guard for env-var mutation. Restores prior values on drop.
-    /// Tests run single-threaded for the whole dirt-api crate (see
-    /// `turso.rs`), so we don't need a process-wide mutex.
+    /// Symmetric counterpart to `from_env_treats_whitespace_api_key_as_unset`.
+    /// `trimmed_env` handles both keys identically, but without this
+    /// test a future refactor could break one side without breaking
+    /// CI.
+    #[test]
+    fn from_env_treats_whitespace_from_address_as_unset() {
+        let _env_lock = lock_env();
+        let _guard = EnvGuard::set(&[
+            ("RESEND_API_KEY", "rs_test_key"),
+            ("RESEND_FROM_ADDRESS", "   "),
+        ]);
+        match EmailSender::from_env() {
+            Err(AppError::Config(_)) => {}
+            Err(other) => panic!("expected AppError::Config, got {other:?}"),
+            Ok(_) => panic!("expected an error, got Ok"),
+        }
+    }
+
+    /// RAII guard for env-var mutation. Restores prior values on drop
+    /// so a test's set/clear doesn't bleed into the rest of the suite.
+    /// Cross-test mutual exclusion is enforced separately via
+    /// `lock_env` / `ENV_LOCK`; `EnvGuard` itself is not thread-safe
+    /// and assumes the caller holds the env lock.
     struct EnvGuard {
         snapshots: Vec<(String, Option<String>)>,
     }
