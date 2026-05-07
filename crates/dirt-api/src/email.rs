@@ -175,7 +175,17 @@ impl EmailSender {
     /// `AppError::Internal` so the request handler maps them onto a 500
     /// — the user can't fix a Resend outage themselves, retrying the
     /// `/v1/auth/request` is the right user-facing prompt.
-    pub async fn send_magic_code(&self, email: &str, code: &str) -> Result<(), AppError> {
+    ///
+    /// `expires_in_minutes` is forwarded to the rendered body so the
+    /// "expires in N minutes" copy can't drift from the actual code TTL.
+    /// Caller (in `routes_auth`) computes it from `CODE_TTL_MS`, which is
+    /// the single source of truth for the magic-code lifetime.
+    pub async fn send_magic_code(
+        &self,
+        email: &str,
+        code: &str,
+        expires_in_minutes: i64,
+    ) -> Result<(), AppError> {
         match &self.mode {
             Mode::Log => {
                 // The "we tried to email you" record stays at info for
@@ -187,7 +197,7 @@ impl EmailSender {
                 tracing::debug!(target: "dirt_api::email", "[dev email] to={email} code={code}");
                 Ok(())
             }
-            Mode::Resend(cfg) => send_via_resend(cfg, email, code).await,
+            Mode::Resend(cfg) => send_via_resend(cfg, email, code, expires_in_minutes).await,
             #[cfg(test)]
             Mode::Capture(captured) => {
                 captured
@@ -209,15 +219,26 @@ impl Default for EmailSender {
 /// Body text for the magic-code email. Centralised so the tests can
 /// assert on the same string the production code produces, and so a
 /// future copy edit only touches one place.
-fn render_magic_code_body(code: &str) -> String {
+///
+/// `expires_in_minutes` is threaded through from the caller (which knows
+/// `CODE_TTL_MS`) instead of being hardcoded — without that, a future
+/// edit to the TTL constant would silently leave the email body
+/// promising the old number.
+fn render_magic_code_body(code: &str, expires_in_minutes: i64) -> String {
     format!(
         "Your Dirt sign-in code is: {code}\n\n\
-         It expires in 15 minutes. If you didn't request this code, you can ignore this email.\n"
+         It expires in {expires_in_minutes} minutes. \
+         If you didn't request this code, you can ignore this email.\n"
     )
 }
 
-async fn send_via_resend(cfg: &ResendConfig, email: &str, code: &str) -> Result<(), AppError> {
-    let body = render_magic_code_body(code);
+async fn send_via_resend(
+    cfg: &ResendConfig,
+    email: &str,
+    code: &str,
+    expires_in_minutes: i64,
+) -> Result<(), AppError> {
+    let body = render_magic_code_body(code, expires_in_minutes);
     let payload = ResendRequest {
         from: &cfg.from,
         to: [email],
@@ -253,7 +274,15 @@ async fn send_via_resend(cfg: &ResendConfig, email: &str, code: &str) -> Result<
         // KiB — so the implicit bound is fine in practice; a hostile
         // upstream blasting a multi-MB body would already be the least
         // of our problems given Vercel's ~6 MB function-response cap.
-        let body_text = response.text().await.unwrap_or_default();
+        //
+        // On a body-stream read error we keep the diagnostic in the log
+        // line itself rather than collapsing to an empty `body=`, so the
+        // operator can tell "Resend hung up mid-stream" from "Resend
+        // genuinely returned an empty body".
+        let body_text = response
+            .text()
+            .await
+            .unwrap_or_else(|err| format!("<body read error: {err}>"));
         tracing::info!(
             target: "dirt_api::email",
             "Resend accepted magic-code email status={status} body={body_text}"
@@ -273,7 +302,15 @@ async fn send_via_resend(cfg: &ResendConfig, email: &str, code: &str) -> Result<
     // client (a) that the backend is Resend, and (b) which kind of
     // failure (401 vs 403 vs 5xx). The detail stays in the warn-level
     // server log only.
-    let body_text = response.text().await.unwrap_or_default();
+    // Same diagnostic-on-read-error treatment as the success branch:
+    // an empty `body=` would make a stream-read error indistinguishable
+    // from a genuinely-empty Resend response, and the error path is
+    // exactly where the body content is most useful (it's what Resend
+    // told us about the 401/403/5xx).
+    let body_text = response
+        .text()
+        .await
+        .unwrap_or_else(|err| format!("<body read error: {err}>"));
     tracing::warn!(
         target: "dirt_api::email",
         "Resend rejected magic-code email status={status} body={body_text}"
@@ -321,7 +358,7 @@ mod tests {
     async fn log_mode_send_succeeds() {
         let sender = EmailSender::log_only();
         sender
-            .send_magic_code("user@example.com", "123456")
+            .send_magic_code("user@example.com", "123456", 15)
             .await
             .unwrap();
     }
@@ -329,7 +366,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn resend_mode_posts_expected_payload_and_headers() {
         let mock = MockServer::start().await;
-        let expected_body = render_magic_code_body("123456");
+        let expected_body = render_magic_code_body("123456", 15);
 
         Mock::given(method("POST"))
             .and(path("/emails"))
@@ -360,7 +397,7 @@ mod tests {
         .unwrap();
 
         sender
-            .send_magic_code("user@example.com", "123456")
+            .send_magic_code("user@example.com", "123456", 15)
             .await
             .unwrap();
         // wiremock's drop-time `.expect(1)` assertion fails the test if
@@ -384,7 +421,7 @@ mod tests {
         .unwrap();
 
         let err = sender
-            .send_magic_code("user@example.com", "123456")
+            .send_magic_code("user@example.com", "123456", 15)
             .await
             .expect_err("503 must surface as AppError");
         assert!(
@@ -417,7 +454,7 @@ mod tests {
         .unwrap();
 
         let err = sender
-            .send_magic_code("user@example.com", "123456")
+            .send_magic_code("user@example.com", "123456", 15)
             .await
             .expect_err("401 must surface as AppError");
         assert!(matches!(err, AppError::Internal(_)));
@@ -425,10 +462,15 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn resend_with_trailing_slash_base_url_does_not_double_up_path() {
-        // The local dev binary is reading these from .env; a trailing
-        // slash on RESEND_API_BASE_OVERRIDE (or someone copying the URL
-        // from the Resend docs that ends with one) must still produce
-        // the right `/emails` path, not `//emails`.
+        // `resend_with_base_url` lets a caller override the API base.
+        // If they (or someone copying the URL from the Resend docs)
+        // leave a trailing slash, path joining must still produce
+        // `/emails`, not `//emails`. Production callers go through
+        // `resend()` which uses `RESEND_API_BASE` verbatim, so this
+        // only protects against the test-seam misuse — but the
+        // `trim_end_matches('/')` in `send_via_resend` is the line we
+        // care about, and this test is the one that catches its
+        // removal.
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/emails"))
@@ -447,7 +489,7 @@ mod tests {
         .unwrap();
 
         sender
-            .send_magic_code("user@example.com", "123456")
+            .send_magic_code("user@example.com", "123456", 15)
             .await
             .unwrap();
     }
@@ -473,7 +515,15 @@ mod tests {
             ("RESEND_FROM_ADDRESS", "Dirt <noreply@catjam.dev>"),
         ]);
         let sender = EmailSender::from_env().unwrap();
-        assert!(matches!(sender.mode, Mode::Resend(_)));
+        // Inspect the inner config so an accidental argument-swap (e.g.
+        // `Self::resend(from, api_key)`) or trimmed_env-key swap fails
+        // here instead of slipping past on `matches!(_, Mode::Resend(_))`.
+        let Mode::Resend(cfg) = &sender.mode else {
+            panic!("expected Mode::Resend, got something else");
+        };
+        assert_eq!(cfg.api_key, "rs_test_key");
+        assert_eq!(cfg.from, "Dirt <noreply@catjam.dev>");
+        assert_eq!(cfg.base_url, RESEND_API_BASE);
     }
 
     #[test]

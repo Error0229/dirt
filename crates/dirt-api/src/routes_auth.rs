@@ -112,7 +112,14 @@ pub async fn request_magic_code(
         }
     }
 
-    state.email.send_magic_code(&email, &code).await?;
+    // Tell the caller and the email body the same thing about lifetime,
+    // sourced from the single CODE_TTL_MS constant. `(60 * 1000)` rather
+    // than a magic 60_000 so the computation reads as ms→minutes.
+    let expires_in_minutes = CODE_TTL_MS / (60 * 1000);
+    state
+        .email
+        .send_magic_code(&email, &code, expires_in_minutes)
+        .await?;
 
     Ok(Json(RequestResponse {
         request_id,
