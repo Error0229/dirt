@@ -247,6 +247,12 @@ async fn send_via_resend(cfg: &ResendConfig, email: &str, code: &str) -> Result<
         // The email-id is useful in logs (Resend's dashboard keys off
         // it) but never hits the response — the user already knows
         // they asked for an email.
+        //
+        // `response.text()` reads the whole body into memory. Resend's
+        // documented response shape is `{"id": "..."}` — well under a
+        // KiB — so the implicit bound is fine in practice; a hostile
+        // upstream blasting a multi-MB body would already be the least
+        // of our problems given Vercel's ~6 MB function-response cap.
         let body_text = response.text().await.unwrap_or_default();
         tracing::info!(
             target: "dirt_api::email",
@@ -306,7 +312,9 @@ mod tests {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn lock_env() -> std::sync::MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     #[tokio::test(flavor = "current_thread")]
