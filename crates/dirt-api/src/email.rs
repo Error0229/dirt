@@ -62,6 +62,13 @@ enum Mode {
     /// parallel one and pretending.
     #[cfg(test)]
     Capture(CapturedSends),
+    /// Test-only: every send returns `AppError::Internal`. Used by the
+    /// route-level test that proves `request_magic_code` rolls back the
+    /// just-inserted DB row when the downstream send fails. The real
+    /// production failure path is the Resend HTTPS branch; that's
+    /// covered by the wiremock 4xx/5xx tests.
+    #[cfg(test)]
+    Failing,
 }
 
 struct ResendConfig {
@@ -147,6 +154,17 @@ impl EmailSender {
         )
     }
 
+    /// Test-only: a sender whose every `send_magic_code` call resolves
+    /// to `AppError::Internal`. Lets the route-level test cover the
+    /// rollback branch in `request_magic_code` without standing up a
+    /// wiremock server in the same test.
+    #[cfg(test)]
+    pub(crate) const fn always_failing() -> Self {
+        Self {
+            mode: Mode::Failing,
+        }
+    }
+
     /// Pick a mode from the process environment.
     ///
     /// Selection rules:
@@ -206,6 +224,10 @@ impl EmailSender {
                     .push((email.to_string(), code.to_string()));
                 Ok(())
             }
+            #[cfg(test)]
+            Mode::Failing => Err(AppError::internal(
+                "test-only forced send failure for rollback coverage",
+            )),
         }
     }
 }
@@ -361,6 +383,30 @@ mod tests {
             .send_magic_code("user@example.com", "123456", 15)
             .await
             .unwrap();
+    }
+
+    /// Snapshot the rendered body so a typo or format-string change is
+    /// caught here, not silently in the wiremock test (which feeds the
+    /// same `render_magic_code_body` output into both the mock matcher
+    /// and the production payload — circular by construction).
+    #[test]
+    fn render_magic_code_body_snapshot() {
+        let body = render_magic_code_body("123456", 15);
+        assert_eq!(
+            body,
+            "Your Dirt sign-in code is: 123456\n\n\
+             It expires in 15 minutes. \
+             If you didn't request this code, you can ignore this email.\n"
+        );
+    }
+
+    /// `expires_in_minutes` actually reaches the rendered body — the
+    /// reason we plumbed the parameter through in the first place
+    /// (see `render_magic_code_body` doc comment about TTL drift).
+    #[test]
+    fn render_magic_code_body_uses_ttl_argument() {
+        assert!(render_magic_code_body("000000", 7).contains("expires in 7 minutes"));
+        assert!(render_magic_code_body("000000", 30).contains("expires in 30 minutes"));
     }
 
     #[tokio::test(flavor = "current_thread")]
