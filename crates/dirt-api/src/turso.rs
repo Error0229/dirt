@@ -427,6 +427,26 @@ impl TursoRepo {
         Ok(InsertMagicCodeOutcome::Inserted)
     }
 
+    /// Best-effort cleanup of a magic-code row by `request_id`. Used by
+    /// `routes_auth::request_magic_code` to roll back the row it just
+    /// inserted when the downstream Resend send fails — without this,
+    /// the per-email cooldown gate would keep firing 429 for 60 s on
+    /// the user's retry, even though the email never landed.
+    ///
+    /// Returns `true` if a row was removed, `false` if the row had
+    /// already been consumed or reaped. Callers treat both as "cleanup
+    /// done"; the boolean is logged for diagnostics only.
+    pub async fn delete_magic_code(&self, request_id: &str) -> Result<bool, AppError> {
+        let conn = self.conn()?;
+        let affected = conn
+            .execute(
+                "DELETE FROM magic_codes WHERE request_id = ?",
+                libsql::params![request_id],
+            )
+            .await?;
+        Ok(affected > 0)
+    }
+
     /// Atomically check + consume a magic code. On success returns the
     /// email tied to the row (caller uses it to upsert the user). On
     /// failure returns the structured `ConsumeFailure`.

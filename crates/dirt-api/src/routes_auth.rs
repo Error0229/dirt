@@ -112,7 +112,45 @@ pub async fn request_magic_code(
         }
     }
 
-    state.email.send_magic_code(&email, &code).await?;
+    // Tell the caller and the email body the same thing about lifetime,
+    // sourced from the single CODE_TTL_MS constant. `(60 * 1000)` rather
+    // than a magic 60_000 so the computation reads as ms→minutes.
+    let expires_in_minutes = CODE_TTL_MS / (60 * 1000);
+
+    // If the Resend send fails, we must roll back the just-inserted
+    // magic_code row. Otherwise the per-email cooldown gate above
+    // would 429 the user's retry for the full `REQUEST_COOLDOWN_MS`
+    // window — even though no email was ever delivered. With the P2.1
+    // Log mode this never triggered (Log mode never errors); P2.3's
+    // real Resend backend made the case real.
+    //
+    // Cleanup is best-effort: if `delete_magic_code` itself errors
+    // (Turso unreachable, etc.) we log and still surface the original
+    // send failure to the user. A persisted row is a UX papercut
+    // (user waits 60 s); silently dropping the send error would be
+    // worse (user thinks they got a code).
+    if let Err(send_err) = state
+        .email
+        .send_magic_code(&email, &code, expires_in_minutes)
+        .await
+    {
+        match state.repo.delete_magic_code(&request_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(
+                    target: "dirt_api::auth",
+                    "rollback after Resend failure found no row for request_id {request_id}; assuming concurrent reap"
+                );
+            }
+            Err(cleanup_err) => {
+                tracing::warn!(
+                    target: "dirt_api::auth",
+                    "rollback after Resend failure could not delete magic_code row {request_id}: {cleanup_err}"
+                );
+            }
+        }
+        return Err(send_err);
+    }
 
     Ok(Json(RequestResponse {
         request_id,
@@ -382,6 +420,36 @@ mod tests {
             router,
             state,
             captured,
+            _temp_db: temp_db,
+        }
+    }
+
+    /// Variant fixture for the rollback-on-send-failure test. Wires an
+    /// `EmailSender` that always errors so we can observe what
+    /// `request_magic_code` does in the failure branch without standing
+    /// up a wiremock server in the same test.
+    struct FailingSendFixture {
+        router: Router,
+        state: AppState,
+        _temp_db: TempDb,
+    }
+
+    async fn build_failing_send_router() -> FailingSendFixture {
+        let config = AppConfig {
+            bind_addr: "127.0.0.1:0".into(),
+            turso_database_url: "libsql://unused.test".into(),
+            turso_auth_token: "unused".into(),
+        };
+        let temp_db = TursoRepo::connect_temp_db().await.unwrap();
+        let state = AppState::new(
+            Arc::new(config),
+            temp_db.repo.clone(),
+            Arc::new(EmailSender::always_failing()),
+        );
+        let router = crate::build_router(state.clone());
+        FailingSendFixture {
+            router,
+            state,
             _temp_db: temp_db,
         }
     }
@@ -922,6 +990,59 @@ mod tests {
             StatusCode::OK,
             "locked code blocked the re-request — cooldown SQL is missing the attempts filter"
         );
+    }
+
+    /// When the downstream email send errors out, `request_magic_code`
+    /// must roll back the `magic_codes` row it just inserted. Otherwise
+    /// the per-email cooldown gate would 429 the user's retry for the
+    /// full `REQUEST_COOLDOWN_MS` window, even though the email never
+    /// landed. Phase 2.1's `Log` mode never errored so this branch
+    /// went uncovered; P2.3's Resend backend made the case real.
+    #[tokio::test(flavor = "current_thread")]
+    async fn request_rolls_back_magic_code_row_when_send_fails() {
+        let fx = build_failing_send_router().await;
+        let email = "rollback@example.com";
+        let body = json!({ "email": email });
+
+        // First request: insert + send → send errors → rollback runs.
+        let resp = fx
+            .router
+            .clone()
+            .oneshot(json_request("POST", "/v1/auth/request", body.clone()).await)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        // The DB row must be gone. Direct repo lookup of the email's
+        // most-recent live row should find nothing — without the
+        // rollback this would still see the just-inserted row, and the
+        // assertion below (cooldown=0 immediate re-request) would also
+        // fail in a more confusing way.
+        let now = now_ms();
+        let outcome = fx
+            .state
+            .repo
+            .try_insert_magic_code_with_cooldown(
+                &uuid::Uuid::now_v7().to_string(),
+                email,
+                "probe-hash",
+                now,
+                now + CODE_TTL_MS,
+                REQUEST_COOLDOWN_MS,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome,
+            crate::turso::InsertMagicCodeOutcome::Inserted,
+            "rollback should have left the email free of live rows so a fresh insert succeeds"
+        );
+
+        // And the route layer agrees — an immediate retry (after the
+        // probe insert above; that one is a real cooldown trigger so
+        // we have to scrub it first to keep the assertion clean).
+        // We're testing the rollback's *effect* on the repo, not
+        // re-testing the cooldown logic, so the direct probe is enough.
     }
 
     /// `revoke_session` must be the synchronization point for

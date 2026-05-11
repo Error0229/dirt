@@ -28,7 +28,10 @@ async fn main() -> Result<(), Error> {
             .await
             .map_err(|e| Error::from(format!("failed to connect to Turso: {e}")))?,
     );
-    let email = Arc::new(EmailSender::from_env());
+    let email = Arc::new(
+        EmailSender::from_env()
+            .map_err(|e| Error::from(format!("failed to load email config: {e}")))?,
+    );
     let state = AppState::new(config, repo, email);
     let router = build_router(state);
 
