@@ -22,6 +22,15 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 base64 = "0.22"
 urlencoding = "2.1"
 
+# Platform-native secret store for `auth::KeyringTokenStore`.
+# Target-gated to non-Android because the `keyring` crate has no
+# Android backend; `dirt-mobile` will provide its own Android KeyStore
+# token store in P2.7. The features here line up with each desktop OS's
+# native store: Keychain on macOS, Credential Manager on Windows,
+# Secret Service / DBus on Linux.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+
 [dev-dependencies]
 pretty_assertions.workspace = true
 tempfile = "3"

@@ -4,6 +4,7 @@
 //! and platform-agnostic service clients used by all Dirt interfaces
 //! (desktop, mobile, CLI, TUI).
 
+pub mod auth;
 pub mod config;
 pub mod db;
 pub mod error;
