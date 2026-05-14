@@ -97,10 +97,11 @@ mod tests {
         let store = MemoryTokenStore::new();
         store.save(&sample_token()).unwrap();
 
-        let next = StoredToken {
-            session_token: "tok2".into(),
-            ..sample_token()
-        };
+        // `StoredToken` implements `Drop` via `ZeroizeOnDrop`, so the
+        // `..base` update syntax (which partially moves out of a Drop
+        // type) is not allowed. Mutate a clone instead.
+        let mut next = sample_token();
+        next.session_token = "tok2".into();
         store.save(&next).unwrap();
         assert_eq!(store.load().unwrap().unwrap().session_token, "tok2");
     }

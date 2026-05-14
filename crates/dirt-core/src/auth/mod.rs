@@ -31,7 +31,12 @@ mod client;
 mod memory_store;
 mod token_store;
 
-#[cfg(not(target_os = "android"))]
+// `KeyringTokenStore` lives behind the `keyring-store` Cargo feature
+// (default on for dirt-core itself; opt-out for `dirt-api` so the
+// Vercel server build doesn't drag in libdbus on Linux) AND a
+// non-Android target gate (the `keyring` crate has no Android backend;
+// `dirt-mobile` ships its own Android KeyStore implementation in P2.7).
+#[cfg(all(feature = "keyring-store", not(target_os = "android")))]
 mod keyring_store;
 
 pub use client::{
@@ -40,5 +45,5 @@ pub use client::{
 pub use memory_store::MemoryTokenStore;
 pub use token_store::{StoredToken, TokenStore, TokenStoreError, TokenStoreResult};
 
-#[cfg(not(target_os = "android"))]
+#[cfg(all(feature = "keyring-store", not(target_os = "android")))]
 pub use keyring_store::KeyringTokenStore;

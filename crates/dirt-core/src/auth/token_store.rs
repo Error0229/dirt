@@ -15,6 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Errors returned by a [`TokenStore`] implementation.
 #[derive(Debug, Error)]
@@ -44,7 +45,15 @@ pub type TokenStoreResult<T> = Result<T, TokenStoreError>;
 /// rotate — the caller is expected to copy `user_id` and `email`
 /// forward from the previously-stored value via
 /// [`StoredToken::with_refreshed`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `ZeroizeOnDrop` is best-effort: it scrubs the heap allocation
+/// owned by this `StoredToken` when the struct goes out of scope.
+/// It does **not** cover transient `String`s produced by
+/// `serde_json::to_string` / `from_str` while loading or saving, nor
+/// any copies the caller has cloned. Treat it as defence in depth
+/// against post-mortem memory snapshots, not a guarantee against a
+/// live attacker with `/proc/<pid>/mem`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct StoredToken {
     pub session_token: String,
     pub session_id: String,
@@ -57,19 +66,20 @@ impl StoredToken {
     /// Produce a new `StoredToken` with the three rotating fields from
     /// a [`RefreshResponse`](super::RefreshResponse) merged in over
     /// `self`. Keeps `user_id` / `email` from the original session.
+    ///
+    /// Takes the whole response by reference rather than three
+    /// positional `impl Into<String>` parameters: `session_token` and
+    /// `session_id` are both stringy and easy to silently swap at the
+    /// call site under the old shape — typed input from `AuthClient`
+    /// makes that mistake unrepresentable.
     #[must_use]
-    pub fn with_refreshed(
-        &self,
-        session_token: impl Into<String>,
-        session_id: impl Into<String>,
-        expires_at_ms: i64,
-    ) -> Self {
+    pub fn with_refreshed(&self, resp: &super::RefreshResponse) -> Self {
         Self {
-            session_token: session_token.into(),
-            session_id: session_id.into(),
+            session_token: resp.session_token.clone(),
+            session_id: resp.session_id.clone(),
             user_id: self.user_id.clone(),
             email: self.email.clone(),
-            expires_at_ms,
+            expires_at_ms: resp.expires_at_ms,
         }
     }
 }
@@ -109,7 +119,7 @@ pub trait TokenStore: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::VerifyResponse;
+    use crate::auth::{RefreshResponse, VerifyResponse};
 
     #[test]
     fn stored_token_from_verify_response_preserves_fields() {
@@ -137,7 +147,12 @@ mod tests {
             email: "user@example.com".into(),
             expires_at_ms: 100,
         };
-        let refreshed = original.with_refreshed("new-tok", "new-sid", 200);
+        let resp = RefreshResponse {
+            session_token: "new-tok".into(),
+            session_id: "new-sid".into(),
+            expires_at_ms: 200,
+        };
+        let refreshed = original.with_refreshed(&resp);
         assert_eq!(refreshed.session_token, "new-tok");
         assert_eq!(refreshed.session_id, "new-sid");
         assert_eq!(refreshed.expires_at_ms, 200);

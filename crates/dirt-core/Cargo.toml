@@ -6,6 +6,19 @@ license.workspace = true
 repository.workspace = true
 description = "Core library for Dirt - models, database, and business logic"
 
+[features]
+# Default ON for desktop / CLI / mobile consumers (the mobile module
+# itself is target-gated to non-Android, so this is a no-op on Android
+# builds). `dirt-api` opts out via `default-features = false` so the
+# Vercel / headless Linux server build doesn't pull libdbus.
+default = ["keyring-store"]
+
+# Enables `auth::KeyringTokenStore` and the underlying `keyring` crate.
+# Off in `dirt-api` because the server never persists a user's session
+# token to the OS secret store, and `sync-secret-service` would otherwise
+# require `libdbus-1-dev` on every Linux server image.
+keyring-store = ["dep:keyring"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
@@ -21,6 +34,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # `dirt-api::routes::encode_cursor`).
 base64 = "0.22"
 urlencoding = "2.1"
+# Best-effort scrub of `StoredToken`'s session_token / session_id heap
+# allocations on drop. Already a transitive dep through `keyring`, so
+# promoting it to direct costs nothing in the lockfile.
+zeroize = { version = "1.8", features = ["derive"] }
 
 # Platform-native secret store for `auth::KeyringTokenStore`.
 # Target-gated to non-Android because the `keyring` crate has no
@@ -28,8 +45,12 @@ urlencoding = "2.1"
 # token store in P2.7. The features here line up with each desktop OS's
 # native store: Keychain on macOS, Credential Manager on Windows,
 # Secret Service / DBus on Linux.
+#
+# Marked optional so the `keyring-store` Cargo feature can flip it
+# off entirely — necessary for `dirt-api` on Linux where libdbus
+# headers are absent (Vercel server image, minimal CI images, etc.).
 [target.'cfg(not(target_os = "android"))'.dependencies]
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"], optional = true }
 
 [dev-dependencies]
 pretty_assertions.workspace = true

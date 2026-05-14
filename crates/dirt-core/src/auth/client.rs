@@ -244,10 +244,15 @@ impl AuthClient {
 
     /// `POST /v1/auth/logout`. Returns `Ok(())` on 204.
     ///
-    /// A 401 (`SESSION_EXPIRED`) here is also reported as success: the
-    /// caller's intent is "make this token dead", and an already-dead
-    /// token satisfies that. Distinguishing the two would force every
-    /// `logout` call site to match-and-discard the error.
+    /// A 401 here is also reported as success **only** when the body's
+    /// `error.code` is `SESSION_EXPIRED` — that's the dirt-api signal
+    /// for "this token was already invalid", which satisfies the
+    /// caller's intent ("make this token dead"). Any other 401
+    /// (a future `MISSING_TOKEN`, a proxy-injected unauthorised,
+    /// a body we can't parse) propagates as a real `SessionExpired`
+    /// error so the caller can decide what to do — silent success on
+    /// any-old-401 would let a server-side regression in the auth
+    /// path quietly leave tokens un-revoked.
     pub async fn logout_session(&self, session_token: &str) -> AuthResult<()> {
         let url = format!("{}{LOGOUT_PATH}", self.base_url);
         let resp = self
@@ -258,8 +263,18 @@ impl AuthClient {
             .await
             .map_err(|err| network_error(&err))?;
         let status = resp.status();
-        if status == StatusCode::NO_CONTENT || status == StatusCode::UNAUTHORIZED {
+        if status == StatusCode::NO_CONTENT {
             return Ok(());
+        }
+        if status == StatusCode::UNAUTHORIZED {
+            let body = resp.text().await.unwrap_or_default();
+            if let Ok(env) = serde_json::from_str::<ErrorEnvelope>(&body) {
+                if env.error.code == "SESSION_EXPIRED" {
+                    return Ok(());
+                }
+                return Err(AuthError::SessionExpired(env.error.message));
+            }
+            return Err(AuthError::SessionExpired(body));
         }
         Err(parse_error_from_status(resp, status).await)
     }
@@ -476,12 +491,12 @@ mod tests {
         client.logout_session(TEST_SESSION_TOKEN).await.unwrap();
     }
 
-    /// 401 on logout is "already revoked" — we treat that as success
-    /// because the caller's intent ("make this token dead") is satisfied
-    /// either way. Without this branch, every logout call site would
-    /// have to match-and-discard the error.
+    /// 401 with `SESSION_EXPIRED` on logout is "already revoked" — we
+    /// treat that as success because the caller's intent ("make this
+    /// token dead") is satisfied. Without this branch every logout
+    /// call site would have to match-and-discard the error.
     #[tokio::test]
-    async fn logout_session_treats_401_as_success() {
+    async fn logout_session_treats_session_expired_401_as_success() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path(LOGOUT_PATH))
@@ -500,7 +515,56 @@ mod tests {
         client
             .logout_session("already-revoked-token")
             .await
-            .expect("logout should swallow 401");
+            .expect("logout should swallow SESSION_EXPIRED 401");
+    }
+
+    /// Only `SESSION_EXPIRED` should be swallowed — any other 401 code
+    /// (a future `MISSING_TOKEN`, a proxy-injected 401, etc.) means
+    /// the server may not have actually revoked the token, so it must
+    /// propagate so the caller can decide what to do.
+    #[tokio::test]
+    async fn logout_session_propagates_non_session_expired_401() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(LOGOUT_PATH))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": {
+                    "code": "MISSING_TOKEN",
+                    "message": "Authorization header was malformed",
+                    "cause": "Authorization header was malformed",
+                    "fix": "Include 'Authorization: Bearer <session-token>'.",
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let err = client.logout_session("malformed").await.unwrap_err();
+        match err {
+            AuthError::SessionExpired(msg) => assert!(msg.contains("Authorization")),
+            other => {
+                panic!("expected SessionExpired (preserving the unswallowed 401), got {other:?}")
+            }
+        }
+    }
+
+    /// A 401 with no JSON envelope (proxy-injected, etc.) also must
+    /// not be swallowed: we can't confirm the server-side revoke.
+    #[tokio::test]
+    async fn logout_session_propagates_401_with_unparseable_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(LOGOUT_PATH))
+            .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let err = client.logout_session("whatever").await.unwrap_err();
+        assert!(
+            matches!(err, AuthError::SessionExpired(msg) if msg.contains("unauthorized")),
+            "non-envelope 401 must surface as SessionExpired, not Ok(())"
+        );
     }
 
     // ---- Error mapping ----

@@ -71,11 +71,7 @@ impl TokenStore for KeyringTokenStore {
     fn load(&self) -> TokenStoreResult<Option<StoredToken>> {
         let entry = self.entry()?;
         match entry.get_password() {
-            Ok(json) => {
-                let token: StoredToken = serde_json::from_str(&json)
-                    .map_err(|err| TokenStoreError::Serialize(err.to_string()))?;
-                Ok(Some(token))
-            }
+            Ok(json) => Ok(Some(parse_token_blob(&json)?)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(err) => Err(TokenStoreError::Backend(err.to_string())),
         }
@@ -83,8 +79,7 @@ impl TokenStore for KeyringTokenStore {
 
     fn save(&self, token: &StoredToken) -> TokenStoreResult<()> {
         let entry = self.entry()?;
-        let json = serde_json::to_string(token)
-            .map_err(|err| TokenStoreError::Serialize(err.to_string()))?;
+        let json = serialize_token_blob(token)?;
         entry
             .set_password(&json)
             .map_err(|err| TokenStoreError::Backend(err.to_string()))
@@ -99,9 +94,29 @@ impl TokenStore for KeyringTokenStore {
     }
 }
 
+// Pulled out into free fns so the deserialize/serialize edges can be
+// unit-tested without standing up a real keyring backend in CI.
+fn parse_token_blob(json: &str) -> TokenStoreResult<StoredToken> {
+    serde_json::from_str(json).map_err(|err| TokenStoreError::Serialize(err.to_string()))
+}
+
+fn serialize_token_blob(token: &StoredToken) -> TokenStoreResult<String> {
+    serde_json::to_string(token).map_err(|err| TokenStoreError::Serialize(err.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_token() -> StoredToken {
+        StoredToken {
+            session_token: "tok".into(),
+            session_id: "sid".into(),
+            user_id: "uid".into(),
+            email: "user@example.com".into(),
+            expires_at_ms: 123,
+        }
+    }
 
     /// Construction must not touch the platform keyring — building the
     /// store is a synchronous, infallible operation in `new`. (`Entry`
@@ -115,5 +130,42 @@ mod tests {
         let rendered = format!("{store:?}");
         assert!(rendered.contains("dev.dirt.session.test"));
         assert!(rendered.contains("default"));
+    }
+
+    /// The serialize/deserialize edge is what breaks silently after a
+    /// `StoredToken` schema change across releases (and is the only
+    /// non-IO code path inside `load`/`save` we can exercise from a
+    /// unit test). Round-tripping a known-good token through the same
+    /// helpers `load`/`save` use confirms the contract.
+    #[test]
+    fn serialize_then_parse_round_trips() {
+        let token = sample_token();
+        let blob = serialize_token_blob(&token).unwrap();
+        let parsed = parse_token_blob(&blob).unwrap();
+        assert_eq!(parsed, token);
+    }
+
+    /// A keyring entry that was written by a different schema version,
+    /// or corrupted out-of-band by the OS secret store, must surface
+    /// as `TokenStoreError::Serialize` — the wrapper caller treats
+    /// this as "force a fresh sign-in", which is the right recovery.
+    /// Without this test the silent-breakage scenario after a schema
+    /// change is uncovered.
+    #[test]
+    fn parse_token_blob_rejects_malformed_json() {
+        let err = parse_token_blob("not json at all").unwrap_err();
+        assert!(
+            matches!(err, TokenStoreError::Serialize(_)),
+            "malformed JSON must classify as Serialize, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_token_blob_rejects_well_formed_json_with_wrong_shape() {
+        // Valid JSON, but missing every required field — most realistic
+        // schema-drift scenario (a future StoredToken adds/renames a
+        // field and an old build tries to load the new blob).
+        let err = parse_token_blob("{}").unwrap_err();
+        assert!(matches!(err, TokenStoreError::Serialize(_)));
     }
 }
