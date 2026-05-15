@@ -53,13 +53,37 @@ pub type TokenStoreResult<T> = Result<T, TokenStoreError>;
 /// any copies the caller has cloned. Treat it as defence in depth
 /// against post-mortem memory snapshots, not a guarantee against a
 /// live attacker with `/proc/<pid>/mem`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+///
+/// `Debug` is intentionally **not** derived. A `#[derive(Debug)]` on
+/// this type would render `session_token` and `session_id` verbatim
+/// from any `tracing::debug!("{token:?}")` / `dbg!()` / panic-chain
+/// formatter — which is the exact log-aggregator leak pathway
+/// `ZeroizeOnDrop` is meant to mitigate. The manual impl below
+/// redacts both fields while keeping the non-secret identity fields
+/// visible for diagnostics.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct StoredToken {
     pub session_token: String,
     pub session_id: String,
     pub user_id: String,
     pub email: String,
     pub expires_at_ms: i64,
+}
+
+impl std::fmt::Debug for StoredToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `session_token` is a live bearer credential; `session_id` is
+        // a server-side row identifier that, while not itself an auth
+        // token, is enough to scope a token-DB compromise back to a
+        // specific user/session in log corpora. Both are redacted.
+        f.debug_struct("StoredToken")
+            .field("session_token", &"[redacted]")
+            .field("session_id", &"[redacted]")
+            .field("user_id", &self.user_id)
+            .field("email", &self.email)
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
 }
 
 impl StoredToken {
@@ -116,6 +140,19 @@ pub trait TokenStore: Send + Sync {
     fn clear(&self) -> TokenStoreResult<()>;
 }
 
+/// Shared test fixture. Re-used by the memory and keyring store
+/// test modules so they don't drift when `StoredToken` fields change.
+#[cfg(test)]
+pub(super) fn sample_stored_token() -> StoredToken {
+    StoredToken {
+        session_token: "tok".into(),
+        session_id: "sid".into(),
+        user_id: "uid".into(),
+        email: "user@example.com".into(),
+        expires_at_ms: 123,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,6 +196,38 @@ mod tests {
         // identity is preserved
         assert_eq!(refreshed.user_id, original.user_id);
         assert_eq!(refreshed.email, original.email);
+    }
+
+    /// The manual `Debug` impl exists for one reason: keep the
+    /// session_token out of log streams. Any future refactor that
+    /// goes back to `#[derive(Debug)]` would silently leak the token
+    /// to `tracing::debug!`, `dbg!`, and panic chains.
+    #[test]
+    fn debug_redacts_session_token_and_session_id() {
+        let token = StoredToken {
+            session_token: "supersecret-bearer-token".into(),
+            session_id: "sess-deadbeef".into(),
+            user_id: "uid-1".into(),
+            email: "user@example.com".into(),
+            expires_at_ms: 123,
+        };
+        let rendered = format!("{token:?}");
+        assert!(
+            !rendered.contains("supersecret-bearer-token"),
+            "session_token must not appear in Debug output: {rendered}"
+        );
+        assert!(
+            !rendered.contains("sess-deadbeef"),
+            "session_id must not appear in Debug output: {rendered}"
+        );
+        assert!(
+            rendered.contains("[redacted]"),
+            "redacted placeholder must be visible: {rendered}"
+        );
+        // Identity fields stay visible so log lines still help with
+        // diagnosing "which user is this".
+        assert!(rendered.contains("uid-1"));
+        assert!(rendered.contains("user@example.com"));
     }
 
     #[test]

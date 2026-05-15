@@ -106,17 +106,8 @@ fn serialize_token_blob(token: &StoredToken) -> TokenStoreResult<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::token_store::sample_stored_token as sample_token;
     use super::*;
-
-    fn sample_token() -> StoredToken {
-        StoredToken {
-            session_token: "tok".into(),
-            session_id: "sid".into(),
-            user_id: "uid".into(),
-            email: "user@example.com".into(),
-            expires_at_ms: 123,
-        }
-    }
 
     /// Construction must not touch the platform keyring — building the
     /// store is a synchronous, infallible operation in `new`. (`Entry`

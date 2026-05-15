@@ -26,6 +26,7 @@
 //!     transient; safe to retry with backoff.
 
 use std::fmt;
+use std::time::Duration;
 
 use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,17 @@ const REQUEST_PATH: &str = "/v1/auth/request";
 const VERIFY_PATH: &str = "/v1/auth/verify";
 const REFRESH_PATH: &str = "/v1/auth/refresh";
 const LOGOUT_PATH: &str = "/v1/auth/logout";
+
+/// Per-request timeout for every endpoint on `AuthClient`.
+///
+/// 30 s is comfortably longer than any expected dirt-api response
+/// (the slowest is `/v1/auth/request` which does a Resend HTTPS round
+/// trip — capped server-side at 10 s) and short enough that a stalled
+/// peer (half-open TCP after a failover, intercepting proxy that
+/// accepts the SYN and drops the rest) does not hang the auth UI / CLI
+/// indefinitely. Without this, `reqwest::Client::new()` has *no*
+/// per-request timeout and the future awaits forever.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Errors returned by the auth API client.
 #[derive(Debug, Error)]
@@ -178,14 +190,18 @@ impl fmt::Debug for AuthClient {
 impl AuthClient {
     /// Build a client bound to `base_url`. Trims trailing slashes so
     /// callers can pass either `https://host` or `https://host/`.
-    /// Rejects empty / non-http(s) URLs loudly; silent fallback would
-    /// mask a misconfigured client as "offline".
+    /// Rejects empty / non-http(s) URLs and non-loopback plaintext
+    /// HTTP loudly; silent fallback would mask a misconfigured client
+    /// as "offline" or leak the session token over plaintext.
     pub fn new(base_url: impl Into<String>) -> AuthResult<Self> {
         let base_url = normalize_base_url(base_url.into())?;
-        Ok(Self {
-            base_url,
-            http: Client::new(),
-        })
+        let http = Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .map_err(|err| {
+                AuthError::InvalidConfiguration(format!("failed to build HTTP client: {err}"))
+            })?;
+        Ok(Self { base_url, http })
     }
 
     /// Expose the normalized base URL for logging/diagnostics.
@@ -344,17 +360,54 @@ fn normalize_base_url(raw: String) -> AuthResult<String> {
     }
     if normalized.starts_with("http://") {
         // The session token is the only credential, so plaintext HTTP
-        // means anyone on the path can read and replay it. We allow
-        // http:// for local dev (loopback addresses, the Android
-        // emulator's 10.0.2.2 forward) but warn loudly so a
-        // misconfigured staging or production deploy doesn't silently
-        // leak the token.
-        tracing::warn!(
-            "DIRT_API_BASE_URL uses plain HTTP — session tokens will be sent in plaintext. \
-             Use HTTPS for any non-loopback environment."
-        );
+        // means anyone on the path can read and replay it. We previously
+        // emitted a `tracing::warn!` and proceeded — but a default-level
+        // log filter in a release binary swallows warnings silently, so
+        // an operator who sets `DIRT_API_BASE_URL=http://api.dirt.dev`
+        // would ship bearer tokens over plaintext with no visible
+        // signal. Reject loudly instead; the loopback allowlist keeps
+        // local dev (Tauri dev server, Android emulator) working.
+        if !is_loopback_http_url(&normalized) {
+            return Err(AuthError::InvalidConfiguration(
+                "DIRT_API_BASE_URL uses plain HTTP for a non-loopback host — \
+                 session tokens would be sent in plaintext. Use https:// for \
+                 any address other than localhost / 127.0.0.1 / ::1 / 10.0.2.2."
+                    .into(),
+            ));
+        }
     }
     Ok(normalized.trim_end_matches('/').to_string())
+}
+
+/// True if `url` is `http://` with a loopback host. Permitted hosts:
+///
+/// - `127.0.0.1` / `localhost` / `::1` — desktop and CLI local dev.
+/// - `10.0.2.2`                        — the Android emulator's
+///   loopback-to-host bridge.
+///
+/// Anything else gets rejected with a configuration error so a
+/// production misconfiguration can't silently transmit session tokens
+/// in plaintext. Port numbers and trailing paths are tolerated.
+///
+/// We parse via `reqwest::Url` (the same URL type reqwest will use
+/// internally for the actual request) so the loopback check and the
+/// transport agree on what the "host" is — no chance of a clever
+/// `http://localhost@evil.com/` style mismatch sneaking past.
+fn is_loopback_http_url(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    if parsed.scheme() != "http" {
+        return false;
+    }
+    // `url::Url::host_str()` returns IPv6 literals wrapped in `[..]`
+    // (e.g. `[::1]`) while IPv4 / hostnames come back bare. Accept
+    // both forms of the IPv6 loopback so the brackets-or-not
+    // distinction isn't a portability landmine for callers.
+    matches!(
+        parsed.host_str(),
+        Some("127.0.0.1" | "localhost" | "::1" | "[::1]" | "10.0.2.2")
+    )
 }
 
 #[cfg(test)]
@@ -388,6 +441,40 @@ mod tests {
     fn new_trims_trailing_slash() {
         let client = AuthClient::new("https://example.com/").unwrap();
         assert_eq!(client.base_url(), "https://example.com");
+    }
+
+    /// Plaintext HTTP for a non-loopback host must be rejected — a
+    /// silent warn-and-proceed was the old behaviour, but a default
+    /// log filter in release builds swallows warnings, and a
+    /// misconfigured production deploy would silently transmit
+    /// session tokens in plaintext.
+    #[test]
+    fn new_rejects_plain_http_for_non_loopback_host() {
+        let err = AuthClient::new("http://api.dirt.dev").unwrap_err();
+        match err {
+            AuthError::InvalidConfiguration(msg) => assert!(
+                msg.contains("plaintext"),
+                "rejection should mention plaintext: {msg}"
+            ),
+            other => panic!("expected InvalidConfiguration, got {other:?}"),
+        }
+        assert!(AuthClient::new("http://example.com:8080").is_err());
+    }
+
+    /// Loopback http:// must still build — local dev (Tauri dev
+    /// server, Android emulator's 10.0.2.2 forward) depends on it.
+    #[test]
+    fn new_accepts_plain_http_for_loopback_hosts() {
+        for url in [
+            "http://127.0.0.1:8080",
+            "http://localhost:8080",
+            "http://localhost",
+            "http://[::1]:8080",
+            "http://10.0.2.2:8080",
+        ] {
+            AuthClient::new(url)
+                .unwrap_or_else(|err| panic!("expected loopback {url} to build, got {err:?}"));
+        }
     }
 
     #[test]
@@ -752,5 +839,26 @@ mod tests {
         let client = AuthClient::new("http://127.0.0.1:1").unwrap();
         let err = client.request_magic_code("x@y.z").await.unwrap_err();
         assert!(matches!(err, AuthError::Network(_)));
+    }
+
+    /// A 200 response with a body that doesn't deserialize against
+    /// the typed response shape must classify as `AuthError::Decode`
+    /// — that's the "server/client contract drift" arm, separate
+    /// from the HTTP-error variants. Previously uncovered.
+    #[tokio::test]
+    async fn non_json_200_maps_to_decode_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(REQUEST_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json at all"))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let err = client.request_magic_code("x@y.z").await.unwrap_err();
+        assert!(
+            matches!(err, AuthError::Decode(_)),
+            "expected Decode for non-JSON 200, got {err:?}"
+        );
     }
 }

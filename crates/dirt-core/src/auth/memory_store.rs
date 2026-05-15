@@ -28,8 +28,17 @@ impl MemoryTokenStore {
     /// Seed the store with an initial token. Useful for tests that need
     /// to verify "what happens if `load()` returns `Some(token)` at app
     /// start" without going through a full verify round-trip first.
+    ///
+    /// Intentionally **not** `const fn` even though the body would
+    /// technically qualify (`Mutex::new` and `Some` are const).
+    /// `StoredToken` holds `String` heap allocations, so a const call
+    /// site can never construct the input — the `const fn` marker
+    /// would suggest a capability the type system precludes, and the
+    /// PR review on #230 flagged that as misleading. Suppress the
+    /// clippy lint locally.
+    #[allow(clippy::missing_const_for_fn)]
     #[must_use]
-    pub const fn with_initial(token: StoredToken) -> Self {
+    pub fn with_initial(token: StoredToken) -> Self {
         Self {
             inner: Mutex::new(Some(token)),
         }
@@ -66,17 +75,8 @@ impl TokenStore for MemoryTokenStore {
 
 #[cfg(test)]
 mod tests {
+    use super::super::token_store::sample_stored_token as sample_token;
     use super::*;
-
-    fn sample_token() -> StoredToken {
-        StoredToken {
-            session_token: "tok".into(),
-            session_id: "sid".into(),
-            user_id: "uid".into(),
-            email: "user@example.com".into(),
-            expires_at_ms: 123,
-        }
-    }
 
     #[test]
     fn fresh_store_loads_none() {
