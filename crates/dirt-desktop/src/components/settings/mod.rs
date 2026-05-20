@@ -1,9 +1,9 @@
 //! Settings panel component.
 //!
-//! Auth tab was removed in the Supabase teardown; sign-in/sign-out lived
-//! here when the desktop app held a Supabase session. The Sync tab still
-//! shows the high-level status signals — they currently stay at
-//! `Offline` until the new ApiClient-driven worker lands.
+//! The Account tab drives the magic-code sign-in/sign-out flow against
+//! `dirt-api`'s `/v1/auth/*` endpoints. The Sync tab shows the runtime
+//! health of the auto-sync worker; it surfaces `Offline` until the
+//! user signs in on the Account tab.
 
 use std::sync::Arc;
 
@@ -20,10 +20,12 @@ use crate::services::{
 };
 use crate::state::AppState;
 use crate::theme::resolve_theme;
+use account_settings::AccountSettingsTab;
 use media_settings::MediaSettingsTab;
 use sync_settings::SyncSettingsTab;
 use theme_settings::ThemeSettingsTab;
 
+mod account_settings;
 mod media_settings;
 mod row;
 mod sync_settings;
@@ -34,6 +36,7 @@ enum SettingsTab {
     Appearance,
     Media,
     Sync,
+    Account,
 }
 
 /// Settings panel component
@@ -283,6 +286,7 @@ pub fn SettingsPanel() -> Element {
                                 (SettingsTab::Appearance, "Appearance"),
                                 (SettingsTab::Media, "Media"),
                                 (SettingsTab::Sync, "Sync"),
+                                (SettingsTab::Account, "Account"),
                             ];
                             rsx! {
                                 for (tab, label) in tabs {
@@ -370,6 +374,7 @@ pub fn SettingsPanel() -> Element {
                             pending_sync_preview: pending_sync_preview,
                         }
                     },
+                    SettingsTab::Account => rsx! { AccountSettingsTab {} },
                 }
 
                 } // settings-body

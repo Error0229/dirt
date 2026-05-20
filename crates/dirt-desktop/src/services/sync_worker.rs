@@ -22,12 +22,20 @@
 //! `UnsyncStorage`-backed `Signal`s aren't `Send`, so a consumer task
 //! on the UI side drains the channel and writes the signals there;
 //! the worker stays cleanly on the tokio side.
+//!
+//! Auth refresh: on a 401 the worker calls
+//! [`SessionApiClient::refresh`] to silently rotate the bearer. A
+//! successful refresh swaps the inner client in place and the next
+//! cycle uses the new token; a `SESSION_EXPIRED` refresh failure parks
+//! the worker until an explicit kick (after the user logs back in).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use dirt_core::sync::api_client::{ApiClient, ApiClientError};
+use dirt_core::sync::api_client::ApiClientError;
 use dirt_core::sync::engine::{SyncEngine, SyncEngineError};
+use dirt_core::sync::session_client::{SessionApiClient, SessionRefreshError};
 use dirt_core::SOLO_USER_ID;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Notify;
@@ -59,6 +67,7 @@ const BACKOFF_SCHEDULE: &[Duration] = &[
 #[derive(Clone)]
 pub struct SyncWorkerHandle {
     notify: Arc<Notify>,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl SyncWorkerHandle {
@@ -66,6 +75,17 @@ impl SyncWorkerHandle {
     /// any tokio task; multiple calls before the worker debounces
     /// collapse into one extra sync cycle.
     pub fn trigger(&self) {
+        self.notify.notify_one();
+    }
+
+    /// Signal the worker to exit at the next safe point. Used on
+    /// sign-out so the worker doesn't keep holding `Arc`s to the
+    /// database and session client after the user has revoked their
+    /// token. Idempotent — calling twice is a no-op.
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+        // Unpark a parked worker so it can observe the flag immediately
+        // instead of waiting for the next mutation kick.
         self.notify.notify_one();
     }
 }
@@ -83,24 +103,24 @@ pub enum SyncEvent {
     LastSync(i64),
 }
 
-/// Spawn a background sync worker bound to `(db, api)` and return a
-/// handle the rest of the app can use to kick it. The worker runs
-/// until the process exits — no Drop-based cancellation, no shutdown
-/// signal: a desktop process getting torn down means the OS reaps the
-/// task. If we ever need cleaner shutdown semantics that's the place
-/// to add a `CancellationToken`.
+/// Spawn a background sync worker bound to `(db, session)` and return a
+/// handle the rest of the app can use to kick it. The worker runs until
+/// the process exits or `SyncWorkerHandle::shutdown` is called (the
+/// latter happens on sign-out).
 pub fn spawn_sync_worker(
     db: Arc<DatabaseService>,
-    api: Arc<ApiClient>,
+    session: Arc<SessionApiClient>,
     events: UnboundedSender<SyncEvent>,
 ) -> SyncWorkerHandle {
     let notify = Arc::new(Notify::new());
+    let shutdown = Arc::new(AtomicBool::new(false));
     let handle = SyncWorkerHandle {
         notify: notify.clone(),
+        shutdown: shutdown.clone(),
     };
 
     tokio::spawn(async move {
-        run_loop(db, api, notify, events).await;
+        run_loop(db, session, notify, shutdown, events).await;
     });
 
     handle
@@ -108,22 +128,33 @@ pub fn spawn_sync_worker(
 
 async fn run_loop(
     db: Arc<DatabaseService>,
-    api: Arc<ApiClient>,
+    session: Arc<SessionApiClient>,
     notify: Arc<Notify>,
+    shutdown: Arc<AtomicBool>,
     events: UnboundedSender<SyncEvent>,
 ) {
+    if shutdown.load(Ordering::SeqCst) {
+        return;
+    }
+
     // Trigger 1: startup sync.
-    let initial = sync_once(&db, &api, &events).await;
+    let initial = sync_once(&db, &session, &events).await;
     let mut consecutive_failures = match initial {
         SyncOutcome::Ok => 0,
         SyncOutcome::Failed => 1,
         SyncOutcome::Permanent => {
-            park_until_kick(&notify).await;
+            park_until_kick(&notify, &shutdown).await;
+            if shutdown.load(Ordering::SeqCst) {
+                return;
+            }
             0
         }
     };
 
     loop {
+        if shutdown.load(Ordering::SeqCst) {
+            return;
+        }
         // Periodic delay shrinks toward zero on success and stretches
         // along `BACKOFF_SCHEDULE` while we're failing, so a misconfigured
         // token doesn't slam the server every 30 s forever.
@@ -136,13 +167,16 @@ async fn run_loop(
         let outcome = tokio::select! {
             // Trigger 2: periodic timer (or backoff timer when failing).
             () = tokio::time::sleep(periodic_delay) => {
-                sync_once(&db, &api, &events).await
+                if shutdown.load(Ordering::SeqCst) { return; }
+                sync_once(&db, &session, &events).await
             }
             // Trigger 3: post-mutation kick. Debounce so a burst of
             // edits coalesces into one sync.
             () = notify.notified() => {
+                if shutdown.load(Ordering::SeqCst) { return; }
                 tokio::time::sleep(POST_MUTATION_DEBOUNCE).await;
-                sync_once(&db, &api, &events).await
+                if shutdown.load(Ordering::SeqCst) { return; }
+                sync_once(&db, &session, &events).await
             }
         };
 
@@ -151,18 +185,24 @@ async fn run_loop(
             SyncOutcome::Failed => consecutive_failures.saturating_add(1),
             SyncOutcome::Permanent => {
                 // The error is not going to clear with retry (e.g.
-                // 401 — the token is wrong). Park until something kicks
-                // the worker explicitly; that gives the user a chance
-                // to fix config and trigger a mutation, and avoids
-                // hammering the server every 5 minutes forever.
-                park_until_kick(&notify).await;
+                // server-side SESSION_EXPIRED past refresh). Park until
+                // something kicks the worker explicitly — that gives the
+                // login UI a chance to land a fresh token and notify the
+                // worker, and avoids hammering the server forever.
+                park_until_kick(&notify, &shutdown).await;
+                if shutdown.load(Ordering::SeqCst) {
+                    return;
+                }
                 0
             }
         };
     }
 }
 
-async fn park_until_kick(notify: &Notify) {
+async fn park_until_kick(notify: &Notify, shutdown: &AtomicBool) {
+    if shutdown.load(Ordering::SeqCst) {
+        return;
+    }
     notify.notified().await;
 }
 
@@ -170,11 +210,9 @@ async fn park_until_kick(notify: &Notify) {
 enum SyncOutcome {
     Ok,
     Failed,
-    /// The error will keep failing under retry — surface to the user
-    /// and stop scheduling automatic attempts. Currently triggered by
-    /// `Unauthorized`; new cases should be added with care, since
-    /// dropping into Permanent removes the worker's ability to recover
-    /// without an explicit notify.
+    /// The error will keep failing under retry (terminal token state
+    /// past silent-refresh) — surface to the user and stop scheduling
+    /// automatic attempts.
     Permanent,
 }
 
@@ -188,15 +226,16 @@ fn backoff_for(consecutive_failures: u32) -> Duration {
 
 async fn sync_once(
     db: &DatabaseService,
-    api: &ApiClient,
+    session: &SessionApiClient,
     events: &UnboundedSender<SyncEvent>,
 ) -> SyncOutcome {
     let _ = events.send(SyncEvent::Status(SyncStatus::Syncing));
+    let api = session.current();
     // The desktop `DatabaseService` is a thin Deref wrapper around the
     // core service. Deref coercion does the right thing here — we
     // pass `&DatabaseService` and rustc reborrows it as the core type
     // `SyncEngine::new` expects.
-    let engine = SyncEngine::new(db, api, SOLO_USER_ID);
+    let engine = SyncEngine::new(db, &api, SOLO_USER_ID);
     match engine.run_once().await {
         Ok(report) => {
             tracing::info!(
@@ -211,52 +250,63 @@ async fn sync_once(
             SyncOutcome::Ok
         }
         Err(err) => {
+            if matches!(&err, SyncEngineError::Api(ApiClientError::Unauthorized(_))) {
+                // Release the snapshot Arc before `refresh` swaps the
+                // inner client. Without this drop the worker would hold
+                // a clone of the stale `ApiClient` across the refresh
+                // (harmless, but noisy in logs).
+                drop(api);
+                return handle_unauthorized(session, events).await;
+            }
             tracing::error!("Sync failed: {err}");
             let _ = events.send(SyncEvent::Status(SyncStatus::Error));
             let _ = events.send(SyncEvent::Issue(Some(err.to_string())));
-            if is_permanent(&err) {
-                SyncOutcome::Permanent
-            } else {
-                SyncOutcome::Failed
-            }
+            SyncOutcome::Failed
         }
     }
 }
 
-/// Return true for errors that will not resolve under retry. The whole
-/// point of separating `Permanent` from `Failed` is that some failures
-/// — wrong token, contract drift — only resolve when the user fixes
-/// something. Burning backoff cycles on those just hammers the server.
-const fn is_permanent(err: &SyncEngineError) -> bool {
-    matches!(err, SyncEngineError::Api(ApiClientError::Unauthorized(_)))
+/// Handle a 401 from the sync engine by attempting silent refresh.
+///
+/// On success the worker returns `Failed` (not `Ok`) so the loop
+/// immediately schedules another sync cycle — `Failed` ramps backoff,
+/// but the first retry runs after only 5 s and uses the fresh bearer,
+/// so the user-visible recovery is fast. On a permanent refresh
+/// failure the keyring has been cleared inside `refresh`; we surface a
+/// re-auth nudge through `sync_issue` and park the worker.
+async fn handle_unauthorized(
+    session: &SessionApiClient,
+    events: &UnboundedSender<SyncEvent>,
+) -> SyncOutcome {
+    match session.refresh().await {
+        Ok(()) => {
+            tracing::info!("Sync token refreshed silently after 401");
+            // Don't surface a UI error — the user shouldn't notice the
+            // background refresh. Mark Failed so we retry quickly with
+            // the new client on the next cycle.
+            SyncOutcome::Failed
+        }
+        Err(SessionRefreshError::SessionExpired(_) | SessionRefreshError::NoToken) => {
+            let _ = events.send(SyncEvent::Status(SyncStatus::Error));
+            let _ = events.send(SyncEvent::Issue(Some(
+                "Your session has expired. Sign in again to resume sync.".into(),
+            )));
+            SyncOutcome::Permanent
+        }
+        Err(other) => {
+            tracing::warn!("Token refresh failed transiently: {other}");
+            let _ = events.send(SyncEvent::Status(SyncStatus::Error));
+            let _ = events.send(SyncEvent::Issue(Some(format!(
+                "Sync refresh failed: {other}"
+            ))));
+            SyncOutcome::Failed
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn unauthorized_classifies_as_permanent() {
-        let err = SyncEngineError::Api(ApiClientError::Unauthorized("bad token".into()));
-        assert!(is_permanent(&err));
-    }
-
-    #[test]
-    fn transient_errors_stay_failed() {
-        let cases = [
-            SyncEngineError::Api(ApiClientError::Network("timeout".into())),
-            SyncEngineError::Api(ApiClientError::ServerUnavailable("turso down".into())),
-            SyncEngineError::Api(ApiClientError::ServerError {
-                status: 500,
-                message: "boom".into(),
-            }),
-            SyncEngineError::PushIncomplete { acked: 0, sent: 1 },
-            SyncEngineError::Decode("contract drift".into()),
-        ];
-        for err in cases {
-            assert!(!is_permanent(&err), "{err} should not be permanent");
-        }
-    }
 
     #[test]
     fn backoff_walks_schedule_then_clamps() {
