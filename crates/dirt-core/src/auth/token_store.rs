@@ -106,6 +106,30 @@ impl StoredToken {
             expires_at_ms: resp.expires_at_ms,
         }
     }
+
+    /// Returns `true` if the stored token's `expires_at_ms` is at or
+    /// before the current wall-clock time.
+    ///
+    /// Lives here (instead of being duplicated across every consumer
+    /// — `dirt-cli`, `dirt-desktop`, `dirt-mobile`) so the ms-vs-s
+    /// unit convention is locked in by the struct itself. Use the
+    /// return value to decide whether to call
+    /// [`AuthClient::refresh_session`](super::AuthClient::refresh_session)
+    /// before the next authed request.
+    ///
+    /// A clock that fails to read (mid-1970 epoch or a backwards
+    /// system clock) is treated as "treat the token as expired and
+    /// re-auth" — the alternative would be to silently keep using a
+    /// possibly-expired session, which is worse than a forced refresh.
+    #[must_use]
+    pub fn is_expired(&self) -> bool {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|d| i64::try_from(d.as_millis()).ok())
+            .unwrap_or(i64::MAX);
+        now_ms >= self.expires_at_ms
+    }
 }
 
 impl From<super::VerifyResponse> for StoredToken {
@@ -242,5 +266,34 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let parsed: StoredToken = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn is_expired_true_for_past_expiry() {
+        let token = StoredToken {
+            session_token: "tok".into(),
+            session_id: "sid".into(),
+            user_id: "uid".into(),
+            email: "user@example.com".into(),
+            // Year 1971-ish — comfortably in the past for every test
+            // run, both on a local machine and on CI runners.
+            expires_at_ms: 1,
+        };
+        assert!(token.is_expired());
+    }
+
+    #[test]
+    fn is_expired_false_for_future_expiry() {
+        let token = StoredToken {
+            session_token: "tok".into(),
+            session_id: "sid".into(),
+            user_id: "uid".into(),
+            email: "user@example.com".into(),
+            // Year 4000-ish — comfortably in the future so a slow
+            // CI runner that drifts ms between this and the call
+            // won't flip the assertion.
+            expires_at_ms: 64_060_588_800_000,
+        };
+        assert!(!token.is_expired());
     }
 }

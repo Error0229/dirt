@@ -80,10 +80,17 @@ pub enum AuthError {
     /// cooldown (or a future global limiter). `retry_after_secs` is
     /// taken from the response body and mirrors the standard
     /// `Retry-After` header.
-    #[error("rate limited: retry after {retry_after_secs}s — {message}")]
+    ///
+    /// `None` means the response body did not include a hint (e.g. a
+    /// 429 injected by an upstream proxy that didn't speak the
+    /// dirt-api envelope). The previous behaviour was to coerce this
+    /// to `0`, which a caller guarding with `if secs > 0 { sleep }`
+    /// would silently turn into a tight retry loop. Surfacing `None`
+    /// instead forces every consumer to pick a default explicitly.
+    #[error("rate limited: retry after {retry_after_secs:?}s — {message}")]
     RateLimited {
         message: String,
-        retry_after_secs: u64,
+        retry_after_secs: Option<u64>,
     },
     /// Server replied 400 with a code other than `INVALID_EMAIL` /
     /// `INVALID_CODE`. `code` carries the dirt-api-specific error code
@@ -130,7 +137,13 @@ struct VerifyBody<'a> {
 /// `session_token` is the bearer credential subsequent authed requests
 /// must carry; the other fields are caller-facing identity (`email`,
 /// `user_id`) and bookkeeping (`session_id`, `expires_at_ms`).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+///
+/// `Debug` is **not** derived — see the manual impl below. Same
+/// rationale as [`super::StoredToken`]: an auto-derived `{:?}`
+/// formatter on this type would leak the live bearer credential
+/// into any logging / panic-chain that sees a `VerifyResponse`
+/// before it gets converted to a `StoredToken`.
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 pub struct VerifyResponse {
     pub session_token: String,
     pub session_id: String,
@@ -139,14 +152,39 @@ pub struct VerifyResponse {
     pub expires_at_ms: i64,
 }
 
+impl fmt::Debug for VerifyResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VerifyResponse")
+            .field("session_token", &"[redacted]")
+            .field("session_id", &"[redacted]")
+            .field("user_id", &self.user_id)
+            .field("email", &self.email)
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
 /// Successful response from `POST /v1/auth/refresh`. Only the rotating
 /// fields are returned — the caller is expected to preserve `user_id`
 /// and `email` from the previous `VerifyResponse` / stored token.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+///
+/// `Debug` is **not** derived — same redaction rationale as
+/// [`VerifyResponse`].
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 pub struct RefreshResponse {
     pub session_token: String,
     pub session_id: String,
     pub expires_at_ms: i64,
+}
+
+impl fmt::Debug for RefreshResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RefreshResponse")
+            .field("session_token", &"[redacted]")
+            .field("session_id", &"[redacted]")
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
 }
 
 // ---- Server error envelope (matches `dirt_api::error::ErrorEnvelope`). ----
@@ -330,12 +368,15 @@ async fn parse_error_from_status(resp: Response, status: StatusCode) -> AuthErro
             "INVALID_CODE" => AuthError::InvalidCode(message),
             _ => AuthError::BadRequest { code, message },
         },
-        // The server always sets `retry_after_secs` on 429; if a future
-        // upstream proxy injects a 429 without it, fall back to 0 so the
-        // caller still gets a typed RateLimited and can default-backoff.
+        // The server always sets `retry_after_secs` on 429; an upstream
+        // proxy that injects a 429 without a body, or with a non-envelope
+        // body, propagates as `None` so consumers can pick a sensible
+        // default (a 60-second floor matches the server's per-email
+        // cooldown) instead of an implicit `0` that turns into a tight
+        // retry loop.
         StatusCode::TOO_MANY_REQUESTS => AuthError::RateLimited {
             message,
-            retry_after_secs: retry_after_secs.unwrap_or(0),
+            retry_after_secs,
         },
         StatusCode::SERVICE_UNAVAILABLE => AuthError::ServerUnavailable(message),
         other => AuthError::ServerError {
@@ -486,6 +527,45 @@ mod tests {
         // Debug impl stays the typed `finish_non_exhaustive` shape so a
         // future field doesn't accidentally leak.
         assert!(rendered.starts_with("AuthClient"));
+    }
+
+    /// `VerifyResponse` is the inbound shape from `/v1/auth/verify`
+    /// that carries the bearer token. The Debug impl must redact the
+    /// credential fields so a `dbg!(&resp)` / `tracing::debug!("{resp:?}")`
+    /// between the wire and the `StoredToken` conversion can't leak
+    /// it to log aggregators.
+    #[test]
+    fn verify_response_debug_redacts_credentials() {
+        let resp = VerifyResponse {
+            session_token: "supersecret-bearer-token".into(),
+            session_id: "sess-deadbeef".into(),
+            user_id: "uid-1".into(),
+            email: "user@example.com".into(),
+            expires_at_ms: 123,
+        };
+        let rendered = format!("{resp:?}");
+        assert!(!rendered.contains("supersecret-bearer-token"));
+        assert!(!rendered.contains("sess-deadbeef"));
+        assert!(rendered.contains("[redacted]"));
+        assert!(rendered.contains("uid-1"));
+        assert!(rendered.contains("user@example.com"));
+    }
+
+    /// Same redaction contract for `RefreshResponse` — same leak
+    /// pathway. The wire shape is smaller (no `user_id` / `email`)
+    /// so the test only asserts the two credential fields are hidden.
+    #[test]
+    fn refresh_response_debug_redacts_credentials() {
+        let resp = RefreshResponse {
+            session_token: "supersecret-bearer-token".into(),
+            session_id: "sess-deadbeef".into(),
+            expires_at_ms: 123,
+        };
+        let rendered = format!("{resp:?}");
+        assert!(!rendered.contains("supersecret-bearer-token"));
+        assert!(!rendered.contains("sess-deadbeef"));
+        assert!(rendered.contains("[redacted]"));
+        assert!(rendered.contains("expires_at_ms"));
     }
 
     // ---- Happy paths ----
@@ -757,10 +837,39 @@ mod tests {
                 retry_after_secs,
                 message,
             } => {
-                assert_eq!(retry_after_secs, 42);
+                assert_eq!(retry_after_secs, Some(42));
                 assert!(message.contains("recently"));
             }
             other => panic!("expected RateLimited, got {other:?}"),
+        }
+    }
+
+    /// A 429 whose body doesn't carry `retry_after_secs` (e.g. a
+    /// non-envelope body from an upstream proxy) must surface as
+    /// `Some(...) == None`. The previous behaviour coerced this to
+    /// `0`, which a caller guarding with `if secs > 0 { sleep }`
+    /// would turn into a tight retry loop. Surfacing `None` forces
+    /// every consumer to pick a default explicitly.
+    #[tokio::test]
+    async fn rate_limited_without_hint_surfaces_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(REQUEST_PATH))
+            .respond_with(ResponseTemplate::new(429).set_body_string("Too Many Requests"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let err = client
+            .request_magic_code("flood@example.com")
+            .await
+            .unwrap_err();
+        match err {
+            AuthError::RateLimited {
+                retry_after_secs, ..
+            } => assert_eq!(retry_after_secs, None),
+            other => panic!("expected RateLimited{{retry_after_secs: None}}, got {other:?}"),
         }
     }
 
