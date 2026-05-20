@@ -458,8 +458,13 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn login_flow_rejects_empty_email_before_calling_server() {
-        // Server mounts no mocks; if the flow tries to hit /request the
-        // MockServer panics on the unexpected route.
+        // Server mounts no mocks. wiremock returns 404 for unmatched
+        // routes (it does not panic), and AuthClient maps that 404 to
+        // a generic `AuthError::ServerError`. If the flow regressed
+        // and contacted the server here, the resulting CliError would
+        // carry "server error 404; retry shortly..." and the
+        // assertion below — which requires the literal "email must
+        // not be empty" — would fail.
         let server = MockServer::start().await;
         let client = client_for(&server);
         let store = MemoryTokenStore::new();
@@ -476,9 +481,11 @@ mod tests {
     /// Companion to `login_flow_rejects_empty_email_before_calling_server`
     /// for the second prompt: `/v1/auth/request` succeeds but the user
     /// hits Enter on the code prompt. The flow must short-circuit
-    /// without ever hitting `/v1/auth/verify` (no `/verify` mock is
-    /// mounted; if the flow calls it, `MockServer` panics on the
-    /// unexpected route).
+    /// without ever hitting `/v1/auth/verify` — no `/verify` mock is
+    /// mounted, so a regression that contacted the server would get
+    /// a 404 from `wiremock`, which `AuthClient` surfaces as
+    /// `ServerError {status: 404, ...}`, which then fails the
+    /// `code must not be empty` assertion below.
     #[tokio::test(flavor = "current_thread")]
     async fn login_flow_rejects_empty_code_before_calling_verify() {
         let server = MockServer::start().await;
@@ -618,7 +625,11 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn logout_flow_with_empty_store_is_noop() {
         let server = MockServer::start().await;
-        // No mocks: if logout_flow hits the network the MockServer will panic.
+        // No mocks. wiremock returns 404 for unmatched routes; AuthClient
+        // maps that to ServerError {status: 404, ...}. A regression here
+        // would surface as a CliError carrying "server error 404; ..."
+        // — the `.unwrap()` below would explode instead of silently
+        // returning Ok.
         let client = client_for(&server);
         let store = MemoryTokenStore::new();
         logout_flow(&client, &store).await.unwrap();
