@@ -147,10 +147,17 @@ async fn logout_flow(client: &AuthClient, store: &dyn TokenStore) -> Result<(), 
         return Ok(());
     };
 
-    client
-        .logout_session(&stored.session_token)
-        .await
-        .map_err(|err| auth_error_to_cli(&err))?;
+    // SessionExpired means the server already considers the token dead
+    // — the user's intent ("revoke this session") is satisfied, so we
+    // still clear the local slot. AuthClient currently short-circuits
+    // 401 SESSION_EXPIRED to `Ok(())` internally, but matching the
+    // variant here makes the design intent explicit at the call site
+    // and keeps `logout_flow_clears_store_when_server_reports_session_expired`
+    // meaningful even if AuthClient stops doing that translation.
+    match client.logout_session(&stored.session_token).await {
+        Ok(()) | Err(AuthError::SessionExpired(_)) => {}
+        Err(err) => return Err(auth_error_to_cli(&err)),
+    }
 
     store
         .clear()
@@ -542,6 +549,40 @@ mod tests {
 
         let store = MemoryTokenStore::with_initial(StoredToken {
             session_token: "tok-dead".into(),
+            session_id: "sess-1".into(),
+            user_id: "uid-1".into(),
+            email: "user@example.com".into(),
+            expires_at_ms: 1_800_000_000_000_i64,
+        });
+        let client = client_for(&server);
+
+        logout_flow(&client, &store).await.unwrap();
+        assert!(store.load().unwrap().is_none());
+    }
+
+    /// Exercises the explicit `Err(AuthError::SessionExpired)` arm in
+    /// `logout_flow`. AuthClient surfaces a 401 with a non-SESSION_EXPIRED
+    /// envelope (e.g. a proxy-injected 401, or a future server code like
+    /// `MISSING_TOKEN`) as `AuthError::SessionExpired` — and the server's
+    /// signal is still "this token is dead". The local slot must be
+    /// cleared so the user is not left holding an unusable credential.
+    #[tokio::test(flavor = "current_thread")]
+    async fn logout_flow_clears_store_when_auth_client_surfaces_session_expired_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/auth/logout"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": {
+                    "code": "MISSING_TOKEN",
+                    "message": "bearer token missing",
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let store = MemoryTokenStore::with_initial(StoredToken {
+            session_token: "tok-stale".into(),
             session_id: "sess-1".into(),
             user_id: "uid-1".into(),
             email: "user@example.com".into(),
