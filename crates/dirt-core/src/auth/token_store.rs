@@ -54,10 +54,10 @@ pub type TokenStoreResult<T> = Result<T, TokenStoreError>;
 /// against post-mortem memory snapshots, not a guarantee against a
 /// live attacker with `/proc/<pid>/mem`.
 ///
-/// `Debug` is intentionally **not** derived. A `#[derive(Debug)]` on
-/// this type would render `session_token` and `session_id` verbatim
-/// from any `tracing::debug!("{token:?}")` / `dbg!()` / panic-chain
-/// formatter — which is the exact log-aggregator leak pathway
+/// `Debug` is intentionally **not** derived. An auto-derived `Debug`
+/// would render `session_token` and `session_id` verbatim through any
+/// `{:?}`-formatting site (`dbg!`, structured logging macros, panic
+/// chains) — which is the exact log-aggregator leak pathway
 /// `ZeroizeOnDrop` is meant to mitigate. The manual impl below
 /// redacts both fields while keeping the non-secret identity fields
 /// visible for diagnostics.

@@ -401,12 +401,12 @@ fn is_loopback_http_url(url: &str) -> bool {
         return false;
     }
     // `url::Url::host_str()` returns IPv6 literals wrapped in `[..]`
-    // (e.g. `[::1]`) while IPv4 / hostnames come back bare. Accept
-    // both forms of the IPv6 loopback so the brackets-or-not
-    // distinction isn't a portability landmine for callers.
+    // (verified against `reqwest 0.12`: `http://[::1]:8080` produces
+    // `host_str() == Some("[::1]")`). IPv4 and hostnames come back
+    // bare. Match the bracketed form for the IPv6 loopback.
     matches!(
         parsed.host_str(),
-        Some("127.0.0.1" | "localhost" | "::1" | "[::1]" | "10.0.2.2")
+        Some("127.0.0.1" | "localhost" | "[::1]" | "10.0.2.2")
     )
 }
 
@@ -851,6 +851,12 @@ mod tests {
         Mock::given(method("POST"))
             .and(path(REQUEST_PATH))
             .respond_with(ResponseTemplate::new(200).set_body_string("not json at all"))
+            // `.expect(1)` so a refactor that returns Ok/Err *before*
+            // dispatching the HTTP call doesn't pass silently — without
+            // it the mock would never be hit and the assertion below
+            // could be satisfied by a code path that bypassed reqwest
+            // entirely.
+            .expect(1)
             .mount(&server)
             .await;
 
