@@ -11,7 +11,24 @@ name = "dirt-mobile"
 path = "src/main.rs"
 
 [dependencies]
-dirt-core = { path = "../dirt-core" }
+# `default-features = false` opts out of dirt-core's `keyring-store`.
+# `dirt-mobile` is Android-only: the `[[bin]]` target, the
+# `[target.'cfg(target_os = "android")']` Dioxus deps below, and the
+# CI matrix (`cargo check -p dirt-mobile --target x86_64-linux-android`)
+# all only build for Android. iOS is not currently planned; if it
+# lands later this dep line should target-split — `cfg(target_os =
+# "android")` keeps `default-features = false`, while a
+# `cfg(target_os = "ios")` branch leaves them on so iOS gets the
+# Keychain backend via `keyring`'s `apple-native` feature.
+#
+# The opt-out is partly documentation-of-intent: even with default
+# features on, `dirt-core`'s `keyring` dep is already target-gated to
+# `cfg(not(target_os = "android"))`, so an Android build wouldn't
+# physically pull `keyring`. Making the opt-out explicit removes any
+# question about resolver behaviour for future Cargo versions and
+# matches the "no transitive features the consumer doesn't need"
+# rule we apply on the server side (`dirt-api`).
+dirt-core = { path = "../dirt-core", default-features = false }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true
