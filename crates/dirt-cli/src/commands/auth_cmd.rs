@@ -38,10 +38,18 @@ pub async fn run_auth(command: AuthCommands) -> Result<(), CliError> {
             login_flow(&client, &store, stdin_read_line).await
         }
         AuthCommands::Logout => {
-            let base_url = require_api_base_url()?;
-            let client = build_auth_client(&base_url)?;
             let store = build_keyring_store()?;
-            logout_flow(&client, &store).await
+            // Defer building the AuthClient (and the
+            // `require_api_base_url` failure path) until we know the
+            // store actually has a token to revoke. A user on a fresh
+            // machine without a configured profile must still be able
+            // to run `dirt auth logout` and get "Not signed in"
+            // instead of "DIRT_API_BASE_URL not set".
+            dispatch_logout(&store, || {
+                let base_url = require_api_base_url()?;
+                build_auth_client(&base_url)
+            })
+            .await
         }
     }
 }
@@ -131,6 +139,33 @@ where
 
     println!("Signed in as {email_for_message}");
     Ok(())
+}
+
+/// Top-level logout dispatcher. Peeks the token store before doing
+/// anything else so callers that are not signed in never pay the
+/// "build an `AuthClient`" cost — and, crucially, never trip the
+/// `DIRT_API_BASE_URL`-not-configured error path for users who only
+/// want to confirm/clear local state on a fresh machine.
+///
+/// `build_client` is invoked **only** when there is a token to revoke.
+/// In production `run_auth` passes a closure that resolves the API
+/// base URL and constructs an `AuthClient`; tests pass a closure that
+/// either returns a wiremock-backed client or panics to assert the
+/// no-op branch never builds one.
+async fn dispatch_logout<F>(store: &dyn TokenStore, build_client: F) -> Result<(), CliError>
+where
+    F: FnOnce() -> Result<AuthClient, CliError>,
+{
+    if store
+        .load()
+        .map_err(|err| token_store_error_to_cli(&err))?
+        .is_none()
+    {
+        println!("Not signed in");
+        return Ok(());
+    }
+    let client = build_client()?;
+    logout_flow(&client, store).await
 }
 
 /// Orchestrate the logout flow.
@@ -432,7 +467,7 @@ mod tests {
     /// for the second prompt: `/v1/auth/request` succeeds but the user
     /// hits Enter on the code prompt. The flow must short-circuit
     /// without ever hitting `/v1/auth/verify` (no `/verify` mock is
-    /// mounted; if the flow calls it, MockServer panics on the
+    /// mounted; if the flow calls it, `MockServer` panics on the
     /// unexpected route).
     #[tokio::test(flavor = "current_thread")]
     async fn login_flow_rejects_empty_code_before_calling_verify() {
@@ -524,6 +559,52 @@ mod tests {
         }
     }
 
+    /// Regression for the codex P2 review: `dispatch_logout` must not
+    /// evaluate the `AuthClient` builder when the store is empty. A
+    /// production user on a fresh machine without `DIRT_API_BASE_URL`
+    /// configured runs `dirt auth logout` and expects "Not signed in",
+    /// not "`DIRT_API_BASE_URL` not set".
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_logout_does_not_invoke_client_builder_when_store_is_empty() {
+        let store = MemoryTokenStore::new();
+        dispatch_logout(&store, || -> Result<AuthClient, CliError> {
+            panic!("AuthClient builder must not run when no token is stored");
+        })
+        .await
+        .unwrap();
+        assert!(store.load().unwrap().is_none());
+    }
+
+    /// Counterpart to the no-op test: when a token IS stored, the
+    /// dispatcher must build the client, hit the server, and clear
+    /// the slot — the full `logout_flow` path is exercised.
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_logout_builds_client_and_revokes_when_token_present() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/auth/logout"))
+            .and(bearer_token("tok-live"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let store = MemoryTokenStore::with_initial(StoredToken {
+            session_token: "tok-live".into(),
+            session_id: "sess-1".into(),
+            user_id: "uid-1".into(),
+            email: "user@example.com".into(),
+            expires_at_ms: 1_800_000_000_000_i64,
+        });
+        let uri = server.uri();
+        dispatch_logout(&store, move || -> Result<AuthClient, CliError> {
+            AuthClient::new(uri).map_err(|err| auth_error_to_cli(&err))
+        })
+        .await
+        .unwrap();
+        assert!(store.load().unwrap().is_none());
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn logout_flow_with_empty_store_is_noop() {
         let server = MockServer::start().await;
@@ -591,7 +672,7 @@ mod tests {
     }
 
     /// Exercises the explicit `Err(AuthError::SessionExpired)` arm in
-    /// `logout_flow`. AuthClient surfaces a 401 with a non-SESSION_EXPIRED
+    /// `logout_flow`. `AuthClient` surfaces a 401 with a non-SESSION_EXPIRED
     /// envelope (e.g. a proxy-injected 401, or a future server code like
     /// `MISSING_TOKEN`) as `AuthError::SessionExpired` — and the server's
     /// signal is still "this token is dead". The local slot must be
