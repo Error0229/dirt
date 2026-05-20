@@ -121,8 +121,13 @@ where
 
     let code = read_line("Code: ").map_err(CliError::Io)?;
     if code.is_empty() {
+        // The /v1/auth/request call has already succeeded by this
+        // point and the user has a live code in their inbox — they
+        // don't need a fresh email, they just need to re-run and
+        // type the code. "resend" implied otherwise.
         return Err(CliError::Auth(
-            "code must not be empty; run `dirt auth login` again to resend".to_string(),
+            "code must not be empty; check your email and run `dirt auth login` again to enter the code"
+                .to_string(),
         ));
     }
 
