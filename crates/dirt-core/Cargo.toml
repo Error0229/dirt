@@ -56,9 +56,10 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 pretty_assertions.workspace = true
 tempfile = "3"
 dotenvy = "0.15"
-# Mock HTTP server for api_client tests. `0.6` is the current 1.x-compatible
-# series and pairs cleanly with reqwest 0.12.
-wiremock = "0.6"
+# Mock HTTP server for api_client + auth client tests. Pinned in
+# `[workspace.dependencies]` so dirt-core and dirt-cli share one version
+# (the `0.6` line pairs cleanly with reqwest 0.12).
+wiremock = { workspace = true }
 
 [lints]
 workspace = true
