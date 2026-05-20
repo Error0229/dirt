@@ -28,6 +28,8 @@ pub enum CliError {
     EditorFailed(String),
     #[error("Configuration error: {0}")]
     Config(String),
+    #[error("{0}")]
+    Auth(String),
     #[error(
         "Sync via the new dirt-api backend is not yet wired into the CLI. \
          Run `dirt config init --api-base-url <URL>` and watch for the \
