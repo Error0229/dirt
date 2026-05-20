@@ -11,7 +11,13 @@ name = "dirt"
 path = "src/main.rs"
 
 [dependencies]
-dirt-core = { path = "../dirt-core" }
+# Explicit `features = ["keyring-store"]` instead of relying on
+# dirt-core's defaults: `dirt auth login`/`logout` cannot work without
+# the keyring backend, so disabling it from the consumer side (via
+# `default-features = false`) would silently break the auth subsystem
+# at runtime. Stating the requirement at the dep declaration makes
+# that contract visible at the Cargo level.
+dirt-core = { path = "../dirt-core", features = ["keyring-store"] }
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 tokio = { version = "1", features = ["full"] }
@@ -23,6 +29,9 @@ serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 libsql.workspace = true
+
+[dev-dependencies]
+wiremock = { workspace = true }
 
 [lints]
 workspace = true
