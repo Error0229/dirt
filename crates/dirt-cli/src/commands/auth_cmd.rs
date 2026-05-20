@@ -109,10 +109,7 @@ where
         .request_magic_code(&email)
         .await
         .map_err(|err| auth_error_to_cli(&err))?;
-    println!(
-        "Sent a 6-digit code to {email}. Enter it below (request_id={request_id})",
-        request_id = req.request_id,
-    );
+    println!("Sent a 6-digit code to {email}. Enter it below.");
 
     let code = read_line("Code: ").map_err(CliError::Io)?;
     if code.is_empty() {
