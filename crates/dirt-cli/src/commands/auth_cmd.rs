@@ -136,19 +136,31 @@ where
                 .to_string(),
         ));
     }
+    if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
+        // dirt-api always emits a 6-digit numeric code. Reject any
+        // other shape locally before hitting /v1/auth/verify — the
+        // server would reply `INVALID_CODE`, which (intentionally)
+        // collapses "wrong code", "expired", "consumed", and
+        // "wrong format" into one signal. A client-side check
+        // separates "your fingers slipped" from "your code is dead"
+        // and saves a wasted round-trip.
+        return Err(CliError::Auth(
+            "code must be exactly 6 digits (0-9); double-check the code from your email"
+                .to_string(),
+        ));
+    }
 
     let verify = client
         .verify_magic_code(&req.request_id, &code)
         .await
         .map_err(|err| auth_error_to_cli(&err))?;
 
-    let email_for_message = verify.email.clone();
     let stored: StoredToken = verify.into();
     store
         .save(&stored)
         .map_err(|err| token_store_error_to_cli(&err))?;
 
-    println!("Signed in as {email_for_message}");
+    println!("Signed in as {}", stored.email);
     Ok(())
 }
 
@@ -167,32 +179,33 @@ async fn dispatch_logout<F>(store: &dyn TokenStore, build_client: F) -> Result<(
 where
     F: FnOnce() -> Result<AuthClient, CliError>,
 {
-    if store
-        .load()
-        .map_err(|err| token_store_error_to_cli(&err))?
-        .is_none()
-    {
-        println!("Not signed in");
-        return Ok(());
-    }
-    let client = build_client()?;
-    logout_flow(&client, store).await
-}
-
-/// Orchestrate the logout flow.
-///
-/// Sequence: load → if empty, print "not signed in" and return; if
-/// present, ask the server to revoke the token, then clear the local
-/// slot. Clearing only happens after the server-side revoke succeeds
-/// (or short-circuits as `SessionExpired` inside `AuthClient`) — a
-/// network failure leaves the local token intact so the user can retry
-/// without orphaning a still-valid server-side session.
-async fn logout_flow(client: &AuthClient, store: &dyn TokenStore) -> Result<(), CliError> {
     let Some(stored) = store.load().map_err(|err| token_store_error_to_cli(&err))? else {
         println!("Not signed in");
         return Ok(());
     };
+    let client = build_client()?;
+    logout_flow(&client, store, stored).await
+}
 
+/// Orchestrate the logout flow given an already-loaded token.
+///
+/// `stored` is the `StoredToken` the dispatcher confirmed exists.
+/// Threading it through avoids a second `store.load()` round-trip
+/// (significant on macOS Keychain / Windows Credential Manager where
+/// a locked keyring can prompt twice) and closes the TOCTOU gap where
+/// a concurrent `dirt auth login` could replace the slot between
+/// the dispatcher's existence check and this function's re-read.
+///
+/// Sequence: revoke the server-side session → clear the local slot.
+/// Clearing only happens after the server-side revoke succeeds
+/// (or short-circuits as `SessionExpired` inside `AuthClient`) — a
+/// network failure leaves the local token intact so the user can retry
+/// without orphaning a still-valid server-side session.
+async fn logout_flow(
+    client: &AuthClient,
+    store: &dyn TokenStore,
+    stored: StoredToken,
+) -> Result<(), CliError> {
     // Any 401 `AuthClient::logout_session` surfaces means the server
     // considers this token invalid — clear the local slot regardless
     // of which 401 sub-code arrived:
@@ -308,12 +321,20 @@ fn auth_error_to_cli(err: &AuthError) -> CliError {
 fn token_store_error_to_cli(err: &TokenStoreError) -> CliError {
     let (cause, fix) = match err {
         TokenStoreError::Backend(msg) => (
-            format!("token store backend error: {msg}"),
+            format!("keyring backend error: {msg}"),
             "ensure the OS keyring is unlocked and accessible, then retry",
         ),
         TokenStoreError::Serialize(msg) => (
-            format!("stored token is unreadable: {msg}"),
-            "clear the stored session and sign in again with `dirt auth login`",
+            // Almost always a schema drift across dirt releases: an
+            // older / newer build wrote a `StoredToken` shape this
+            // build can't deserialize. "sign in again with `dirt
+            // auth login`" alone is misleading because dirt-cli's
+            // own load would still hit the corrupt slot — the user
+            // needs to clear the keyring entry first.
+            format!("stored token is unreadable (likely a schema drift): {msg}"),
+            "delete the entry manually from the OS keyring \
+             (service: dev.dirt.session), then run `dirt auth login` \
+             to write a fresh one",
         ),
     };
     CliError::Auth(format!("{cause}; {fix}"))
@@ -551,6 +572,104 @@ mod tests {
         assert!(store.load().unwrap().is_none());
     }
 
+    /// Companion to the empty-code guard: a 5-digit, 7-digit, or
+    /// non-numeric input is locally rejected before /v1/auth/verify
+    /// would have produced the same generic `INVALID_CODE`.
+    #[tokio::test(flavor = "current_thread")]
+    async fn login_flow_rejects_non_six_digit_code_before_calling_verify() {
+        for (label, bad_code) in [
+            ("five digits", "12345"),
+            ("seven digits", "1234567"),
+            ("letters", "abc123"),
+            (
+                "trailing whitespace would already trim; padded letters",
+                "12a345",
+            ),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/v1/auth/request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "request_id": "req-1",
+                    "expires_at_ms": 1_700_000_000_000_i64,
+                })))
+                .mount(&server)
+                .await;
+            let client = client_for(&server);
+            let store = MemoryTokenStore::new();
+            let reader = scripted_reader(vec!["user@example.com", bad_code]);
+            let err = login_flow(&client, &store, reader).await.unwrap_err();
+            match err {
+                CliError::Auth(msg) => {
+                    assert!(msg.contains("exactly 6 digits"), "[{label}] got {msg}")
+                }
+                other => panic!("[{label}] expected Auth error, got {other:?}"),
+            }
+            assert!(store.load().unwrap().is_none());
+        }
+    }
+
+    /// A working server response but a `TokenStore` that fails to save
+    /// must surface as a `CliError::Auth` (so the user knows what
+    /// happened) and leave the store empty (nothing to leak).
+    #[tokio::test(flavor = "current_thread")]
+    async fn login_flow_surfaces_save_failure() {
+        use std::sync::Mutex;
+
+        use dirt_core::auth::{TokenStore, TokenStoreError};
+
+        struct SaveFailsStore {
+            inner: Mutex<Option<StoredToken>>,
+        }
+        impl TokenStore for SaveFailsStore {
+            fn load(&self) -> Result<Option<StoredToken>, TokenStoreError> {
+                Ok(self.inner.lock().unwrap().clone())
+            }
+            fn save(&self, _token: &StoredToken) -> Result<(), TokenStoreError> {
+                Err(TokenStoreError::Backend("injected save failure".into()))
+            }
+            fn clear(&self) -> Result<(), TokenStoreError> {
+                unreachable!("login_flow does not clear")
+            }
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/auth/request"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "request_id": "req-abc",
+                "expires_at_ms": 1_700_000_000_000_i64,
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/auth/verify"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "session_token": "tok-live",
+                "session_id": "sess-1",
+                "user_id": "uid-1",
+                "email": "user@example.com",
+                "expires_at_ms": 1_800_000_000_000_i64,
+            })))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let store = SaveFailsStore {
+            inner: Mutex::new(None),
+        };
+        let reader = scripted_reader(vec!["user@example.com", "123456"]);
+        let err = login_flow(&client, &store, reader).await.unwrap_err();
+        match err {
+            CliError::Auth(msg) => {
+                assert!(msg.contains("keyring backend error"), "got {msg}");
+                assert!(msg.contains("injected save failure"), "got {msg}");
+            }
+            other => panic!("expected Auth error, got {other:?}"),
+        }
+        assert!(store.load().unwrap().is_none());
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn login_flow_surfaces_invalid_code_and_leaves_store_empty() {
         let server = MockServer::start().await;
@@ -663,19 +782,10 @@ mod tests {
         assert!(store.load().unwrap().is_none());
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn logout_flow_with_empty_store_is_noop() {
-        let server = MockServer::start().await;
-        // No mocks. wiremock returns 404 for unmatched routes; AuthClient
-        // maps that to ServerError {status: 404, ...}. A regression here
-        // would surface as a CliError carrying "server error 404; ..."
-        // — the `.unwrap()` below would explode instead of silently
-        // returning Ok.
-        let client = client_for(&server);
-        let store = MemoryTokenStore::new();
-        logout_flow(&client, &store).await.unwrap();
-        assert!(store.load().unwrap().is_none());
-    }
+    // Note: there is no `logout_flow_with_empty_store_is_noop` test
+    // because `logout_flow` no longer carries the empty-store branch
+    // — the "not signed in" case lives in `dispatch_logout`, covered
+    // by `dispatch_logout_does_not_invoke_client_builder_when_store_is_empty`.
 
     #[tokio::test(flavor = "current_thread")]
     async fn logout_flow_clears_store_on_success() {
@@ -688,25 +798,26 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = MemoryTokenStore::with_initial(StoredToken {
+        let stored = StoredToken {
             session_token: "tok-live".into(),
             session_id: "sess-1".into(),
             user_id: "uid-1".into(),
             email: "user@example.com".into(),
             expires_at_ms: 1_800_000_000_000_i64,
-        });
+        };
+        let store = MemoryTokenStore::with_initial(stored.clone());
         let client = client_for(&server);
 
-        logout_flow(&client, &store).await.unwrap();
+        logout_flow(&client, &store, stored).await.unwrap();
         assert!(store.load().unwrap().is_none());
     }
 
-    /// `AuthClient` turns a 401-SESSION_EXPIRED into `Ok(())` because
-    /// the server intent ("make this token dead") is satisfied. The
-    /// local store should still be cleared so the user isn't left
-    /// with a dangling dead token.
+    /// Exercises the `Ok(())` arm of the match: `AuthClient`
+    /// short-circuits a 401-with-SESSION_EXPIRED-envelope to
+    /// `Ok(())` internally, so even though the server replied 401
+    /// the local clear still fires.
     #[tokio::test(flavor = "current_thread")]
-    async fn logout_flow_clears_store_when_server_reports_session_expired() {
+    async fn logout_flow_clears_store_when_auth_client_silently_accepts_session_expired() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/auth/logout"))
@@ -720,16 +831,17 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = MemoryTokenStore::with_initial(StoredToken {
+        let stored = StoredToken {
             session_token: "tok-dead".into(),
             session_id: "sess-1".into(),
             user_id: "uid-1".into(),
             email: "user@example.com".into(),
             expires_at_ms: 1_800_000_000_000_i64,
-        });
+        };
+        let store = MemoryTokenStore::with_initial(stored.clone());
         let client = client_for(&server);
 
-        logout_flow(&client, &store).await.unwrap();
+        logout_flow(&client, &store, stored).await.unwrap();
         assert!(store.load().unwrap().is_none());
     }
 
@@ -739,6 +851,13 @@ mod tests {
     /// `MISSING_TOKEN`) as `AuthError::SessionExpired` — and the server's
     /// signal is still "this token is dead". The local slot must be
     /// cleared so the user is not left holding an unusable credential.
+    ///
+    /// The `.unwrap()` on `logout_flow` is load-bearing: if a future
+    /// `AuthClient` refactor stops mapping non-SESSION_EXPIRED 401s to
+    /// `Err(SessionExpired)`, the call will return a different error
+    /// variant, the store will not be cleared, and the unwrap will
+    /// panic — making the regression visible at test time instead of
+    /// silently passing.
     #[tokio::test(flavor = "current_thread")]
     async fn logout_flow_clears_store_when_auth_client_surfaces_session_expired_error() {
         let server = MockServer::start().await;
@@ -754,16 +873,17 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = MemoryTokenStore::with_initial(StoredToken {
+        let stored = StoredToken {
             session_token: "tok-stale".into(),
             session_id: "sess-1".into(),
             user_id: "uid-1".into(),
             email: "user@example.com".into(),
             expires_at_ms: 1_800_000_000_000_i64,
-        });
+        };
+        let store = MemoryTokenStore::with_initial(stored.clone());
         let client = client_for(&server);
 
-        logout_flow(&client, &store).await.unwrap();
+        logout_flow(&client, &store, stored).await.unwrap();
         assert!(store.load().unwrap().is_none());
     }
 
@@ -805,17 +925,18 @@ mod tests {
             .mount(&server)
             .await;
         let client = client_for(&server);
+        let stored = StoredToken {
+            session_token: "tok-live".into(),
+            session_id: "sess-1".into(),
+            user_id: "uid-1".into(),
+            email: "user@example.com".into(),
+            expires_at_ms: 1_800_000_000_000_i64,
+        };
         let store = LoadOkClearFailsStore {
-            inner: Mutex::new(Some(StoredToken {
-                session_token: "tok-live".into(),
-                session_id: "sess-1".into(),
-                user_id: "uid-1".into(),
-                email: "user@example.com".into(),
-                expires_at_ms: 1_800_000_000_000_i64,
-            })),
+            inner: Mutex::new(Some(stored.clone())),
         };
 
-        let err = logout_flow(&client, &store).await.unwrap_err();
+        let err = logout_flow(&client, &store, stored).await.unwrap_err();
         match err {
             CliError::Auth(msg) => {
                 assert!(
@@ -854,16 +975,17 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = MemoryTokenStore::with_initial(StoredToken {
+        let stored = StoredToken {
             session_token: "tok-live".into(),
             session_id: "sess-1".into(),
             user_id: "uid-1".into(),
             email: "user@example.com".into(),
             expires_at_ms: 1_800_000_000_000_i64,
-        });
+        };
+        let store = MemoryTokenStore::with_initial(stored.clone());
         let client = client_for(&server);
 
-        let err = logout_flow(&client, &store).await.unwrap_err();
+        let err = logout_flow(&client, &store, stored).await.unwrap_err();
         match err {
             CliError::Auth(msg) => assert!(msg.contains("server error 500"), "got {msg}"),
             other => panic!("expected Auth error, got {other:?}"),
