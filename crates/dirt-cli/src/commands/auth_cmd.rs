@@ -428,6 +428,36 @@ mod tests {
         assert!(store.load().unwrap().is_none());
     }
 
+    /// Companion to `login_flow_rejects_empty_email_before_calling_server`
+    /// for the second prompt: `/v1/auth/request` succeeds but the user
+    /// hits Enter on the code prompt. The flow must short-circuit
+    /// without ever hitting `/v1/auth/verify` (no `/verify` mock is
+    /// mounted; if the flow calls it, MockServer panics on the
+    /// unexpected route).
+    #[tokio::test(flavor = "current_thread")]
+    async fn login_flow_rejects_empty_code_before_calling_verify() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/auth/request"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "request_id": "req-1",
+                "expires_at_ms": 1_700_000_000_000_i64,
+            })))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let store = MemoryTokenStore::new();
+        let reader = scripted_reader(vec!["user@example.com", ""]);
+
+        let err = login_flow(&client, &store, reader).await.unwrap_err();
+        match err {
+            CliError::Auth(msg) => assert!(msg.contains("code must not be empty"), "got {msg}"),
+            other => panic!("expected Auth error, got {other:?}"),
+        }
+        assert!(store.load().unwrap().is_none());
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn login_flow_surfaces_invalid_code_and_leaves_store_empty() {
         let server = MockServer::start().await;
