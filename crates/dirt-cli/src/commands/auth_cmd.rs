@@ -187,13 +187,31 @@ async fn logout_flow(client: &AuthClient, store: &dyn TokenStore) -> Result<(), 
         return Ok(());
     };
 
-    // SessionExpired means the server already considers the token dead
-    // — the user's intent ("revoke this session") is satisfied, so we
-    // still clear the local slot. AuthClient currently short-circuits
-    // 401 SESSION_EXPIRED to `Ok(())` internally, but matching the
-    // variant here makes the design intent explicit at the call site
-    // and keeps `logout_flow_clears_store_when_server_reports_session_expired`
-    // meaningful even if AuthClient stops doing that translation.
+    // Any 401 `AuthClient::logout_session` surfaces means the server
+    // considers this token invalid — clear the local slot regardless
+    // of which 401 sub-code arrived:
+    //
+    //   * 401 with `error.code == "SESSION_EXPIRED"` → AuthClient
+    //     short-circuits to `Ok(())` internally (server's preferred
+    //     "already revoked" signal); caught by the Ok arm below.
+    //   * 401 with any other parseable envelope (`MISSING_TOKEN`,
+    //     `INVALID_TOKEN`, a future server code) → surfaces as
+    //     `Err(SessionExpired(message))` and we still clear: the
+    //     server could not validate the token, so it is effectively
+    //     dead from this client's perspective.
+    //   * 401 with an unparseable body (proxy-injected) → also
+    //     surfaces as `Err(SessionExpired(body))` and same call:
+    //     clear, force a fresh sign-in.
+    //
+    // The tradeoff this accepts: if the bearer header is missing
+    // due to a code defect on our side, this clears a live
+    // server-side session — but the next sign-in just rotates it,
+    // and the alternative (leaving the local slot with a token the
+    // server won't accept) is strictly worse.
+    //
+    // Real network/server failures (5xx, ServerUnavailable, Network)
+    // fall through the catch-all arm and propagate, preserving the
+    // local slot for retry.
     match client.logout_session(&stored.session_token).await {
         Ok(()) | Err(AuthError::SessionExpired(_)) => {}
         Err(err) => return Err(auth_error_to_cli(&err)),
