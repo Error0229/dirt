@@ -217,9 +217,25 @@ async fn logout_flow(client: &AuthClient, store: &dyn TokenStore) -> Result<(), 
         Err(err) => return Err(auth_error_to_cli(&err)),
     }
 
-    store
-        .clear()
-        .map_err(|err| token_store_error_to_cli(&err))?;
+    if let Err(err) = store.clear() {
+        // The server-side revoke just succeeded; only the local slot
+        // failed to clear. Surface that explicitly so the user knows
+        // the next step: re-run `dirt auth logout` once the keyring
+        // is reachable — the server will reply SESSION_EXPIRED (the
+        // arm above), and store.clear() will get a second chance.
+        // Without this framing the user sees a generic "keyring
+        // unreachable" and may worry their session is still live.
+        let cause = match &err {
+            TokenStoreError::Backend(msg) => format!("keyring backend error: {msg}"),
+            TokenStoreError::Serialize(msg) => format!("stored token is unreadable: {msg}"),
+        };
+        return Err(CliError::Auth(format!(
+            "server revoke succeeded but local store clear failed: {cause}. \
+             Re-run `dirt auth logout` once the keyring is reachable; \
+             the server will reply SESSION_EXPIRED and the local slot \
+             will be cleared then."
+        )));
+    }
     println!("Logged out");
     Ok(())
 }
@@ -742,6 +758,74 @@ mod tests {
 
         logout_flow(&client, &store).await.unwrap();
         assert!(store.load().unwrap().is_none());
+    }
+
+    /// `store.clear()` failures after a successful server-side revoke
+    /// are a real keyring scenario (e.g. credential-manager IPC dies
+    /// between read and delete). The error must convey that the
+    /// server-side revoke already succeeded so the user understands
+    /// that retrying `dirt auth logout` is harmless and will finish
+    /// the cleanup via `SESSION_EXPIRED`.
+    #[tokio::test(flavor = "current_thread")]
+    async fn logout_flow_reports_revoke_succeeded_when_local_clear_fails() {
+        use std::sync::Mutex;
+
+        use dirt_core::auth::{TokenStore, TokenStoreError};
+
+        struct LoadOkClearFailsStore {
+            inner: Mutex<Option<StoredToken>>,
+        }
+
+        impl TokenStore for LoadOkClearFailsStore {
+            fn load(&self) -> Result<Option<StoredToken>, TokenStoreError> {
+                Ok(self.inner.lock().unwrap().clone())
+            }
+            fn save(&self, _token: &StoredToken) -> Result<(), TokenStoreError> {
+                unreachable!("logout_flow never calls save")
+            }
+            fn clear(&self) -> Result<(), TokenStoreError> {
+                Err(TokenStoreError::Backend(
+                    "simulated keyring IPC failure".into(),
+                ))
+            }
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/auth/logout"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = client_for(&server);
+        let store = LoadOkClearFailsStore {
+            inner: Mutex::new(Some(StoredToken {
+                session_token: "tok-live".into(),
+                session_id: "sess-1".into(),
+                user_id: "uid-1".into(),
+                email: "user@example.com".into(),
+                expires_at_ms: 1_800_000_000_000_i64,
+            })),
+        };
+
+        let err = logout_flow(&client, &store).await.unwrap_err();
+        match err {
+            CliError::Auth(msg) => {
+                assert!(
+                    msg.contains("server revoke succeeded"),
+                    "must surface that server revoke succeeded: {msg}"
+                );
+                assert!(
+                    msg.contains("simulated keyring IPC failure"),
+                    "must include the underlying keyring error: {msg}"
+                );
+                assert!(
+                    msg.contains("Re-run `dirt auth logout`"),
+                    "must point the user at the retry path: {msg}"
+                );
+            }
+            other => panic!("expected Auth error, got {other:?}"),
+        }
     }
 
     /// A real network/server failure during logout must NOT clear the
