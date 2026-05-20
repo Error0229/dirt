@@ -291,9 +291,14 @@ fn describe_auth_error(err: &AuthError) -> (String, &'static str) {
             message,
             retry_after_secs,
         } => {
+            // Use a comma inside `cause` (not `;`) so the assembled
+            // user-facing string keeps the single-separator shape
+            // `{cause}; {fix}` shared by every other arm — otherwise
+            // a 429 surfaces as "...; retry after 42s; wait the
+            // cooldown..." with two semicolons.
             let cause = retry_after_secs.as_ref().map_or_else(
                 || format!("rate limited ({message})"),
-                |secs| format!("rate limited ({message}); retry after {secs}s"),
+                |secs| format!("rate limited ({message}), retry after {secs}s"),
             );
             (cause, "wait the cooldown period and try again")
         }
