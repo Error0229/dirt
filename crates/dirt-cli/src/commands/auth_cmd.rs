@@ -10,9 +10,15 @@
 use std::env;
 use std::io::{self, BufRead, Write};
 
-use dirt_core::auth::{
-    AuthClient, AuthError, KeyringTokenStore, StoredToken, TokenStore, TokenStoreError,
-};
+use dirt_core::auth::{AuthClient, AuthError, StoredToken, TokenStore, TokenStoreError};
+// `KeyringTokenStore` is target-gated in dirt-core to non-Android
+// (Android has no keyring backend; dirt-mobile uses its own AndroidKeyStore
+// impl in Phase 2.7). Mirror the gate here so an Android cross-compile of
+// dirt-cli fails at the `build_keyring_store` call site with a clear,
+// localized error rather than a confusing "unresolved import" originating
+// from inside the dirt-core auth module.
+#[cfg(not(target_os = "android"))]
+use dirt_core::auth::KeyringTokenStore;
 use dirt_core::sync::api_client::{ApiClient, ApiClientError};
 
 use crate::cli::AuthCommands;
@@ -258,6 +264,7 @@ fn build_auth_client(base_url: &str) -> Result<AuthClient, CliError> {
     AuthClient::new(base_url).map_err(|err| auth_error_to_cli(&err))
 }
 
+#[cfg(not(target_os = "android"))]
 fn build_keyring_store() -> Result<KeyringTokenStore, CliError> {
     let profile = CliProfilesConfig::load()
         .map_err(CliError::Config)?
