@@ -30,7 +30,7 @@
 //! the worker until an explicit kick (after the user logs back in).
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dirt_core::sync::api_client::ApiClientError;
@@ -39,6 +39,7 @@ use dirt_core::sync::session_client::{SessionApiClient, SessionRefreshError};
 use dirt_core::SOLO_USER_ID;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 
 use crate::services::DatabaseService;
 use crate::state::SyncStatus;
@@ -64,10 +65,18 @@ const BACKOFF_SCHEDULE: &[Duration] = &[
 
 /// Handle held by mutation sites so they can poke the worker without
 /// taking a lock or reaching into the worker's internal state.
+///
+/// Clone-friendly because the worker handle ends up in a Dioxus signal
+/// (`AppState::sync_worker`) that's read by every mutation site. The
+/// inner `JoinHandle` lives behind a `Mutex<Option<_>>` so the *first*
+/// `shutdown().await` consumes it; subsequent calls see `None` and
+/// return immediately — important because `shutdown_existing_worker`
+/// is idempotent across login/logout transitions.
 #[derive(Clone)]
 pub struct SyncWorkerHandle {
     notify: Arc<Notify>,
     shutdown: Arc<AtomicBool>,
+    join: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl SyncWorkerHandle {
@@ -78,15 +87,32 @@ impl SyncWorkerHandle {
         self.notify.notify_one();
     }
 
-    /// Signal the worker to exit at the next safe point. Used on
-    /// sign-out so the worker doesn't keep holding `Arc`s to the
-    /// database and session client after the user has revoked their
-    /// token. Idempotent — calling twice is a no-op.
-    pub fn shutdown(&self) {
+    /// Signal the worker to exit *and* wait for the in-flight
+    /// `sync_once` (if any) to complete before returning. The caller
+    /// (login / logout flow) relies on this so that re-spawning a
+    /// worker against a fresh `SessionApiClient` cannot race a
+    /// still-executing push from the previous session.
+    ///
+    /// Idempotent — calling twice on the same handle just returns
+    /// immediately the second time (the `JoinHandle` is already gone).
+    pub async fn shutdown(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
         // Unpark a parked worker so it can observe the flag immediately
         // instead of waiting for the next mutation kick.
         self.notify.notify_one();
+        let join = self
+            .join
+            .lock()
+            .expect("sync worker join slot poisoned")
+            .take();
+        if let Some(handle) = join {
+            // `JoinHandle::await` returns `Err` if the task panicked.
+            // We ignore that — the worker only logs and the runtime
+            // already surfaces the panic via tracing — but we still
+            // wait so a panicked worker can't drag its `Arc<DatabaseService>`
+            // into a race with the newly spawned one.
+            let _ = handle.await;
+        }
     }
 }
 
@@ -114,16 +140,18 @@ pub fn spawn_sync_worker(
 ) -> SyncWorkerHandle {
     let notify = Arc::new(Notify::new());
     let shutdown = Arc::new(AtomicBool::new(false));
-    let handle = SyncWorkerHandle {
-        notify: notify.clone(),
-        shutdown: shutdown.clone(),
-    };
+    let notify_for_task = notify.clone();
+    let shutdown_for_task = shutdown.clone();
 
-    tokio::spawn(async move {
-        run_loop(db, session, notify, shutdown, events).await;
+    let task = tokio::spawn(async move {
+        run_loop(db, session, notify_for_task, shutdown_for_task, events).await;
     });
 
-    handle
+    SyncWorkerHandle {
+        notify,
+        shutdown,
+        join: Arc::new(Mutex::new(Some(task))),
+    }
 }
 
 async fn run_loop(
@@ -251,10 +279,12 @@ async fn sync_once(
         }
         Err(err) => {
             if matches!(&err, SyncEngineError::Api(ApiClientError::Unauthorized(_))) {
-                // Release the snapshot Arc before `refresh` swaps the
-                // inner client. Without this drop the worker would hold
-                // a clone of the stale `ApiClient` across the refresh
-                // (harmless, but noisy in logs).
+                // The snapshot Arc isn't load-bearing for `refresh` —
+                // `SessionApiClient::refresh` takes `self.inner.write()`
+                // regardless of how many `Arc<ApiClient>` clones are
+                // outstanding. We drop early purely to free the old
+                // `ApiClient` before the next cycle pulls a snapshot
+                // of the refreshed one.
                 drop(api);
                 return handle_unauthorized(session, events).await;
             }
@@ -307,6 +337,37 @@ async fn handle_unauthorized(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dirt_core::auth::{AuthClient, MemoryTokenStore, StoredToken, TokenStore};
+    use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const REFRESH_PATH: &str = "/v1/auth/refresh";
+
+    fn seeded_store(token: &str) -> Arc<MemoryTokenStore> {
+        Arc::new(MemoryTokenStore::with_initial(StoredToken {
+            session_token: token.into(),
+            session_id: "sid-old".into(),
+            user_id: "uid-1".into(),
+            email: "user@example.com".into(),
+            expires_at_ms: 1,
+        }))
+    }
+
+    fn session_for(server: &MockServer, store: Arc<dyn TokenStore>) -> SessionApiClient {
+        let auth = AuthClient::new(server.uri()).expect("auth client should build for mock");
+        SessionApiClient::from_store(server.uri(), auth, store)
+            .expect("session client should build")
+            .expect("seeded store should hydrate a session")
+    }
+
+    fn drain_events(rx: &mut tokio::sync::mpsc::UnboundedReceiver<SyncEvent>) -> Vec<SyncEvent> {
+        let mut out = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            out.push(event);
+        }
+        out
+    }
 
     #[test]
     fn backoff_walks_schedule_then_clamps() {
@@ -317,5 +378,130 @@ mod tests {
         // Past the end of the schedule it stays at the cap.
         assert_eq!(backoff_for(5), Duration::from_secs(300));
         assert_eq!(backoff_for(99), Duration::from_secs(300));
+    }
+
+    /// 401 from sync + a successful `/v1/auth/refresh` should return
+    /// `Failed` (so the worker loops back quickly with the new bearer)
+    /// and must NOT emit a UI-facing error event — the refresh is
+    /// supposed to be invisible to the user.
+    #[tokio::test(flavor = "current_thread")]
+    async fn handle_unauthorized_returns_failed_on_successful_refresh() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(REFRESH_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "session_token": "new-token",
+                "session_id": "sid-new",
+                "expires_at_ms": 9_999_999,
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let store_concrete = seeded_store("old-token");
+        let store: Arc<dyn TokenStore> = store_concrete.clone();
+        let session = session_for(&server, store);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SyncEvent>();
+
+        let outcome = handle_unauthorized(&session, &tx).await;
+        assert_eq!(outcome, SyncOutcome::Failed);
+
+        // Silent refresh: the worker should not push an Error onto the
+        // status channel. (The caller already enqueued Syncing before
+        // calling handle_unauthorized; we just confirm no extra noise.)
+        assert!(
+            drain_events(&mut rx).is_empty(),
+            "successful refresh must not emit user-visible status events"
+        );
+
+        // And the new bearer must be persisted to the store so the next
+        // sync cycle picks it up.
+        assert_eq!(
+            store_concrete.load().unwrap().unwrap().session_token,
+            "new-token"
+        );
+    }
+
+    /// 401 from sync + `SESSION_EXPIRED` on refresh is the terminal
+    /// state — the worker must surface the "Sign in again" copy and
+    /// return `Permanent` so the loop parks instead of hammering the
+    /// server forever.
+    #[tokio::test(flavor = "current_thread")]
+    async fn handle_unauthorized_returns_permanent_on_session_expired() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(REFRESH_PATH))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": {
+                    "code": "SESSION_EXPIRED",
+                    "message": "session token is invalid or expired",
+                    "cause": "session token is invalid or expired",
+                    "fix": "Sign in again to obtain a fresh session token.",
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let store_concrete = seeded_store("dead-token");
+        let store: Arc<dyn TokenStore> = store_concrete.clone();
+        let session = session_for(&server, store);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SyncEvent>();
+
+        let outcome = handle_unauthorized(&session, &tx).await;
+        assert_eq!(outcome, SyncOutcome::Permanent);
+
+        let events = drain_events(&mut rx);
+        // Expect a Status(Error) + Issue(..."Sign in again"...) in
+        // some order.
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SyncEvent::Status(SyncStatus::Error))),
+            "expected Error status event, got {events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SyncEvent::Issue(Some(msg)) if msg.contains("Sign in again"))),
+            "expected 'Sign in again' issue message, got {events:?}"
+        );
+
+        // SessionApiClient::refresh clears the keyring on SESSION_EXPIRED.
+        assert!(store_concrete.load().unwrap().is_none());
+    }
+
+    /// 401 from sync + a transient 503 on refresh should classify as
+    /// `Failed` (worker keeps retrying under backoff) and surface a
+    /// distinct "Sync refresh failed" message — separate from the
+    /// permanent "Sign in again" copy so a future log filter can
+    /// tell them apart.
+    #[tokio::test(flavor = "current_thread")]
+    async fn handle_unauthorized_returns_failed_on_transient_refresh_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(REFRESH_PATH))
+            .respond_with(ResponseTemplate::new(503).set_body_string("turso down"))
+            .mount(&server)
+            .await;
+
+        let store_concrete = seeded_store("still-valid");
+        let store: Arc<dyn TokenStore> = store_concrete.clone();
+        let session = session_for(&server, store);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SyncEvent>();
+
+        let outcome = handle_unauthorized(&session, &tx).await;
+        assert_eq!(outcome, SyncOutcome::Failed);
+
+        let events = drain_events(&mut rx);
+        assert!(
+            events.iter().any(
+                |e| matches!(e, SyncEvent::Issue(Some(msg)) if msg.contains("Sync refresh failed"))
+            ),
+            "expected 'Sync refresh failed' issue message, got {events:?}"
+        );
+
+        // Transient failure must not clear the store — the credential
+        // may still be valid; the worker will retry under backoff.
+        assert!(store_concrete.load().unwrap().is_some());
     }
 }

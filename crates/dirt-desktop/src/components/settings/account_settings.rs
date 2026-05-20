@@ -64,23 +64,15 @@ pub(super) fn AccountSettingsTab() -> Element {
                 SignedInRow {
                     email: token.email.clone(),
                     busy: busy(),
-                    on_logout: {
-                        let stored = token.clone();
-                        move |_| {
-                            let stored_for_task = stored.clone();
-                            let deps_for_task = deps_signal.read().clone();
-                            busy.set(true);
-                            message.set(None);
-                            spawn(async move {
-                                let outcome = perform_logout(&deps_for_task, &stored_for_task).await;
-                                apply_logout_outcome(
-                                    outcome,
-                                    state,
-                                    &mut message,
-                                );
-                                busy.set(false);
-                            });
-                        }
+                    on_logout: move |_| {
+                        let deps_for_task = deps_signal.read().clone();
+                        busy.set(true);
+                        message.set(None);
+                        spawn(async move {
+                            let outcome = perform_logout(&deps_for_task).await;
+                            apply_logout_outcome(outcome, state, &mut message).await;
+                            busy.set(false);
+                        });
                     },
                 }
             },
@@ -151,7 +143,8 @@ pub(super) fn AccountSettingsTab() -> Element {
                                 &mut code_input,
                                 &mut request_id,
                                 &mut message,
-                            );
+                            )
+                            .await;
                             busy.set(false);
                         });
                     },
@@ -344,18 +337,50 @@ async fn perform_verify(deps: &AuthDeps, request_id: &str, code: &str) -> LoginO
     }
 }
 
-async fn perform_logout(deps: &AuthDeps, stored: &StoredToken) -> LogoutOutcome {
+async fn perform_logout(deps: &AuthDeps) -> LogoutOutcome {
+    // Read the freshest bearer from the keyring rather than reusing
+    // the snapshot we captured at sign-in. Silent refresh in the sync
+    // worker rotates the token in the keyring without touching the
+    // `signed_in` signal, so logging out with the signal's value
+    // would `POST /v1/auth/logout` with an already-revoked token,
+    // receive `SESSION_EXPIRED`, and treat that as success — leaving
+    // the live token on the server until it expires naturally.
+    let current = match deps.token_store.load() {
+        Ok(Some(token)) => token,
+        Ok(None) => {
+            // Nothing to revoke; treat as a no-op success so the UI
+            // can reset its signed-in state without surfacing an error.
+            return LogoutOutcome::Success;
+        }
+        Err(err) => return LogoutOutcome::Failure(describe_store_error(&err)),
+    };
+
+    // Refuse to clear the keyring without a way to talk to the server.
+    // The only way to reach this branch is a CLI-login → desktop-open
+    // sequence where `DIRT_API_BASE_URL` isn't configured on the
+    // desktop side. Silently wiping the local slot would orphan the
+    // server session until it expired naturally — and once the local
+    // token is gone the user has no handle to revoke it. Fail loud so
+    // they configure the base URL or run `dirt auth logout` from the
+    // CLI (which has the URL configured separately).
+    let Some(auth) = deps.auth_client.as_ref() else {
+        return LogoutOutcome::Failure(
+            "Cannot sign out: DIRT_API_BASE_URL is not configured on this app, \
+             so the server session can't be revoked. Configure the base URL and \
+             retry, or run `dirt auth logout` from the CLI."
+                .into(),
+        );
+    };
+
     // Revoke server-side first. If the server is reachable but rejects
     // the call (network blip, 5xx) we surface that and keep the local
     // session intact so the user can retry — clearing the keyring on a
     // failed revoke would leave a token live on the server with no
     // local handle to revoke it later.
-    if let Some(auth) = deps.auth_client.as_ref() {
-        match auth.logout_session(&stored.session_token).await {
-            Ok(()) | Err(AuthError::SessionExpired(_)) => {}
-            Err(other) => {
-                return LogoutOutcome::Failure(describe_auth_error(&other));
-            }
+    match auth.logout_session(&current.session_token).await {
+        Ok(()) | Err(AuthError::SessionExpired(_)) => {}
+        Err(other) => {
+            return LogoutOutcome::Failure(describe_auth_error(&other));
         }
     }
     if let Err(err) = deps.token_store.clear() {
@@ -368,7 +393,13 @@ async fn perform_logout(deps: &AuthDeps, stored: &StoredToken) -> LogoutOutcome 
     LogoutOutcome::Success
 }
 
-fn apply_login_outcome(
+// `AppState` is a `Copy` struct of `Signal` handles; passing by value
+// matches the rest of the desktop component tree and avoids fighting
+// the borrow checker against the `Signal::set` `&mut self` receiver
+// when called on subfields. The lint flags the raw byte count without
+// noticing that every field is a cheap `Arc`-backed handle.
+#[allow(clippy::large_types_passed_by_value)]
+async fn apply_login_outcome(
     outcome: LoginOutcome,
     mut state: AppState,
     deps: &AuthDeps,
@@ -381,8 +412,9 @@ fn apply_login_outcome(
         LoginOutcome::Success(token, session) => {
             // Tear down the previous worker (if any — happens during
             // re-login after a permanent failure) before starting a
-            // fresh one, so two workers never race on the same DB.
-            shutdown_existing_worker(state.sync_worker);
+            // fresh one. The await joins the old task so two workers
+            // never run a `sync_once` against the same DB concurrently.
+            shutdown_existing_worker(state.sync_worker).await;
 
             state.signed_in.set(Some(token));
             state.session_client.set(Some(session.clone()));
@@ -420,14 +452,16 @@ fn apply_login_outcome(
     }
 }
 
-fn apply_logout_outcome(
+// See the rationale on [`apply_login_outcome`].
+#[allow(clippy::large_types_passed_by_value)]
+async fn apply_logout_outcome(
     outcome: LogoutOutcome,
     mut state: AppState,
     message: &mut Signal<Option<(MessageKind, String)>>,
 ) {
     match outcome {
         LogoutOutcome::Success => {
-            shutdown_existing_worker(state.sync_worker);
+            shutdown_existing_worker(state.sync_worker).await;
             state.signed_in.set(None);
             state.session_client.set(None);
             state.sync_status.set(SyncStatus::Offline);
@@ -440,11 +474,18 @@ fn apply_logout_outcome(
     }
 }
 
-fn shutdown_existing_worker(mut sync_worker: Signal<Option<SyncWorkerHandle>>) {
-    if let Some(handle) = sync_worker.read().as_ref() {
-        handle.shutdown();
-    }
+/// Drop the currently-tracked worker handle and wait for the
+/// underlying tokio task to finish its in-flight `sync_once`. The
+/// await is critical — without it a fresh worker spawned right after
+/// can run a startup sync concurrently with the old worker's
+/// not-yet-cancelled push cycle, producing two simultaneous bearer
+/// tokens against the same server endpoint.
+async fn shutdown_existing_worker(mut sync_worker: Signal<Option<SyncWorkerHandle>>) {
+    let handle = sync_worker.read().clone();
     sync_worker.set(None);
+    if let Some(handle) = handle {
+        handle.shutdown().await;
+    }
 }
 
 /// Sanity-check an email before hitting the server. We don't try to

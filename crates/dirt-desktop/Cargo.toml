@@ -39,5 +39,11 @@ serde.workspace = true
 serde_json.workspace = true
 dotenvy = "0.15"
 
+[dev-dependencies]
+serde_json.workspace = true
+# `services::sync_worker` tests construct a `SessionApiClient` against
+# a mock HTTP server to exercise the refresh-on-401 path end-to-end.
+wiremock = { workspace = true }
+
 [lints]
 workspace = true

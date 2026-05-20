@@ -419,7 +419,14 @@ fn hydrate_session(deps: &AuthDeps) -> Result<Option<SessionApiClient>, String> 
 /// status channel into Dioxus signals. Factored out so login/logout
 /// flows can call into the same setup path without duplicating the
 /// channel wiring.
-pub fn spawn_session_worker(
+// Reachable only from `app.rs` and `account_settings.rs`, but routed
+// through the (private) `app` module — so `pub` would be misleadingly
+// broad. The `redundant_pub_crate` lint would prefer plain `pub`
+// because the enclosing module is private; we override it because the
+// `pub(crate)` is documenting *intent* (callable anywhere inside
+// dirt-desktop) rather than just satisfying the type checker.
+#[allow(clippy::redundant_pub_crate)]
+pub(crate) fn spawn_session_worker(
     db: Arc<DatabaseService>,
     session: Arc<SessionApiClient>,
     mut sync_worker_signal: Signal<Option<SyncWorkerHandle>>,
