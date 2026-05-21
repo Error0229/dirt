@@ -21,7 +21,7 @@ use dirt_core::auth::{StoredToken, TokenStore, TokenStoreResult};
 
 use super::{backend, parse_token_blob, serialize_token_blob};
 
-/// AndroidX EncryptedSharedPreferences-backed token store.
+/// `AndroidX` `EncryptedSharedPreferences`-backed token store.
 ///
 /// Constructed once at app startup; cheap to clone (the `JavaVM` and
 /// `GlobalRef` are reference-counted handles).
@@ -49,11 +49,11 @@ impl std::fmt::Debug for EncryptedPrefsTokenStore {
 }
 
 impl EncryptedPrefsTokenStore {
-    /// Open the EncryptedSharedPreferences file `service` and bind the
-    /// store to the `account` key inside it. Building the store touches
-    /// the Android KeyStore once (to materialize / unwrap the master
-    /// key) so a failure here surfaces immediately rather than at the
-    /// first load.
+    /// Open the `EncryptedSharedPreferences` file `service` and bind
+    /// the store to the `account` key inside it. Building the store
+    /// touches the Android `KeyStore` once (to materialize / unwrap the
+    /// master key) so a failure here surfaces immediately rather than
+    /// at the first load.
     pub fn open(service: &str, account: &str) -> TokenStoreResult<Self> {
         let ctx = ndk_context::android_context();
 
@@ -64,20 +64,27 @@ impl EncryptedPrefsTokenStore {
         let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }
             .map_err(|err| backend(format!("invalid JavaVM handle: {err}")))?;
 
-        let mut env = vm
-            .attach_current_thread()
-            .map_err(|err| backend(format!("attach JVM thread: {err}")))?;
+        // Inner scope owns the `AttachGuard`. The guard borrows `vm`
+        // (so it can detach on drop), so we cannot move `vm` into
+        // `Self` while the guard is still alive — explicitly bounding
+        // the borrow with this block lets the guard drop before the
+        // `Ok(Self { vm, .. })` construction below.
+        let prefs_ref = {
+            let mut env = vm
+                .attach_current_thread()
+                .map_err(|err| backend(format!("attach JVM thread: {err}")))?;
 
-        // SAFETY: `ctx.context()` returns the host Activity / Application
-        // jobject that ndk_context received from the runtime; reifying
-        // it as a `JObject` for a single JNIEnv invocation is sound.
-        let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+            // SAFETY: `ctx.context()` returns the host Activity /
+            // Application jobject that ndk_context received from the
+            // runtime; reifying it as a `JObject` for a single JNIEnv
+            // invocation is sound.
+            let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
 
-        let master_key = build_master_key(&mut env, &activity)?;
-        let prefs = create_encrypted_prefs(&mut env, &activity, service, &master_key)?;
-        let prefs_ref = env
-            .new_global_ref(prefs)
-            .map_err(|err| backend(format!("global ref for SharedPreferences: {err}")))?;
+            let master_key = build_master_key(&mut env, &activity)?;
+            let prefs = create_encrypted_prefs(&mut env, &activity, service, &master_key)?;
+            env.new_global_ref(prefs)
+                .map_err(|err| backend(format!("global ref for SharedPreferences: {err}")))?
+        };
 
         Ok(Self {
             vm,

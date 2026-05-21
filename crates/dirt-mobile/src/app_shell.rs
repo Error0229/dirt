@@ -3,9 +3,9 @@
 //! Owns startup wiring: open the local DB, build an [`AuthClient`] +
 //! [`DefaultTokenStore`] from the build-baked bootstrap (and provide
 //! both via context as [`AuthDeps`]), hydrate any pre-existing session
-//! from the EncryptedSharedPreferences slot, spawn the auto-sync worker
-//! if a token is present, and drain the worker's `SyncEvent` mpsc into
-//! Dioxus signals on the UI side.
+//! from the `EncryptedSharedPreferences` slot, spawn the auto-sync
+//! worker if a token is present, and drain the worker's `SyncEvent`
+//! mpsc into Dioxus signals on the UI side.
 //!
 //! Auth is opt-in in the same sense as desktop: a missing or
 //! never-saved token leaves `SyncStatus::Offline` and does NOT park
@@ -88,7 +88,7 @@ pub fn AppShell() -> Element {
     let mut store_w = store;
     let mut sync_status_w = sync_status;
     let mut sync_issue_w = sync_issue;
-    let mut last_sync_at_w = last_sync_at;
+    let last_sync_at_w = last_sync_at;
     let mut notes_w = notes;
     let mut signed_in_w = signed_in;
     let mut session_client_w = session_client;
@@ -184,7 +184,7 @@ pub fn AppShell() -> Element {
 ///
 /// `token_store` is always populated — `DefaultTokenStore::open` is
 /// fallible on Android (the master-key materialization talks to the
-/// KeyStore) so a failure here is logged + surfaced through the
+/// `KeyStore`) so a failure here is logged + surfaced through the
 /// Account row by leaving `auth_client` / `api_base_url` populated but
 /// the token store unconstructable. We don't have a "no token store"
 /// state in `AuthDeps` because every binary needs to be able to clear
@@ -299,7 +299,7 @@ pub(crate) fn spawn_session_worker(
 }
 
 /// Sentinel `TokenStore` produced when the real store fails to open at
-/// startup (Android KeyStore unreachable, AndroidX class not found,
+/// startup (Android `KeyStore` unreachable, `AndroidX` class not found,
 /// etc.). Every call returns the cached failure message so the
 /// Account row surfaces the same diagnostic on every interaction
 /// rather than silently behaving as "no slot exists".
@@ -308,7 +308,7 @@ struct SentinelTokenStore {
 }
 
 impl SentinelTokenStore {
-    fn new(reason: String) -> Self {
+    const fn new(reason: String) -> Self {
         Self { reason }
     }
 }

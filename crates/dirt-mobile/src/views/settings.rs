@@ -99,7 +99,7 @@ pub fn Settings() -> Element {
                 None => rsx! {
                     SignedOutPanel {
                         auth_available: auth_deps_snapshot.auth_client.is_some(),
-                        api_base_url: auth_deps_snapshot.api_base_url.clone(),
+                        api_base_url: auth_deps_snapshot.api_base_url,
                         email_input: email_input(),
                         on_email_input: move |value: String| email_input.set(value),
                         code_input: code_input(),

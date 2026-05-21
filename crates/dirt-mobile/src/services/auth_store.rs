@@ -37,7 +37,13 @@ mod host_impl;
 #[cfg(target_os = "android")]
 pub use android_impl::EncryptedPrefsTokenStore as DefaultTokenStore;
 
+// On the host (`cargo test` on Windows / Linux) nothing in the binary
+// actually calls `DefaultTokenStore::open` — `app_shell` is android-only
+// and the auth_flow tests construct stores directly via `MemoryTokenStore`
+// — so the alias is technically unused. Keep it visible so a future host
+// integration test could reach for it; suppress the warning explicitly.
 #[cfg(not(target_os = "android"))]
+#[allow(unused_imports)]
 pub use host_impl::FileTokenStore as DefaultTokenStore;
 
 /// Shared JSON codec for both impls. Pulled out so the unit tests can
