@@ -8,3 +8,4 @@
 pub mod api_client;
 pub mod engine;
 pub mod merge;
+pub mod session_client;

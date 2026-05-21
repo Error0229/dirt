@@ -1897,6 +1897,7 @@ dependencies = [
  "tracing-subscriber",
  "tray-icon 0.19.3",
  "urlencoding",
+ "wiremock",
 ]
 
 [[package]]
