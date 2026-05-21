@@ -33,6 +33,7 @@ use crate::services::{spawn_sync_worker, SyncEvent, SyncWorkerHandle};
 use crate::state::{AppState, AuthDeps, SyncStatus, View};
 use crate::ui::MOBILE_UI_STYLES;
 use crate::views::{Editor, List, Settings};
+use tokio::sync::mpsc::UnboundedSender;
 
 /// Keyring service identifier for the mobile session token. Matches
 /// the values used in `dirt-cli` and `dirt-desktop` so the trio share
@@ -59,6 +60,7 @@ pub fn AppShell() -> Element {
     let sync_worker: Signal<Option<SyncWorkerHandle>> = use_signal(|| None);
     let signed_in: Signal<Option<StoredToken>> = use_signal(|| None);
     let session_client: Signal<Option<Arc<SessionApiClient>>> = use_signal(|| None);
+    let events_tx: Signal<Option<UnboundedSender<SyncEvent>>> = use_signal(|| None);
 
     // Auth deps are built once at startup — mobile bootstrap is
     // build-time-baked, so unlike desktop there's no async manifest
@@ -78,6 +80,7 @@ pub fn AppShell() -> Element {
         sync_worker,
         signed_in,
         session_client,
+        events_tx,
     });
     use_context_provider(|| auth_deps_signal);
 
@@ -88,10 +91,11 @@ pub fn AppShell() -> Element {
     let mut store_w = store;
     let mut sync_status_w = sync_status;
     let mut sync_issue_w = sync_issue;
-    let last_sync_at_w = last_sync_at;
+    let mut last_sync_at_w = last_sync_at;
     let mut notes_w = notes;
     let mut signed_in_w = signed_in;
     let mut session_client_w = session_client;
+    let mut events_tx_w = events_tx;
 
     let _init = use_resource(move || async move {
         if init_started() {
@@ -122,6 +126,36 @@ pub fn AppShell() -> Element {
 
         store_w.set(Some(opened.clone()));
 
+        // Build the long-lived `SyncEvent` bridge here so the drainer
+        // attaches to `AppShell`'s scope (the root). A previous version
+        // created the channel + drainer inside `spawn_session_worker`,
+        // which meant the drainer inherited the scope of *whatever
+        // component called the helper* — for re-spawns from Settings
+        // after sign-in that scope was the Settings view, so navigating
+        // back to the list cancelled the drainer and silently dropped
+        // every subsequent worker event.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SyncEvent>();
+        events_tx_w.set(Some(tx.clone()));
+
+        // Drainer task. Captures the signals + a store ref by clone so
+        // the worker can also list freshly-pulled notes back into the
+        // UI on every successful sync.
+        let store_for_refresh = opened.clone();
+        spawn(async move {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    SyncEvent::Status(status) => sync_status_w.set(status),
+                    SyncEvent::Issue(issue) => sync_issue_w.set(issue),
+                    SyncEvent::LastSync(ts) => {
+                        last_sync_at_w.set(Some(ts));
+                        if let Ok(refreshed) = store_for_refresh.list_notes().await {
+                            notes_w.set(refreshed);
+                        }
+                    }
+                }
+            }
+        });
+
         let deps = auth_deps_signal.read().clone();
         match hydrate_session(&deps) {
             Ok(Some(session)) => {
@@ -129,22 +163,15 @@ pub fn AppShell() -> Element {
                 signed_in_w.set(stored);
                 let session_arc = Arc::new(session);
                 session_client_w.set(Some(session_arc.clone()));
-                spawn_session_worker(
-                    opened.clone(),
-                    session_arc,
-                    sync_worker,
-                    sync_status_w,
-                    sync_issue_w,
-                    last_sync_at_w,
-                    notes_w,
-                );
+                spawn_session_worker(opened.clone(), session_arc, tx, sync_worker);
                 tracing::info!("Mobile sync worker spawned");
             }
             Ok(None) => {
                 // No token in the EncryptedSharedPreferences slot — sync
                 // is opt-in. Leave the worker unspawned and the status
                 // at Offline; the user can sign in via Settings →
-                // Account when they want sync.
+                // Account when they want sync. `tx` is preserved on the
+                // signal so the post-login spawn can pick it up.
                 signed_in_w.set(None);
                 session_client_w.set(None);
                 sync_status_w.set(SyncStatus::Offline);
@@ -252,10 +279,18 @@ fn hydrate_session(deps: &AuthDeps) -> Result<Option<SessionApiClient>, String> 
     .map_err(|err| err.to_string())
 }
 
-/// Spawn the sync worker and the UI-bridge consumer that drains its
-/// status channel into Dioxus signals. Factored out so login / logout
-/// flows in [`crate::views::settings`] can call into the same setup
-/// path without duplicating the channel wiring.
+/// Spawn the sync worker against an existing `SyncEvent` channel.
+///
+/// The channel + drainer are owned by [`AppShell`] (so the drainer
+/// task lives in the root scope); this helper just plugs a new worker
+/// into the existing pipe. Each call takes a fresh clone of the
+/// long-lived sender — when the worker shuts down (sign-out) its
+/// sender drops, but `AppShell` keeps its own clone so the drainer
+/// stays alive for the next sign-in.
+///
+/// Factored out (rather than inlined) so login / logout flows in
+/// [`crate::views::settings`] can call it without duplicating the
+/// sender-clone dance.
 // Reachable only from `app_shell.rs` and `views/settings.rs`, but
 // routed through the (private) module — so `pub` would be misleadingly
 // broad. The `redundant_pub_crate` lint would prefer plain `pub`
@@ -266,36 +301,11 @@ fn hydrate_session(deps: &AuthDeps) -> Result<Option<SessionApiClient>, String> 
 pub(crate) fn spawn_session_worker(
     store: Arc<MobileNoteStore>,
     session: Arc<SessionApiClient>,
+    events_tx: UnboundedSender<SyncEvent>,
     mut sync_worker_signal: Signal<Option<SyncWorkerHandle>>,
-    mut sync_status_signal: Signal<SyncStatus>,
-    mut sync_issue_signal: Signal<Option<String>>,
-    mut last_sync_at_signal: Signal<Option<i64>>,
-    mut notes_signal: Signal<Vec<dirt_core::models::Note>>,
 ) {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SyncEvent>();
-    let handle = spawn_sync_worker(store.clone(), session, tx);
+    let handle = spawn_sync_worker(store, session, events_tx);
     sync_worker_signal.set(Some(handle));
-
-    // The mobile shell rebroadcasts pull-applied updates by re-listing
-    // notes after every successful sync — same behaviour the previous
-    // mobile sync wiring had. Without this the UI freezes its initial
-    // snapshot and a pull-only sync (from a desktop edit) wouldn't show
-    // up without a manual reload.
-    let store_for_refresh = store;
-    spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                SyncEvent::Status(status) => sync_status_signal.set(status),
-                SyncEvent::Issue(issue) => sync_issue_signal.set(issue),
-                SyncEvent::LastSync(ts) => {
-                    last_sync_at_signal.set(Some(ts));
-                    if let Ok(refreshed) = store_for_refresh.list_notes().await {
-                        notes_signal.set(refreshed);
-                    }
-                }
-            }
-        }
-    });
 }
 
 /// Sentinel `TokenStore` produced when the real store fails to open at

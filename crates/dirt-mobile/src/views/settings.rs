@@ -89,6 +89,15 @@ pub fn Settings() -> Element {
                             busy.set(true);
                             message.set(None);
                             spawn(async move {
+                                // Shut down (and await) the worker *before*
+                                // talking to the server. Otherwise a parallel
+                                // `sync_once` that hits a 401 can call
+                                // `session.refresh()` mid-logout and persist
+                                // a fresh token to the store after
+                                // `perform_logout` has cleared it — leaving
+                                // the device "signed in" while the UI claims
+                                // it's signed out.
+                                shutdown_existing_worker(state.sync_worker).await;
                                 let outcome = perform_logout(&deps_for_task).await;
                                 apply_logout_outcome(outcome, state, &mut message).await;
                                 busy.set(false);
@@ -406,25 +415,23 @@ async fn apply_login_outcome(
             state.session_client.set(Some(session.clone()));
 
             let store = state.store.read().clone();
-            if let Some(store) = store {
-                spawn_session_worker(
-                    store,
-                    session,
-                    state.sync_worker,
-                    state.sync_status,
-                    state.sync_issue,
-                    state.last_sync_at,
-                    state.notes,
-                );
-            } else {
-                // Local DB isn't ready yet — extremely unlikely (the
-                // Settings view can't open before the DB hydrates) but
-                // worth a loud error rather than silently skipping
-                // worker startup.
-                state.sync_status.set(SyncStatus::Error);
-                state.sync_issue.set(Some(
-                    "Local database is not ready; sync worker not started.".into(),
-                ));
+            let events_tx = state.events_tx.read().clone();
+            match (store, events_tx) {
+                (Some(store), Some(events_tx)) => {
+                    spawn_session_worker(store, session, events_tx, state.sync_worker);
+                }
+                // Either the local DB or the long-lived event bridge is
+                // missing. Both should be present by the time the
+                // Settings view is reachable (they're hydrated in
+                // `AppShell`'s startup `use_resource`), so this is a
+                // hard error — surface loudly rather than silently
+                // skipping worker startup.
+                _ => {
+                    state.sync_status.set(SyncStatus::Error);
+                    state.sync_issue.set(Some(
+                        "Local database / sync bridge not ready; sync worker not started.".into(),
+                    ));
+                }
             }
 
             email_input.set(String::new());
@@ -439,6 +446,13 @@ async fn apply_login_outcome(
 }
 
 // See the rationale on [`apply_login_outcome`].
+//
+// Logout shuts the worker down *before* this runs (in the on_logout
+// handler) — so this function does not call `shutdown_existing_worker`.
+// Calling it again here would be a no-op (the handle has been removed
+// from the signal already), but documenting the ordering up front keeps
+// future refactors honest: the shutdown must happen ahead of
+// `perform_logout` to close the refresh-after-revoke race.
 #[allow(clippy::large_types_passed_by_value)]
 async fn apply_logout_outcome(
     outcome: LogoutOutcome,
@@ -447,7 +461,6 @@ async fn apply_logout_outcome(
 ) {
     match outcome {
         LogoutOutcome::Success => {
-            shutdown_existing_worker(state.sync_worker).await;
             state.signed_in.set(None);
             state.session_client.set(None);
             state.sync_status.set(SyncStatus::Offline);

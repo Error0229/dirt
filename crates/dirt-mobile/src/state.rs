@@ -17,11 +17,13 @@ use dirt_core::auth::{AuthClient, TokenStore};
 use dirt_core::models::{Note, NoteId};
 #[cfg(target_os = "android")]
 use dirt_core::sync::session_client::SessionApiClient;
+#[cfg(target_os = "android")]
+use tokio::sync::mpsc::UnboundedSender;
 
 #[cfg(target_os = "android")]
 use crate::data::MobileNoteStore;
 #[cfg(target_os = "android")]
-use crate::services::SyncWorkerHandle;
+use crate::services::{SyncEvent, SyncWorkerHandle};
 
 /// Coarse sync status surfaced to the UI by the worker.
 ///
@@ -99,6 +101,19 @@ pub struct AppState {
     /// present; the sync worker holds its own `Arc<SessionApiClient>`
     /// so swapping this signal doesn't kill the running worker.
     pub session_client: Signal<Option<Arc<SessionApiClient>>>,
+    /// Long-lived [`SyncEvent`] sender shared by every worker spawn
+    /// (startup-hydrate, post-login). Owned by `AppShell` along with
+    /// the corresponding drainer task — both live in the root scope,
+    /// so the bridge from worker → UI signals stays alive when the
+    /// user navigates between List / Editor / Settings.
+    ///
+    /// A previous version spawned the drainer inside
+    /// `spawn_session_worker`, but Dioxus' `spawn` attaches the task
+    /// to the *calling* component's scope. When the Settings view
+    /// re-spawned the worker after sign-in and the user navigated
+    /// back to the list, the drainer was cancelled — leaving the
+    /// worker alive but its status events silently dropped.
+    pub events_tx: Signal<Option<UnboundedSender<SyncEvent>>>,
 }
 
 #[cfg(target_os = "android")]
