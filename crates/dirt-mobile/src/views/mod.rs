@@ -5,6 +5,8 @@
 
 mod editor;
 mod list;
+mod settings;
 
 pub use editor::Editor;
 pub use list::List;
+pub use settings::Settings;

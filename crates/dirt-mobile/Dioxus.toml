@@ -1,3 +1,14 @@
 [application]
 android_manifest = "android/AndroidManifest.xml"
 android_main_activity = "android/MainActivity.kt"
+
+# Pull AndroidX Security into the generated APK so the JNI-backed
+# `EncryptedPrefsTokenStore` can call `MasterKey.Builder` and
+# `EncryptedSharedPreferences.create`. Phase 2.7 of the auth migration
+# stores the magic-link session bearer here rather than in an env var.
+# Version is the most recent stable pre-1.1; the API has been frozen
+# since 1.0 so any 1.1.x build is wire-compatible with the JNI bridge.
+[android]
+gradle_dependencies = [
+    "androidx.security:security-crypto:1.1.0-alpha06",
+]

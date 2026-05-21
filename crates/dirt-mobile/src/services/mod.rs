@@ -5,7 +5,11 @@
 //! and the actor lives on the tokio side.
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
+pub mod auth_flow;
+pub mod auth_store;
 pub mod sync_worker;
 
+#[cfg_attr(not(target_os = "android"), allow(unused_imports))]
+pub use auth_store::DefaultTokenStore;
 #[cfg_attr(not(target_os = "android"), allow(unused_imports))]
 pub use sync_worker::{spawn_sync_worker, SyncEvent, SyncWorkerHandle};

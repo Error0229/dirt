@@ -27,15 +27,24 @@ pub fn List() -> Element {
 
             SyncBanner { status, issue: issue.clone() }
 
-            UiButton {
-                r#type: "button",
-                block: true,
-                variant: ButtonVariant::Primary,
-                onclick: move |_| {
-                    state.selected_note_id.set(None);
-                    state.view.set(View::Editor);
-                },
-                "New note"
+            div {
+                style: "display: flex; gap: 8px;",
+                UiButton {
+                    r#type: "button",
+                    block: true,
+                    variant: ButtonVariant::Primary,
+                    onclick: move |_| {
+                        state.selected_note_id.set(None);
+                        state.view.set(View::Editor);
+                    },
+                    "New note"
+                }
+                UiButton {
+                    r#type: "button",
+                    variant: ButtonVariant::Secondary,
+                    onclick: move |_| state.view.set(View::Settings),
+                    "Settings"
+                }
             }
         }
 

@@ -1910,12 +1910,15 @@ dependencies = [
  "dirs",
  "dirt-core",
  "dotenvy",
+ "jni",
+ "ndk-context",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wiremock",
 ]
 
 [[package]]
