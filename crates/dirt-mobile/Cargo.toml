@@ -40,11 +40,25 @@ thiserror.workspace = true
 [target.'cfg(target_os = "android")'.dependencies]
 dioxus = { workspace = true, features = ["mobile"] }
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
+# JNI bridge for the Android-side `TokenStore`. `ndk-context` exposes the
+# JavaVM + Activity handles the Dioxus mobile runtime publishes; `jni`
+# is the Rust binding to Android's Java APIs (KeyStore + AndroidX
+# EncryptedSharedPreferences). Android-only — host builds use the
+# file-backed fallback under `cfg(not(target_os = "android"))`.
+jni = "0.21"
+ndk-context = "0.1"
 
 [build-dependencies]
 dotenvy = "0.15"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# `services::sync_worker` tests construct a `SessionApiClient` against
+# a mock HTTP server to exercise the refresh-on-401 path end-to-end
+# (mirrors the dirt-desktop dev-deps so a developer running
+# `cargo test -p dirt-mobile` on Windows / Linux gets the same checks).
+wiremock = { workspace = true }
 
 [lints]
 workspace = true
