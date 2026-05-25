@@ -18,7 +18,10 @@ pub fn load_bootstrap_config() -> BootstrapConfig {
 }
 
 fn normalize_desktop_bootstrap(mut config: BootstrapConfig) -> BootstrapConfig {
-    config.dirt_api_base_url = config.dirt_api_base_url.as_deref().map(normalize_desktop_url);
+    config.dirt_api_base_url = config
+        .dirt_api_base_url
+        .as_deref()
+        .map(normalize_desktop_url);
     config
 }
 

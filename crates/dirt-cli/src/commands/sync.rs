@@ -33,18 +33,20 @@ use dirt_core::sync::engine::{SyncEngine, SyncEngineError, SyncReport};
 use dirt_core::sync::session_client::{SessionApiClient, SessionRefreshError};
 use dirt_core::SOLO_USER_ID;
 
-use crate::commands::auth_cmd::KEYRING_SERVICE;
+use crate::commands::auth_cmd::{KEYRING_ACCOUNT, KEYRING_SERVICE};
 use crate::commands::common::open_database;
 use crate::config_profiles::{normalize_text_option, CliProfilesConfig};
 use crate::error::CliError;
 
 pub async fn run_sync(db_path: &Path) -> Result<(), CliError> {
     let api_base_url = resolve_api_base_url()?;
-    let profile_name = CliProfilesConfig::load()
-        .map_err(CliError::Config)?
-        .resolve_profile_name(None);
+    // Fixed `(service, "default")` keyring slot so a login from any
+    // client (CLI / desktop / mobile) is visible here. The previous
+    // profile-keyed account silently broke cross-client sharing under
+    // `DIRT_PROFILE=foo` — see `KEYRING_ACCOUNT` doc-comment in
+    // `commands::auth_cmd` for the full reasoning.
     let store: Arc<dyn TokenStore> =
-        Arc::new(KeyringTokenStore::new(KEYRING_SERVICE, profile_name));
+        Arc::new(KeyringTokenStore::new(KEYRING_SERVICE, KEYRING_ACCOUNT));
     let session = build_session(api_base_url, store)?;
     let db = open_database(db_path).await?;
     let report = run_session_sync(&db, &session).await?;

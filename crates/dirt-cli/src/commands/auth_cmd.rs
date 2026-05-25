@@ -37,6 +37,19 @@ use crate::error::CliError;
 /// stranded.
 pub const KEYRING_SERVICE: &str = "dev.dirt.session";
 
+/// Per-user discriminator inside the keyring service slot.
+///
+/// Fixed at `"default"` — matches the constant `dirt-desktop` and
+/// `dirt-mobile` use, so a magic-link login from any client is visible
+/// to all of them. A previous version of the CLI keyed the account by
+/// the active `CliProfilesConfig` profile name, which made
+/// `DIRT_PROFILE=foo` land in `(service, foo)` while desktop wrote to
+/// `(service, "default")` — silently breaking the shared-session story
+/// for anyone with a non-default profile. The CLI profile is for
+/// `dirt_api_base_url` selection only; session sharing belongs to the
+/// account discriminator, not to the per-endpoint profile name.
+pub const KEYRING_ACCOUNT: &str = "default";
+
 pub async fn run_auth(command: AuthCommands) -> Result<(), CliError> {
     match command {
         AuthCommands::Status => {
@@ -368,10 +381,11 @@ fn build_auth_client(base_url: &str) -> Result<AuthClient, CliError> {
 
 #[cfg(not(target_os = "android"))]
 fn build_keyring_store() -> Result<KeyringTokenStore, CliError> {
-    let profile = CliProfilesConfig::load()
-        .map_err(CliError::Config)?
-        .resolve_profile_name(None);
-    Ok(KeyringTokenStore::new(KEYRING_SERVICE, profile))
+    // Account discriminator is fixed at `KEYRING_ACCOUNT` so a login
+    // from any client (CLI / desktop / mobile) lands in the same slot.
+    // See the `KEYRING_ACCOUNT` doc-comment for why this isn't keyed
+    // off the CLI profile.
+    Ok(KeyringTokenStore::new(KEYRING_SERVICE, KEYRING_ACCOUNT))
 }
 
 fn resolve_api_base_url() -> Result<Option<String>, CliError> {
