@@ -275,20 +275,21 @@ async fn run_delete_soft_deletes_note_by_exact_and_prefix_id() {
 async fn run_sync_requires_sync_configuration() {
     let db_path = unique_test_db_path();
 
-    // Force the unconfigured paths so the test doesn't accidentally pick
-    // up a developer's real DIRT_API_BASE_URL or DIRT_CLIENT_TOKEN.
+    // Force the unconfigured path so the test doesn't accidentally pick
+    // up a developer's real DIRT_API_BASE_URL. Post-2.8 there is no
+    // client-side bearer env var to clear — auth flows through the
+    // keyring, which the CLI guards against silently in
+    // `commands::sync::build_session` (Auth error if empty).
     // SAFETY: tests in this module run on a current_thread runtime, so
     // there's no concurrent reader of these vars within the process.
     unsafe {
         std::env::remove_var("DIRT_API_BASE_URL");
-        std::env::remove_var("DIRT_CLIENT_TOKEN");
         std::env::set_var("DIRT_PROFILE", "this-profile-does-not-exist");
     }
 
     let error = run_sync(&db_path).await.unwrap_err();
-    // Either "no api_base_url configured" or "no DIRT_CLIENT_TOKEN" —
-    // the contract is that `dirt sync` refuses to run rather than
-    // silently no-oping.
+    // No api_base_url is `SyncNotConfigured`. The contract is that
+    // `dirt sync` refuses to run rather than silently no-oping.
     assert!(
         matches!(error, CliError::SyncNotConfigured | CliError::Config(_)),
         "unexpected error variant: {error:?}",

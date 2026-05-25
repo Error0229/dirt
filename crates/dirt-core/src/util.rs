@@ -18,11 +18,6 @@ pub fn is_http_url(value: &str) -> bool {
     value.starts_with("http://") || value.starts_with("https://")
 }
 
-/// Truncate text to at most 180 characters for error messages.
-pub fn compact_text(value: &str) -> String {
-    value.trim().chars().take(180).collect()
-}
-
 /// Current Unix timestamp in seconds.
 pub fn unix_timestamp_now() -> i64 {
     chrono::Utc::now().timestamp()

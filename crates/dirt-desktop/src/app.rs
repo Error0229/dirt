@@ -20,7 +20,7 @@ use dirt_core::auth::{AuthClient, KeyringTokenStore};
 use dirt_core::models::Note;
 use dirt_core::sync::session_client::SessionApiClient;
 
-use crate::bootstrap_config::{load_bootstrap_config, resolve_bootstrap_config, BootstrapConfig};
+use crate::bootstrap_config::{load_bootstrap_config, BootstrapConfig};
 use crate::components::{QuickCapture, SettingsPanel};
 use crate::queries::use_notes_query;
 use crate::services::{
@@ -69,38 +69,17 @@ pub fn App() -> Element {
                 None
             }
         });
-    let mut bootstrap_ready = use_signal(|| false);
-    let mut bootstrap_config: Signal<Option<BootstrapConfig>> = use_signal(|| None);
+    // Bootstrap is build-baked (see `bootstrap_config::load_bootstrap_config`),
+    // so it's available synchronously at component init. The Phase-1
+    // managed-architecture's runtime `/v1/bootstrap` fetch was removed
+    // when the server-side route was deleted; clients now read straight
+    // from the embedded JSON.
+    let bootstrap_config: Signal<BootstrapConfig> = use_signal(load_bootstrap_config);
     let sync_status = use_signal(|| SyncStatus::Offline);
     let sync_issue = use_signal(|| None::<String>);
     let last_sync_at = use_signal(|| None::<i64>);
     let pending_sync_count = use_signal(|| 0usize);
     let pending_sync_note_ids = use_signal(Vec::new);
-    let embedded_bootstrap_config = load_bootstrap_config();
-
-    // Resolve runtime bootstrap manifest. The auto-sync worker reads
-    // the resolved config (or the embedded fallback) below.
-    use_effect(move || {
-        if bootstrap_ready() {
-            return;
-        }
-        let fallback_bootstrap = embedded_bootstrap_config.clone();
-
-        spawn(async move {
-            let resolved = match resolve_bootstrap_config(fallback_bootstrap.clone()).await {
-                Ok(config) => config,
-                Err(error) => {
-                    tracing::warn!(
-                        "Failed to resolve runtime bootstrap manifest ({}). Falling back to embedded desktop bootstrap values.",
-                        error
-                    );
-                    fallback_bootstrap
-                }
-            };
-            bootstrap_config.set(Some(resolved));
-            bootstrap_ready.set(true);
-        });
-    });
 
     let mut sync_status_signal = sync_status;
     let mut sync_issue_signal = sync_issue;
@@ -117,9 +96,7 @@ pub fn App() -> Element {
     });
 
     use_effect(move || {
-        let Some(bootstrap) = bootstrap_config() else {
-            return;
-        };
+        let bootstrap = bootstrap_config();
         let api_base_url = bootstrap
             .dirt_api_base_url
             .as_deref()
@@ -146,10 +123,6 @@ pub fn App() -> Element {
     // present) spawn the auto-sync worker. A missing token leaves
     // sync_status at Offline — sync is opt-in.
     let _db_init_task = use_resource(move || async move {
-        if !bootstrap_ready() {
-            return;
-        }
-
         match DatabaseService::new().await {
             Ok(db) => {
                 let db = Arc::new(db);
