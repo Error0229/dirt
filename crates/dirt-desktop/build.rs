@@ -7,7 +7,6 @@ use serde::Serialize;
 
 #[derive(Debug, Default, Serialize)]
 struct DesktopBootstrapConfig {
-    bootstrap_manifest_url: Option<String>,
     dirt_api_base_url: Option<String>,
 }
 
@@ -15,9 +14,7 @@ fn main() {
     configure_windows_stack_size();
 
     println!("cargo:rerun-if-env-changed=DIRT_DESKTOP_API_BASE_URL");
-    println!("cargo:rerun-if-env-changed=DIRT_DESKTOP_BOOTSTRAP_URL");
     println!("cargo:rerun-if-env-changed=DIRT_API_BASE_URL");
-    println!("cargo:rerun-if-env-changed=DIRT_BOOTSTRAP_URL");
     println!("cargo:rerun-if-changed=../../.env.client");
     println!("cargo:rerun-if-changed=../../.env.client.example");
 
@@ -56,24 +53,8 @@ fn write_desktop_bootstrap_config() -> io::Result<()> {
                 .as_deref()
                 .map(normalize_desktop_local_base_url)
         });
-    let bootstrap_manifest_url = env_var_trimmed("DIRT_DESKTOP_BOOTSTRAP_URL")
-        .as_deref()
-        .map(normalize_desktop_local_base_url)
-        .or_else(|| {
-            env_var_trimmed("DIRT_BOOTSTRAP_URL")
-                .as_deref()
-                .map(normalize_desktop_local_base_url)
-        })
-        .or_else(|| {
-            dirt_api_base_url
-                .as_deref()
-                .map(|value| format!("{}/v1/bootstrap", value.trim_end_matches('/')))
-        });
 
-    let config = DesktopBootstrapConfig {
-        bootstrap_manifest_url,
-        dirt_api_base_url,
-    };
+    let config = DesktopBootstrapConfig { dirt_api_base_url };
 
     let content = serde_json::to_string_pretty(&config)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;

@@ -1,14 +1,15 @@
 //! `dirt auth` — magic-link auth commands.
 //!
-//! Login / logout go through [`dirt_core::auth::AuthClient`] +
-//! [`dirt_core::auth::KeyringTokenStore`]. The `status` command stays
-//! on the Phase-1 `DIRT_CLIENT_TOKEN` connectivity probe for now —
-//! cutting `status` and `dirt sync` over to the magic-link session is
-//! tracked separately (Phase 2.5 was explicitly scoped to
-//! login/logout only).
+//! All four subcommands (`status` / `login` / `logout` and any future
+//! additions) route through [`dirt_core::auth::AuthClient`] +
+//! [`dirt_core::auth::KeyringTokenStore`]. Phase 2.8 finished the cutover:
+//! `status` now probes with the keyring-stored session token and shares
+//! the silent-refresh path with `dirt sync`, so the CLI has no remaining
+//! dependency on `DIRT_CLIENT_TOKEN`.
 
 use std::env;
 use std::io::{self, BufRead, Write};
+use std::sync::Arc;
 
 use dirt_core::auth::{AuthClient, AuthError, StoredToken, TokenStore, TokenStoreError};
 // `KeyringTokenStore` is target-gated in dirt-core to non-Android
@@ -19,7 +20,8 @@ use dirt_core::auth::{AuthClient, AuthError, StoredToken, TokenStore, TokenStore
 // from inside the dirt-core auth module.
 #[cfg(not(target_os = "android"))]
 use dirt_core::auth::KeyringTokenStore;
-use dirt_core::sync::api_client::{ApiClient, ApiClientError};
+use dirt_core::sync::api_client::ApiClientError;
+use dirt_core::sync::session_client::{SessionApiClient, SessionRefreshError};
 
 use crate::cli::AuthCommands;
 use crate::config_profiles::{normalize_text_option, CliProfilesConfig};
@@ -28,7 +30,25 @@ use crate::error::CliError;
 /// Reverse-DNS service identifier the keyring slot is filed under. Shows
 /// up verbatim in Keychain Access / Credential Manager / `seahorse` so
 /// a user looking for "where does dirt store its session" can find it.
-const KEYRING_SERVICE: &str = "dev.dirt.session";
+///
+/// Pub-in-crate so `dirt sync` and `dirt auth status` reach the same
+/// slot — the three commands MUST hit identical `(service, account)`
+/// keyring coordinates or a login from one command leaves the others
+/// stranded.
+pub const KEYRING_SERVICE: &str = "dev.dirt.session";
+
+/// Per-user discriminator inside the keyring service slot.
+///
+/// Fixed at `"default"` — matches the constant `dirt-desktop` and
+/// `dirt-mobile` use, so a magic-link login from any client is visible
+/// to all of them. A previous version of the CLI keyed the account by
+/// the active `CliProfilesConfig` profile name, which made
+/// `DIRT_PROFILE=foo` land in `(service, foo)` while desktop wrote to
+/// `(service, "default")` — silently breaking the shared-session story
+/// for anyone with a non-default profile. The CLI profile is for
+/// `dirt_api_base_url` selection only; session sharing belongs to the
+/// account discriminator, not to the per-endpoint profile name.
+pub const KEYRING_ACCOUNT: &str = "default";
 
 pub async fn run_auth(command: AuthCommands) -> Result<(), CliError> {
     match command {
@@ -62,39 +82,121 @@ pub async fn run_auth(command: AuthCommands) -> Result<(), CliError> {
 
 /// Compute the user-facing status line. Returned (not printed) so tests
 /// can assert exact strings.
+///
+/// Reads the keyring-stored session token planted by `dirt auth login`
+/// and probes the API with it. Shares the silent-refresh path with
+/// `dirt sync` so a freshly rotated session keeps reporting `online`
+/// without nudging the user.
+///
+/// Output forms (exact prefixes are part of the contract — scripts grep
+/// for `^online:` to detect a healthy state):
+///
+///   - "offline: `DIRT_API_BASE_URL` not set — …"
+///   - "offline: not signed in — run `dirt auth login` to sign in"
+///   - "offline: session expired — run `dirt auth login` …"
+///   - "offline: \<cause\>; \<fix\>"
+///   - "online: signed in as \<email\>, server ok"
+///   - "online: signed in as \<email\>, server ok (session rotated)"
 pub async fn status_line() -> Result<String, CliError> {
-    let token = normalize_text_option(env::var("DIRT_CLIENT_TOKEN").ok());
-    let Some(token) = token else {
-        return Ok(
-            "offline: DIRT_CLIENT_TOKEN not set — local capture works, sync disabled".to_string(),
-        );
-    };
-
     let Some(api_base_url) = resolve_api_base_url()? else {
         return Ok(
             "offline: DIRT_API_BASE_URL not set — local capture works, sync disabled".to_string(),
         );
     };
 
-    let api = match ApiClient::new(api_base_url, token) {
-        Ok(api) => api,
+    let store: Arc<dyn TokenStore> = Arc::new(build_keyring_store()?);
+
+    // Load once to extract the email for the diagnostic line. The
+    // SessionApiClient::from_store call below performs its own
+    // store.load() — two reads against the same keyring slot are
+    // cheap on every platform we ship (Credential Manager / Secret
+    // Service / Keychain all serve the second call from in-process
+    // state once ACL has been granted in the first call).
+    let stored = match store.load() {
+        Ok(Some(stored)) => stored,
+        Ok(None) => {
+            return Ok("offline: not signed in — run `dirt auth login` to sign in".to_string())
+        }
         Err(err) => {
             return Ok(format!(
-                "offline: auth test failed — invalid configuration: {err}"
-            ));
+                "offline: auth test failed — {}",
+                describe_token_store_error(&err)
+            ))
         }
+    };
+
+    Ok(probe_session_status(api_base_url, store, &stored.email).await)
+}
+
+/// Wire the session client up against `api_base_url` and probe with
+/// `.pull(None, Some(1))`. Pulled out so it stays tractable to unit-test
+/// against a wiremock server — the surrounding `status_line` is mostly
+/// keyring-store plumbing that needs an integration test instead.
+async fn probe_session_status(
+    api_base_url: String,
+    store: Arc<dyn TokenStore>,
+    email: &str,
+) -> String {
+    let auth = match AuthClient::new(&api_base_url) {
+        Ok(auth) => auth,
+        Err(err) => {
+            return format!("offline: auth test failed — invalid configuration: {err}");
+        }
+    };
+
+    let session = match SessionApiClient::from_store(api_base_url, auth, store) {
+        Ok(Some(session)) => session,
+        // The earlier `store.load()` returned `Some`, so reaching `Ok(None)` here
+        // means the keyring slot was cleared between the load and now —
+        // treat it as a fresh not-signed-in.
+        Ok(None) => return "offline: not signed in — run `dirt auth login` to sign in".to_string(),
+        Err(err) => return format!("offline: auth test failed — {err}"),
     };
 
     // The pull endpoint is the cheapest authenticated probe — it
     // doesn't mutate anything and exercises the same bearer middleware
     // production traffic does.
-    Ok(match api.pull(None, Some(1)).await {
-        Ok(_) => "online: authenticated as solo-user, server ok".to_string(),
+    let api = session.current();
+    match api.pull(None, Some(1)).await {
+        Ok(_) => format!("online: signed in as {email}, server ok"),
+        Err(ApiClientError::Unauthorized(_)) => {
+            // The snapshot Arc isn't load-bearing for refresh — drop
+            // early to free the stale ApiClient before pulling a fresh
+            // snapshot post-refresh (mirrors desktop's pattern).
+            drop(api);
+            handle_status_unauthorized(&session, email).await
+        }
         Err(err) => {
             let (cause, fix) = describe_api_error(&err);
             format!("offline: auth test failed — {cause}; {fix}")
         }
-    })
+    }
+}
+
+/// Bearer was rejected mid-probe. Try one silent refresh and re-probe
+/// so a long-running CLI session (e.g. shell prompt integration that
+/// invokes `dirt auth status` every minute) doesn't flap to `offline:`
+/// the first time the token rotates. Matches the policy in
+/// `commands::sync::run_session_sync`.
+async fn handle_status_unauthorized(session: &SessionApiClient, email: &str) -> String {
+    match session.refresh().await {
+        Ok(()) => {
+            let api = session.current();
+            match api.pull(None, Some(1)).await {
+                Ok(_) => {
+                    format!("online: signed in as {email}, server ok (session rotated)")
+                }
+                Err(err) => {
+                    let (cause, fix) = describe_api_error(&err);
+                    format!("offline: server rejected refreshed session — {cause}; {fix}")
+                }
+            }
+        }
+        Err(SessionRefreshError::SessionExpired(_) | SessionRefreshError::NoToken) => {
+            "offline: session expired — run `dirt auth login` to sign in again".to_string()
+        }
+        Err(other) => format!("offline: session refresh failed — {other}; retry shortly"),
+    }
 }
 
 /// Orchestrate the interactive login flow.
@@ -279,10 +381,11 @@ fn build_auth_client(base_url: &str) -> Result<AuthClient, CliError> {
 
 #[cfg(not(target_os = "android"))]
 fn build_keyring_store() -> Result<KeyringTokenStore, CliError> {
-    let profile = CliProfilesConfig::load()
-        .map_err(CliError::Config)?
-        .resolve_profile_name(None);
-    Ok(KeyringTokenStore::new(KEYRING_SERVICE, profile))
+    // Account discriminator is fixed at `KEYRING_ACCOUNT` so a login
+    // from any client (CLI / desktop / mobile) lands in the same slot.
+    // See the `KEYRING_ACCOUNT` doc-comment for why this isn't keyed
+    // off the CLI profile.
+    Ok(KeyringTokenStore::new(KEYRING_SERVICE, KEYRING_ACCOUNT))
 }
 
 fn resolve_api_base_url() -> Result<Option<String>, CliError> {
@@ -319,6 +422,13 @@ fn auth_error_to_cli(err: &AuthError) -> CliError {
 }
 
 fn token_store_error_to_cli(err: &TokenStoreError) -> CliError {
+    CliError::Auth(describe_token_store_error(err))
+}
+
+/// Build the `cause; fix` line for a `TokenStoreError`. Pulled out of
+/// `token_store_error_to_cli` so `status_line` can fold the same copy
+/// into its `offline:` envelope without going through `CliError`.
+fn describe_token_store_error(err: &TokenStoreError) -> String {
     let (cause, fix) = match err {
         TokenStoreError::Backend(msg) => (
             format!("keyring backend error: {msg}"),
@@ -337,7 +447,7 @@ fn token_store_error_to_cli(err: &TokenStoreError) -> CliError {
              to write a fresh one",
         ),
     };
-    CliError::Auth(format!("{cause}; {fix}"))
+    format!("{cause}; {fix}")
 }
 
 fn describe_auth_error(err: &AuthError) -> (String, &'static str) {
@@ -398,9 +508,13 @@ fn describe_auth_error(err: &AuthError) -> (String, &'static str) {
 
 fn describe_api_error(err: &ApiClientError) -> (String, &'static str) {
     match err {
+        // Status's 401 branch hits this *after* one silent refresh has
+        // already been attempted, so the server actually rejected a
+        // freshly minted bearer — surface re-login as the next step
+        // rather than nudging the user at a token they cannot rotate.
         ApiClientError::Unauthorized(_) => (
             "401 unauthorized".to_string(),
-            "rotate DIRT_CLIENT_TOKEN to match the bearer token the server is configured with",
+            "run `dirt auth login` to sign in again; the server rejected the current session",
         ),
         ApiClientError::Network(msg) => (
             format!("network error: {msg}"),
@@ -424,7 +538,7 @@ fn describe_api_error(err: &ApiClientError) -> (String, &'static str) {
         ),
         ApiClientError::InvalidConfiguration(msg) => (
             format!("invalid configuration: {msg}"),
-            "check DIRT_API_BASE_URL and DIRT_CLIENT_TOKEN",
+            "check DIRT_API_BASE_URL and your CLI profile config",
         ),
     }
 }
@@ -460,18 +574,204 @@ mod tests {
         AuthClient::new(server.uri()).expect("client should build for mock server")
     }
 
+    fn seeded_store(token: &str) -> Arc<MemoryTokenStore> {
+        Arc::new(MemoryTokenStore::with_initial(StoredToken {
+            session_token: token.into(),
+            session_id: "sid-1".into(),
+            user_id: "uid-1".into(),
+            email: "user@example.com".into(),
+            expires_at_ms: 1_800_000_000_000_i64,
+        }))
+    }
+
+    /// Successful probe — pull endpoint returns 200, status line must
+    /// be the canonical `online:` form including the stored email.
     #[tokio::test(flavor = "current_thread")]
-    #[allow(unsafe_code)]
-    async fn status_offline_when_no_client_token() {
-        // SAFETY: tests run on current_thread, no concurrent reader.
-        unsafe {
-            std::env::remove_var("DIRT_CLIENT_TOKEN");
-        }
-        let line = status_line().await.unwrap();
+    async fn probe_session_status_online_when_session_valid() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/notes/pull"))
+            .and(bearer_token("tok-live"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "notes": [],
+                "server_time_ms": 1_700_000_000_000_i64,
+                "has_more": false,
+                "next_cursor": null,
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let store: Arc<dyn TokenStore> = seeded_store("tok-live");
+        let line = probe_session_status(server.uri(), store, "user@example.com").await;
+        assert_eq!(line, "online: signed in as user@example.com, server ok");
+    }
+
+    /// 401 + refresh-rotates + re-probe succeeds → must surface the
+    /// `(session rotated)` suffix so a watcher can tell that the
+    /// online state involved a refresh.
+    #[tokio::test(flavor = "current_thread")]
+    async fn probe_session_status_refreshes_and_reprobes_on_401() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/notes/pull"))
+            .and(bearer_token("tok-stale"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": {
+                    "code": "SESSION_EXPIRED",
+                    "message": "session token is invalid or expired",
+                    "cause": "session token is invalid or expired",
+                    "fix": "Sign in again."
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/auth/refresh"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "session_token": "tok-fresh",
+                "session_id": "sid-new",
+                "expires_at_ms": 9_999_999_999_999_i64,
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/notes/pull"))
+            .and(bearer_token("tok-fresh"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "notes": [],
+                "server_time_ms": 1_700_000_000_000_i64,
+                "has_more": false,
+                "next_cursor": null,
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let store: Arc<dyn TokenStore> = seeded_store("tok-stale");
+        let line = probe_session_status(server.uri(), store, "user@example.com").await;
         assert_eq!(
             line,
-            "offline: DIRT_CLIENT_TOKEN not set — local capture works, sync disabled"
+            "online: signed in as user@example.com, server ok (session rotated)"
         );
+    }
+
+    /// 401 → refresh returns `SESSION_EXPIRED` → terminal `offline:`
+    /// pointing at `dirt auth login`. The keyring slot is cleared by
+    /// `SessionApiClient::refresh`; we assert that explicitly so the
+    /// next status invocation lands the "not signed in" path instead
+    /// of looping through refresh again.
+    #[tokio::test(flavor = "current_thread")]
+    async fn probe_session_status_session_expired_after_failed_refresh() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/notes/pull"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": {
+                    "code": "SESSION_EXPIRED",
+                    "message": "session token is invalid or expired",
+                    "cause": "session token is invalid or expired",
+                    "fix": "Sign in again."
+                }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/auth/refresh"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": {
+                    "code": "SESSION_EXPIRED",
+                    "message": "session token is invalid or expired",
+                    "cause": "session token is invalid or expired",
+                    "fix": "Sign in again."
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let store_concrete = seeded_store("tok-dead");
+        let store: Arc<dyn TokenStore> = store_concrete.clone();
+        let line = probe_session_status(server.uri(), store, "user@example.com").await;
+        assert_eq!(
+            line,
+            "offline: session expired — run `dirt auth login` to sign in again"
+        );
+        assert!(
+            store_concrete.load().unwrap().is_none(),
+            "keyring slot must be cleared after SESSION_EXPIRED"
+        );
+    }
+
+    /// 401 on the probe + transient 5xx on refresh → must report a
+    /// retry-shortly hint and keep the stored token intact so the next
+    /// `dirt auth status` (or `dirt sync`) can recover when the server
+    /// settles down.
+    #[tokio::test(flavor = "current_thread")]
+    async fn probe_session_status_transient_refresh_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/notes/pull"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": {
+                    "code": "SESSION_EXPIRED",
+                    "message": "session token is invalid or expired",
+                    "cause": "session token is invalid or expired",
+                    "fix": "Sign in again."
+                }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/auth/refresh"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("turso down"))
+            .mount(&server)
+            .await;
+
+        let store_concrete = seeded_store("tok-maybe-live");
+        let store: Arc<dyn TokenStore> = store_concrete.clone();
+        let line = probe_session_status(server.uri(), store, "user@example.com").await;
+        assert!(
+            line.starts_with("offline: session refresh failed"),
+            "got {line}"
+        );
+        assert!(line.contains("retry shortly"), "got {line}");
+        assert!(
+            store_concrete.load().unwrap().is_some(),
+            "transient refresh failure must NOT clear the keyring"
+        );
+    }
+
+    /// A 5xx on the probe itself (not a 401) must NOT trigger refresh
+    /// and must surface the server-side cause verbatim — separating
+    /// "server is sick" from "your credentials are sick" is what makes
+    /// `dirt auth status` actionable.
+    #[tokio::test(flavor = "current_thread")]
+    async fn probe_session_status_offline_on_server_unavailable() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/notes/pull"))
+            .respond_with(ResponseTemplate::new(503).set_body_json(json!({
+                "error": {
+                    "code": "TURSO_UNREACHABLE",
+                    "message": "turso unreachable",
+                    "cause": "turso unreachable",
+                    "fix": "Retry shortly."
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        // /v1/auth/refresh should never be reached; mounting nothing
+        // confirms that any accidental refresh would 404 here (wiremock
+        // returns 404 for unmounted routes), changing the output line
+        // and failing the assertion below.
+
+        let store: Arc<dyn TokenStore> = seeded_store("tok-live");
+        let line = probe_session_status(server.uri(), store, "user@example.com").await;
+        assert!(line.starts_with("offline: auth test failed"), "got {line}");
+        assert!(line.contains("server unavailable"), "got {line}");
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -601,7 +901,7 @@ mod tests {
             let err = login_flow(&client, &store, reader).await.unwrap_err();
             match err {
                 CliError::Auth(msg) => {
-                    assert!(msg.contains("exactly 6 digits"), "[{label}] got {msg}")
+                    assert!(msg.contains("exactly 6 digits"), "[{label}] got {msg}");
                 }
                 other => panic!("[{label}] expected Auth error, got {other:?}"),
             }

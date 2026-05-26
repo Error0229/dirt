@@ -20,7 +20,7 @@ use dirt_core::auth::{AuthClient, KeyringTokenStore};
 use dirt_core::models::Note;
 use dirt_core::sync::session_client::SessionApiClient;
 
-use crate::bootstrap_config::{load_bootstrap_config, resolve_bootstrap_config, BootstrapConfig};
+use crate::bootstrap_config::{load_bootstrap_config, BootstrapConfig};
 use crate::components::{QuickCapture, SettingsPanel};
 use crate::queries::use_notes_query;
 use crate::services::{
@@ -69,87 +69,40 @@ pub fn App() -> Element {
                 None
             }
         });
-    let mut bootstrap_ready = use_signal(|| false);
-    let mut bootstrap_config: Signal<Option<BootstrapConfig>> = use_signal(|| None);
+    // Bootstrap is build-baked (see `bootstrap_config::load_bootstrap_config`)
+    // and never changes at runtime — the Phase-1 managed-architecture's
+    // `/v1/bootstrap` fetch was removed when the server-side route was
+    // deleted. Loading it into a local rather than a `Signal` lets us
+    // build `auth_deps` synchronously below: critical because the
+    // `_db_init_task` `use_resource` reads `auth_deps` early to decide
+    // whether to spawn the sync worker, and a `use_effect`-based
+    // population (the previous shape) could race ahead and leave the
+    // user offline on every startup despite a valid keyring entry.
+    let bootstrap = load_bootstrap_config();
+
     let sync_status = use_signal(|| SyncStatus::Offline);
     let sync_issue = use_signal(|| None::<String>);
     let last_sync_at = use_signal(|| None::<i64>);
     let pending_sync_count = use_signal(|| 0usize);
     let pending_sync_note_ids = use_signal(Vec::new);
-    let embedded_bootstrap_config = load_bootstrap_config();
-
-    // Resolve runtime bootstrap manifest. The auto-sync worker reads
-    // the resolved config (or the embedded fallback) below.
-    use_effect(move || {
-        if bootstrap_ready() {
-            return;
-        }
-        let fallback_bootstrap = embedded_bootstrap_config.clone();
-
-        spawn(async move {
-            let resolved = match resolve_bootstrap_config(fallback_bootstrap.clone()).await {
-                Ok(config) => config,
-                Err(error) => {
-                    tracing::warn!(
-                        "Failed to resolve runtime bootstrap manifest ({}). Falling back to embedded desktop bootstrap values.",
-                        error
-                    );
-                    fallback_bootstrap
-                }
-            };
-            bootstrap_config.set(Some(resolved));
-            bootstrap_ready.set(true);
-        });
-    });
 
     let mut sync_status_signal = sync_status;
     let mut sync_issue_signal = sync_issue;
     let last_sync_at_signal = last_sync_at;
 
-    // Auth dependencies live in a signal so they can be reactively
-    // populated once `bootstrap_config` resolves. Initial value carries
-    // the always-present keyring store; the `auth_client` /
-    // `api_base_url` fields fill in after bootstrap.
-    let mut auth_deps: Signal<AuthDeps> = use_signal(|| AuthDeps {
-        auth_client: None,
-        token_store: Arc::new(KeyringTokenStore::new(KEYRING_SERVICE, KEYRING_ACCOUNT)),
-        api_base_url: None,
-    });
-
-    use_effect(move || {
-        let Some(bootstrap) = bootstrap_config() else {
-            return;
-        };
-        let api_base_url = bootstrap
-            .dirt_api_base_url
-            .as_deref()
-            .filter(|value| !value.trim().is_empty());
-        let (client_arc, normalized_url) =
-            api_base_url.map_or((None, None), |url| match AuthClient::new(url) {
-                Ok(client) => {
-                    let normalized = client.base_url().to_string();
-                    (Some(Arc::new(client)), Some(normalized))
-                }
-                Err(err) => {
-                    tracing::error!("AuthClient build failed for `{url}`: {err}");
-                    (None, None)
-                }
-            });
-        auth_deps.with_mut(|deps| {
-            deps.auth_client = client_arc;
-            deps.api_base_url = normalized_url;
-        });
-    });
+    // Build the auth deps once from `bootstrap`. Same pattern as
+    // `dirt-mobile::app_shell::build_auth_deps`: every field is
+    // populated synchronously so any downstream `use_resource` /
+    // `use_effect` reading the signal sees a final value on first
+    // render. The signal is never mutated after init — it stays in a
+    // `Signal` only so it can be shared via `use_context_provider`.
+    let auth_deps: Signal<AuthDeps> = use_signal(|| build_auth_deps(&bootstrap));
 
     // Initialize the local database; once it's ready, hydrate any
     // pre-existing session from the keyring and (only if a token is
     // present) spawn the auto-sync worker. A missing token leaves
     // sync_status at Offline — sync is opt-in.
     let _db_init_task = use_resource(move || async move {
-        if !bootstrap_ready() {
-            return;
-        }
-
         match DatabaseService::new().await {
             Ok(db) => {
                 let db = Arc::new(db);
@@ -398,6 +351,40 @@ pub fn App() -> Element {
 /// the keyring slot is empty (user hasn't logged in yet). `Err(msg)`
 /// is reserved for real misconfigurations the user should see in the
 /// UI (malformed base URL, keyring backend failure).
+/// Build the per-process auth dependencies from the build-baked
+/// bootstrap.
+///
+/// Synchronous on purpose: the previous shape — initialize with
+/// `None`/`None` then populate via `use_effect(bootstrap_config)` —
+/// raced the `_db_init_task` `use_resource` and could leave a
+/// signed-in user offline on every launch, because the resource read
+/// `auth_deps` before the effect fired (#235 review). Building
+/// everything here at signal init eliminates the race entirely;
+/// `bootstrap` is constant for the lifetime of the process so there
+/// is nothing for the reactive layer to react to anyway.
+fn build_auth_deps(bootstrap: &BootstrapConfig) -> AuthDeps {
+    let api_base_url = bootstrap
+        .dirt_api_base_url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty());
+    let (auth_client, normalized_url) =
+        api_base_url.map_or((None, None), |url| match AuthClient::new(url) {
+            Ok(client) => {
+                let normalized = client.base_url().to_string();
+                (Some(Arc::new(client)), Some(normalized))
+            }
+            Err(err) => {
+                tracing::error!("AuthClient build failed for `{url}`: {err}");
+                (None, None)
+            }
+        });
+    AuthDeps {
+        auth_client,
+        token_store: Arc::new(KeyringTokenStore::new(KEYRING_SERVICE, KEYRING_ACCOUNT)),
+        api_base_url: normalized_url,
+    }
+}
+
 fn hydrate_session(deps: &AuthDeps) -> Result<Option<SessionApiClient>, String> {
     let Some(auth_client) = deps.auth_client.as_ref() else {
         // No base URL configured — sync just isn't available. Not an

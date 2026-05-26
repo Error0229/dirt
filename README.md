@@ -10,8 +10,8 @@
 | `dirt-core` | Models, SQLite repository, sync engine. Platform-agnostic. |
 | `dirt-api` | axum HTTP server. `POST /v1/notes/push`, `GET /v1/notes/pull`, `/healthz`. Bearer-authed. Backed by Turso. |
 | `dirt-desktop` | Dioxus desktop app. Auto-syncs in the background. |
-| `dirt-mobile` | Android shell (in transition — Phase 1 ships server + desktop + CLI; the mobile sync worker is the next milestone). |
-| `dirt-cli` | `dirt add`, `dirt list`, `dirt sync`, etc. Local-first; sync only runs when `DIRT_API_BASE_URL` and `DIRT_CLIENT_TOKEN` are set. |
+| `dirt-mobile` | Dioxus Android app. Magic-link login wired up; mobile sync worker mirrors desktop. |
+| `dirt-cli` | `dirt add`, `dirt list`, `dirt sync`, etc. Local-first; sync runs when `DIRT_API_BASE_URL` is configured and a session is stored via `dirt auth login`. |
 | `dirt-vercel` | Workspace-root crate that hosts the Vercel serverless entry point at `api/axum.rs`. Pulls in `dirt-api` by path. |
 
 ## Quick start
@@ -26,15 +26,17 @@ cargo run -p dirt-cli list
 ```
 
 The CLI captures locally to a SQLite file under your platform's data
-dir. Sync stays off until both `DIRT_API_BASE_URL` and
-`DIRT_CLIENT_TOKEN` are set.
+dir. Sync stays off until `DIRT_API_BASE_URL` is configured and you
+sign in with `dirt auth login` (the session lands in your OS keyring;
+the same slot is shared across `dirt-cli` and `dirt-desktop`, so a
+login from either gets you sync on both).
 
 ### Run the desktop app
 
 ```bash
 export DIRT_API_BASE_URL="https://dirt-api.vercel.app"
-export DIRT_CLIENT_TOKEN="$(cat .env.client | grep DIRT_CLIENT_TOKEN | cut -d= -f2)"
 cargo run -p dirt-desktop
+# Then sign in from Settings → Account.
 ```
 
 The window opens, the local DB initializes, and a background sync
@@ -43,8 +45,9 @@ sync runs on three triggers: app startup, a 30 s periodic timer, and
 a 1.5 s debounce after every successful local mutation. Failures back
 off exponentially (5 s → 15 s → 60 s → 300 s).
 
-If either env var is missing, the sync indicator shows red and the
-Settings → Sync tab explains which one. Local capture still works.
+If `DIRT_API_BASE_URL` is missing or the user is not signed in, the
+sync indicator shows red and the Settings → Sync / Account tab explains
+which one. Local capture still works.
 
 ### Run the API server
 
@@ -66,9 +69,12 @@ for the full API contract + 15-minute self-host recipe.
 - **Server-authoritative timestamps.** Pull ordering uses
   `server_updated_at_ms` exclusively; a misbehaving client clock can't
   poison the cursor.
-- **Single shared bearer token in Phase 1.** `DIRT_CLIENT_TOKEN` on
-  every client must equal `DIRT_SERVER_TOKEN` on the server. Per-user
-  identity comes in Phase 2 (magic-link auth).
+- **Magic-link sessions (Phase 2).** Clients sign in via
+  `/v1/auth/{request,verify}` and persist the resulting session token
+  in the OS keychain. The session middleware on `dirt-api` resolves
+  the bearer to a user id before any note-shaped handler runs. The
+  Phase-1 `DIRT_CLIENT_TOKEN` shared bearer has been retired from all
+  three clients.
 - **No silent failures.** Misconfigured env vars surface visibly
   (`SyncStatus::Error` with a populated `sync_issue`) instead of
   pretending to be offline. The "no fallback" rule is a project-wide

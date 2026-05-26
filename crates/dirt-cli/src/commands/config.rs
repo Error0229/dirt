@@ -56,7 +56,7 @@ pub fn run_config_init(
         .ok_or_else(|| CliError::Config("Failed to persist profile".to_string()))?;
     if profile.dirt_api_base_url().is_some() {
         println!(
-            "Profile '{profile_name}' is ready. Set DIRT_CLIENT_TOKEN in your environment to authorize sync."
+            "Profile '{profile_name}' is ready. Run `dirt auth login` to sign in and authorize sync."
         );
     } else {
         println!("Profile '{profile_name}' is missing: api_base_url");

@@ -148,13 +148,25 @@ impl SessionApiClient {
         let resp = match self.auth.refresh_session(&stored.session_token).await {
             Ok(resp) => resp,
             Err(AuthError::SessionExpired(msg)) => {
-                // Bearer is dead and there's no path back via refresh —
-                // wipe the slot so the next login starts clean and a
-                // background refresh-loop bug can't keep retrying a
-                // known-bad credential.
-                if let Err(err) = self.store.clear() {
-                    tracing::warn!("Failed to clear stale token after SessionExpired: {err}");
-                }
+                // Compare-and-swap: only clear the slot if it still
+                // holds the very token whose refresh just failed.
+                //
+                // Phase 2.8 made this slot shared across CLI + desktop
+                // + mobile, so two clients can hit a 401 at roughly the
+                // same time, both read `tok-A`, and race into refresh.
+                // The first refresh succeeds and writes `tok-B`; the
+                // second arrives at the server with `tok-A` (now
+                // rotated) and gets `SESSION_EXPIRED`. Unconditionally
+                // clearing in that arm would wipe the winner's
+                // `tok-B`, putting every client back at "Sign in
+                // again" despite a perfectly valid token sitting on
+                // disk a moment ago.
+                //
+                // Surfacing `SessionExpired` to *this* caller is still
+                // correct — its in-flight bearer is dead and the
+                // worker should park. The slot's contents belong to
+                // whoever wrote last.
+                clear_if_still_stale(self.store.as_ref(), &stored.session_token);
                 return Err(SessionRefreshError::SessionExpired(msg));
             }
             Err(other) => return Err(SessionRefreshError::Other(other.to_string())),
@@ -171,6 +183,45 @@ impl SessionApiClient {
             .write()
             .expect("SessionApiClient inner lock poisoned") = Arc::new(new_api);
         Ok(())
+    }
+}
+
+/// Clear the keyring slot only if it still holds `stale_token`.
+///
+/// Pulled out of [`SessionApiClient::refresh`] so the compare-and-swap
+/// stays scrutable: a peer process on the same keyring slot may have
+/// rotated the token between our `load` and the server's
+/// `SESSION_EXPIRED` reply, and clearing the peer's freshly-rotated
+/// token would put every client back at "Sign in again."
+///
+/// Reading the store twice (once at the top of `refresh` and again
+/// here) is a deliberate cost: it bounds the window in which a peer's
+/// write can clobber ours to "between our load and our clear" rather
+/// than the full duration of the network round-trip. The platform
+/// keyring serializes individual reads/writes inside the OS, so the
+/// load↔clear is the smallest atomic unit we can build without
+/// reaching for an out-of-process lock.
+fn clear_if_still_stale(store: &dyn TokenStore, stale_token: &str) {
+    match store.load() {
+        Ok(Some(current)) if current.session_token == stale_token => {
+            if let Err(err) = store.clear() {
+                tracing::warn!("Failed to clear stale token after SessionExpired: {err}");
+            }
+        }
+        Ok(Some(_)) => {
+            // Slot was rotated by a peer between our load and the
+            // SESSION_EXPIRED reply — preserve the peer's token.
+            tracing::info!(
+                "Keyring slot rotated by a peer during refresh; preserving the peer's token after SessionExpired"
+            );
+        }
+        Ok(None) => {
+            // Slot already empty — nothing to do; another path cleared
+            // it (logout, manual delete, etc.).
+        }
+        Err(err) => {
+            tracing::warn!("Failed to inspect keyring during SessionExpired: {err}");
+        }
     }
 }
 
@@ -293,6 +344,126 @@ mod tests {
         assert!(
             store_concrete.load().unwrap().is_some(),
             "store must NOT be cleared on transient refresh failure"
+        );
+    }
+
+    /// Phase 2.8 made the keyring slot shared across CLI / desktop /
+    /// mobile, which opens a refresh race: two clients hit a 401 on
+    /// the *same* stale token, both enter `refresh`, the first
+    /// succeeds and writes a fresh token, the second arrives at the
+    /// server with the now-rotated token and gets `SESSION_EXPIRED`.
+    /// The old behaviour cleared the slot unconditionally on
+    /// `SESSION_EXPIRED`, wiping the winner's fresh token and putting
+    /// every client back at "Sign in again."
+    ///
+    /// This regression test models the race precisely. `refresh()`
+    /// reads the store twice: once at the top to pick the bearer to
+    /// send, and once inside the CAS in `clear_if_still_stale` to
+    /// decide whether the slot still holds the bearer that just
+    /// failed. A peer's write lands between those two loads. The
+    /// `LoadSwapStore` wrapper returns `tok-stale` on the first load
+    /// (so refresh POSTs the stale bearer the server then rejects)
+    /// and `tok-fresh` on every subsequent load (so the CAS sees the
+    /// peer's freshly-rotated token and skips the clear).
+    #[tokio::test(flavor = "current_thread")]
+    async fn refresh_preserves_peer_rotated_token_during_concurrent_session_expired() {
+        use std::sync::Mutex;
+
+        use crate::auth::{StoredToken, TokenStore, TokenStoreError, TokenStoreResult};
+
+        /// The first two `load()` calls (from `SessionApiClient::from_store`
+        /// at construction, and the top of `refresh()` for the bearer
+        /// it sends) return `tok-stale`. Every subsequent load returns
+        /// `tok-fresh`, modeling a peer that won the refresh race
+        /// between the top-of-refresh load and the CAS recheck.
+        struct LoadSwapStore {
+            load_count: Mutex<usize>,
+            clear_count: Mutex<usize>,
+            stale: StoredToken,
+            fresh: StoredToken,
+        }
+
+        impl TokenStore for LoadSwapStore {
+            fn load(&self) -> TokenStoreResult<Option<StoredToken>> {
+                let mut n = self.load_count.lock().unwrap();
+                *n += 1;
+                if *n <= 2 {
+                    Ok(Some(self.stale.clone()))
+                } else {
+                    Ok(Some(self.fresh.clone()))
+                }
+            }
+            fn save(&self, _token: &StoredToken) -> TokenStoreResult<()> {
+                Err(TokenStoreError::Backend(
+                    "save() should never run on the SessionExpired path".into(),
+                ))
+            }
+            fn clear(&self) -> TokenStoreResult<()> {
+                *self.clear_count.lock().unwrap() += 1;
+                Ok(())
+            }
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(REFRESH_PATH))
+            .and(bearer_token("tok-stale"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": {
+                    "code": "SESSION_EXPIRED",
+                    "message": "session token is invalid or expired",
+                    "cause": "session token is invalid or expired",
+                    "fix": "Sign in again to obtain a fresh session token.",
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let auth = AuthClient::new(server.uri()).unwrap();
+        let store_concrete = Arc::new(LoadSwapStore {
+            load_count: Mutex::new(0),
+            clear_count: Mutex::new(0),
+            stale: StoredToken {
+                session_token: "tok-stale".into(),
+                session_id: "sid-old".into(),
+                user_id: "uid-1".into(),
+                email: "user@example.com".into(),
+                expires_at_ms: 1,
+            },
+            fresh: StoredToken {
+                session_token: "tok-fresh".into(),
+                session_id: "sid-new".into(),
+                user_id: "uid-1".into(),
+                email: "user@example.com".into(),
+                expires_at_ms: 9_999_999_999_999,
+            },
+        });
+        let store: Arc<dyn TokenStore> = store_concrete.clone();
+        let session = SessionApiClient::from_store(server.uri(), auth, store)
+            .unwrap()
+            .unwrap();
+
+        let err = session.refresh().await.unwrap_err();
+        assert!(matches!(err, SessionRefreshError::SessionExpired(_)));
+
+        // The whole point of the CAS: the peer's `tok-fresh` was
+        // already in the slot at clear-decision time, so `clear()`
+        // must NOT have fired. Pre-fix this counter would be 1.
+        assert_eq!(
+            *store_concrete.clear_count.lock().unwrap(),
+            0,
+            "compare-and-swap must skip clear() when the slot holds a peer's freshly rotated token"
+        );
+
+        // Sanity: at least three loads must have happened — one each
+        // from `from_store`, the top of `refresh()`, and the CAS
+        // recheck inside `clear_if_still_stale`. Anything less proves
+        // the CAS branch never ran and the clear-skipped assertion
+        // above is hollow.
+        assert!(
+            *store_concrete.load_count.lock().unwrap() >= 3,
+            "expected at least three store.load() calls (from_store + refresh + CAS recheck)"
         );
     }
 

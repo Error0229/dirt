@@ -18,16 +18,13 @@ const QUICK_CAPTURE_WIDGET_XML: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 
 #[derive(Debug, Default, Serialize)]
 struct MobileBootstrapConfig {
-    bootstrap_manifest_url: Option<String>,
     dirt_api_base_url: Option<String>,
 }
 
 fn main() {
     println!("cargo:rerun-if-env-changed=WRY_ANDROID_KOTLIN_FILES_OUT_DIR");
     println!("cargo:rerun-if-env-changed=DIRT_MOBILE_API_BASE_URL");
-    println!("cargo:rerun-if-env-changed=DIRT_MOBILE_BOOTSTRAP_URL");
     println!("cargo:rerun-if-env-changed=DIRT_API_BASE_URL");
-    println!("cargo:rerun-if-env-changed=DIRT_BOOTSTRAP_URL");
     println!("cargo:rerun-if-changed=../../.env.client");
     println!("cargo:rerun-if-changed=../../.env.client.example");
 
@@ -88,24 +85,8 @@ fn write_mobile_bootstrap_config() -> io::Result<()> {
                 .as_deref()
                 .map(normalize_android_emulator_base_url)
         });
-    let bootstrap_manifest_url = env_var_trimmed("DIRT_MOBILE_BOOTSTRAP_URL")
-        .as_deref()
-        .map(normalize_android_emulator_base_url)
-        .or_else(|| {
-            env_var_trimmed("DIRT_BOOTSTRAP_URL")
-                .as_deref()
-                .map(normalize_android_emulator_base_url)
-        })
-        .or_else(|| {
-            dirt_api_base_url
-                .as_deref()
-                .map(|value| format!("{}/v1/bootstrap", value.trim_end_matches('/')))
-        });
 
-    let config = MobileBootstrapConfig {
-        bootstrap_manifest_url,
-        dirt_api_base_url,
-    };
+    let config = MobileBootstrapConfig { dirt_api_base_url };
 
     let content = serde_json::to_string_pretty(&config)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;

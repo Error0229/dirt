@@ -39,9 +39,8 @@ pub enum CliError {
     #[error("auth error: {0}")]
     Auth(String),
     #[error(
-        "Sync via the new dirt-api backend is not yet wired into the CLI. \
-         Run `dirt config init --api-base-url <URL>` and watch for the \
-         follow-up commit that adds the ApiClient-driven sync worker."
+        "Sync is not configured. Run `dirt config init --api-base-url <URL>` to point \
+         the CLI at a dirt-api endpoint, then `dirt auth login` to sign in."
     )]
     SyncNotConfigured,
 }
