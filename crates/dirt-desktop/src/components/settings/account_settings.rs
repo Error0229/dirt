@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use dirt_core::auth::{AuthError, StoredToken, TokenStoreError};
-use dirt_core::services::db_paths::{migrate_solo_db_to_user, write_active_user};
+use dirt_core::services::db_paths::{migrate_solo_db_to_user, write_active_user, DB_FILENAME};
 use dirt_core::sync::session_client::SessionApiClient;
 
 use super::row::SettingRow;
@@ -440,7 +440,9 @@ async fn apply_login_outcome(
                 // Migrate first, then write state.json. If the
                 // migration fails the pointer stays at the previous
                 // user so the next launch lands on a consistent DB.
-                if let Err(err) = migrate_solo_db_to_user(&data_dir, &token.user_id).await {
+                if let Err(err) =
+                    migrate_solo_db_to_user(&data_dir, &token.user_id, DB_FILENAME).await
+                {
                     state.sync_status.set(SyncStatus::Error);
                     state
                         .sync_issue

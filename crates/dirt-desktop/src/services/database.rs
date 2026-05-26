@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::thread;
 
 use dirt_core::models::Settings;
-use dirt_core::services::db_paths::{solo_db_path as core_solo_db_path, user_db_path};
+use dirt_core::services::db_paths::{solo_db_path as core_solo_db_path, user_db_path, DB_FILENAME};
 use dirt_core::services::DatabaseService as CoreDatabaseService;
 use dirt_core::Result;
 
@@ -31,7 +31,7 @@ impl DatabaseService {
     /// account_settings::apply_login_outcome` and by startup when
     /// `state.json` is present.
     pub async fn open_for_user(user_id: &str) -> Result<Self> {
-        let path = user_db_path(&Self::data_dir(), user_id)?;
+        let path = user_db_path(&Self::data_dir(), user_id, DB_FILENAME)?;
         let inner = CoreDatabaseService::open_for_user(path, user_id).await?;
         Ok(Self { inner })
     }
@@ -43,7 +43,7 @@ impl DatabaseService {
     /// into the user's directory and subsequent launches go through
     /// [`Self::open_for_user`].
     pub async fn open_solo() -> Result<Self> {
-        let path = core_solo_db_path(&Self::data_dir());
+        let path = core_solo_db_path(&Self::data_dir(), DB_FILENAME);
         let inner = CoreDatabaseService::open_local_path(path).await?;
         Ok(Self { inner })
     }

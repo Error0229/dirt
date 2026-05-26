@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use dirt_core::auth::{AuthClient, AuthError, StoredToken, TokenStore, TokenStoreError};
 use dirt_core::services::db_paths::{
-    migrate_solo_db_to_user, read_active_user, write_active_user, SoloMigrationOutcome,
+    migrate_solo_db_to_user, read_active_user, write_active_user, SoloMigrationOutcome, DB_FILENAME,
 };
 // `KeyringTokenStore` is target-gated in dirt-core to non-Android
 // (Android has no keyring backend; dirt-mobile uses its own AndroidKeyStore
@@ -314,7 +314,7 @@ async fn finalize_login_locally(store: &dyn TokenStore) -> Result<(), CliError> 
         }
     };
 
-    match migrate_solo_db_to_user(&data_dir, &stored.user_id).await {
+    match migrate_solo_db_to_user(&data_dir, &stored.user_id, DB_FILENAME).await {
         Ok(SoloMigrationOutcome::Migrated) => {
             println!(
                 "Migrated legacy local notes into per-user store for {}",

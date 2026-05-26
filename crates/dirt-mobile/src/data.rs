@@ -119,29 +119,27 @@ fn normalize_content(content: &str) -> Result<String> {
 
 /// Pre-signin legacy DB path used only on a brand-new install. After
 /// the first sign-in the migration moves this file under the user's
-/// directory and this location is never re-created.
+/// directory and this location is never re-created. Delegates to
+/// `dirt_core::services::db_paths::solo_db_path` with the mobile
+/// filename so the migration helper finds the right file on disk.
 #[cfg(target_os = "android")]
 fn solo_db_path_mobile() -> PathBuf {
-    // Mobile keeps the filename `dirt-mobile.db` for parity with the
-    // pre-Phase-2 layout; the desktop / CLI use `dirt.db`. The names
-    // are kept distinct on disk so a shared `<data_dir>` survives the
-    // case where someone debugs mobile and desktop from the same
-    // directory.
-    let data_dir = default_mobile_data_directory();
-    // The core `solo_db_path` helper hard-codes `dirt.db`; mobile's
-    // legacy name predates the helper. Inline the join here.
-    data_dir.join("dirt-mobile.db")
+    dirt_core::services::db_paths::solo_db_path(
+        &default_mobile_data_directory(),
+        dirt_core::services::db_paths::MOBILE_DB_FILENAME,
+    )
 }
 
 /// Per-user DB path for `user_id` under the mobile data directory.
-/// Mirrors `dirt_core::services::db_paths::user_db_path` but keeps
-/// the mobile-specific filename.
+/// Delegates to the core helper so the layout is identical to
+/// desktop / CLI aside from the filename.
 #[cfg(target_os = "android")]
 fn user_db_path_for(user_id: &str) -> Result<PathBuf> {
-    let safe = dirt_core::services::db_paths::validate_user_id(user_id)?;
-    Ok(default_mobile_data_directory()
-        .join(safe)
-        .join("dirt-mobile.db"))
+    dirt_core::services::db_paths::user_db_path(
+        &default_mobile_data_directory(),
+        user_id,
+        dirt_core::services::db_paths::MOBILE_DB_FILENAME,
+    )
 }
 
 #[cfg(test)]

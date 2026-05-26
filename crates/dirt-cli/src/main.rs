@@ -33,29 +33,53 @@ async fn run() -> Result<(), CliError> {
         .init();
 
     let cli = Cli::parse();
-    let scope = commands::common::resolve_db_scope(cli.db_path).await?;
     let global_profile = config_profiles::normalize_profile_name(cli.profile.as_deref());
     if let Some(profile) = &global_profile {
         env::set_var("DIRT_PROFILE", profile);
     }
 
+    // Per-command DB scope resolution. Commands that don't touch
+    // the notes DB (`auth`, `config`, `completions`, the empty-help
+    // path) intentionally skip `resolve_db_scope` so a corrupt or
+    // unreadable `state.json` doesn't block recovery flows like
+    // `dirt auth login`. Only DB-bearing commands pay the
+    // resolution cost — and only those will surface a Config error
+    // if the state file is broken.
+    let cli_db_path = cli.db_path.clone();
+    let resolve = || commands::common::resolve_db_scope(cli_db_path.clone());
+
     match cli.command {
-        Some(Commands::Add { content }) => commands::add::run_add(&content, &scope).await?,
+        Some(Commands::Add { content }) => {
+            let scope = resolve().await?;
+            commands::add::run_add(&content, &scope).await?;
+        }
         Some(Commands::List { limit, tag, json }) => {
+            let scope = resolve().await?;
             commands::list::run_list(limit, tag.as_deref(), json, &scope).await?;
         }
         Some(Commands::Search { query, limit, json }) => {
+            let scope = resolve().await?;
             commands::search::run_search(&query, limit, json, &scope).await?;
         }
-        Some(Commands::Edit { id }) => commands::edit::run_edit(&id, &scope).await?,
-        Some(Commands::Delete { id }) => commands::delete::run_delete(&id, &scope).await?,
+        Some(Commands::Edit { id }) => {
+            let scope = resolve().await?;
+            commands::edit::run_edit(&id, &scope).await?;
+        }
+        Some(Commands::Delete { id }) => {
+            let scope = resolve().await?;
+            commands::delete::run_delete(&id, &scope).await?;
+        }
         Some(Commands::Export { format, output }) => {
+            let scope = resolve().await?;
             commands::export::run_export(format, output.as_deref(), &scope).await?;
         }
         Some(Commands::Completions { shell, output }) => {
             commands::completions::run_completions(shell, output.as_deref())?;
         }
-        Some(Commands::Sync) => commands::sync::run_sync(&scope).await?,
+        Some(Commands::Sync) => {
+            let scope = resolve().await?;
+            commands::sync::run_sync(&scope).await?;
+        }
         Some(Commands::Config { command }) => {
             commands::config::run_config(command, global_profile.as_deref())?;
         }
@@ -70,6 +94,7 @@ async fn run() -> Result<(), CliError> {
                 Cli::command().print_help().map_err(CliError::Io)?;
                 println!();
             } else {
+                let scope = resolve().await?;
                 commands::add::run_add(&cli.note, &scope).await?;
             }
         }

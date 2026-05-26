@@ -429,6 +429,7 @@ async fn apply_login_outcome(
                 if let Err(err) = dirt_core::services::db_paths::migrate_solo_db_to_user(
                     &data_dir,
                     &token.user_id,
+                    dirt_core::services::db_paths::MOBILE_DB_FILENAME,
                 )
                 .await
                 {

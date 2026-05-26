@@ -5,7 +5,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
-use dirt_core::services::db_paths::{read_active_user, resolve_active_db};
+use dirt_core::services::db_paths::{read_active_user, resolve_active_db, DB_FILENAME};
 use dirt_core::services::DatabaseService;
 use dirt_core::{Note, NoteId, SOLO_USER_ID};
 use serde::Serialize;
@@ -363,7 +363,7 @@ pub async fn resolve_db_scope(cli_db_path: Option<PathBuf>) -> Result<DbScope, C
         };
         return Ok(DbScope { path, user_id });
     }
-    let (path, user_id) = resolve_active_db(&default_data_dir).await?;
+    let (path, user_id) = resolve_active_db(&default_data_dir, DB_FILENAME).await?;
     Ok(DbScope { path, user_id })
 }
 

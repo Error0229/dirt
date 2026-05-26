@@ -35,9 +35,21 @@ use crate::SOLO_USER_ID;
 /// Filename of the active-user pointer at the top of the dirt data
 /// directory.
 const STATE_FILENAME: &str = "state.json";
-/// Filename of the per-user (and legacy) `SQLite` database file. Same
-/// on every platform so the layout is uniform.
-const DB_FILENAME: &str = "dirt.db";
+/// Default `SQLite` filename used by desktop and CLI.
+///
+/// Mobile uses a different name ([`MOBILE_DB_FILENAME`]) so every
+/// path helper that touches the filesystem takes the filename as a
+/// parameter rather than hardcoding it.
+pub const DB_FILENAME: &str = "dirt.db";
+
+/// Filename used by the Android shell.
+///
+/// Distinct from [`DB_FILENAME`] so a developer who pointed both
+/// desktop and mobile at the same `<data_dir>` for debugging doesn't
+/// have them stomp on each other's row layout. Mobile callers thread
+/// this in at the call site so the migration finds and moves the
+/// correct legacy file.
+pub const MOBILE_DB_FILENAME: &str = "dirt-mobile.db";
 
 /// Persistent state at the top of the dirt data directory.
 ///
@@ -69,18 +81,25 @@ pub enum SoloMigrationOutcome {
 
 /// Legacy single-DB path used pre-Phase-2 and for the first launch on
 /// a brand-new machine that has never signed in.
+///
+/// `db_filename` is one of [`DB_FILENAME`] (desktop / CLI) or
+/// [`MOBILE_DB_FILENAME`]. Passing it explicitly at every call site
+/// makes the desktop/mobile filename divergence visible — a previous
+/// version hardcoded `dirt.db` and silently skipped the mobile
+/// migration because the legacy file was actually `dirt-mobile.db`.
 #[must_use]
-pub fn solo_db_path(data_dir: &Path) -> PathBuf {
-    data_dir.join(DB_FILENAME)
+pub fn solo_db_path(data_dir: &Path, db_filename: &str) -> PathBuf {
+    data_dir.join(db_filename)
 }
 
 /// Per-user DB path for `user_id`.
 ///
 /// `user_id` must be pre-validated by [`validate_user_id`]; callers
-/// reach this only after the boundary check.
-pub fn user_db_path(data_dir: &Path, user_id: &str) -> Result<PathBuf> {
+/// reach this only after the boundary check. See [`solo_db_path`]
+/// for the `db_filename` convention.
+pub fn user_db_path(data_dir: &Path, user_id: &str, db_filename: &str) -> Result<PathBuf> {
     let safe = validate_user_id(user_id)?;
-    Ok(data_dir.join(safe).join(DB_FILENAME))
+    Ok(data_dir.join(safe).join(db_filename))
 }
 
 /// Validate that `user_id` is a UUID-v7-shaped string and safe to use
@@ -194,18 +213,21 @@ pub async fn clear_active_user(data_dir: &Path) -> Result<()> {
 
 /// Resolve `(db_path, user_id)` from on-disk state.
 ///
-/// - If `state.json` exists → `(<data_dir>/<user_id>/dirt.db, <user_id>)`.
-/// - Else → `(<data_dir>/dirt.db, SOLO_USER_ID)`.
+/// - If `state.json` exists → `(<data_dir>/<user_id>/<db_filename>, <user_id>)`.
+/// - Else → `(<data_dir>/<db_filename>, SOLO_USER_ID)`.
 ///
-/// The resolved tuple is the input to
-/// [`crate::services::DatabaseService::open_for_user`].
-pub async fn resolve_active_db(data_dir: &Path) -> Result<(PathBuf, String)> {
+/// `db_filename` is [`DB_FILENAME`] for desktop / CLI builds and
+/// [`MOBILE_DB_FILENAME`] for Android.
+pub async fn resolve_active_db(data_dir: &Path, db_filename: &str) -> Result<(PathBuf, String)> {
     match read_active_user(data_dir).await? {
         Some(user_id) => {
-            let path = user_db_path(data_dir, &user_id)?;
+            let path = user_db_path(data_dir, &user_id, db_filename)?;
             Ok((path, user_id))
         }
-        None => Ok((solo_db_path(data_dir), SOLO_USER_ID.to_string())),
+        None => Ok((
+            solo_db_path(data_dir, db_filename),
+            SOLO_USER_ID.to_string(),
+        )),
     }
 }
 
@@ -223,11 +245,12 @@ pub async fn resolve_active_db(data_dir: &Path) -> Result<(PathBuf, String)> {
 pub async fn migrate_solo_db_to_user(
     data_dir: &Path,
     user_id: &str,
+    db_filename: &str,
 ) -> Result<SoloMigrationOutcome> {
     validate_user_id(user_id)?;
 
-    let solo_path = solo_db_path(data_dir);
-    let user_path = user_db_path(data_dir, user_id)?;
+    let solo_path = solo_db_path(data_dir, db_filename);
+    let user_path = user_db_path(data_dir, user_id, db_filename)?;
     let user_dir = user_path
         .parent()
         .expect("user_db_path always has a parent")
@@ -322,13 +345,13 @@ mod tests {
     #[test]
     fn solo_db_path_is_top_level_dirt_db() {
         let dir = std::path::PathBuf::from("/tmp/dirt");
-        assert_eq!(solo_db_path(&dir), dir.join("dirt.db"));
+        assert_eq!(solo_db_path(&dir, DB_FILENAME), dir.join("dirt.db"));
     }
 
     #[test]
     fn user_db_path_nests_under_user_id() {
         let dir = std::path::PathBuf::from("/tmp/dirt");
-        let p = user_db_path(&dir, TEST_USER_A).unwrap();
+        let p = user_db_path(&dir, TEST_USER_A, DB_FILENAME).unwrap();
         assert_eq!(p, dir.join(TEST_USER_A).join("dirt.db"));
     }
 
@@ -417,8 +440,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn resolve_active_db_falls_back_to_solo_when_state_absent() {
         let dir = data_dir();
-        let (path, user_id) = resolve_active_db(dir.path()).await.unwrap();
-        assert_eq!(path, solo_db_path(dir.path()));
+        let (path, user_id) = resolve_active_db(dir.path(), DB_FILENAME).await.unwrap();
+        assert_eq!(path, solo_db_path(dir.path(), DB_FILENAME));
         assert_eq!(user_id, SOLO_USER_ID);
     }
 
@@ -426,15 +449,18 @@ mod tests {
     async fn resolve_active_db_returns_user_path_when_state_present() {
         let dir = data_dir();
         write_active_user(dir.path(), TEST_USER_A).await.unwrap();
-        let (path, user_id) = resolve_active_db(dir.path()).await.unwrap();
-        assert_eq!(path, user_db_path(dir.path(), TEST_USER_A).unwrap());
+        let (path, user_id) = resolve_active_db(dir.path(), DB_FILENAME).await.unwrap();
+        assert_eq!(
+            path,
+            user_db_path(dir.path(), TEST_USER_A, DB_FILENAME).unwrap()
+        );
         assert_eq!(user_id, TEST_USER_A);
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn migrate_solo_db_no_solo_db_yields_no_op() {
         let dir = data_dir();
-        let outcome = migrate_solo_db_to_user(dir.path(), TEST_USER_A)
+        let outcome = migrate_solo_db_to_user(dir.path(), TEST_USER_A, DB_FILENAME)
             .await
             .unwrap();
         assert_eq!(outcome, SoloMigrationOutcome::NoSoloDb);
@@ -446,7 +472,7 @@ mod tests {
 
         // Seed a legacy solo DB with content, a pending row, and a
         // sync_state row. The migration must rewrite all three.
-        let solo_path = solo_db_path(dir.path());
+        let solo_path = solo_db_path(dir.path(), DB_FILENAME);
         let db = DatabaseService::open_local_path(solo_path.clone())
             .await
             .unwrap();
@@ -460,14 +486,14 @@ mod tests {
         db.write_sync_cursor(SOLO_USER_ID, &cursor).await.unwrap();
         drop(db);
 
-        let outcome = migrate_solo_db_to_user(dir.path(), TEST_USER_A)
+        let outcome = migrate_solo_db_to_user(dir.path(), TEST_USER_A, DB_FILENAME)
             .await
             .unwrap();
         assert_eq!(outcome, SoloMigrationOutcome::Migrated);
 
         // Source gone, destination present.
         assert!(!fs::try_exists(&solo_path).await.unwrap());
-        let user_path = user_db_path(dir.path(), TEST_USER_A).unwrap();
+        let user_path = user_db_path(dir.path(), TEST_USER_A, DB_FILENAME).unwrap();
         assert!(fs::try_exists(&user_path).await.unwrap());
 
         // Reopen and verify rows are rewritten.
@@ -490,17 +516,17 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn migrate_solo_db_second_call_is_already_migrated() {
         let dir = data_dir();
-        let solo_path = solo_db_path(dir.path());
+        let solo_path = solo_db_path(dir.path(), DB_FILENAME);
         let db = DatabaseService::open_local_path(solo_path).await.unwrap();
         db.create_note("first").await.unwrap();
         drop(db);
 
-        let first = migrate_solo_db_to_user(dir.path(), TEST_USER_A)
+        let first = migrate_solo_db_to_user(dir.path(), TEST_USER_A, DB_FILENAME)
             .await
             .unwrap();
         assert_eq!(first, SoloMigrationOutcome::Migrated);
 
-        let second = migrate_solo_db_to_user(dir.path(), TEST_USER_A)
+        let second = migrate_solo_db_to_user(dir.path(), TEST_USER_A, DB_FILENAME)
             .await
             .unwrap();
         assert_eq!(second, SoloMigrationOutcome::AlreadyMigrated);
@@ -512,12 +538,12 @@ mod tests {
         // Create both: legacy + user dir. We'd hit this only after a
         // crashed half-migration that re-created the legacy file
         // somehow; refuse rather than overwrite.
-        let solo_path = solo_db_path(dir.path());
+        let solo_path = solo_db_path(dir.path(), DB_FILENAME);
         let db = DatabaseService::open_local_path(solo_path).await.unwrap();
         db.create_note("solo").await.unwrap();
         drop(db);
 
-        let user_path = user_db_path(dir.path(), TEST_USER_A).unwrap();
+        let user_path = user_db_path(dir.path(), TEST_USER_A, DB_FILENAME).unwrap();
         fs::create_dir_all(user_path.parent().unwrap())
             .await
             .unwrap();
@@ -525,7 +551,7 @@ mod tests {
         user_db.create_note("user").await.unwrap();
         drop(user_db);
 
-        let err = migrate_solo_db_to_user(dir.path(), TEST_USER_A)
+        let err = migrate_solo_db_to_user(dir.path(), TEST_USER_A, DB_FILENAME)
             .await
             .unwrap_err();
         assert!(
@@ -543,7 +569,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn migrate_solo_db_repairs_half_migrated_state() {
         let dir = data_dir();
-        let user_path = user_db_path(dir.path(), TEST_USER_A).unwrap();
+        let user_path = user_db_path(dir.path(), TEST_USER_A, DB_FILENAME).unwrap();
         fs::create_dir_all(user_path.parent().unwrap())
             .await
             .unwrap();
@@ -555,7 +581,7 @@ mod tests {
         assert_eq!(note.user_id, SOLO_USER_ID);
         drop(db);
 
-        let outcome = migrate_solo_db_to_user(dir.path(), TEST_USER_A)
+        let outcome = migrate_solo_db_to_user(dir.path(), TEST_USER_A, DB_FILENAME)
             .await
             .unwrap();
         assert_eq!(outcome, SoloMigrationOutcome::AlreadyMigrated);

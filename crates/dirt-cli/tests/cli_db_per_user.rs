@@ -16,7 +16,7 @@
 
 use dirt_core::services::db_paths::{
     migrate_solo_db_to_user, read_active_user, resolve_active_db, solo_db_path, user_db_path,
-    write_active_user, SoloMigrationOutcome,
+    write_active_user, SoloMigrationOutcome, DB_FILENAME,
 };
 use dirt_core::services::DatabaseService;
 use dirt_core::SOLO_USER_ID;
@@ -39,9 +39,14 @@ async fn two_user_ids_get_separate_dbs() {
     write_active_user(dir.path(), USER_A)
         .await
         .expect("write active user A");
-    let (path_a, uid_a) = resolve_active_db(dir.path()).await.expect("resolve A's DB");
+    let (path_a, uid_a) = resolve_active_db(dir.path(), DB_FILENAME)
+        .await
+        .expect("resolve A's DB");
     assert_eq!(uid_a, USER_A);
-    assert_eq!(path_a, user_db_path(dir.path(), USER_A).unwrap());
+    assert_eq!(
+        path_a,
+        user_db_path(dir.path(), USER_A, DB_FILENAME).unwrap()
+    );
 
     let db_a = DatabaseService::open_for_user(path_a.clone(), USER_A)
         .await
@@ -60,7 +65,9 @@ async fn two_user_ids_get_separate_dbs() {
     write_active_user(dir.path(), USER_B)
         .await
         .expect("write active user B");
-    let (path_b, uid_b) = resolve_active_db(dir.path()).await.expect("resolve B's DB");
+    let (path_b, uid_b) = resolve_active_db(dir.path(), DB_FILENAME)
+        .await
+        .expect("resolve B's DB");
     assert_eq!(uid_b, USER_B);
     assert_ne!(
         path_b, path_a,
@@ -86,7 +93,7 @@ async fn two_user_ids_get_separate_dbs() {
     write_active_user(dir.path(), USER_A)
         .await
         .expect("re-write active user A");
-    let (path_a2, uid_a2) = resolve_active_db(dir.path())
+    let (path_a2, uid_a2) = resolve_active_db(dir.path(), DB_FILENAME)
         .await
         .expect("resolve A's DB again");
     assert_eq!(uid_a2, USER_A);
@@ -109,8 +116,8 @@ async fn two_user_ids_get_separate_dbs() {
 #[tokio::test(flavor = "current_thread")]
 async fn pre_signin_resolves_to_legacy_solo_layout() {
     let dir = TempDir::new().expect("tempdir");
-    let (path, user_id) = resolve_active_db(dir.path()).await.unwrap();
-    assert_eq!(path, solo_db_path(dir.path()));
+    let (path, user_id) = resolve_active_db(dir.path(), DB_FILENAME).await.unwrap();
+    assert_eq!(path, solo_db_path(dir.path(), DB_FILENAME));
     assert_eq!(user_id, SOLO_USER_ID);
     assert!(read_active_user(dir.path()).await.unwrap().is_none());
 }
@@ -125,7 +132,7 @@ async fn first_signin_migrates_legacy_data_into_user_dir() {
     let dir = TempDir::new().expect("tempdir");
 
     // Seed a legacy solo DB the way Phase 1 left it.
-    let legacy_path = solo_db_path(dir.path());
+    let legacy_path = solo_db_path(dir.path(), DB_FILENAME);
     let solo = DatabaseService::open_local_path(legacy_path.clone())
         .await
         .unwrap();
@@ -133,17 +140,19 @@ async fn first_signin_migrates_legacy_data_into_user_dir() {
     drop(solo);
 
     // First sign-in as user A runs the migration.
-    let outcome = migrate_solo_db_to_user(dir.path(), USER_A).await.unwrap();
+    let outcome = migrate_solo_db_to_user(dir.path(), USER_A, DB_FILENAME)
+        .await
+        .unwrap();
     assert_eq!(outcome, SoloMigrationOutcome::Migrated);
     write_active_user(dir.path(), USER_A).await.unwrap();
 
     // Legacy file gone, per-user file present.
     assert!(!tokio::fs::try_exists(&legacy_path).await.unwrap());
-    let user_path = user_db_path(dir.path(), USER_A).unwrap();
+    let user_path = user_db_path(dir.path(), USER_A, DB_FILENAME).unwrap();
     assert!(tokio::fs::try_exists(&user_path).await.unwrap());
 
     // The pre-upgrade note is now A's note.
-    let (path, uid) = resolve_active_db(dir.path()).await.unwrap();
+    let (path, uid) = resolve_active_db(dir.path(), DB_FILENAME).await.unwrap();
     assert_eq!(uid, USER_A);
     let db = DatabaseService::open_for_user(path, USER_A).await.unwrap();
     let notes = db.list_notes(10, 0).await.unwrap();
@@ -165,7 +174,7 @@ async fn signout_preserves_db_ownership() {
     let dir = TempDir::new().expect("tempdir");
     write_active_user(dir.path(), USER_A).await.unwrap();
 
-    let (path, _) = resolve_active_db(dir.path()).await.unwrap();
+    let (path, _) = resolve_active_db(dir.path(), DB_FILENAME).await.unwrap();
     let db = DatabaseService::open_for_user(path.clone(), USER_A)
         .await
         .unwrap();
@@ -174,7 +183,7 @@ async fn signout_preserves_db_ownership() {
 
     // ... user signs out (keyring cleared, state.json untouched) ...
     // Subsequent offline capture still targets A's DB:
-    let (path_again, uid_again) = resolve_active_db(dir.path()).await.unwrap();
+    let (path_again, uid_again) = resolve_active_db(dir.path(), DB_FILENAME).await.unwrap();
     assert_eq!(uid_again, USER_A);
     let db2 = DatabaseService::open_for_user(path_again, USER_A)
         .await
@@ -184,4 +193,50 @@ async fn signout_preserves_db_ownership() {
     let notes = db2.list_notes(10, 0).await.unwrap();
     assert_eq!(notes.len(), 2);
     assert!(notes.iter().all(|n| n.user_id == USER_A));
+}
+
+/// Regression for the codex P1 review on PR #236: mobile uses
+/// `dirt-mobile.db`, not `dirt.db`. A previous implementation
+/// hard-coded the filename inside `migrate_solo_db_to_user`, which
+/// meant the migration silently skipped pre-upgrade mobile data
+/// (looking for the wrong filename on disk). Parametrizing the
+/// filename and exercising both `DB_FILENAME` and `MOBILE_DB_FILENAME`
+/// here pins the contract down.
+#[tokio::test(flavor = "current_thread")]
+async fn migration_honors_mobile_filename() {
+    use dirt_core::services::db_paths::MOBILE_DB_FILENAME;
+
+    let dir = TempDir::new().expect("tempdir");
+
+    // Seed a legacy mobile-style solo DB.
+    let mobile_legacy = solo_db_path(dir.path(), MOBILE_DB_FILENAME);
+    assert!(mobile_legacy.ends_with("dirt-mobile.db"));
+    let solo = DatabaseService::open_local_path(mobile_legacy.clone())
+        .await
+        .unwrap();
+    solo.create_note("legacy mobile capture").await.unwrap();
+    drop(solo);
+
+    let outcome = migrate_solo_db_to_user(dir.path(), USER_A, MOBILE_DB_FILENAME)
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome,
+        SoloMigrationOutcome::Migrated,
+        "the mobile-filename migration must actually find and move the legacy file"
+    );
+
+    // Legacy file gone; per-user mobile DB present.
+    assert!(!tokio::fs::try_exists(&mobile_legacy).await.unwrap());
+    let user_mobile_path = user_db_path(dir.path(), USER_A, MOBILE_DB_FILENAME).unwrap();
+    assert!(tokio::fs::try_exists(&user_mobile_path).await.unwrap());
+
+    // Pre-upgrade row preserved and re-stamped with A's user_id.
+    let migrated = DatabaseService::open_for_user(user_mobile_path, USER_A)
+        .await
+        .unwrap();
+    let notes = migrated.list_notes(10, 0).await.unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].content, "legacy mobile capture");
+    assert_eq!(notes[0].user_id, USER_A);
 }
