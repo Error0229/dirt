@@ -18,6 +18,9 @@ use dioxus::desktop::{window, LogicalPosition, LogicalSize};
 use dioxus::prelude::*;
 use dirt_core::auth::{AuthClient, KeyringTokenStore};
 use dirt_core::models::Note;
+use dirt_core::services::db_paths::{
+    migrate_solo_db_to_user, read_active_user, write_active_user,
+};
 use dirt_core::sync::session_client::SessionApiClient;
 
 use crate::bootstrap_config::{load_bootstrap_config, BootstrapConfig};
@@ -102,8 +105,53 @@ pub fn App() -> Element {
     // pre-existing session from the keyring and (only if a token is
     // present) spawn the auto-sync worker. A missing token leaves
     // sync_status at Offline — sync is opt-in.
+    //
+    // DB resolution branches on three states:
+    //
+    //   1. Keyring populated AND `state.json` says the same user_id →
+    //      open `<user_id>/dirt.db` and spawn the worker.
+    //   2. Keyring populated AND `state.json` is absent → first
+    //      sign-in on this machine: run the legacy-solo migration,
+    //      write `state.json`, open `<user_id>/dirt.db`.
+    //   3. Keyring populated AND `state.json` points to a different
+    //      user (peer client logged in as someone else while this app
+    //      was closed) → rewrite `state.json` to match the keyring,
+    //      open / create the new user's DB.
+    //   4. Keyring empty → leave `state.json` alone (sign-out
+    //      preserves DB allegiance), open whatever DB the pointer
+    //      names. Brand-new install with no pointer falls through to
+    //      the legacy solo DB.
     let _db_init_task = use_resource(move || async move {
-        match DatabaseService::new().await {
+        let deps = auth_deps.read().clone();
+        let stored_token = deps.token_store.load().ok().flatten();
+        let data_dir = DatabaseService::data_dir();
+        let active_pointer = read_active_user(&data_dir).await.ok().flatten();
+
+        let db_result = if let Some(token) = &stored_token {
+            // Token in keyring: ensure state.json + DB on disk match.
+            let needs_pointer_update = active_pointer.as_deref() != Some(token.user_id.as_str());
+            if needs_pointer_update {
+                if let Err(err) = migrate_solo_db_to_user(&data_dir, &token.user_id).await {
+                    tracing::error!(
+                        "Solo-to-user migration on desktop startup failed: {err}"
+                    );
+                }
+                if let Err(err) = write_active_user(&data_dir, &token.user_id).await {
+                    tracing::error!("Could not write active-user pointer: {err}");
+                }
+            }
+            DatabaseService::open_for_user(&token.user_id).await
+        } else {
+            // No bearer in keyring: honor the pointer if it exists,
+            // else fall back to the legacy solo DB. Either way the
+            // sync worker stays unspawned until a sign-in lands.
+            match active_pointer {
+                Some(uid) => DatabaseService::open_for_user(&uid).await,
+                None => DatabaseService::open_solo().await,
+            }
+        };
+
+        match db_result {
             Ok(db) => {
                 let db = Arc::new(db);
 
@@ -127,11 +175,9 @@ pub fn App() -> Element {
 
                 if !sync_worker_started() {
                     sync_worker_started.set(true);
-                    let deps = auth_deps.read().clone();
                     match hydrate_session(&deps) {
                         Ok(Some(session)) => {
-                            let stored = deps.token_store.load().ok().flatten();
-                            signed_in.set(stored);
+                            signed_in.set(stored_token);
                             let session_arc = Arc::new(session);
                             session_client.set(Some(session_arc.clone()));
                             spawn_session_worker(

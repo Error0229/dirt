@@ -1,4 +1,10 @@
 //! Desktop wrapper for the shared core database service.
+//!
+//! Path resolution sits in `dirt_core::services::db_paths` since
+//! Phase 2.x — the desktop wrapper owns the large-stack settings
+//! load and a thin `new_for_user` convenience constructor; everything
+//! else delegates to [`dirt_core::services::DatabaseService`] via
+//! `Deref`.
 
 #![allow(dead_code)] // Methods are consumed through Deref from app components.
 
@@ -7,6 +13,7 @@ use std::path::PathBuf;
 use std::thread;
 
 use dirt_core::models::Settings;
+use dirt_core::services::db_paths::{solo_db_path as core_solo_db_path, user_db_path};
 use dirt_core::services::DatabaseService as CoreDatabaseService;
 use dirt_core::Result;
 
@@ -17,9 +24,27 @@ pub struct DatabaseService {
 }
 
 impl DatabaseService {
-    /// Create a new local-only database service.
-    pub async fn new() -> Result<Self> {
-        let inner = CoreDatabaseService::open_local_path(Self::default_db_path()).await?;
+    /// Open the per-user DB for `user_id` under the desktop's
+    /// canonical `<os_data>/dirt` directory.
+    ///
+    /// Used by the login swap path in `components::settings::
+    /// account_settings::apply_login_outcome` and by startup when
+    /// `state.json` is present.
+    pub async fn open_for_user(user_id: &str) -> Result<Self> {
+        let path = user_db_path(&Self::data_dir(), user_id)?;
+        let inner = CoreDatabaseService::open_for_user(path, user_id).await?;
+        Ok(Self { inner })
+    }
+
+    /// Open the legacy pre-signin solo DB.
+    ///
+    /// Only reachable on a brand-new desktop install that has never
+    /// signed in. Once a sign-in lands, the migration moves this file
+    /// into the user's directory and subsequent launches go through
+    /// [`Self::open_for_user`].
+    pub async fn open_solo() -> Result<Self> {
+        let path = core_solo_db_path(&Self::data_dir());
+        let inner = CoreDatabaseService::open_local_path(path).await?;
         Ok(Self { inner })
     }
 
@@ -53,11 +78,26 @@ impl DatabaseService {
         .map_err(|error| dirt_core::Error::Database(error.to_string()))?
     }
 
-    fn default_db_path() -> PathBuf {
+    /// Canonical `<os_data>/dirt` directory shared with the CLI and
+    /// mobile builds. The `DIRT_DATA_DIR` env var override is honored
+    /// for tests + developer overrides.
+    pub fn data_dir() -> PathBuf {
+        if let Some(override_dir) = std::env::var_os("DIRT_DATA_DIR") {
+            return PathBuf::from(override_dir);
+        }
         dirs::data_dir()
             .unwrap_or_else(|| panic!("Failed to resolve desktop data directory"))
             .join("dirt")
-            .join("dirt.db")
+    }
+}
+
+/// Borrow the desktop wrapper as the core service. Convenience for
+/// call sites (sync worker, account settings) that already hold a
+/// `&DatabaseService` and want to pass it to APIs typed against the
+/// core wrapper.
+impl AsRef<CoreDatabaseService> for DatabaseService {
+    fn as_ref(&self) -> &CoreDatabaseService {
+        &self.inner
     }
 }
 
@@ -68,3 +108,4 @@ impl Deref for DatabaseService {
         &self.inner
     }
 }
+
