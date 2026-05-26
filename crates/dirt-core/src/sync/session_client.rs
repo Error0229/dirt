@@ -120,6 +120,28 @@ impl SessionApiClient {
         &self.base_url
     }
 
+    /// Read the `user_id` of whichever session token is currently in
+    /// the underlying store.
+    ///
+    /// Used by the sync workers' pre-sync mismatch guard: if the
+    /// keyring slot has been rotated to a different account since
+    /// this process opened its DB (e.g. another client logged in as
+    /// a different user), the worker must refuse to push under the
+    /// wrong scope. The store read is cheap on every platform we
+    /// ship (in-process keyring cache after the first ACL grant).
+    ///
+    /// Returns `Ok(None)` if the slot has been cleared concurrently
+    /// (logout from another client) — the caller should park sync
+    /// rather than treat that as a mismatch.
+    pub fn current_user_id(&self) -> Result<Option<String>, SessionRefreshError> {
+        // Clone the user_id out before `tok` is dropped — `StoredToken`
+        // is `ZeroizeOnDrop` so we can't move fields out of it.
+        self.store
+            .load()
+            .map(|opt| opt.map(|tok| tok.user_id.clone()))
+            .map_err(|err| SessionRefreshError::Store(err.to_string()))
+    }
+
     /// Cheap snapshot of the live `ApiClient`. The returned `Arc` is
     /// safe to hold across `.await` points — a concurrent `refresh`
     /// only swaps the slot, never mutates the value behind the `Arc`
