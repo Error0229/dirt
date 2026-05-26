@@ -9,8 +9,23 @@ use crate::state::AppState;
 
 /// Create a new note with optimistic UI update and background persistence.
 pub fn create_note_optimistic(state: &mut AppState) {
-    // Create optimistic note with client-generated ID (UUID v7)
-    let optimistic_note = Note::new("");
+    // Resolve the DB up-front so the optimistic note carries the
+    // active user's id from the moment it appears in the UI. Without
+    // a DB ready there is nowhere to persist anyway — bail cleanly
+    // rather than creating an orphan optimistic row.
+    let db = state.db_service.read().clone();
+    let Some(db) = db else {
+        tracing::warn!("Skipping optimistic note creation — database is not ready yet");
+        return;
+    };
+
+    let optimistic_note = match Note::new_for_user("", db.user_id()) {
+        Ok(note) => note,
+        Err(err) => {
+            tracing::error!("Failed to build optimistic note: {err}");
+            return;
+        }
+    };
     let note_id = optimistic_note.id;
 
     // Update UI immediately (optimistic)
@@ -21,17 +36,14 @@ pub fn create_note_optimistic(state: &mut AppState) {
     tracing::info!("Created new note (optimistic): {}", note_id);
 
     // Persist in background
-    let db = state.db_service.read().clone();
     let worker = state.sync_worker.read().clone();
     spawn(async move {
-        if let Some(db) = db {
-            if let Err(e) = db.create_note_with_id(&optimistic_note).await {
-                tracing::error!("Failed to persist note: {}", e);
-            } else {
-                invalidate_notes_query().await;
-                if let Some(worker) = worker {
-                    worker.trigger();
-                }
+        if let Err(e) = db.create_note_with_id(&optimistic_note).await {
+            tracing::error!("Failed to persist note: {}", e);
+        } else {
+            invalidate_notes_query().await;
+            if let Some(worker) = worker {
+                worker.trigger();
             }
         }
     });

@@ -47,7 +47,12 @@ fn format_relative_time_units() {
 
 #[test]
 fn note_preview_truncates_with_ellipsis() {
-    let note = dirt_core::Note::new("This is a very long sentence that should be shortened");
+    let note =
+        dirt_core::Note::new_for_user(
+            "This is a very long sentence that should be shortened",
+            dirt_core::SOLO_USER_ID,
+        )
+        .unwrap();
     let preview = note_preview(&note, 20);
     assert_eq!(preview, "This is a very lo...");
 }
@@ -60,11 +65,11 @@ async fn list_notes_respects_limit_and_tag_filter() {
         let db = Database::open(&db_path).await.unwrap();
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        repo.create("First #work").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "First #work").await.unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create("Second #personal").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Second #personal").await.unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create("Third #work").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Third #work").await.unwrap();
     }
 
     let recent = list_notes(2, None, &db_path).await.unwrap();
@@ -87,11 +92,11 @@ async fn search_notes_finds_matches_with_limit() {
         let db = Database::open(&db_path).await.unwrap();
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        repo.create("Milk and eggs").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Milk and eggs").await.unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create("Milkshake recipe").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Milkshake recipe").await.unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create("Unrelated note").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Unrelated note").await.unwrap();
     }
 
     let matches = search_notes("milk", 1, &db_path).await.unwrap();
@@ -303,7 +308,7 @@ async fn run_sync_requires_sync_configuration() {
 
 #[test]
 fn note_to_export_item_sorts_tags() {
-    let note = Note::new("#zeta test #alpha #beta");
+    let note = Note::new_for_user("#zeta test #alpha #beta", dirt_core::SOLO_USER_ID).unwrap();
     let export = dirt_core::export::note_to_export_item(&note);
 
     assert_eq!(export.tags, vec!["alpha", "beta", "zeta"]);
@@ -336,7 +341,7 @@ async fn run_export_writes_json_file() {
     {
         let db = Database::open(&db_path).await.unwrap();
         let repo = LibSqlNoteRepository::new(db.connection());
-        repo.create("Export me #one").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Export me #one").await.unwrap();
     }
 
     let output_path = std::env::temp_dir().join(format!(

@@ -53,13 +53,18 @@ fn note_matches_tag_filter(note: &Note, tag_filter: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dirt_core::SOLO_USER_ID;
+
+    fn note(content: &str) -> Note {
+        Note::new_for_user(content, SOLO_USER_ID).expect("test note fixture must build")
+    }
 
     #[test]
     fn collects_sorted_unique_tags() {
         let notes = vec![
-            Note::new("Ship #work and #urgent updates"),
-            Note::new("Go hiking #personal #urgent"),
-            Note::new("No tag note"),
+            note("Ship #work and #urgent updates"),
+            note("Go hiking #personal #urgent"),
+            note("No tag note"),
         ];
 
         assert_eq!(
@@ -75,9 +80,9 @@ mod tests {
     #[test]
     fn filters_notes_with_search_and_tag_together() {
         let notes = vec![
-            Note::new("Project kickoff tomorrow #work"),
-            Note::new("Project movie night #personal"),
-            Note::new("Standup notes #work"),
+            note("Project kickoff tomorrow #work"),
+            note("Project movie night #personal"),
+            note("Standup notes #work"),
         ];
 
         let filtered = filter_notes(&notes, "project", Some("work"));
@@ -88,8 +93,8 @@ mod tests {
     #[test]
     fn treats_query_and_tag_case_insensitively() {
         let notes = vec![
-            Note::new("Debug release blocker #Work"),
-            Note::new("Read a book #personal"),
+            note("Debug release blocker #Work"),
+            note("Read a book #personal"),
         ];
 
         let filtered = filter_notes(&notes, "DEBUG", Some("WORK"));

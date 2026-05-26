@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn pushnote_from_note_roundtrips_timestamps() {
-        let mut note = Note::new("hello #world");
+        let mut note = Note::new_for_user("hello #world", SOLO_USER_ID).unwrap();
         note.created_at = 1;
         note.updated_at = 2;
         note.deleted_at = Some(3);

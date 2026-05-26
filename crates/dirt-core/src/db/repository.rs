@@ -9,8 +9,12 @@ use libsql::Connection;
 /// Trait for note storage operations (async)
 #[allow(async_fn_in_trait)]
 pub trait NoteRepository {
-    /// Create a new note
-    async fn create(&self, content: &str) -> Result<Note>;
+    /// Create a new note stamped with `user_id`.
+    ///
+    /// Callers pass the active user's id from `DatabaseService::user_id()`
+    /// so the new row belongs to whichever account is signed in.
+    /// Signed-out (offline) capture passes `SOLO_USER_ID` explicitly.
+    async fn create(&self, user_id: &str, content: &str) -> Result<Note>;
 
     /// Create a note with a pre-generated ID (for optimistic UI updates)
     async fn create_with_note(&self, note: &Note) -> Result<Note>;
@@ -185,8 +189,8 @@ const NOTE_COLUMNS: &str =
     "id, user_id, content, created_at, updated_at, server_updated_at, deleted_at";
 
 impl NoteRepository for LibSqlNoteRepository<'_> {
-    async fn create(&self, content: &str) -> Result<Note> {
-        let note = Note::new(content);
+    async fn create(&self, user_id: &str, content: &str) -> Result<Note> {
+        let note = Note::new_for_user(content, user_id)?;
         self.create_with_note(&note).await
     }
 
@@ -606,7 +610,7 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let note = repo.create("Hello world #test").await.unwrap();
+        let note = repo.create(SOLO_USER_ID, "Hello world #test").await.unwrap();
         assert_eq!(note.content, "Hello world #test");
         assert_eq!(note.user_id, SOLO_USER_ID);
         assert!(note.server_updated_at.is_none());
@@ -622,9 +626,9 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        repo.create("Note 1").await.unwrap();
-        repo.create("Note 2").await.unwrap();
-        repo.create("Note 3").await.unwrap();
+        repo.create(SOLO_USER_ID, "Note 1").await.unwrap();
+        repo.create(SOLO_USER_ID, "Note 2").await.unwrap();
+        repo.create(SOLO_USER_ID, "Note 3").await.unwrap();
 
         let notes = repo.list(10, 0).await.unwrap();
         assert_eq!(notes.len(), 3);
@@ -636,7 +640,7 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let note = repo.create("Original").await.unwrap();
+        let note = repo.create(SOLO_USER_ID, "Original").await.unwrap();
 
         // Pretend the note was previously synced.
         db.connection()
@@ -662,7 +666,7 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let note = repo.create("To delete #tagged").await.unwrap();
+        let note = repo.create(SOLO_USER_ID, "To delete #tagged").await.unwrap();
         repo.delete(&note.id).await.unwrap();
 
         // Not visible via live-only queries.
@@ -697,9 +701,9 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let alive = repo.create("Hello apple").await.unwrap();
-        let doomed = repo.create("Goodbye apple").await.unwrap();
-        repo.create("Something else").await.unwrap();
+        let alive = repo.create(SOLO_USER_ID, "Hello apple").await.unwrap();
+        let doomed = repo.create(SOLO_USER_ID, "Goodbye apple").await.unwrap();
+        repo.create(SOLO_USER_ID, "Something else").await.unwrap();
 
         let results = repo.search("apple", 10).await.unwrap();
         assert_eq!(results.len(), 2);
@@ -715,9 +719,9 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let a = repo.create("#rust one").await.unwrap();
-        let _b = repo.create("#rust two").await.unwrap();
-        let _c = repo.create("#rust three").await.unwrap();
+        let a = repo.create(SOLO_USER_ID, "#rust one").await.unwrap();
+        let _b = repo.create(SOLO_USER_ID, "#rust two").await.unwrap();
+        let _c = repo.create(SOLO_USER_ID, "#rust three").await.unwrap();
 
         let tags = repo.list_tags().await.unwrap();
         let rust_count = tags.iter().find(|(n, _)| n == "rust").unwrap().1;
@@ -737,9 +741,9 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        repo.create("Note with #rust").await.unwrap();
-        repo.create("Another #rust note").await.unwrap();
-        repo.create("No tag").await.unwrap();
+        repo.create(SOLO_USER_ID, "Note with #rust").await.unwrap();
+        repo.create(SOLO_USER_ID, "Another #rust note").await.unwrap();
+        repo.create(SOLO_USER_ID, "No tag").await.unwrap();
 
         let notes = repo.list_by_tag("rust", 10, 0).await.unwrap();
         assert_eq!(notes.len(), 2);
@@ -774,7 +778,7 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let existing = repo.create("Live #work note").await.unwrap();
+        let existing = repo.create(SOLO_USER_ID, "Live #work note").await.unwrap();
         assert_eq!(repo.list_by_tag("work", 10, 0).await.unwrap().len(), 1);
 
         let tombstoned = Note {
@@ -799,7 +803,7 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let note = repo.create("hello sync").await.unwrap();
+        let note = repo.create(SOLO_USER_ID, "hello sync").await.unwrap();
         assert!(repo.is_pending(SOLO_USER_ID, &note.id).await.unwrap());
 
         let pending = repo.list_pending_notes(SOLO_USER_ID, 10).await.unwrap();
@@ -831,7 +835,7 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let note = repo.create("first").await.unwrap();
+        let note = repo.create(SOLO_USER_ID, "first").await.unwrap();
         // Pretend we pushed it so the pending flag is gone, mimicking the
         // post-push state.
         repo.mark_pushed(SOLO_USER_ID, &note.id, 1_000)
@@ -848,7 +852,7 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let note = repo.create("doomed").await.unwrap();
+        let note = repo.create(SOLO_USER_ID, "doomed").await.unwrap();
         repo.mark_pushed(SOLO_USER_ID, &note.id, 100).await.unwrap();
         repo.delete(&note.id).await.unwrap();
 
@@ -864,7 +868,7 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let note = repo.create("hello").await.unwrap();
+        let note = repo.create(SOLO_USER_ID, "hello").await.unwrap();
         assert!(repo.is_pending(SOLO_USER_ID, &note.id).await.unwrap());
 
         repo.mark_pushed(SOLO_USER_ID, &note.id, 12_345)
@@ -881,9 +885,9 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let a = repo.create("a").await.unwrap();
-        let b = repo.create("b").await.unwrap();
-        let c = repo.create("c").await.unwrap();
+        let a = repo.create(SOLO_USER_ID, "a").await.unwrap();
+        let b = repo.create(SOLO_USER_ID, "b").await.unwrap();
+        let c = repo.create(SOLO_USER_ID, "c").await.unwrap();
 
         // Re-stamp dirty_at on `b` to a far-future value so it becomes the
         // newest dirty row regardless of how close create()'s wall-clock
@@ -905,7 +909,7 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let note = repo.create("doomed").await.unwrap();
+        let note = repo.create(SOLO_USER_ID, "doomed").await.unwrap();
         repo.delete(&note.id).await.unwrap();
 
         assert!(repo.get(&note.id).await.unwrap().is_none());

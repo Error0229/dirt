@@ -5,6 +5,11 @@
 //! plumbing for corrupt local-replica state lived here while embedded
 //! replicas were the sync mechanism; with the new design there is no
 //! remote replica file to recover from, just a local `SQLite` database.
+//!
+//! The service carries a `user_id` so every locally-created row gets
+//! stamped with whichever account this DB belongs to. Path layout
+//! (single DB per user, plus a legacy SOLO path used before first
+//! sign-in) lives in [`super::db_paths`].
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,26 +21,51 @@ use crate::db::{
     SyncCursor,
 };
 use crate::models::{Note, Settings};
-use crate::{NoteId, Result};
+use crate::{NoteId, Result, SOLO_USER_ID};
+
+use super::db_paths::validate_user_id;
 
 /// Thread-safe service for DB and repository operations.
 #[derive(Clone)]
 pub struct DatabaseService {
     db: Arc<Mutex<Database>>,
+    /// Owner of the rows in this DB. New notes are stamped with this
+    /// id; sync engines read it via [`Self::user_id`].
+    user_id: Arc<str>,
 }
 
 impl DatabaseService {
-    /// Open a local-only database service at the given path.
-    pub async fn open_local_path(db_path: impl Into<PathBuf>) -> Result<Self> {
+    /// Open the DB at `db_path` and tag it with `user_id`.
+    ///
+    /// `user_id` must be either [`SOLO_USER_ID`] (legacy / pre-signin)
+    /// or a UUID-v7 issued by the server; anything else is rejected
+    /// before we touch the filesystem. Use `open_local_path` for the
+    /// legacy solo case so the substitution is visible at the call
+    /// site.
+    pub async fn open_for_user(
+        db_path: impl Into<PathBuf>,
+        user_id: impl Into<String>,
+    ) -> Result<Self> {
         let db_path = db_path.into();
+        let user_id = user_id.into();
+        validate_user_id(&user_id)?;
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-
         let db = Database::open(&db_path).await?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
+            user_id: Arc::from(user_id),
         })
+    }
+
+    /// Open the legacy single-DB path with the `SOLO_USER_ID` tenant.
+    ///
+    /// Used on a brand-new machine that has never signed in, and by
+    /// existing tests. Production sign-in paths route through
+    /// [`Self::open_for_user`] instead.
+    pub async fn open_local_path(db_path: impl Into<PathBuf>) -> Result<Self> {
+        Self::open_for_user(db_path, SOLO_USER_ID).await
     }
 
     /// Open an in-memory database service (primarily for tests).
@@ -43,7 +73,31 @@ impl DatabaseService {
         let db = Database::open_in_memory().await?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
+            user_id: Arc::from(SOLO_USER_ID),
         })
+    }
+
+    /// In-memory DB tagged with an arbitrary `user_id`. Convenient
+    /// for tests that want to exercise per-user scoping without
+    /// touching the filesystem.
+    pub async fn open_in_memory_for_user(user_id: impl Into<String>) -> Result<Self> {
+        let user_id = user_id.into();
+        validate_user_id(&user_id)?;
+        let db = Database::open_in_memory().await?;
+        Ok(Self {
+            db: Arc::new(Mutex::new(db)),
+            user_id: Arc::from(user_id),
+        })
+    }
+
+    /// The user_id every locally-created row in this DB carries.
+    ///
+    /// Sync engines pass this into `SyncEngine::new` and the cross-
+    /// client mismatch guard (sync workers + CLI sync) compares it
+    /// against the bearer's `stored.user_id` before pushing.
+    #[must_use]
+    pub fn user_id(&self) -> &str {
+        &self.user_id
     }
 
     /// List notes newest-first.
@@ -85,11 +139,11 @@ impl DatabaseService {
         Ok(matching_ids)
     }
 
-    /// Create a new note.
+    /// Create a new note stamped with the DB's owning `user_id`.
     pub async fn create_note(&self, content: &str) -> Result<Note> {
         let db = self.db.lock().await;
         let repo = LibSqlNoteRepository::new(db.connection());
-        repo.create(content).await
+        repo.create(&self.user_id, content).await
     }
 
     /// Create a note with a pre-generated id.
