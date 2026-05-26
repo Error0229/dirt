@@ -17,28 +17,30 @@
 //! to the desktop worker's continuous-refresh loop in
 //! `dirt-desktop/src/services/sync_worker.rs`.
 //!
-//! The local-DB `user_id` stays [`SOLO_USER_ID`] for parity with desktop
-//! and Phase-1 client rows. Migrating local-store `user_id` to the
-//! authenticated session's `user_id` is a separate, larger piece of
-//! work — see `docs/DESIGN.md` Phase 2 notes — and is intentionally not
-//! part of Phase 2.8.
+//! Phase 2.x: the local DB is per-user (see
+//! `dirt_core::services::db_paths`), and the sync engine is keyed
+//! by `db.user_id()` rather than the legacy `SOLO_USER_ID` sentinel.
+//! A pre-sync `scope_guard::check_scope` refuses to push when the
+//! keyring slot holds a bearer for a different user than the DB
+//! belongs to — this closes the cross-client race where another
+//! client signs in as a different account while this CLI invocation
+//! is mid-flight.
 
 use std::env;
-use std::path::Path;
 use std::sync::Arc;
 
 use dirt_core::auth::{AuthClient, KeyringTokenStore, TokenStore};
 use dirt_core::sync::api_client::ApiClientError;
 use dirt_core::sync::engine::{SyncEngine, SyncEngineError, SyncReport};
+use dirt_core::sync::scope_guard::{check_scope, ScopeCheckError};
 use dirt_core::sync::session_client::{SessionApiClient, SessionRefreshError};
-use dirt_core::SOLO_USER_ID;
 
 use crate::commands::auth_cmd::{KEYRING_ACCOUNT, KEYRING_SERVICE};
-use crate::commands::common::open_database;
+use crate::commands::common::{open_database, DbScope};
 use crate::config_profiles::{normalize_text_option, CliProfilesConfig};
 use crate::error::CliError;
 
-pub async fn run_sync(db_path: &Path) -> Result<(), CliError> {
+pub async fn run_sync(scope: &DbScope) -> Result<(), CliError> {
     let api_base_url = resolve_api_base_url()?;
     // Fixed `(service, "default")` keyring slot so a login from any
     // client (CLI / desktop / mobile) is visible here. The previous
@@ -48,7 +50,39 @@ pub async fn run_sync(db_path: &Path) -> Result<(), CliError> {
     let store: Arc<dyn TokenStore> =
         Arc::new(KeyringTokenStore::new(KEYRING_SERVICE, KEYRING_ACCOUNT));
     let session = build_session(api_base_url, store)?;
-    let db = open_database(db_path).await?;
+    let db = open_database(scope).await?;
+
+    // Cross-client scope check: the keyring slot may have been
+    // rotated to a different account by another process between the
+    // moment `state.json` was last written and now. Refuse to push
+    // rather than silently stamp this user's rows with a peer's
+    // bearer.
+    match check_scope(db.user_id(), &session) {
+        Ok(()) => {}
+        Err(ScopeCheckError::Mismatch {
+            db_user,
+            session_user,
+        }) => {
+            return Err(CliError::Auth(format!(
+                "this CLI invocation opened the DB for user {db_user} but the keyring \
+                 session belongs to {session_user}; another client signed in as a \
+                 different account. Re-run `dirt sync` (or restart) to pick up the new \
+                 active user, or run `dirt auth login` to sign back in as {db_user}."
+            )));
+        }
+        Err(ScopeCheckError::SessionVanished) => {
+            return Err(CliError::Auth(
+                "the session token was cleared between login and sync; run `dirt auth login` again."
+                    .into(),
+            ));
+        }
+        Err(ScopeCheckError::Store(msg)) => {
+            return Err(CliError::Config(format!(
+                "could not verify session scope: {msg}; retry shortly"
+            )));
+        }
+    }
+
     let report = run_session_sync(&db, &session).await?;
     print_report(&report);
     Ok(())
@@ -106,7 +140,7 @@ async fn sync_once(
     session: &SessionApiClient,
 ) -> Result<SyncReport, SyncEngineError> {
     let api = session.current();
-    let engine = SyncEngine::new(db, &api, SOLO_USER_ID);
+    let engine = SyncEngine::new(db, &api, db.user_id());
     engine.run_once().await
 }
 

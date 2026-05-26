@@ -12,6 +12,9 @@ use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
 use dirt_core::auth::{AuthClient, AuthError, StoredToken, TokenStore, TokenStoreError};
+use dirt_core::services::db_paths::{
+    migrate_solo_db_to_user, read_active_user, write_active_user, SoloMigrationOutcome,
+};
 // `KeyringTokenStore` is target-gated in dirt-core to non-Android
 // (Android has no keyring backend; dirt-mobile uses its own AndroidKeyStore
 // impl in Phase 2.7). Mirror the gate here so an Android cross-compile of
@@ -61,7 +64,11 @@ pub async fn run_auth(command: AuthCommands) -> Result<(), CliError> {
             let base_url = require_api_base_url()?;
             let client = build_auth_client(&base_url)?;
             let store = build_keyring_store()?;
-            login_flow(&client, &store, stdin_read_line).await
+            login_flow(&client, &store, stdin_read_line).await?;
+            // The keyring slot now has the freshest token. Update the
+            // local active-user pointer + migrate the legacy solo DB
+            // if this is the very first sign-in on this machine.
+            finalize_login_locally(&store).await
         }
         AuthCommands::Logout => {
             let store = build_keyring_store()?;
@@ -263,6 +270,72 @@ where
         .map_err(|err| token_store_error_to_cli(&err))?;
 
     println!("Signed in as {}", stored.email);
+    Ok(())
+}
+
+/// Post-`login_flow` local bookkeeping.
+///
+/// Two side effects after the bearer is safely persisted:
+///
+/// 1. If this is the first sign-in ever on this machine, the legacy
+///    `<data_dir>/dirt.db` is moved into `<data_dir>/<user_id>/` and
+///    its rows' `user_id` columns are rewritten from `SOLO_USER_ID`
+///    to the just-authenticated user. Idempotent: a no-op on
+///    subsequent logins.
+/// 2. The active-user pointer (`<data_dir>/state.json`) is rewritten
+///    to the new `user_id` if it differs from whatever was there
+///    before. This is what makes subsequent CLI invocations open the
+///    right per-user DB even after sign-out.
+///
+/// Surfacing errors out of either step is intentional: we must not
+/// silently leave a half-migrated DB or a stale state pointer behind
+/// (CLAUDE.md: no silent fallbacks). The login itself succeeded —
+/// the keyring slot holds a valid bearer — so a follow-up
+/// `dirt auth login` after fixing the underlying issue (disk full,
+/// permission, etc.) will retry these steps without re-doing the
+/// magic-code dance.
+async fn finalize_login_locally(store: &dyn TokenStore) -> Result<(), CliError> {
+    let stored = match store.load() {
+        Ok(Some(t)) => t,
+        // Token was cleared by a concurrent operation between save
+        // and now — treat as benign; subsequent commands will re-
+        // prompt the user.
+        Ok(None) => return Ok(()),
+        Err(err) => return Err(token_store_error_to_cli(&err)),
+    };
+
+    let data_dir = crate::commands::common::dirt_data_dir();
+    let previous_user = match read_active_user(&data_dir).await {
+        Ok(opt) => opt,
+        Err(err) => {
+            return Err(CliError::Config(format!(
+                "could not read active-user pointer: {err}"
+            )));
+        }
+    };
+
+    match migrate_solo_db_to_user(&data_dir, &stored.user_id).await {
+        Ok(SoloMigrationOutcome::Migrated) => {
+            println!(
+                "Migrated legacy local notes into per-user store for {}",
+                stored.user_id
+            );
+        }
+        Ok(SoloMigrationOutcome::NoSoloDb | SoloMigrationOutcome::AlreadyMigrated) => {}
+        Err(err) => {
+            return Err(CliError::Config(format!(
+                "solo DB migration failed (your login is saved; re-run `dirt auth login` after resolving): {err}"
+            )));
+        }
+    }
+
+    if previous_user.as_deref() != Some(stored.user_id.as_str()) {
+        if let Err(err) = write_active_user(&data_dir, &stored.user_id).await {
+            return Err(CliError::Config(format!(
+                "could not persist active user pointer: {err}"
+            )));
+        }
+    }
     Ok(())
 }
 
