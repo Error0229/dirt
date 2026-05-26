@@ -20,6 +20,8 @@
 //! `shutdown_existing_worker`) so a freshly spawned worker after
 //! re-login cannot race the previous one's in-flight `sync_once`.
 
+use std::sync::Arc;
+
 use dioxus::prelude::*;
 
 use crate::app_shell::spawn_session_worker;
