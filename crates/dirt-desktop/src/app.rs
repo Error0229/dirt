@@ -18,9 +18,7 @@ use dioxus::desktop::{window, LogicalPosition, LogicalSize};
 use dioxus::prelude::*;
 use dirt_core::auth::{AuthClient, KeyringTokenStore};
 use dirt_core::models::Note;
-use dirt_core::services::db_paths::{
-    migrate_solo_db_to_user, read_active_user, write_active_user,
-};
+use dirt_core::services::db_paths::{migrate_solo_db_to_user, read_active_user, write_active_user};
 use dirt_core::sync::session_client::SessionApiClient;
 
 use crate::bootstrap_config::{load_bootstrap_config, BootstrapConfig};
@@ -132,9 +130,7 @@ pub fn App() -> Element {
             let needs_pointer_update = active_pointer.as_deref() != Some(token.user_id.as_str());
             if needs_pointer_update {
                 if let Err(err) = migrate_solo_db_to_user(&data_dir, &token.user_id).await {
-                    tracing::error!(
-                        "Solo-to-user migration on desktop startup failed: {err}"
-                    );
+                    tracing::error!("Solo-to-user migration on desktop startup failed: {err}");
                 }
                 if let Err(err) = write_active_user(&data_dir, &token.user_id).await {
                     tracing::error!("Could not write active-user pointer: {err}");

@@ -18,10 +18,10 @@ use crate::error::CliError;
 /// these. The auth flow reaches `dirt_data_dir()` directly when it
 /// needs to update `state.json` or run the legacy-solo migration —
 /// the `DbScope` shape stays narrow because most commands only need
-/// the (path, user_id) pair.
+/// the (path, `user_id`) pair.
 #[derive(Debug, Clone)]
 pub struct DbScope {
-    /// Absolute path to the SQLite file this command will open.
+    /// Absolute path to the `SQLite` file this command will open.
     pub path: PathBuf,
     /// Owner of the rows in that DB. New notes are stamped with this
     /// id; the sync engine reads it via `DatabaseService::user_id()`.
@@ -332,7 +332,7 @@ pub fn create_temp_note_file_path() -> PathBuf {
     env::temp_dir().join(format!("dirt-note-{}-{now}.md", std::process::id()))
 }
 
-/// Resolve which DB this CLI invocation should open and what user_id
+/// Resolve which DB this CLI invocation should open and what `user_id`
 /// to stamp new notes with.
 ///
 /// Resolution order (matches the active-user-pointer design in
@@ -389,4 +389,3 @@ pub async fn open_database(scope: &DbScope) -> Result<DatabaseService, CliError>
     }
     Ok(DatabaseService::open_for_user(scope.path.clone(), scope.user_id.clone()).await?)
 }
-

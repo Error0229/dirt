@@ -108,4 +108,3 @@ impl Deref for DatabaseService {
         &self.inner
     }
 }
-

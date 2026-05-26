@@ -423,14 +423,12 @@ async fn apply_login_outcome(
             let user_changed = current_user.as_deref() != Some(token.user_id.as_str());
 
             let store_for_worker = if user_changed {
-                let data_dir =
-                    crate::config::default_mobile_data_directory();
-                if let Err(err) =
-                    dirt_core::services::db_paths::migrate_solo_db_to_user(
-                        &data_dir,
-                        &token.user_id,
-                    )
-                    .await
+                let data_dir = crate::config::default_mobile_data_directory();
+                if let Err(err) = dirt_core::services::db_paths::migrate_solo_db_to_user(
+                    &data_dir,
+                    &token.user_id,
+                )
+                .await
                 {
                     state.sync_status.set(SyncStatus::Error);
                     state

@@ -453,6 +453,14 @@ fn build_auth_client(base_url: &str) -> Result<AuthClient, CliError> {
 }
 
 #[cfg(not(target_os = "android"))]
+// The `Result` wrapper is load-bearing for the call sites: they `?`
+// the constructor alongside other `CliError`-returning operations,
+// and a future keyring backend (or fallback chain) could plausibly
+// fail at construction time. The unconditional `Ok` today is a
+// current implementation detail, not a stable contract — keep the
+// Result shape so a future failure mode doesn't ripple through
+// every caller.
+#[allow(clippy::unnecessary_wraps)]
 fn build_keyring_store() -> Result<KeyringTokenStore, CliError> {
     // Account discriminator is fixed at `KEYRING_ACCOUNT` so a login
     // from any client (CLI / desktop / mobile) lands in the same slot.

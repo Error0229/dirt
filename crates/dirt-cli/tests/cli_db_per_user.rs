@@ -39,9 +39,7 @@ async fn two_user_ids_get_separate_dbs() {
     write_active_user(dir.path(), USER_A)
         .await
         .expect("write active user A");
-    let (path_a, uid_a) = resolve_active_db(dir.path())
-        .await
-        .expect("resolve A's DB");
+    let (path_a, uid_a) = resolve_active_db(dir.path()).await.expect("resolve A's DB");
     assert_eq!(uid_a, USER_A);
     assert_eq!(path_a, user_db_path(dir.path(), USER_A).unwrap());
 
@@ -62,9 +60,7 @@ async fn two_user_ids_get_separate_dbs() {
     write_active_user(dir.path(), USER_B)
         .await
         .expect("write active user B");
-    let (path_b, uid_b) = resolve_active_db(dir.path())
-        .await
-        .expect("resolve B's DB");
+    let (path_b, uid_b) = resolve_active_db(dir.path()).await.expect("resolve B's DB");
     assert_eq!(uid_b, USER_B);
     assert_ne!(
         path_b, path_a,
@@ -107,7 +103,7 @@ async fn two_user_ids_get_separate_dbs() {
 }
 
 /// On a fresh machine that has never signed in, the resolver returns
-/// the legacy `dirt.db` location and SOLO_USER_ID. This is the only
+/// the legacy `dirt.db` location and `SOLO_USER_ID`. This is the only
 /// state where the legacy location is ever the answer — the moment
 /// the user signs in for the first time, the migration moves it.
 #[tokio::test(flavor = "current_thread")]
@@ -121,7 +117,7 @@ async fn pre_signin_resolves_to_legacy_solo_layout() {
 
 /// First sign-in on a machine that has Phase-1 capture history:
 /// the legacy `dirt.db` is moved into `<user_id>/dirt.db` and every
-/// row's `user_id` column is rewritten from SOLO_USER_ID. The user
+/// row's `user_id` column is rewritten from `SOLO_USER_ID`. The user
 /// sees their pre-upgrade notes in their per-user DB; the legacy
 /// path no longer exists.
 #[tokio::test(flavor = "current_thread")]
@@ -183,9 +179,7 @@ async fn signout_preserves_db_ownership() {
     let db2 = DatabaseService::open_for_user(path_again, USER_A)
         .await
         .unwrap();
-    db2.create_note("captured while signed out")
-        .await
-        .unwrap();
+    db2.create_note("captured while signed out").await.unwrap();
 
     let notes = db2.list_notes(10, 0).await.unwrap();
     assert_eq!(notes.len(), 2);

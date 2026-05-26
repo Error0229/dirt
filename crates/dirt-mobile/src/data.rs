@@ -144,7 +144,6 @@ fn user_db_path_for(user_id: &str) -> Result<PathBuf> {
         .join("dirt-mobile.db"))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

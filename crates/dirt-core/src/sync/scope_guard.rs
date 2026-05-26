@@ -41,7 +41,7 @@ pub enum ScopeCheckError {
     /// not a security signal, just "no bearer available."
     #[error("no session token in the keyring; sign in to resume sync")]
     SessionVanished,
-    /// The token store backend itself failed (DBus down, etc.).
+    /// The token store backend itself failed (`DBus` down, etc.).
     #[error("failed to read session for scope check: {0}")]
     Store(String),
 }

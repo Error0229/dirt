@@ -58,12 +58,11 @@ fn format_relative_time_units() {
 
 #[test]
 fn note_preview_truncates_with_ellipsis() {
-    let note =
-        dirt_core::Note::new_for_user(
-            "This is a very long sentence that should be shortened",
-            dirt_core::SOLO_USER_ID,
-        )
-        .unwrap();
+    let note = dirt_core::Note::new_for_user(
+        "This is a very long sentence that should be shortened",
+        dirt_core::SOLO_USER_ID,
+    )
+    .unwrap();
     let preview = note_preview(&note, 20);
     assert_eq!(preview, "This is a very lo...");
 }
@@ -76,11 +75,17 @@ async fn list_notes_respects_limit_and_tag_filter() {
         let db = Database::open(&db_path).await.unwrap();
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        repo.create(dirt_core::SOLO_USER_ID, "First #work").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "First #work")
+            .await
+            .unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create(dirt_core::SOLO_USER_ID, "Second #personal").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Second #personal")
+            .await
+            .unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create(dirt_core::SOLO_USER_ID, "Third #work").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Third #work")
+            .await
+            .unwrap();
     }
 
     let scope = scope_for(&db_path);
@@ -104,11 +109,17 @@ async fn search_notes_finds_matches_with_limit() {
         let db = Database::open(&db_path).await.unwrap();
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        repo.create(dirt_core::SOLO_USER_ID, "Milk and eggs").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Milk and eggs")
+            .await
+            .unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create(dirt_core::SOLO_USER_ID, "Milkshake recipe").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Milkshake recipe")
+            .await
+            .unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create(dirt_core::SOLO_USER_ID, "Unrelated note").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Unrelated note")
+            .await
+            .unwrap();
     }
 
     let matches = search_notes("milk", 1, &scope_for(&db_path)).await.unwrap();
@@ -353,7 +364,9 @@ async fn run_export_writes_json_file() {
     {
         let db = Database::open(&db_path).await.unwrap();
         let repo = LibSqlNoteRepository::new(db.connection());
-        repo.create(dirt_core::SOLO_USER_ID, "Export me #one").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Export me #one")
+            .await
+            .unwrap();
     }
 
     let output_path = std::env::temp_dir().join(format!(

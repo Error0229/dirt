@@ -264,8 +264,7 @@ mod tests {
 
     #[test]
     fn test_title_preview() {
-        let note =
-            Note::new_for_user("First line\nSecond line\nThird line", SOLO_USER_ID).unwrap();
+        let note = Note::new_for_user("First line\nSecond line\nThird line", SOLO_USER_ID).unwrap();
         assert_eq!(note.title_preview(50), "First line");
         assert_eq!(note.title_preview(5), "First");
     }

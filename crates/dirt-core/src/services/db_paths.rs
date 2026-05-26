@@ -35,7 +35,7 @@ use crate::SOLO_USER_ID;
 /// Filename of the active-user pointer at the top of the dirt data
 /// directory.
 const STATE_FILENAME: &str = "state.json";
-/// Filename of the per-user (and legacy) SQLite database file. Same
+/// Filename of the per-user (and legacy) `SQLite` database file. Same
 /// on every platform so the layout is uniform.
 const DB_FILENAME: &str = "dirt.db";
 
@@ -94,7 +94,7 @@ pub fn user_db_path(data_dir: &Path, user_id: &str) -> Result<PathBuf> {
 /// reaches the clients — keyring `StoredToken.user_id`, `/v1/notes/pull`
 /// responses, etc. — so this is the same shape the rest of the system
 /// already validates. Rejecting non-UUID strings here closes the
-/// "what if a buggy proxy injects `../../etc/passwd` into the user_id
+/// "what if a buggy proxy injects `../../etc/passwd` into the `user_id`
 /// field" path before it touches the filesystem.
 pub fn validate_user_id(user_id: &str) -> Result<&str> {
     if user_id.is_empty() {
@@ -176,7 +176,9 @@ pub async fn write_active_user(data_dir: &Path, user_id: &str) -> Result<()> {
     // doesn't expose fsync directly; the rename below is a strong
     // enough barrier on every OS we ship for the typical
     // application-state-file case.
-    fs::rename(&tmp_path, &final_path).await.map_err(Error::Io)?;
+    fs::rename(&tmp_path, &final_path)
+        .await
+        .map_err(Error::Io)?;
     Ok(())
 }
 
@@ -308,8 +310,8 @@ mod tests {
     use crate::services::DatabaseService;
     use tempfile::TempDir;
 
-    /// Canonical UUID-v7-shaped user_id for tests. Different from
-    /// SOLO_USER_ID so migrations can prove they rewrite.
+    /// Canonical UUID-v7-shaped `user_id` for tests. Different from
+    /// `SOLO_USER_ID` so migrations can prove they rewrite.
     const TEST_USER_A: &str = "01932aaa-0000-7000-8000-000000000001";
     const TEST_USER_B: &str = "01932bbb-0000-7000-8000-000000000002";
 
@@ -405,12 +407,9 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn read_active_user_rejects_bad_user_id_in_state_file() {
         let dir = data_dir();
-        fs::write(
-            state_path(dir.path()),
-            br#"{"active_user_id":"../escape"}"#,
-        )
-        .await
-        .unwrap();
+        fs::write(state_path(dir.path()), br#"{"active_user_id":"../escape"}"#)
+            .await
+            .unwrap();
         let err = read_active_user(dir.path()).await.unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)), "{err:?}");
     }
@@ -519,10 +518,10 @@ mod tests {
         drop(db);
 
         let user_path = user_db_path(dir.path(), TEST_USER_A).unwrap();
-        fs::create_dir_all(user_path.parent().unwrap()).await.unwrap();
-        let user_db = DatabaseService::open_local_path(user_path)
+        fs::create_dir_all(user_path.parent().unwrap())
             .await
             .unwrap();
+        let user_db = DatabaseService::open_local_path(user_path).await.unwrap();
         user_db.create_note("user").await.unwrap();
         drop(user_db);
 
@@ -537,15 +536,17 @@ mod tests {
 
     /// Regression: if a previous migration succeeded at rename but
     /// crashed before the row rewrite, the second call must still
-    /// complete the rewrite so the DB ends up with the right user_id
+    /// complete the rewrite so the DB ends up with the right `user_id`
     /// columns. We simulate by opening the user DB directly with
-    /// SOLO_USER_ID rows and then calling the migration (which sees
-    /// AlreadyMigrated but runs the rewrite anyway).
+    /// `SOLO_USER_ID` rows and then calling the migration (which sees
+    /// `AlreadyMigrated` but runs the rewrite anyway).
     #[tokio::test(flavor = "current_thread")]
     async fn migrate_solo_db_repairs_half_migrated_state() {
         let dir = data_dir();
         let user_path = user_db_path(dir.path(), TEST_USER_A).unwrap();
-        fs::create_dir_all(user_path.parent().unwrap()).await.unwrap();
+        fs::create_dir_all(user_path.parent().unwrap())
+            .await
+            .unwrap();
         // Stage SOLO-stamped rows in what would be the user's DB:
         let db = DatabaseService::open_local_path(user_path.clone())
             .await
@@ -559,9 +560,7 @@ mod tests {
             .unwrap();
         assert_eq!(outcome, SoloMigrationOutcome::AlreadyMigrated);
 
-        let repaired = DatabaseService::open_local_path(user_path)
-            .await
-            .unwrap();
+        let repaired = DatabaseService::open_local_path(user_path).await.unwrap();
         let notes = repaired.list_notes(10, 0).await.unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!(

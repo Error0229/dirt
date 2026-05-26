@@ -90,7 +90,7 @@ impl DatabaseService {
         })
     }
 
-    /// The user_id every locally-created row in this DB carries.
+    /// The `user_id` every locally-created row in this DB carries.
     ///
     /// Sync engines pass this into `SyncEngine::new` and the cross-
     /// client mismatch guard (sync workers + CLI sync) compares it

@@ -610,7 +610,10 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let note = repo.create(SOLO_USER_ID, "Hello world #test").await.unwrap();
+        let note = repo
+            .create(SOLO_USER_ID, "Hello world #test")
+            .await
+            .unwrap();
         assert_eq!(note.content, "Hello world #test");
         assert_eq!(note.user_id, SOLO_USER_ID);
         assert!(note.server_updated_at.is_none());
@@ -666,7 +669,10 @@ mod tests {
         let db = setup().await;
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        let note = repo.create(SOLO_USER_ID, "To delete #tagged").await.unwrap();
+        let note = repo
+            .create(SOLO_USER_ID, "To delete #tagged")
+            .await
+            .unwrap();
         repo.delete(&note.id).await.unwrap();
 
         // Not visible via live-only queries.
@@ -742,7 +748,9 @@ mod tests {
         let repo = LibSqlNoteRepository::new(db.connection());
 
         repo.create(SOLO_USER_ID, "Note with #rust").await.unwrap();
-        repo.create(SOLO_USER_ID, "Another #rust note").await.unwrap();
+        repo.create(SOLO_USER_ID, "Another #rust note")
+            .await
+            .unwrap();
         repo.create(SOLO_USER_ID, "No tag").await.unwrap();
 
         let notes = repo.list_by_tag("rust", 10, 0).await.unwrap();
