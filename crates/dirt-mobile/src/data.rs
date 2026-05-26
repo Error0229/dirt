@@ -35,10 +35,22 @@ impl Deref for MobileNoteStore {
 }
 
 impl MobileNoteStore {
-    /// Open the default local mobile database path.
+    /// Open the per-user DB at `<data_dir>/<user_id>/dirt-mobile.db`.
     #[cfg(target_os = "android")]
-    pub async fn open_default() -> Result<Self> {
-        let db_path = default_db_path();
+    pub async fn open_for_user(user_id: &str) -> Result<Self> {
+        let db_path = user_db_path_for(user_id)?;
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let db = CoreDatabaseService::open_for_user(db_path, user_id).await?;
+        Ok(Self { db })
+    }
+
+    /// Open the legacy pre-signin solo mobile DB. Only reachable on a
+    /// brand-new install that has never signed in.
+    #[cfg(target_os = "android")]
+    pub async fn open_solo() -> Result<Self> {
+        let db_path = solo_db_path_mobile();
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -105,11 +117,33 @@ fn normalize_content(content: &str) -> Result<String> {
     Ok(normalized.to_string())
 }
 
-/// Build a mobile-friendly local DB path.
+/// Pre-signin legacy DB path used only on a brand-new install. After
+/// the first sign-in the migration moves this file under the user's
+/// directory and this location is never re-created.
 #[cfg(target_os = "android")]
-pub fn default_db_path() -> PathBuf {
-    default_mobile_data_directory().join("dirt-mobile.db")
+fn solo_db_path_mobile() -> PathBuf {
+    // Mobile keeps the filename `dirt-mobile.db` for parity with the
+    // pre-Phase-2 layout; the desktop / CLI use `dirt.db`. The names
+    // are kept distinct on disk so a shared `<data_dir>` survives the
+    // case where someone debugs mobile and desktop from the same
+    // directory.
+    let data_dir = default_mobile_data_directory();
+    // The core `solo_db_path` helper hard-codes `dirt.db`; mobile's
+    // legacy name predates the helper. Inline the join here.
+    data_dir.join("dirt-mobile.db")
 }
+
+/// Per-user DB path for `user_id` under the mobile data directory.
+/// Mirrors `dirt_core::services::db_paths::user_db_path` but keeps
+/// the mobile-specific filename.
+#[cfg(target_os = "android")]
+fn user_db_path_for(user_id: &str) -> Result<PathBuf> {
+    let safe = dirt_core::services::db_paths::validate_user_id(user_id)?;
+    Ok(default_mobile_data_directory()
+        .join(safe)
+        .join("dirt-mobile.db"))
+}
+
 
 #[cfg(test)]
 mod tests {

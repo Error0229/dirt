@@ -24,9 +24,13 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use dirt_core::auth::{AuthClient, StoredToken};
+use dirt_core::services::db_paths::{
+    migrate_solo_db_to_user, read_active_user, write_active_user,
+};
 use dirt_core::sync::session_client::SessionApiClient;
 
 use crate::bootstrap_config::{load_bootstrap_config, BootstrapConfig};
+use crate::config::default_mobile_data_directory;
 use crate::data::MobileNoteStore;
 use crate::services::auth_store::DefaultTokenStore;
 use crate::services::{spawn_sync_worker, SyncEvent, SyncWorkerHandle};
@@ -103,14 +107,54 @@ pub fn AppShell() -> Element {
         }
         init_started.set(true);
 
-        let opened = match MobileNoteStore::open_default().await {
-            Ok(s) => Arc::new(s),
-            Err(error) => {
-                tracing::error!("Failed to open mobile DB: {error}");
-                sync_status_w.set(SyncStatus::Error);
-                sync_issue_w.set(Some(format!("Failed to open local database: {error}")));
-                init_started.set(false);
-                return;
+        // Resolve which DB this launch should open (issue #234).
+        // Mirrors desktop's branching:
+        //   - Keyring populated AND state.json points to that user →
+        //     open the per-user DB.
+        //   - Keyring populated AND no state.json (or different user)
+        //     → first-signin migration + pointer write, then open the
+        //     per-user DB.
+        //   - Keyring empty AND state.json present → honor the pointer
+        //     (sign-out preserves DB allegiance).
+        //   - Keyring empty AND no state.json → legacy solo DB.
+        //
+        // `app_shell` is `#[cfg(target_os = "android")]` per
+        // `main.rs`, so the migration / store APIs we call here are
+        // always available on this build.
+        let opened = {
+            let deps_for_init = auth_deps_signal.read().clone();
+            let stored_token = deps_for_init.token_store.load().ok().flatten();
+            let data_dir = default_mobile_data_directory();
+            let active_pointer = read_active_user(&data_dir).await.ok().flatten();
+
+            let result = if let Some(token) = &stored_token {
+                let needs_update = active_pointer.as_deref() != Some(token.user_id.as_str());
+                if needs_update {
+                    if let Err(err) = migrate_solo_db_to_user(&data_dir, &token.user_id).await
+                    {
+                        tracing::error!("Mobile solo→user migration failed: {err}");
+                    }
+                    if let Err(err) = write_active_user(&data_dir, &token.user_id).await {
+                        tracing::error!("Could not write active-user pointer: {err}");
+                    }
+                }
+                MobileNoteStore::open_for_user(&token.user_id).await
+            } else {
+                match active_pointer {
+                    Some(uid) => MobileNoteStore::open_for_user(&uid).await,
+                    None => MobileNoteStore::open_solo().await,
+                }
+            };
+
+            match result {
+                Ok(s) => Arc::new(s),
+                Err(error) => {
+                    tracing::error!("Failed to open mobile DB: {error}");
+                    sync_status_w.set(SyncStatus::Error);
+                    sync_issue_w.set(Some(format!("Failed to open local database: {error}")));
+                    init_started.set(false);
+                    return;
+                }
             }
         };
 
