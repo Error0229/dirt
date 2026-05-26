@@ -19,13 +19,14 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use dirt_core::auth::{AuthError, StoredToken, TokenStoreError};
+use dirt_core::services::db_paths::{migrate_solo_db_to_user, write_active_user, DB_FILENAME};
 use dirt_core::sync::session_client::SessionApiClient;
 
 use super::row::SettingRow;
 use crate::app::spawn_session_worker;
 use crate::components::button::{Button, ButtonVariant};
 use crate::components::input::Input;
-use crate::services::SyncWorkerHandle;
+use crate::services::{DatabaseService, SyncWorkerHandle};
 use crate::state::{AppState, AuthDeps, SyncStatus};
 
 /// Discriminator for the inline status banner.
@@ -416,11 +417,90 @@ async fn apply_login_outcome(
             // never run a `sync_once` against the same DB concurrently.
             shutdown_existing_worker(state.sync_worker).await;
 
+            // Per-user DB swap (issue #234). If the just-authenticated
+            // user owns a different DB than the one currently in
+            // `db_service`, atomically:
+            //   1. Run the legacy-solo migration (no-op after the first
+            //      sign-in on this machine).
+            //   2. Rewrite `state.json` so subsequent launches open
+            //      the right DB.
+            //   3. Drop the current Arc and open the per-user DB.
+            // Same-user re-logins (refresh after expired session) skip
+            // the swap and just spawn a worker against the existing
+            // `db_service`.
+            let current_user = state
+                .db_service
+                .read()
+                .as_ref()
+                .map(|db| db.user_id().to_string());
+            let user_changed = current_user.as_deref() != Some(token.user_id.as_str());
+
+            let db_for_worker = if user_changed {
+                let data_dir = DatabaseService::data_dir();
+                // Migrate first, then write state.json. If the
+                // migration fails the pointer stays at the previous
+                // user so the next launch lands on a consistent DB.
+                if let Err(err) =
+                    migrate_solo_db_to_user(&data_dir, &token.user_id, DB_FILENAME).await
+                {
+                    state.sync_status.set(SyncStatus::Error);
+                    state
+                        .sync_issue
+                        .set(Some(format!("Could not migrate local data: {err}")));
+                    message.set(Some((
+                        MessageKind::Error,
+                        format!(
+                            "Sign-in succeeded but local data migration failed: {err}. \
+                             Re-run sign-in after resolving."
+                        ),
+                    )));
+                    return;
+                }
+                if let Err(err) = write_active_user(&data_dir, &token.user_id).await {
+                    state.sync_status.set(SyncStatus::Error);
+                    state
+                        .sync_issue
+                        .set(Some(format!("Could not persist active user: {err}")));
+                    message.set(Some((
+                        MessageKind::Error,
+                        format!("Sign-in succeeded but persistence failed: {err}"),
+                    )));
+                    return;
+                }
+
+                // Drop the previous DB Arc from the signal so callers
+                // re-reading pick up the new handle. Outstanding Arc
+                // clones (e.g. a mutation handler that captured one
+                // before this swap) continue to write to the old DB
+                // until they release — the worker is already shut
+                // down so there's no pushing into the old scope.
+                state.db_service.set(None);
+                match DatabaseService::open_for_user(&token.user_id).await {
+                    Ok(new_db) => {
+                        let new_db = Arc::new(new_db);
+                        state.db_service.set(Some(new_db.clone()));
+                        Some(new_db)
+                    }
+                    Err(err) => {
+                        state.sync_status.set(SyncStatus::Error);
+                        state
+                            .sync_issue
+                            .set(Some(format!("Could not open per-user DB: {err}")));
+                        message.set(Some((
+                            MessageKind::Error,
+                            format!("Sign-in succeeded but the new DB would not open: {err}"),
+                        )));
+                        return;
+                    }
+                }
+            } else {
+                state.db_service.read().clone()
+            };
+
             state.signed_in.set(Some(token));
             state.session_client.set(Some(session.clone()));
 
-            let db = state.db_service.read().clone();
-            if let Some(db) = db {
+            if let Some(db) = db_for_worker {
                 spawn_session_worker(
                     db,
                     session,

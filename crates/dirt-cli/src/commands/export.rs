@@ -3,15 +3,15 @@ use std::path::Path;
 use dirt_core::export::{render_notes_export, ExportFormat as CoreExportFormat};
 
 use crate::cli::ExportFormat;
-use crate::commands::common::list_all_notes;
+use crate::commands::common::{list_all_notes, DbScope};
 use crate::error::CliError;
 
 pub async fn run_export(
     format: ExportFormat,
     output_path: Option<&Path>,
-    db_path: &Path,
+    scope: &DbScope,
 ) -> Result<(), CliError> {
-    let notes = list_all_notes(db_path).await?;
+    let notes = list_all_notes(scope).await?;
     let core_format = match format {
         ExportFormat::Json => CoreExportFormat::Json,
         ExportFormat::Markdown => CoreExportFormat::Markdown,

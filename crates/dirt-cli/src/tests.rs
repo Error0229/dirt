@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -11,12 +11,23 @@ use crate::cli::{CompletionShell, ExportFormat};
 use crate::commands::common::{
     default_editor, format_relative_time, list_notes, normalize_content, normalize_note_identifier,
     normalize_search_query, note_preview, open_database, resolve_note_for_edit, search_notes,
+    DbScope,
 };
 use crate::commands::completions::run_completions;
 use crate::commands::delete::run_delete;
 use crate::commands::export::run_export;
 use crate::commands::sync::run_sync;
 use crate::error::CliError;
+
+/// Tests open the legacy single-DB layout with `SOLO_USER_ID` —
+/// the per-user routing only kicks in when `state.json` is
+/// present, which the test harness deliberately doesn't create.
+fn scope_for(path: &Path) -> DbScope {
+    DbScope {
+        path: path.to_path_buf(),
+        user_id: dirt_core::SOLO_USER_ID.to_string(),
+    }
+}
 
 #[test]
 fn normalize_content_trims_and_rejects_empty() {
@@ -47,7 +58,11 @@ fn format_relative_time_units() {
 
 #[test]
 fn note_preview_truncates_with_ellipsis() {
-    let note = dirt_core::Note::new("This is a very long sentence that should be shortened");
+    let note = dirt_core::Note::new_for_user(
+        "This is a very long sentence that should be shortened",
+        dirt_core::SOLO_USER_ID,
+    )
+    .unwrap();
     let preview = note_preview(&note, 20);
     assert_eq!(preview, "This is a very lo...");
 }
@@ -60,19 +75,26 @@ async fn list_notes_respects_limit_and_tag_filter() {
         let db = Database::open(&db_path).await.unwrap();
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        repo.create("First #work").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "First #work")
+            .await
+            .unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create("Second #personal").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Second #personal")
+            .await
+            .unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create("Third #work").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Third #work")
+            .await
+            .unwrap();
     }
 
-    let recent = list_notes(2, None, &db_path).await.unwrap();
+    let scope = scope_for(&db_path);
+    let recent = list_notes(2, None, &scope).await.unwrap();
     assert_eq!(recent.len(), 2);
     assert_eq!(recent[0].content, "Third #work");
     assert_eq!(recent[1].content, "Second #personal");
 
-    let work_only = list_notes(10, Some("work"), &db_path).await.unwrap();
+    let work_only = list_notes(10, Some("work"), &scope).await.unwrap();
     assert_eq!(work_only.len(), 2);
     assert!(work_only.iter().all(|note| note.content.contains("#work")));
 
@@ -87,14 +109,20 @@ async fn search_notes_finds_matches_with_limit() {
         let db = Database::open(&db_path).await.unwrap();
         let repo = LibSqlNoteRepository::new(db.connection());
 
-        repo.create("Milk and eggs").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Milk and eggs")
+            .await
+            .unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create("Milkshake recipe").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Milkshake recipe")
+            .await
+            .unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create("Unrelated note").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Unrelated note")
+            .await
+            .unwrap();
     }
 
-    let matches = search_notes("milk", 1, &db_path).await.unwrap();
+    let matches = search_notes("milk", 1, &scope_for(&db_path)).await.unwrap();
     assert_eq!(matches.len(), 1);
     assert!(matches[0].content.to_lowercase().contains("milk"));
 
@@ -151,7 +179,7 @@ async fn resolve_note_for_edit_supports_exact_and_prefix_id() {
     repo.create_with_note(&note_b).await.unwrap();
     drop(db);
 
-    let service = open_database(&db_path).await.unwrap();
+    let service = open_database(&scope_for(&db_path)).await.unwrap();
 
     let by_exact = resolve_note_for_edit("11111111-1111-7111-8111-111111111111", &service)
         .await
@@ -195,7 +223,7 @@ async fn resolve_note_for_edit_rejects_ambiguous_prefix() {
     repo.create_with_note(&note_b).await.unwrap();
     drop(db);
 
-    let service = open_database(&db_path).await.unwrap();
+    let service = open_database(&scope_for(&db_path)).await.unwrap();
 
     let error = resolve_note_for_edit("aaaaaaaa-aaaa-7aaa-8aaa", &service)
         .await
@@ -209,7 +237,7 @@ async fn resolve_note_for_edit_rejects_ambiguous_prefix() {
 #[tokio::test(flavor = "current_thread")]
 async fn resolve_note_for_edit_rejects_missing_note() {
     let db_path = unique_test_db_path();
-    let service = open_database(&db_path).await.unwrap();
+    let service = open_database(&scope_for(&db_path)).await.unwrap();
 
     let error = resolve_note_for_edit("does-not-exist", &service)
         .await
@@ -248,7 +276,7 @@ async fn run_delete_soft_deletes_note_by_exact_and_prefix_id() {
     repo.create_with_note(&note_b).await.unwrap();
     drop(db);
 
-    run_delete("bbbbbbbb-bbbb-7bbb-8bbb-2", &db_path)
+    run_delete("bbbbbbbb-bbbb-7bbb-8bbb-2", &scope_for(&db_path))
         .await
         .unwrap();
 
@@ -258,7 +286,7 @@ async fn run_delete_soft_deletes_note_by_exact_and_prefix_id() {
     assert!(repo.get(&note_a.id).await.unwrap().is_some());
     drop(db);
 
-    run_delete("bbbbbbbb-bbbb-7bbb-8bbb-111111111111", &db_path)
+    run_delete("bbbbbbbb-bbbb-7bbb-8bbb-111111111111", &scope_for(&db_path))
         .await
         .unwrap();
 
@@ -287,7 +315,7 @@ async fn run_sync_requires_sync_configuration() {
         std::env::set_var("DIRT_PROFILE", "this-profile-does-not-exist");
     }
 
-    let error = run_sync(&db_path).await.unwrap_err();
+    let error = run_sync(&scope_for(&db_path)).await.unwrap_err();
     // No api_base_url is `SyncNotConfigured`. The contract is that
     // `dirt sync` refuses to run rather than silently no-oping.
     assert!(
@@ -303,7 +331,7 @@ async fn run_sync_requires_sync_configuration() {
 
 #[test]
 fn note_to_export_item_sorts_tags() {
-    let note = Note::new("#zeta test #alpha #beta");
+    let note = Note::new_for_user("#zeta test #alpha #beta", dirt_core::SOLO_USER_ID).unwrap();
     let export = dirt_core::export::note_to_export_item(&note);
 
     assert_eq!(export.tags, vec!["alpha", "beta", "zeta"]);
@@ -336,7 +364,9 @@ async fn run_export_writes_json_file() {
     {
         let db = Database::open(&db_path).await.unwrap();
         let repo = LibSqlNoteRepository::new(db.connection());
-        repo.create("Export me #one").await.unwrap();
+        repo.create(dirt_core::SOLO_USER_ID, "Export me #one")
+            .await
+            .unwrap();
     }
 
     let output_path = std::env::temp_dir().join(format!(
@@ -346,7 +376,7 @@ async fn run_export_writes_json_file() {
             .map_or(0, |duration| duration.as_nanos())
     ));
 
-    run_export(ExportFormat::Json, Some(&output_path), &db_path)
+    run_export(ExportFormat::Json, Some(&output_path), &scope_for(&db_path))
         .await
         .unwrap();
 

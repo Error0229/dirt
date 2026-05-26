@@ -1,7 +1,6 @@
-use std::path::Path;
-
 use crate::commands::common::{
-    format_note_lines, normalize_search_query, note_to_list_item, search_notes, NoteListItem,
+    format_note_lines, normalize_search_query, note_to_list_item, search_notes, DbScope,
+    NoteListItem,
 };
 use crate::error::CliError;
 
@@ -9,10 +8,10 @@ pub async fn run_search(
     query: &str,
     limit: usize,
     as_json: bool,
-    db_path: &Path,
+    scope: &DbScope,
 ) -> Result<(), CliError> {
     let normalized_query = normalize_search_query(query)?;
-    let notes = search_notes(&normalized_query, limit, db_path).await?;
+    let notes = search_notes(&normalized_query, limit, scope).await?;
 
     if as_json {
         let json_items = notes

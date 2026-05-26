@@ -35,10 +35,22 @@ impl Deref for MobileNoteStore {
 }
 
 impl MobileNoteStore {
-    /// Open the default local mobile database path.
+    /// Open the per-user DB at `<data_dir>/<user_id>/dirt-mobile.db`.
     #[cfg(target_os = "android")]
-    pub async fn open_default() -> Result<Self> {
-        let db_path = default_db_path();
+    pub async fn open_for_user(user_id: &str) -> Result<Self> {
+        let db_path = user_db_path_for(user_id)?;
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let db = CoreDatabaseService::open_for_user(db_path, user_id).await?;
+        Ok(Self { db })
+    }
+
+    /// Open the legacy pre-signin solo mobile DB. Only reachable on a
+    /// brand-new install that has never signed in.
+    #[cfg(target_os = "android")]
+    pub async fn open_solo() -> Result<Self> {
+        let db_path = solo_db_path_mobile();
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -105,10 +117,29 @@ fn normalize_content(content: &str) -> Result<String> {
     Ok(normalized.to_string())
 }
 
-/// Build a mobile-friendly local DB path.
+/// Pre-signin legacy DB path used only on a brand-new install. After
+/// the first sign-in the migration moves this file under the user's
+/// directory and this location is never re-created. Delegates to
+/// `dirt_core::services::db_paths::solo_db_path` with the mobile
+/// filename so the migration helper finds the right file on disk.
 #[cfg(target_os = "android")]
-pub fn default_db_path() -> PathBuf {
-    default_mobile_data_directory().join("dirt-mobile.db")
+fn solo_db_path_mobile() -> PathBuf {
+    dirt_core::services::db_paths::solo_db_path(
+        &default_mobile_data_directory(),
+        dirt_core::services::db_paths::MOBILE_DB_FILENAME,
+    )
+}
+
+/// Per-user DB path for `user_id` under the mobile data directory.
+/// Delegates to the core helper so the layout is identical to
+/// desktop / CLI aside from the filename.
+#[cfg(target_os = "android")]
+fn user_db_path_for(user_id: &str) -> Result<PathBuf> {
+    dirt_core::services::db_paths::user_db_path(
+        &default_mobile_data_directory(),
+        user_id,
+        dirt_core::services::db_paths::MOBILE_DB_FILENAME,
+    )
 }
 
 #[cfg(test)]

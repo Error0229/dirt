@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn note_to_export_item_sorts_tags() {
-        let note = Note::new("#zeta test #alpha #beta");
+        let note = Note::new_for_user("#zeta test #alpha #beta", crate::SOLO_USER_ID).unwrap();
         let export = note_to_export_item(&note);
 
         assert_eq!(export.tags, vec!["alpha", "beta", "zeta"]);

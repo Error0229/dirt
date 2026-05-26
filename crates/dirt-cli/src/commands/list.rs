@@ -1,15 +1,15 @@
-use std::path::Path;
-
-use crate::commands::common::{format_note_lines, list_notes, note_to_list_item, NoteListItem};
+use crate::commands::common::{
+    format_note_lines, list_notes, note_to_list_item, DbScope, NoteListItem,
+};
 use crate::error::CliError;
 
 pub async fn run_list(
     limit: usize,
     tag: Option<&str>,
     as_json: bool,
-    db_path: &Path,
+    scope: &DbScope,
 ) -> Result<(), CliError> {
-    let notes = list_notes(limit, tag, db_path).await?;
+    let notes = list_notes(limit, tag, scope).await?;
 
     if as_json {
         let json_items = notes

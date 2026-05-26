@@ -38,8 +38,8 @@ use std::time::Duration;
 
 use dirt_core::sync::api_client::ApiClientError;
 use dirt_core::sync::engine::{SyncEngine, SyncEngineError};
+use dirt_core::sync::scope_guard::{check_scope, ScopeCheckError};
 use dirt_core::sync::session_client::{SessionApiClient, SessionRefreshError};
-use dirt_core::SOLO_USER_ID;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -251,10 +251,48 @@ async fn sync_once(
     events: &UnboundedSender<SyncEvent>,
 ) -> SyncOutcome {
     let _ = events.send(SyncEvent::Status(SyncStatus::Syncing));
+
+    // Pre-sync scope check (issue #234). The keyring is shared across
+    // CLI / desktop / mobile, so a peer client signing in as a
+    // different account would otherwise let the worker push under the
+    // wrong scope.
+    match check_scope(store.user_id(), session) {
+        Ok(()) => {}
+        Err(ScopeCheckError::Mismatch {
+            db_user,
+            session_user,
+        }) => {
+            tracing::warn!(
+                "Sync paused: DB belongs to {db_user} but session is for {session_user}"
+            );
+            let _ = events.send(SyncEvent::Status(SyncStatus::Error));
+            let _ = events.send(SyncEvent::Issue(Some(format!(
+                "This device opened the DB for {db_user} but the active session is {session_user}. \
+                 Reopen the app (or sign in again) to switch accounts safely."
+            ))));
+            return SyncOutcome::Permanent;
+        }
+        Err(ScopeCheckError::SessionVanished) => {
+            let _ = events.send(SyncEvent::Status(SyncStatus::Error));
+            let _ = events.send(SyncEvent::Issue(Some(
+                "The session was cleared from the keystore. Sign in again to resume sync.".into(),
+            )));
+            return SyncOutcome::Permanent;
+        }
+        Err(ScopeCheckError::Store(msg)) => {
+            tracing::warn!("Pre-sync keystore read failed: {msg}");
+            let _ = events.send(SyncEvent::Status(SyncStatus::Error));
+            let _ = events.send(SyncEvent::Issue(Some(format!(
+                "Could not read the session from the keystore: {msg}. Retrying shortly."
+            ))));
+            return SyncOutcome::Failed;
+        }
+    }
+
     let api = session.current();
     // `MobileNoteStore` derefs to the core `DatabaseService` the engine
     // expects, so rustc reborrows automatically.
-    let engine = SyncEngine::new(store, &api, SOLO_USER_ID);
+    let engine = SyncEngine::new(store, &api, store.user_id());
     match engine.run_once().await {
         Ok(report) => {
             tracing::info!(

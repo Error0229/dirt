@@ -5,11 +5,28 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
+use dirt_core::services::db_paths::{read_active_user, resolve_active_db, DB_FILENAME};
 use dirt_core::services::DatabaseService;
-use dirt_core::{Note, NoteId};
+use dirt_core::{Note, NoteId, SOLO_USER_ID};
 use serde::Serialize;
 
 use crate::error::CliError;
+
+/// Resolved DB target for one CLI invocation.
+///
+/// Every command opens its DB via [`open_database`] using one of
+/// these. The auth flow reaches `dirt_data_dir()` directly when it
+/// needs to update `state.json` or run the legacy-solo migration —
+/// the `DbScope` shape stays narrow because most commands only need
+/// the (path, `user_id`) pair.
+#[derive(Debug, Clone)]
+pub struct DbScope {
+    /// Absolute path to the `SQLite` file this command will open.
+    pub path: PathBuf,
+    /// Owner of the rows in that DB. New notes are stamped with this
+    /// id; the sync engine reads it via `DatabaseService::user_id()`.
+    pub user_id: String,
+}
 
 #[derive(Debug, Serialize)]
 pub struct NoteListItem {
@@ -25,9 +42,9 @@ pub struct NoteListItem {
 pub async fn list_notes(
     limit: usize,
     tag: Option<&str>,
-    db_path: &Path,
+    scope: &DbScope,
 ) -> Result<Vec<Note>, CliError> {
-    let db = open_database(db_path).await?;
+    let db = open_database(scope).await?;
     if let Some(tag_name) = tag {
         Ok(db.list_notes_by_tag(tag_name, limit, 0).await?)
     } else {
@@ -35,10 +52,10 @@ pub async fn list_notes(
     }
 }
 
-pub async fn list_all_notes(db_path: &Path) -> Result<Vec<Note>, CliError> {
+pub async fn list_all_notes(scope: &DbScope) -> Result<Vec<Note>, CliError> {
     const PAGE_SIZE: usize = 500;
 
-    let db = open_database(db_path).await?;
+    let db = open_database(scope).await?;
 
     let mut notes = Vec::new();
     let mut offset = 0usize;
@@ -60,9 +77,9 @@ pub async fn list_all_notes(db_path: &Path) -> Result<Vec<Note>, CliError> {
 pub async fn search_notes(
     query: &str,
     limit: usize,
-    db_path: &Path,
+    scope: &DbScope,
 ) -> Result<Vec<Note>, CliError> {
-    let db = open_database(db_path).await?;
+    let db = open_database(scope).await?;
     Ok(db.search_notes(query, limit).await?)
 }
 
@@ -315,22 +332,60 @@ pub fn create_temp_note_file_path() -> PathBuf {
     env::temp_dir().join(format!("dirt-note-{}-{now}.md", std::process::id()))
 }
 
-pub fn resolve_db_path(cli_db_path: Option<PathBuf>) -> PathBuf {
-    cli_db_path
-        .or_else(|| env::var_os("DIRT_DB_PATH").map(PathBuf::from))
-        .unwrap_or_else(default_db_path)
+/// Resolve which DB this CLI invocation should open and what `user_id`
+/// to stamp new notes with.
+///
+/// Resolution order (matches the active-user-pointer design in
+/// `docs/plans/2026-05-26-issue-234-per-user-db-partitioning.md`):
+///
+/// 1. **`--db-path` flag** or **`DIRT_DB_PATH` env var** → honor the
+///    path verbatim and look up `user_id` from `state.json` if it
+///    exists in the *default* `<os_data>/dirt` directory, else fall
+///    back to `SOLO_USER_ID`. `data_dir` is set to `None` so the
+///    auth flow won't write state into a test override.
+/// 2. **`state.json` at `<data_dir>/state.json`** → return
+///    `(<data_dir>/<user_id>/dirt.db, <user_id>)`.
+/// 3. **No state file** → legacy single-DB layout
+///    `(<data_dir>/dirt.db, SOLO_USER_ID)`. Only reachable on a
+///    machine that has never signed in.
+///
+/// Tests can override the dirt data dir via `DIRT_DATA_DIR`.
+pub async fn resolve_db_scope(cli_db_path: Option<PathBuf>) -> Result<DbScope, CliError> {
+    let default_data_dir = dirt_data_dir();
+    let explicit = cli_db_path.or_else(|| env::var_os("DIRT_DB_PATH").map(PathBuf::from));
+    if let Some(path) = explicit {
+        // Explicit override: respect the path but still pick up the
+        // active user_id (if any) so a one-off `--db-path` invocation
+        // doesn't silently stamp new notes with the wrong tenant.
+        let user_id = match read_active_user(&default_data_dir).await {
+            Ok(Some(uid)) => uid,
+            _ => SOLO_USER_ID.to_string(),
+        };
+        return Ok(DbScope { path, user_id });
+    }
+    let (path, user_id) = resolve_active_db(&default_data_dir, DB_FILENAME).await?;
+    Ok(DbScope { path, user_id })
 }
 
-pub fn default_db_path() -> PathBuf {
+/// Canonical `<os_data>/dirt` directory, with a `DIRT_DATA_DIR` env
+/// override for tests. Pub-in-crate so the auth command can write
+/// `state.json` against the same root.
+#[must_use]
+pub fn dirt_data_dir() -> PathBuf {
+    if let Some(override_dir) = env::var_os("DIRT_DATA_DIR") {
+        return PathBuf::from(override_dir);
+    }
     dirs::data_dir()
         .unwrap_or_else(|| panic!("Failed to resolve CLI data directory"))
         .join("dirt")
-        .join("dirt.db")
 }
 
-pub async fn open_database(path: &Path) -> Result<DatabaseService, CliError> {
-    if let Some(parent) = path.parent() {
+/// Open the DB referenced by `scope`. Wraps
+/// [`DatabaseService::open_for_user`] so callers don't have to
+/// re-thread the `user_id` argument at every call site.
+pub async fn open_database(scope: &DbScope) -> Result<DatabaseService, CliError> {
+    if let Some(parent) = scope.path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    Ok(DatabaseService::open_local_path(path.to_path_buf()).await?)
+    Ok(DatabaseService::open_for_user(scope.path.clone(), scope.user_id.clone()).await?)
 }

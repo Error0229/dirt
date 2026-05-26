@@ -223,7 +223,7 @@ mod tests {
     }
 
     /// The manual `Debug` impl exists for one reason: keep the
-    /// session_token out of log streams. Any future refactor that
+    /// `session_token` out of log streams. Any future refactor that
     /// goes back to `#[derive(Debug)]` would silently leak the token
     /// to `tracing::debug!`, `dbg!`, and panic chains.
     #[test]

@@ -14,7 +14,7 @@ fn tag_regex() -> &'static Regex {
 }
 use uuid::Uuid;
 
-use crate::SOLO_USER_ID;
+use crate::error::Error;
 
 /// A unique identifier for a note, using UUID v7 (time-sortable)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -65,7 +65,9 @@ impl FromStr for NoteId {
 pub struct Note {
     /// Unique identifier
     pub id: NoteId,
-    /// Owning tenant. Solo phase: always `SOLO_USER_ID`.
+    /// Owning tenant. Carries the active user's id since Phase 2.x — the
+    /// pre-Phase-2 `SOLO_USER_ID` only appears on a brand-new install
+    /// that has never signed in, or in tests.
     pub user_id: String,
     /// Plain text content
     pub content: String,
@@ -81,19 +83,33 @@ pub struct Note {
 }
 
 impl Note {
-    /// Create a new note with the given content, scoped to the solo-phase user.
-    #[must_use]
-    pub fn new(content: impl Into<String>) -> Self {
+    /// Create a new note scoped to `user_id`.
+    ///
+    /// Returns `Err(Error::InvalidInput)` for an empty `user_id` — that
+    /// would silently fall back to a sentinel and re-introduce the
+    /// cross-account leak this whole refactor is closing. Callers in
+    /// signed-out contexts pass [`SOLO_USER_ID`] explicitly so the
+    /// substitution is visible at the call site.
+    pub fn new_for_user(
+        content: impl Into<String>,
+        user_id: impl Into<String>,
+    ) -> crate::Result<Self> {
+        let user_id = user_id.into();
+        if user_id.is_empty() {
+            return Err(Error::InvalidInput(
+                "Note user_id must not be empty; pass SOLO_USER_ID for signed-out captures".into(),
+            ));
+        }
         let now = chrono::Utc::now().timestamp_millis();
-        Self {
+        Ok(Self {
             id: NoteId::new(),
-            user_id: SOLO_USER_ID.to_string(),
+            user_id,
             content: content.into(),
             created_at: now,
             updated_at: now,
             server_updated_at: None,
             deleted_at: None,
-        }
+        })
     }
 
     /// Extract #tags from content
@@ -154,6 +170,7 @@ pub fn extract_tags(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SOLO_USER_ID;
 
     #[test]
     fn test_note_id_unique() {
@@ -170,8 +187,8 @@ mod tests {
     }
 
     #[test]
-    fn test_note_new() {
-        let note = Note::new("Hello world");
+    fn test_note_new_for_user() {
+        let note = Note::new_for_user("Hello world", SOLO_USER_ID).unwrap();
         assert_eq!(note.content, "Hello world");
         assert_eq!(note.user_id, SOLO_USER_ID);
         assert!(!note.is_deleted());
@@ -182,8 +199,21 @@ mod tests {
     }
 
     #[test]
+    fn test_note_new_for_user_rejects_empty_user_id() {
+        let err = Note::new_for_user("hi", "").unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    #[test]
+    fn test_note_new_for_user_stamps_arbitrary_user_id() {
+        let uid = "01932aaa-0000-7000-8000-000000000001";
+        let note = Note::new_for_user("hi", uid).unwrap();
+        assert_eq!(note.user_id, uid);
+    }
+
+    #[test]
     fn test_is_deleted_reflects_tombstone() {
-        let mut note = Note::new("Delete me");
+        let mut note = Note::new_for_user("Delete me", SOLO_USER_ID).unwrap();
         assert!(!note.is_deleted());
         note.deleted_at = Some(1_700_000_000_000);
         assert!(note.is_deleted());
@@ -234,17 +264,17 @@ mod tests {
 
     #[test]
     fn test_title_preview() {
-        let note = Note::new("First line\nSecond line\nThird line");
+        let note = Note::new_for_user("First line\nSecond line\nThird line", SOLO_USER_ID).unwrap();
         assert_eq!(note.title_preview(50), "First line");
         assert_eq!(note.title_preview(5), "First");
     }
 
     #[test]
     fn test_is_empty() {
-        let empty = Note::new("   ");
+        let empty = Note::new_for_user("   ", SOLO_USER_ID).unwrap();
         assert!(empty.is_empty());
 
-        let not_empty = Note::new("Hello");
+        let not_empty = Note::new_for_user("Hello", SOLO_USER_ID).unwrap();
         assert!(!not_empty.is_empty());
     }
 }

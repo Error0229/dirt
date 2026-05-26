@@ -20,6 +20,8 @@
 //! `shutdown_existing_worker`) so a freshly spawned worker after
 //! re-login cannot race the previous one's in-flight `sync_once`.
 
+use std::sync::Arc;
+
 use dioxus::prelude::*;
 
 use crate::app_shell::spawn_session_worker;
@@ -411,12 +413,82 @@ async fn apply_login_outcome(
             // never run a `sync_once` against the same DB concurrently.
             shutdown_existing_worker(state.sync_worker).await;
 
+            // Per-user DB swap (issue #234). When the just-authenticated
+            // user differs from the DB currently in `state.store`,
+            // migrate, rewrite state.json, and reopen against the new
+            // user. Same-user logins skip the swap.
+            let current_user = state
+                .store
+                .read()
+                .as_ref()
+                .map(|store| store.user_id().to_string());
+            let user_changed = current_user.as_deref() != Some(token.user_id.as_str());
+
+            let store_for_worker = if user_changed {
+                let data_dir = crate::config::default_mobile_data_directory();
+                if let Err(err) = dirt_core::services::db_paths::migrate_solo_db_to_user(
+                    &data_dir,
+                    &token.user_id,
+                    dirt_core::services::db_paths::MOBILE_DB_FILENAME,
+                )
+                .await
+                {
+                    state.sync_status.set(SyncStatus::Error);
+                    state
+                        .sync_issue
+                        .set(Some(format!("Could not migrate local data: {err}")));
+                    message.set(Some((
+                        MessageKind::Error,
+                        format!(
+                            "Sign-in succeeded but local data migration failed: {err}. \
+                             Re-run sign-in after resolving."
+                        ),
+                    )));
+                    return;
+                }
+                if let Err(err) =
+                    dirt_core::services::db_paths::write_active_user(&data_dir, &token.user_id)
+                        .await
+                {
+                    state.sync_status.set(SyncStatus::Error);
+                    state
+                        .sync_issue
+                        .set(Some(format!("Could not persist active user: {err}")));
+                    message.set(Some((
+                        MessageKind::Error,
+                        format!("Sign-in succeeded but persistence failed: {err}"),
+                    )));
+                    return;
+                }
+
+                state.store.set(None);
+                match crate::data::MobileNoteStore::open_for_user(&token.user_id).await {
+                    Ok(new_store) => {
+                        let new_store = Arc::new(new_store);
+                        state.store.set(Some(new_store.clone()));
+                        Some(new_store)
+                    }
+                    Err(err) => {
+                        state.sync_status.set(SyncStatus::Error);
+                        state
+                            .sync_issue
+                            .set(Some(format!("Could not open per-user DB: {err}")));
+                        message.set(Some((
+                            MessageKind::Error,
+                            format!("Sign-in succeeded but the new DB would not open: {err}"),
+                        )));
+                        return;
+                    }
+                }
+            } else {
+                state.store.read().clone()
+            };
+
             state.signed_in.set(Some(token));
             state.session_client.set(Some(session.clone()));
 
-            let store = state.store.read().clone();
             let events_tx = state.events_tx.read().clone();
-            match (store, events_tx) {
+            match (store_for_worker, events_tx) {
                 (Some(store), Some(events_tx)) => {
                     spawn_session_worker(store, session, events_tx, state.sync_worker);
                 }
