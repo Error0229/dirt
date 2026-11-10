@@ -8,8 +8,9 @@
 //!
 //! Vercel exposes each `api/*.rs` file at its own route prefix, but we
 //! use a single `api/axum.rs` so the Router we already build in
-//! `dirt_api::build_router` handles all routing internally. Deployed by
-//! setting Vercel's Root Directory to `crates/dirt-api/`.
+//! `dirt_api::build_router` handles all routing internally. Deployed with
+//! Vercel's Root Directory set to the workspace root, where this file's
+//! `dirt-vercel` package and `vercel.json` live.
 
 use std::sync::Arc;
 

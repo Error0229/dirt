@@ -1,5 +1,11 @@
 # Dirt Security Baseline
 
+> **Archived on 2026-11-10.** This document describes Dirt before the
+> redesign and is no longer maintained. It was written for the shared-token
+> deployment that magic-code sessions replaced in May 2026. The current threat
+> model is in section 3.4 of
+> [plans/2026-11-10-system-redesign-design.md](../plans/2026-11-10-system-redesign-design.md).
+
 This document defines minimum security requirements for the
 `dirt-api` sync backend and its clients. Phase 1 is a single-user
 deployment using a shared bearer token; Phase 2's magic-link auth will

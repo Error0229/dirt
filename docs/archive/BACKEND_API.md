@@ -1,5 +1,12 @@
 # Backend API
 
+> **Archived on 2026-11-10.** This document describes Dirt before the
+> redesign and is no longer maintained. It documents the shared bearer token
+> (`DIRT_SERVER_TOKEN`), which magic-code sessions replaced in May 2026, so
+> the authentication it describes does not match the code. The current design
+> is in
+> [plans/2026-11-10-system-redesign-design.md](../plans/2026-11-10-system-redesign-design.md).
+
 The `dirt-api` service is a small axum HTTP server that mediates note
 sync between clients and a Turso (libSQL) database. It exposes three
 routes — one health probe and two authenticated note endpoints — and

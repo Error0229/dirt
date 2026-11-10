@@ -1,10 +1,12 @@
 # Dirt system redesign: design
 
 - **Date:** 2026-11-10
-- **Status:** design approved section by section in discussion; not yet implemented
-- **Supersedes:** the architecture sections of `docs/DESIGN.md`, and all of
-  `docs/BACKEND_API.md`, `docs/DEPLOY.md` and `docs/feature-parity.md`. Those
-  files are rewritten in build step 2.
+- **Status:** design approved section by section in discussion; amended the
+  same day with the 21 amendments (A1 to C6) recorded in the implementation
+  plan; not yet implemented
+- **Supersedes:** the original design document and the backend API, deploy,
+  security and feature-parity documents. All are now in `docs/archive/`. Each
+  replacement is written by the build step that defines its subject.
 
 ## 1. Purpose
 
@@ -150,14 +152,24 @@ and when they change.
 
 - Clerk proves who the person is. It does nothing else.
 - The app opens the system browser on Clerk's hosted sign-in page using OAuth
-  with PKCE. Desktop and CLI receive the result on a loopback address; Android
-  through an app link.
-- The client sends Clerk's token to our server once, when registering the
-  device. The server verifies it against Clerk's public keys, maps the Clerk
-  user to an account, and issues a device token.
+  with PKCE, requesting the `openid` scope so that Clerk returns an ID token.
+  Desktop and CLI receive the result on `127.0.0.1` with a port chosen at run
+  time. Android receives it through a custom URL scheme, or an app link if
+  Clerk refuses the scheme.
+- Before sign-in, the client asks our server for a single-use nonce and passes
+  it to Clerk. The ID token stays valid for a day, so without the nonce it
+  could be replayed.
+- The client sends Clerk's ID token to our server once, when registering the
+  device. The server verifies the signature against Clerk's public keys and
+  checks the issuer, the audience, the expiry and the nonce. It maps the Clerk
+  issuer and user ID to an account, and issues a device token.
 - After that, Clerk is out of the path. Sync uses only the device token.
 - No Clerk SDK is needed: a generic OAuth client and standard token
   verification are enough.
+- Clerk's free plan offers email code and up to three social logins. Passkeys
+  and multi-factor login need its paid plan in production.
+- A Clerk production instance needs a domain we own. Development instances are
+  capped at 100 users.
 
 ### 5.2 Devices and sessions
 
@@ -226,6 +238,16 @@ already runs the desktop app needs none of it either.
   change.
 - Creation time is read from the note's UUID v7, so it is not stored
   separately.
+- **Edits are applied as diffs.** The editors hand over the whole text. The
+  client compares it with the previous text and applies only the inserts and
+  deletes. Replacing the whole text would make two concurrent edits appear
+  twice after merging.
+- **Client ID.** Each install has one CRDT client ID, stored in the local
+  database so that it is lost together with the data it describes. Every edit
+  is read, changed and written back inside one write transaction, which keeps
+  the desktop app and CLI safe on a shared ID. If an incoming document holds
+  more of this device's own edits than the device does, the device takes a new
+  ID.
 
 ### 6.2 Deletion
 
@@ -233,9 +255,18 @@ A delete covers only what the deleting device had seen. If another device
 edited the note without knowing about the delete, the merge brings the note
 back with that edit.
 
-Proposed mechanism: the deletion marker stores the document state the deleter
-had observed. The note counts as deleted only while the document contains no
-edits beyond that state.
+Mechanism: each device that deletes a note writes its own marker, holding the
+document state that device had observed. The note counts as deleted while at
+least one marker covers every edit in the document. Restoring a note is an
+ordinary edit.
+
+Two details make this sound in yrs:
+
+- Every edit also writes the last-edited time. A text edit that only deletes
+  characters does not advance the state the marker is compared against, so on
+  its own it would go unseen.
+- There is one marker per device. With a single shared marker, two devices
+  deleting the same note could bring it back.
 
 "Delete always wins" would be simpler but can drop an edit, which breaks the
 promise of never losing a thought.
@@ -263,6 +294,14 @@ note and refuses a lower one, which stops the server replaying an old version.
   includes the current blob, which saves a round trip.
 - **Pull:** everything after the client's cursor, in pages ordered by change
   number.
+- **Size caps:** a push batch and a pull page are each capped at about 3 MB,
+  counted in bytes and not in notes. The hosting platform rejects bodies over
+  4.5 MB.
+- **Account epoch:** every response carries the account's epoch number. It
+  changes when the account is reset or the database is restored from a backup.
+  A client that sees a new epoch resets its cursor and its last-seen change
+  numbers, then merges everything again. Without it, clients would refuse the
+  lower change numbers that follow a restore and stay stuck.
 - **One sync cycle:** pull, decrypt and merge every incoming document into the
   local one, then push whatever is still changed locally. A refused push is
   merged and retried on the next cycle.
@@ -274,7 +313,9 @@ note and refuses a lower one, which stops the server replaying an old version.
 - One database per account, in a folder named after the account. This closes
   issue #234.
 - Per note: the CRDT document, the derived text, the last-seen change number,
-  and a "changed locally" flag.
+  and a local revision counter. A successful push marks the note as synced
+  only if the counter has not moved since the push began, so an edit made
+  during a push is never skipped.
 - Tags, the tag index, the full-text index, settings and the sync cursor, as
   today.
 - Notes created before sign-in live in a local store and are uploaded to the
@@ -311,12 +352,14 @@ It sends no email, merges nothing, and never inspects note content.
 | Notes | `POST /v1/notes/push`, `GET /v1/notes/pull` |
 | Account | `DELETE /v1/account` |
 
-A pending device may call only the enrolment and recovery endpoints.
+A pending device may call only the enrolment endpoints and
+`GET /v1/recovery`. It may not create or delete the recovery copy, so a stolen
+email inbox cannot destroy it.
 
 ### 7.3 Tables
 
-- **accounts:** ID, Clerk user ID, email, change counter, current key version,
-  usage totals for quotas.
+- **accounts:** ID, Clerk issuer and user ID, email, change counter, epoch,
+  current key version, usage totals for quotas.
 - **devices:** ID, account, name, public key, token hash, status, last seen.
 - **notes:** account, note ID, change number, key version, format version,
   ciphertext. Primary key on account and note ID; index on account and change
@@ -329,7 +372,9 @@ A pending device may call only the enrolment and recovery endpoints.
 - Postgres on Neon, through its pooled connection endpoint. Each serverless
   instance holds one or two connections.
 - `sqlx` as the driver. All SQL lives in one module and uses standard SQL only.
-- Migrations are SQL files applied at deploy time, not at server start.
+- Migrations are SQL files applied at deploy time, not at server start. They
+  run against Neon's direct endpoint, because the migration lock is not
+  supported through the pooled one.
 - **The counter:** taking the account's next change number locks that account's
   row until the write commits. Writes for one account are therefore ordered
   even with many server instances. The version check is one conditional update
@@ -340,13 +385,24 @@ A pending device may call only the enrolment and recovery endpoints.
 - **Idle wake-up:** on the free plan the database sleeps after five idle
   minutes and takes about half a second to wake. Acceptable for background
   sync.
+- **Compute allowance:** the free plan includes 100 compute-unit hours per
+  project per month, which is 400 hours at the smallest size. A month has
+  about 730 hours, and a client left open polls every 30 seconds and keeps the
+  database awake. The free plan therefore cannot carry continuous use; expect
+  a paid plan once there are real users. Trial 4 measures the real figure.
+- **Region:** a Neon project's region cannot be changed, and Neon has no Tokyo
+  region. The trial project uses AWS US West 2 (Oregon), which is co-located
+  with Vercel's `pdx1`. The function region must be pinned to match.
 - **Backups:** Neon's point-in-time restore, plus a scheduled dump stored
   outside Neon.
 
 ### 7.5 Hosting
 
 - The axum app stays on Vercel's serverless Rust runtime.
-- To confirm before launch: whether Vercel's free plan permits commercial use.
+- Vercel's free plan is for non-commercial use only. Charging for Dirt, or
+  showing ads, requires the paid plan. Donations are exempt.
+- Vercel caps request and response bodies at 4.5 MB, which is why section 6.4
+  caps batches and pages by bytes.
 
 ### 7.6 Limits
 
@@ -397,6 +453,9 @@ Rule: no HTTP, SQL or cryptography lives in a client crate.
 - **Sign-out:** the app syncs, then deletes that account's local database and
   keys. If unsynced notes cannot be uploaded, it warns and offers an export
   first.
+- **Sign-out guard:** signing out of the only approved device is blocked with
+  a warning unless a recovery phrase exists. It would otherwise destroy the
+  last copy of the account key.
 
 ### 8.4 Local database library
 
@@ -405,7 +464,10 @@ Rule: no HTTP, SQL or cryptography lives in a client crate.
   This addresses issues #210 and #218, where one locked connection blocks the
   interface during sync.
 - The desktop app and CLI open the same file from two processes, so a busy
-  timeout is set.
+  timeout is set and write transactions are opened as immediate.
+- `rusqlite` and `libsql` each compile their own SQLite and cannot be linked
+  into one program. A program's dependencies must contain one or the other,
+  which fixes how step 3 begins.
 
 ## 9. Errors, testing and visibility
 
@@ -507,18 +569,25 @@ integration uses a Postgres service container.
 
 1. **Trials for the unverified assumptions** in section 13. Any of them could
    change a decision, and finding out before building is cheap.
-2. **Clean-up:** delete the dead code, rewrite the stale docs, close the stale
-   issues.
-3. **New local core:** `dirt-proto`, CRDT notes and the per-account store.
-   Desktop and CLI work locally on it, without sync.
+2. **Clean-up:** delete dead code that nothing live depends on, archive the
+   stale docs, and close the stale issues. Code that a later step replaces is
+   deleted by that step, and each archived document is written fresh by the
+   step that defines its subject.
+3. **New local core:** first remove the server's dependency on `dirt-core`,
+   so that the server keeps building on `libsql`. Then build `dirt-proto`,
+   CRDT notes and the per-account store. Desktop and CLI work locally on it,
+   without sync.
 4. **Server:** the Postgres schema, device registry, push and pull with the
    version check, quotas and Clerk verification.
 5. **Encryption and sync for one device:** sign-in, the account key, the sync
-   cycle and the worker, with the multi-device simulation tests.
-6. **More devices:** approval, the recovery phrase, and the device list with
-   removal.
+   cycle and the worker, with the multi-device simulation tests. The tests
+   give a second device the account key directly, because real enrolment
+   arrives in step 6.
+6. **More devices:** approval, the recovery phrase, the device list with
+   removal, and account reset and deletion.
 7. **Clients reconnected:** desktop first, then CLI, then Android.
-8. **Hardening:** account deletion, backups and key rotation.
+8. **Hardening:** backups, key rotation, and the hosting and database plan
+   decisions.
 9. **Attachments.**
 
 The app has no sync between steps 3 and 5. That is acceptable only because
@@ -534,14 +603,17 @@ import into the new one.
 |---|---|---|
 | yrs documents stay small | Measure document size after about a thousand edits to a short note | Compare Loro and Automerge; revisit the sync shape for long notes |
 | `rusqlite` builds for Android | Build and run a query in the mobile shell | Keep `libsql` for the local file |
-| Clerk works from a native client | Sign in from desktop (loopback) and Android (app link) with a public PKCE client | Fall back to the existing email-code login |
+| Clerk works from a native client | Sign in from desktop (loopback) and Android (custom URL scheme) with a public PKCE client | Fall back to the existing email-code login |
 | Postgres works from the Vercel Rust runtime | Deploy a function that runs one transaction against Neon's pooled endpoint | Reconsider the host before the database |
 
-### To confirm before launch
+The trials need Rust 1.95 or newer. The development machine had 1.85 when this
+was written.
 
-- Clerk's current free allowance. Clerk's own explainer says 50,000 monthly
-  retained users since February 2026; third-party sites still quote 10,000.
-- Whether Vercel's free plan permits commercial use.
+### Confirmed since the design was approved
+
+- Clerk's free plan covers 50,000 monthly retained users per app, per its
+  pricing page.
+- Vercel's free plan forbids commercial use (section 7.5).
 
 ### Details not yet decided
 
@@ -549,7 +621,9 @@ import into the new one.
 - Purging deleted notes: when a deleted note's blob is finally removed, and
   what a device does if it still holds unseen edits for a purged note.
 - Whether to pad blobs so their sizes reveal less.
-- The Android mechanism for returning from the browser sign-in.
+- The flows a gap check found unspecified, such as what a pending device may
+  do and how key rotation treats offline devices. The implementation plan
+  lists them under the build step that must settle each one.
 
 ## 14. What is deleted, kept and rewritten
 
@@ -559,14 +633,17 @@ import into the new one.
 | Rewritten against this design | The rest of `dirt-core` and `dirt-api`; the local and server schemas |
 | Kept and reconnected | Desktop views and components, tray and hotkey; mobile views and the Android secure-storage code; CLI commands for add, list, search, edit, delete and export |
 
+Deletion happens in the step that replaces each piece, not all at once. Only
+the transcription and media code, which nothing depends on, goes in step 2.
+
 ## 15. Sources checked during the discussion
 
 - Convex: [A Map of Sync](https://stack.convex.dev/a-map-of-sync),
   [An Object Sync Engine for Local-first Apps](https://stack.convex.dev/object-sync-engine),
   [convex crate](https://docs.rs/crate/convex/latest)
 - Clerk: [Adding Clerk auth to your CLI](https://clerk.com/blog/adding-clerk-auth-to-your-cli),
-  [How Clerk implements OAuth](https://clerk.com/docs/oauth/how-clerk-implements-oauth),
-  [Clerk Pricing Explained](https://clerk.com/articles/clerk-pricing-explained)
+  [How Clerk implements OAuth](https://clerk.com/docs/guides/configure/auth-strategies/oauth/how-clerk-implements-oauth),
+  [pricing](https://clerk.com/pricing)
 - Turso: [joining Supabase announcement](https://x.com/tursodatabase/status/2106054567125532976),
   [coverage of plan continuity](https://www.beri.net/article/supabase-turso-acquisition-database-per-agent-sqlite-postgres-pricing-continuity)
 - Neon: [free plan limits](https://neon.com/faqs/free-plan-limits-and-quotas),
