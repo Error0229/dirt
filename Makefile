@@ -7,6 +7,13 @@ API_BIND ?= 0.0.0.0:8080
 MOBILE_DEV_PORT ?= 8081
 DESKTOP_DEV_PORT ?= 8082
 
+# JDK for Android builds only. dx passes its environment on to Gradle, so the
+# Android targets below run with JAVA_HOME set to this value. Every other
+# target, and the rest of the machine, keeps the global JAVA_HOME.
+# Set it once per machine through the DIRT_ANDROID_JAVA_HOME environment
+# variable, or per call: make run-mobile-android ANDROID_JAVA_HOME=/path/to/jdk
+ANDROID_JAVA_HOME ?= $(DIRT_ANDROID_JAVA_HOME)
+
 define HELP_TEXT
 Dirt workspace commands
 
@@ -42,6 +49,8 @@ Dirt workspace commands
   run-mobile-ios           Run mobile app on iOS (MOBILE_DEV_PORT=8081)
   run-mobile-web           Run mobile package on web (MOBILE_DEV_PORT=8081)
   build-mobile-android     Build Android release
+                           (Android targets use the JDK named by
+                           DIRT_ANDROID_JAVA_HOME when it is set)
 
   check-platforms          Check API + CLI + desktop + mobile
   test-platforms           Test core + API + CLI + desktop + mobile
@@ -143,6 +152,10 @@ check-mobile: ## Check dirt-mobile
 
 test-mobile: ## Test dirt-mobile
 	$(CARGO) test -p dirt-mobile
+
+ifneq ($(strip $(ANDROID_JAVA_HOME)),)
+run-mobile-android build-mobile-android: export JAVA_HOME := $(ANDROID_JAVA_HOME)
+endif
 
 run-mobile-android: ## Run mobile app on Android (Dioxus)
 	$(DX) serve --platform android --package dirt-mobile --port $(MOBILE_DEV_PORT)
