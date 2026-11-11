@@ -189,8 +189,30 @@ pub fn registration(id_token: &str, nonce: &str, name: &str) -> Value {
         nonce: nonce.to_owned(),
         name: name.to_owned(),
         public_key: vec![7; 32],
+        previous_token: None,
     })
     .unwrap()
+}
+
+/// Signs `user` in again on a device that held `previous_token` and has
+/// `public_key`.
+pub async fn sign_in_again(
+    app: &Router,
+    user: &str,
+    name: &str,
+    public_key: Vec<u8>,
+    previous_token: &str,
+) -> RegisterDeviceResponse {
+    let nonce = nonce(app).await;
+    let body = serde_json::to_value(RegisterDeviceRequest {
+        id_token: sign(&claims(user, &nonce)),
+        nonce,
+        name: name.to_owned(),
+        public_key,
+        previous_token: Some(previous_token.to_owned()),
+    })
+    .unwrap();
+    post(app, "/v1/devices", None, body).await.json()
 }
 
 /// Attempts to sign `user` in on a new device.

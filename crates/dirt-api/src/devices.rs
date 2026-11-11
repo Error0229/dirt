@@ -116,6 +116,39 @@ pub async fn register(
     .fetch_one(&mut *tx)
     .await?;
 
+    // A device whose token expired signs in again and stays the device it
+    // was. It proves that with the old token, which only it ever held, and
+    // its public key. A revoked device never matches, so it starts over as
+    // a new device that has to be approved.
+    if let Some(previous) = request.previous_token.as_deref() {
+        let token = new_token();
+        let known: Option<(Uuid, String)> = sqlx::query_as(
+            "UPDATE devices SET token_hash = $1, name = $2, last_seen = now() \
+              WHERE account_id = $3 AND token_hash = $4 AND public_key = $5 \
+                AND status <> 'revoked' \
+             RETURNING id, status",
+        )
+        .bind(hash_secret(&token))
+        .bind(name)
+        .bind(account_id)
+        .bind(hash_secret(previous))
+        .bind(&request.public_key)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some((device_id, status)) = known {
+            let status = status_from_text(&status)?;
+            tx.commit().await?;
+            return Ok(Json(RegisterDeviceResponse {
+                account_id,
+                device_id,
+                token,
+                status,
+                first_device: false,
+                epoch,
+            }));
+        }
+    }
+
     // Only one registration can flip the flag, however many arrive at once:
     // the update locks the account row, and the others then see it set. The
     // winner is the first device, which creates the account key.

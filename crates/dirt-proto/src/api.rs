@@ -168,6 +168,13 @@ pub struct RegisterDeviceRequest {
     /// The device's public key. The private half never leaves the device.
     #[serde(with = "base64_bytes")]
     pub public_key: Vec<u8>,
+    /// The token this device held before, when it signs in again because
+    /// that token expired. With the same public key it shows the server
+    /// that this is a device it already knows, which then keeps its ID and
+    /// its status. The public key alone would prove nothing: every approved
+    /// device of the account can read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

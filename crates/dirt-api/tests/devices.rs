@@ -9,7 +9,7 @@ mod common;
 use axum::http::{Method, StatusCode};
 use common::{
     app, call, claims, get, nonce, note_id, post, pull, push_one, register, registration, sign,
-    sign_with_another_key, try_register,
+    sign_in_again, sign_with_another_key, try_register,
 };
 use dirt_proto::api::{
     limits, DeviceInfo, DeviceList, DeviceStatus, PushOutcome, RegisterDeviceResponse,
@@ -411,6 +411,116 @@ async fn a_token_unused_for_too_long_stops_working(pool: PgPool) {
     let answer = get(&app, "/v1/devices/me", Some(&device.token)).await;
     assert_eq!(answer.status, StatusCode::UNAUTHORIZED);
     assert_eq!(answer.code(), "device_expired");
+}
+
+async fn expire_every_token(pool: &PgPool) {
+    sqlx::query("UPDATE devices SET last_seen = now() - make_interval(days => 91)")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_device_whose_token_expired_signs_in_again_as_itself(pool: PgPool) {
+    let app = app(pool.clone());
+    let laptop = register(&app, "alice", "Laptop").await;
+    let phone = register(&app, "alice", "Phone").await;
+    assert_eq!(phone.status, DeviceStatus::Pending);
+    expire_every_token(&pool).await;
+
+    let again = sign_in_again(&app, "alice", "Laptop", vec![7; 32], &laptop.token).await;
+
+    assert_eq!(again.device_id, laptop.device_id);
+    assert_eq!(again.account_id, laptop.account_id);
+    assert_eq!(again.status, DeviceStatus::Approved);
+    assert!(!again.first_device, "the account already has its key");
+    assert_ne!(again.token, laptop.token);
+    // The new token works and the old one is gone for good.
+    assert_eq!(
+        get(&app, "/v1/devices", Some(&again.token)).await.status,
+        StatusCode::OK
+    );
+    let old = get(&app, "/v1/devices/me", Some(&laptop.token)).await;
+    assert_eq!(old.code(), "unauthenticated");
+
+    // A device that was still waiting keeps waiting: signing in again is
+    // not a way round approval.
+    let again = sign_in_again(&app, "alice", "Phone", vec![7; 32], &phone.token).await;
+    assert_eq!(again.device_id, phone.device_id);
+    assert_eq!(again.status, DeviceStatus::Pending);
+
+    let (devices,): (i64,) = sqlx::query_as("SELECT count(*) FROM devices")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(devices, 2, "no device was added");
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn signing_in_again_needs_the_old_token_and_the_same_key(pool: PgPool) {
+    let app = app(pool.clone());
+    let laptop = register(&app, "alice", "Laptop").await;
+    let mallory = register(&app, "mallory", "Laptop").await;
+    expire_every_token(&pool).await;
+
+    // The public key is no secret, so it is not enough: someone who can
+    // sign in to the account but holds no device gets a new device that has
+    // to be approved, as on any first sign-in.
+    let with_key_only = register(&app, "alice", "Laptop").await;
+    assert_ne!(with_key_only.device_id, laptop.device_id);
+    assert_eq!(with_key_only.status, DeviceStatus::Pending);
+
+    // A made-up token, the right token with another key, and another
+    // account's token all get the same.
+    let cases = [
+        ("alice", vec![7; 32], "not-a-token".to_owned()),
+        ("alice", vec![8; 32], laptop.token.clone()),
+        ("alice", vec![7; 32], mallory.token.clone()),
+    ];
+    for (user, public_key, previous) in cases {
+        // Keep under the limit on waiting devices.
+        sqlx::query("DELETE FROM devices WHERE status = 'pending'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let answer = sign_in_again(&app, user, "Laptop", public_key, &previous).await;
+        assert_ne!(answer.device_id, laptop.device_id);
+        assert_ne!(answer.device_id, mallory.device_id);
+        assert_eq!(answer.status, DeviceStatus::Pending);
+    }
+
+    // Mallory's own token cannot move Alice's laptop either way round:
+    // signing in as Mallory with Alice's token resumes nothing of Alice's.
+    let answer = sign_in_again(&app, "mallory", "Laptop", vec![7; 32], &laptop.token).await;
+    assert_eq!(answer.account_id, mallory.account_id);
+    assert_ne!(answer.device_id, laptop.device_id);
+    assert_eq!(answer.status, DeviceStatus::Pending);
+
+    // And the laptop's old token still resumes the laptop afterwards.
+    let again = sign_in_again(&app, "alice", "Laptop", vec![7; 32], &laptop.token).await;
+    assert_eq!(again.device_id, laptop.device_id);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_revoked_device_signs_in_again_as_a_new_device(pool: PgPool) {
+    let app = app(pool.clone());
+    let laptop = register(&app, "alice", "Laptop").await;
+    let phone = register(&app, "alice", "Phone").await;
+    sqlx::query("UPDATE devices SET status = 'approved' WHERE id = $1")
+        .bind(phone.device_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let path = format!("/v1/devices/{}", phone.device_id);
+    let revoked = call(&app, Method::DELETE, &path, Some(&laptop.token), None).await;
+    assert_eq!(revoked.status, StatusCode::OK);
+
+    let again = sign_in_again(&app, "alice", "Phone", vec![7; 32], &phone.token).await;
+
+    assert_ne!(again.device_id, phone.device_id);
+    assert_eq!(again.status, DeviceStatus::Pending);
+    let old = get(&app, "/v1/devices/me", Some(&phone.token)).await;
+    assert_eq!(old.code(), "device_revoked");
 }
 
 // ---- The request limit ----

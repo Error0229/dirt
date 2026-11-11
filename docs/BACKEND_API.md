@@ -79,6 +79,14 @@ nonce. It then spends the nonce.
   `pending` until an approved device hands it the key.
 - An account may have three devices pending at a time.
 
+A device whose token expired signs in again with one more field,
+`"previous_token": "…"`, holding the token it had. If the account has a
+device with that token and that public key that has not been revoked, the
+answer carries the same `device_id` and `status`, a new `token`, and
+`first_device: false`; the old token stops working. Otherwise the request is
+treated as a first sign-in. The public key alone identifies nothing, since
+every approved device of the account can read it.
+
 ### `GET /v1/devices/me`
 
 The calling device's own entry. This is the only call a pending device may
