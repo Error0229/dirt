@@ -1,0 +1,21 @@
+== healthz (no database)
+statuses: {200: 100}
+prepared-statement errors: 0
+total: n=100 min=30 p50=41 p95=54 p99=64 max=66 ms
+database: n=0 min=NaN p50=NaN p95=NaN p99=NaN max=NaN ms
+deployments: {"dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv": 100}
+function instances: 1
+== pull (two queries)
+statuses: {200: 100}
+prepared-statement errors: 0
+total: n=100 min=33 p50=44 p95=59 p99=70 max=92 ms
+database: n=100 min=3 p50=3 p95=4 p99=7 max=8 ms
+deployments: {"dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv": 100}
+function instances: 1
+== push (one transaction)
+statuses: {200: 100}
+prepared-statement errors: 0
+total: n=100 min=38 p50=48 p95=61 p99=70 max=91 ms
+database: n=100 min=4 p50=4 p95=6 p99=7 max=7 ms
+deployments: {"dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv": 100}
+function instances: 1

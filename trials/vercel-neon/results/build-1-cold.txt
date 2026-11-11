@@ -1,0 +1,14 @@
+<claude-code-hint v="1" type="plugin" value="vercel@claude-plugins-official" />
+Vercel CLI 65.2.0 (Node.js 22.16.0)
+2026-11-11T06:58:29.769Z  Running build in Washington, D.C., USA (East) – iad1
+2026-11-11T06:58:29.769Z  Build machine configuration: 2 cores, 8 GB
+2026-11-11T06:58:29.783Z  Retrieving list of deployment files...
+2026-11-11T06:58:29.891Z  Previous build caches not available.
+2026-11-11T06:58:30.108Z  Downloading 13 deployment files...
+2026-11-11T06:58:30.717Z  Running "vercel build"
+2026-11-11T06:58:30.728Z  Vercel CLI 65.14.0
+2026-11-11T07:01:16.566Z  Build Completed in /vercel/output [3m]
+2026-11-11T07:01:16.602Z  Deploying outputs...
+2026-11-11T07:01:21.891Z  Deployment completed
+2026-11-11T07:01:21.893Z  Creating build cache...
+status	● Ready

@@ -1,0 +1,11 @@
+== 500 concurrent pushes to different notes
+wall: 2850 ms
+statuses: {200: 500}
+prepared-statement errors: 0
+total: n=500 min=51 p50=1810 p95=2754 p99=2846 max=2847 ms
+database: n=500 min=3 p50=552 p95=1746 p99=2022 max=2317 ms
+deployments: {"dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv": 500}
+function instances: 156
+accepted=500 distinct=500 range=Some(1)..=Some(500)
+pulled=500 strictly increasing=true
+-> PASS

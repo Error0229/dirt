@@ -1,0 +1,10 @@
+idle from 23:08:19
+first request after 7 idle minutes, at 23:15:19
+status=200 total=987 ms database=Some(738.96) ms deployment=Some("dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv") body={"change_counter":null,"database_started_at":1794381320.474951,"notes":[]}
+status=200 total=145 ms database=Some(6.22) ms deployment=Some("dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv") body={"change_counter":null,"database_started_at":1794381320.474951,"notes":[]}
+status=200 total=362 ms database=Some(8.21) ms deployment=Some("dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv") body={"change_counter":null,"database_started_at":1794381320.474951,"notes":[]}
+idle from 23:15:21
+first request after 7 idle minutes, at 23:22:21
+status=200 total=985 ms database=Some(697.56) ms deployment=Some("dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv") body={"change_counter":null,"database_started_at":1794381742.238687,"notes":[]}
+status=200 total=231 ms database=Some(8.05) ms deployment=Some("dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv") body={"change_counter":null,"database_started_at":1794381742.238687,"notes":[]}
+status=200 total=194 ms database=Some(7.98) ms deployment=Some("dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv") body={"change_counter":null,"database_started_at":1794381742.238687,"notes":[]}

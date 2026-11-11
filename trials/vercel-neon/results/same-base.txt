@@ -1,0 +1,19 @@
+== 50 concurrent pushes, same base: replace an existing note
+wall: 193 ms
+statuses: {200: 1, 409: 49}
+prepared-statement errors: 0
+total: n=50 min=47 p50=112 p95=188 p99=192 max=192 ms
+database: n=50 min=5 p50=59 p95=113 p99=119 max=119 ms
+deployments: {"dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv": 50}
+function instances: 44
+accepted=1 stale=49 -> PASS
+== 50 concurrent pushes, same base: create a new note
+wall: 195 ms
+statuses: {200: 1, 409: 49}
+prepared-statement errors: 0
+total: n=50 min=46 p50=157 p95=190 p99=194 max=194 ms
+database: n=50 min=4 p50=63 p95=126 p99=129 max=129 ms
+deployments: {"dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv": 50}
+function instances: 48
+accepted=1 stale=49 -> PASS
+final state: {"change_counter":3,"database_started_at":1794380251.415388,"notes":[{"note_id":"21559565-8ddb-40c5-8254-11938a1e09c1","change_number":2,"bytes":9},{"note_id":"71145ac4-4a8e-4c03-a65d-d8ffcb94652e","change_number":3,"bytes":9}]}

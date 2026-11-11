@@ -1,0 +1,10 @@
+request 0: deployment dpl_3pTvHRPXf5CejhBo8pKedjwV5FHZ
+request 46: deployment dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv
+== 200 sequential requests
+statuses: {200: 200}
+prepared-statement errors: 0
+total: n=200 min=36 p50=48 p95=118 p99=224 max=351 ms
+database: n=200 min=3 p50=4 p95=10 p99=60 max=87 ms
+deployments: {"dpl_3pTvHRPXf5CejhBo8pKedjwV5FHZ": 46, "dpl_E1Frev7yq2hrjhW81gqPRDJKwAkv": 154}
+function instances: 1
+account counter=Some(100), pushes sent=100
