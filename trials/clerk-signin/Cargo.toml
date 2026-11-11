@@ -1,0 +1,26 @@
+[package]
+name = "clerk-signin-trial"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Trial 3 of the Dirt redesign: Clerk sign-in from native clients"
+
+[dependencies]
+base64 = "0.22"
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
+rand = "0.9"
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "json", "form"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+url = "2"
+webbrowser = "1.2"
+
+[dev-dependencies]
+# Tests sign tokens with a key made on the spot, standing in for Clerk.
+rsa = "0.9"
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+# An empty workspace table keeps this crate out of the main Dirt workspace.
+[workspace]

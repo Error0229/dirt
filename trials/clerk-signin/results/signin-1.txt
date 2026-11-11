@@ -1,0 +1,11 @@
+issuer: https://ace-buck-9704.clerk.accounts.dev
+redirect: http://127.0.0.1:62700/callback
+open this address to sign in:
+https://ace-buck-9704.clerk.accounts.dev/oauth/authorize?<query removed>
+callback received: code of 48 characters, state matches
+token response: token_type=Some("bearer") expires_in=Some(86399) scope=Some("openid profile email offline_access") refresh_token=issued
+access token is opaque (36 characters)
+ID token header: Header { typ: Some("JWT"), alg: RS256, cty: None, jku: None, jwk: None, kid: Some("ins_3LvuUEOmtsIAqQJSuLZhvVNAw1V"), x5u: None, x5c: None, x5t: None, x5t_s256: None, crit: None, enc: None, zip: None, url: None, nonce: None, extras: Extras { inner: {"cat": String("cl_B7d4PD444AAA")} } }
+ID token verified. claims: {"iss":"https://ace-buck-9704.clerk.accounts.dev","sub":"user_3Lx8lz6sK33iGRerdI3R3nnXivs","exp":1794470947,"nonce":"GRldn4b5wbdNd5NeG5OjHrE0fM_LqI7nS8VKR--Xo_g","at_hash":"EpIKEwmNtOnj7bLPiDZLeQ","aud":["rzAdLbprY1LizqO9"],"auth_time":1794384538,"email":"dirt.trial+clerk_test@example.com","email_verified":true,"family_name":"User","given_name":"Trial","iat":1794384547,"jti":"d5629976-eca7-4b7a-8b6f-02ac4d07d381","name":"Trial User","rat":1794384508,"sid":"sess_3Lx8pEsYGF2pXwemrHrVH1Jjiac"}
+user ID: user_3Lx8lz6sK33iGRerdI3R3nnXivs
+userinfo: {"email":"dirt.trial+clerk_test@example.com","email_verified":true,"family_name":"User","given_name":"Trial","instance_id":"ins_3LvuUEOmtsIAqQJSuLZhvVNAw1V","name":"Trial User","object":"oauth_user_info","sub":"user_3Lx8lz6sK33iGRerdI3R3nnXivs","user_id":"user_3Lx8lz6sK33iGRerdI3R3nnXivs"}
