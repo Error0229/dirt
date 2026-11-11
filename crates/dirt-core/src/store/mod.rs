@@ -13,6 +13,7 @@ mod location;
 mod notes;
 mod schema;
 mod settings;
+mod sync_state;
 
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
@@ -22,6 +23,7 @@ use rusqlite::Connection;
 use tokio::sync::oneshot;
 
 pub use location::{store_path, StoreName};
+pub use sync_state::{NoteProblem, ProblemKind, SyncProgress, UnsentNote};
 
 use crate::models::{Note, NoteId, Settings};
 use crate::{Error, Result};
@@ -47,18 +49,29 @@ struct Inner {
     // `Option` so that `drop` can close the channels before joining.
     writer: Option<mpsc::Sender<Job>>,
     readers: Option<mpsc::Sender<Job>>,
+    /// The writer's thread first, then the readers'.
     threads: Vec<JoinHandle<()>>,
 }
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        // Closing the channels ends each thread's loop. Joining them means
-        // the file is closed by the time the last handle is gone, which
-        // matters to anything that then moves or deletes the file.
-        self.writer = None;
+        // Closing a channel ends its threads' loops. Joining them means the
+        // file is closed by the time the last handle is gone, which matters
+        // to anything that then moves, copies or deletes the file.
+        //
+        // The readers go first and the writer last. SQLite folds the
+        // write-ahead log into the database file when the last connection
+        // closes, but only a connection that may write can do it. Closing
+        // the writer last leaves one complete file and no log beside it.
         self.readers = None;
-        for thread in self.threads.drain(..) {
-            let _ = thread.join();
+        while self.threads.len() > 1 {
+            if let Some(reader) = self.threads.pop() {
+                let _ = reader.join();
+            }
+        }
+        self.writer = None;
+        if let Some(writer) = self.threads.pop() {
+            let _ = writer.join();
         }
     }
 }
@@ -311,6 +324,107 @@ impl Store {
             copied.push((snapshot.id, snapshot.revision));
         }
         Ok(copied)
+    }
+
+    // ---- Sync state ----
+
+    /// Notes changed here and not yet accepted by the server, positioned
+    /// after `after` (zero for the start), up to `max_notes` and for as
+    /// long as their documents fit in `max_bytes` together. Notes with a
+    /// sync problem are left out.
+    pub async fn unsent_notes(
+        &self,
+        after: i64,
+        max_notes: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<UnsentNote>> {
+        self.read(move |c| sync_state::unsent(c, after, max_notes, max_bytes))
+            .await
+    }
+
+    /// Forgets the server's version of a note, so that the next push
+    /// offers it as new.
+    pub async fn forget_note_server_version(&self, id: &NoteId) -> Result<()> {
+        let id = *id;
+        self.write(move |c| sync_state::forget_server_version(c, &id))
+            .await
+    }
+
+    /// How many notes are waiting to be pushed.
+    pub async fn unsent_count(&self) -> Result<usize> {
+        self.read(|c| sync_state::unsent_count(c)).await
+    }
+
+    /// Records that the server accepted `revision` of a note as change
+    /// number `change`. A note edited since then stays unsent.
+    pub async fn mark_note_pushed(&self, id: &NoteId, revision: i64, change: i64) -> Result<()> {
+        let id = *id;
+        self.write(move |c| sync_state::mark_pushed(c, &id, revision, change))
+            .await
+    }
+
+    /// Merges a document that came from the server as change number
+    /// `change`. The note does not become unsent by this. Returns the
+    /// note, or `None` if it is deleted.
+    ///
+    /// Refuses a change number lower than one already seen for the note
+    /// with [`Error::Replay`].
+    pub async fn apply_remote_note(
+        &self,
+        id: &NoteId,
+        document: Vec<u8>,
+        change: i64,
+    ) -> Result<Option<Note>> {
+        let id = *id;
+        self.write(move |c| sync_state::apply_remote(c, &id, &document, change))
+            .await
+    }
+
+    /// The last change number seen for a note, or `None` if the store has
+    /// never held it.
+    pub async fn note_server_change(&self, id: &NoteId) -> Result<Option<i64>> {
+        let id = *id;
+        self.read(move |c| sync_state::server_change(c, &id)).await
+    }
+
+    /// The pull cursor and the account epoch it belongs to.
+    pub async fn sync_progress(&self) -> Result<SyncProgress> {
+        self.read(|c| sync_state::progress(c)).await
+    }
+
+    pub async fn set_sync_cursor(&self, cursor: i64) -> Result<()> {
+        self.write(move |c| sync_state::set_cursor(c, cursor)).await
+    }
+
+    /// Starts over for a new account epoch: forgets the cursor and every
+    /// change number seen, and marks every note unsent.
+    pub async fn begin_epoch(&self, epoch: i32) -> Result<()> {
+        self.write(move |c| sync_state::begin_epoch(c, epoch)).await
+    }
+
+    /// Flags a note as not syncable, with the reason and what would end
+    /// the problem. A flagged note is not pushed.
+    pub async fn flag_note_problem(
+        &self,
+        id: &NoteId,
+        reason: String,
+        kind: ProblemKind,
+    ) -> Result<()> {
+        let id = *id;
+        self.write(move |c| sync_state::set_problem(c, &id, Some((&reason, kind))))
+            .await
+    }
+
+    /// Clears a note's sync problem, if it has one.
+    pub async fn clear_note_problem(&self, id: &NoteId) -> Result<()> {
+        let id = *id;
+        self.write(move |c| sync_state::set_problem(c, &id, None))
+            .await
+    }
+
+    /// The notes that could not be synced, and why.
+    pub async fn note_problems(&self) -> Result<Vec<NoteProblem>> {
+        self.read(|c| sync_state::problems(c)).await
     }
 
     // ---- Settings ----

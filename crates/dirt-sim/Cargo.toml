@@ -1,0 +1,38 @@
+[package]
+name = "dirt-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Simulation harness: real Dirt clients against the real server, in one process"
+publish = false
+
+# This crate exists for its tests. It is the one place allowed to depend on
+# both dirt-core and dirt-api: neither of those may depend on the other.
+
+[dependencies]
+dirt-api = { path = "../dirt-api" }
+dirt-core = { path = "../dirt-core", default-features = false }
+dirt-proto = { path = "../dirt-proto" }
+
+axum = "0.8"
+base64 = "0.22"
+http-body-util = "0.1"
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+rsa = "0.9"
+serde_json.workspace = true
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "postgres",
+    "migrate",
+    "macros",
+    "uuid",
+] }
+tempfile = "3"
+tokio.workspace = true
+tower = { version = "0.5", features = ["util"] }
+uuid.workspace = true
+
+[lints]
+workspace = true

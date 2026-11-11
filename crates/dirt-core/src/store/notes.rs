@@ -32,6 +32,32 @@ fn note_from_row(row: &Row<'_>) -> rusqlite::Result<Note> {
     })
 }
 
+/// Where a document being saved came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Origin {
+    /// An edit made on this device. It raises the note's revision, which
+    /// marks the note as unsent.
+    Local,
+    /// A document merged in from the server. The revision is left alone:
+    /// what the server already has does not need sending.
+    Remote,
+}
+
+/// A note's row number, document and last change number seen, or `None`
+/// if there is no such note.
+pub(super) fn load_for_update(
+    tx: &Transaction<'_>,
+    id: &NoteId,
+) -> Result<Option<(i64, Vec<u8>, i64)>> {
+    Ok(tx
+        .query_row(
+            "SELECT rowid, doc, server_change FROM notes WHERE id = ?1",
+            [id.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?)
+}
+
 /// A note's row number and document, or `None` if there is no such note.
 fn load(tx: &Transaction<'_>, id: &NoteId) -> Result<Option<(i64, Vec<u8>)>> {
     Ok(tx
@@ -45,11 +71,12 @@ fn load(tx: &Transaction<'_>, id: &NoteId) -> Result<Option<(i64, Vec<u8>)>> {
 
 /// Writes a document and everything derived from it. Returns the note, or
 /// `None` if the document says the note is deleted.
-fn save(
+pub(super) fn save(
     tx: &Transaction<'_>,
     id: &NoteId,
     doc: &NoteDoc,
     existing_row: Option<i64>,
+    origin: Origin,
 ) -> Result<Option<Note>> {
     let key = id.as_str();
     let text = doc.text();
@@ -63,22 +90,34 @@ fn save(
         .unwrap_or_default();
     let bytes = doc.encode();
 
+    let local = origin == Origin::Local;
     let row = if let Some(row) = existing_row {
         tx.execute(
             "UPDATE notes SET doc = ?1, text = ?2, edited_at = ?3, deleted = ?4, \
-                    revision = revision + 1 \
+                    revision = revision + ?6 \
               WHERE rowid = ?5",
-            params![bytes, text, edited_at, deleted, row],
+            params![bytes, text, edited_at, deleted, row, i64::from(local)],
         )?;
         row
     } else {
+        // A note that arrives from the server starts out as sent.
+        let pushed_revision = if local { None } else { Some(1) };
         tx.execute(
-            "INSERT INTO notes (id, doc, text, edited_at, deleted, revision) \
-             VALUES (?1, ?2, ?3, ?4, ?5, 1)",
-            params![key, bytes, text, edited_at, deleted],
+            "INSERT INTO notes (id, doc, text, edited_at, deleted, revision, pushed_revision) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)",
+            params![key, bytes, text, edited_at, deleted, pushed_revision],
         )?;
         tx.last_insert_rowid()
     };
+
+    if local {
+        // A problem such as "too large" may be cured by this very edit,
+        // so the note gets another try.
+        tx.execute(
+            "DELETE FROM sync_problems WHERE note_id = ?1 AND retry_after_edit = 1",
+            [&key],
+        )?;
+    }
 
     // The search index and the tags hold live notes only.
     tx.execute("DELETE FROM notes_fts WHERE rowid = ?1", [row])?;
@@ -125,7 +164,7 @@ pub(super) fn create(
         // creation as an edit to give the note an edit time.
         doc.restore(now_ms);
     }
-    let note = save(&tx, &id, &doc, None)?.ok_or_else(|| not_found(&id))?;
+    let note = save(&tx, &id, &doc, None, Origin::Local)?.ok_or_else(|| not_found(&id))?;
     tx.commit()?;
     Ok(note)
 }
@@ -147,7 +186,7 @@ pub(super) fn update(
         drop(tx);
         return get(connection, id)?.ok_or_else(|| not_found(id));
     }
-    let note = save(&tx, id, &doc, Some(row))?.ok_or_else(|| not_found(id))?;
+    let note = save(&tx, id, &doc, Some(row), Origin::Local)?.ok_or_else(|| not_found(id))?;
     tx.commit()?;
     Ok(note)
 }
@@ -160,7 +199,7 @@ pub(super) fn delete(connection: &mut Connection, id: &NoteId) -> Result<()> {
         return Ok(());
     }
     doc.delete();
-    save(&tx, id, &doc, Some(row))?;
+    save(&tx, id, &doc, Some(row), Origin::Local)?;
     tx.commit()?;
     Ok(())
 }
@@ -174,7 +213,7 @@ pub(super) fn restore(connection: &mut Connection, id: &NoteId, now_ms: i64) -> 
         return get(connection, id)?.ok_or_else(|| not_found(id));
     }
     doc.restore(now_ms);
-    let note = save(&tx, id, &doc, Some(row))?.ok_or_else(|| not_found(id))?;
+    let note = save(&tx, id, &doc, Some(row), Origin::Local)?.ok_or_else(|| not_found(id))?;
     tx.commit()?;
     Ok(note)
 }
@@ -195,7 +234,7 @@ pub(super) fn merge_document(
     let note = match load(&tx, id)? {
         None => {
             let doc = NoteDoc::from_bytes(me, incoming)?;
-            save(&tx, id, &doc, None)?
+            save(&tx, id, &doc, None, Origin::Local)?
         }
         Some((row, mine)) => {
             let doc = NoteDoc::from_bytes(me, &mine)?;
@@ -205,7 +244,7 @@ pub(super) fn merge_document(
                 drop(tx);
                 return get(connection, id);
             }
-            save(&tx, id, &doc, Some(row))?
+            save(&tx, id, &doc, Some(row), Origin::Local)?
         }
     };
     tx.commit()?;

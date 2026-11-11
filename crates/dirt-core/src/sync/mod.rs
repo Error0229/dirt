@@ -7,4 +7,5 @@
 //! protocol. The sign-in flows still use these clients.
 
 pub mod api_client;
+pub mod engine;
 pub mod session_client;

@@ -722,12 +722,21 @@ erDiagram
     version.
   - Expired versus revoked tokens. Default: an expired device signs in again
     as the same device with no new approval; a revoked one needs approval.
+    Settled: the device proves itself with its expired token and its public
+    key, not the public key alone.
   - Who syncs when desktop and CLI share a machine. Default: the CLI syncs
     after each write unless the desktop holds a lock; the desktop watches the
     database for CLI writes.
   - The sign-out guard (amendment B8).
 - **Exit:** the simulation and tampering tests pass; the desktop signs in and
   syncs with one device; #211 and #216 are closed.
+
+**Progress (2026-11-11):** built in two parts, planned in
+`docs/plans/2026-11-11-step-5-encryption-and-sync-plan.md`. Part 5a is done:
+the crypto module, the store's sync state, the server client, the sync cycle
+and the simulation harness (`crates/dirt-sim`), with the simulation and
+tampering tests passing. Part 5b, sign-in and the clients, is next. No client
+syncs yet.
 
 ### Step 6: More devices
 
@@ -765,7 +774,9 @@ erDiagram
 - **Deliverables:**
   - The session states and approval prompt in each interface.
   - The sync status view, with a manual sync button and the time of the last
-    sync, in every client (amendment D1).
+    sync, in every client (amendment D1). It lists the notes that could not
+    be synced with the reason for each, and says what releases a held note:
+    an edit on a device that can still read it.
   - Sync on return to the app: window focus on desktop, resume on Android.
   - CLI commands for sign-in, devices and verbose sync.
   - Deletion of `config_profiles.rs` and the old `auth_cmd.rs`.

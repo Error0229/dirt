@@ -20,6 +20,17 @@ pub enum Error {
     #[error(transparent)]
     Document(#[from] crate::notes::DocError),
 
+    /// The server sent a version of a note older than one already seen
+    #[error("the server sent change {got} of note {note} after change {seen}")]
+    Replay {
+        /// The note concerned
+        note: String,
+        /// The highest change number already seen for it
+        seen: i64,
+        /// The lower change number that arrived
+        got: i64,
+    },
+
     /// The store's threads have stopped, so nothing more can be asked of it
     #[error("The note store is closed")]
     StoreClosed,
