@@ -1,69 +1,61 @@
-//! Local development server entry point.
+//! `dirt-api`: run the server locally, or apply the database schema.
 //!
-//! Reads `.env.server` when built in debug mode, constructs the same
-//! `AppState` / `Router` the Vercel adapter uses, and serves on the
-//! configured bind address.
+//! ```text
+//! dirt-api            # serve on DIRT_API_BIND_ADDR (default 0.0.0.0:8080)
+//! dirt-api migrate    # apply migrations to MIGRATE_DATABASE_URL
+//! ```
 //!
-//! Note: we build the tokio runtime manually on an 8 MiB stack instead of
-//! using `#[tokio::main]`. libsql + axum startup on Windows routinely
-//! overflows the default 1 MiB main-thread stack (see the same workaround
-//! in `dirt-core::services::database`).
+//! Both read `.env.server` from the working directory if it is there.
+//!
+//! Migrations are a separate command on purpose. They run once at deploy
+//! time against the database's direct endpoint: the migration lock is held
+//! for a whole session, which a pooled endpoint does not provide. The server
+//! itself never changes the schema.
 
-use std::sync::Arc;
+use std::error::Error;
 
-use dirt_api::{build_router, AppConfig, AppState, EmailSender, TursoRepo};
+use dirt_api::{build_router, AppState, Config, MIGRATOR};
+use sqlx::postgres::PgPoolOptions;
 
-const STACK_SIZE: usize = 8 * 1024 * 1024;
+type AnyError = Box<dyn Error + Send + Sync>;
 
-#[cfg(debug_assertions)]
-fn load_dev_dotenv() {
-    let server_env = std::path::Path::new(".env.server");
-    if server_env.exists() {
-        let _ = dotenvy::from_path(server_env);
-    }
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    #[cfg(debug_assertions)]
-    load_dev_dotenv();
-
+#[tokio::main]
+async fn main() -> Result<(), AnyError> {
+    let _ = dotenvy::from_filename(".env.server");
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("dirt_api=info".parse()?),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "dirt_api=info,tower_http=info".into()),
         )
         .init();
 
-    std::thread::Builder::new()
-        .stack_size(STACK_SIZE)
-        .name("dirt-api-runtime".into())
-        .spawn(run_server)?
-        .join()
-        .map_err(|_| "server thread panicked")?
+    match std::env::args().nth(1).as_deref() {
+        None | Some("serve") => serve().await,
+        Some("migrate") => migrate().await,
+        Some(other) => Err(format!("unknown command {other:?}; use `serve` or `migrate`").into()),
+    }
 }
 
-fn run_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(STACK_SIZE)
-        .build()?;
+async fn serve() -> Result<(), AnyError> {
+    let config = Config::from_env()?;
+    let address = config.bind_addr;
+    let app = build_router(AppState::from_config(config)?);
+    let listener = tokio::net::TcpListener::bind(address).await?;
+    tracing::info!("dirt-api listening on {address}");
+    axum::serve(listener, app).await?;
+    Ok(())
+}
 
-    runtime.block_on(async {
-        let config = Arc::new(AppConfig::from_env()?);
-        tracing::info!("Starting dirt-api with config: {:?}", config);
-
-        let repo = Arc::new(
-            TursoRepo::connect(&config.turso_database_url, &config.turso_auth_token).await?,
-        );
-        let email = Arc::new(EmailSender::from_env()?);
-        let state = AppState::new(config.clone(), repo, email);
-
-        let bind_addr = config.bind_addr.clone();
-        let router = build_router(state);
-
-        let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-        tracing::info!("dirt-api listening on {}", bind_addr);
-        axum::serve(listener, router).await?;
-        Ok(())
-    })
+async fn migrate() -> Result<(), AnyError> {
+    let url = std::env::var("MIGRATE_DATABASE_URL")
+        .map_err(|_| "MIGRATE_DATABASE_URL is not set; use the database's direct endpoint")?;
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await?;
+    MIGRATOR.run(&pool).await?;
+    for migration in MIGRATOR.iter() {
+        tracing::info!("applied: {} {}", migration.version, migration.description);
+    }
+    Ok(())
 }

@@ -1,44 +1,30 @@
 //! Vercel serverless entry point.
 //!
-//! Reads environment variables from the Vercel project (set via
-//! `vercel env add` or the dashboard), builds the same `AppState` /
-//! `Router` the local dev binary uses, and wraps it with
-//! `vercel_runtime::axum::VercelLayer` so Vercel can drive it as a
-//! Function.
+//! Reads the same environment variables as `dirt-api serve` (set on the
+//! Vercel project), builds the same router, and wraps it with
+//! `vercel_runtime::axum::VercelLayer` so Vercel can drive it as a function.
 //!
-//! Vercel exposes each `api/*.rs` file at its own route prefix, but we
-//! use a single `api/axum.rs` so the Router we already build in
-//! `dirt_api::build_router` handles all routing internally. Deployed with
-//! Vercel's Root Directory set to the workspace root, where this file's
-//! `dirt-vercel` package and `vercel.json` live.
+//! One function holds the whole router; `vercel.json` rewrites every path to
+//! it. Vercel's Root Directory for the project is the workspace root.
+//!
+//! The pool and the signing keys are built here, before `run`, so that warm
+//! invocations of one instance share them. Neither connects until first use.
 
-use std::sync::Arc;
-
-use dirt_api::{build_router, AppConfig, AppState, EmailSender, TursoRepo};
+use dirt_api::{build_router, AppState, Config};
 use tower::ServiceBuilder;
 use vercel_runtime::axum::VercelLayer;
 use vercel_runtime::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let config = Arc::new(
-        AppConfig::from_env().map_err(|e| Error::from(format!("failed to load config: {e}")))?,
-    );
-    let repo = Arc::new(
-        TursoRepo::connect(&config.turso_database_url, &config.turso_auth_token)
-            .await
-            .map_err(|e| Error::from(format!("failed to connect to Turso: {e}")))?,
-    );
-    let email = Arc::new(
-        EmailSender::from_env()
-            .map_err(|e| Error::from(format!("failed to load email config: {e}")))?,
-    );
-    let state = AppState::new(config, repo, email);
-    let router = build_router(state);
+    let config =
+        Config::from_env().map_err(|e| Error::from(format!("failed to load config: {e}")))?;
+    let state = AppState::from_config(config)
+        .map_err(|e| Error::from(format!("failed to build the server state: {e}")))?;
 
     let app = ServiceBuilder::new()
         .layer(VercelLayer::new())
-        .service(router);
+        .service(build_router(state));
 
     vercel_runtime::run(app).await
 }

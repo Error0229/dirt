@@ -7,6 +7,7 @@ repository.workspace = true
 description = "Types shared by the Dirt server and its clients"
 
 [dependencies]
+base64 = "0.22"
 serde.workspace = true
 uuid.workspace = true
 

@@ -8,16 +8,18 @@ The project is also a system design case study. Multi-user accounts, three clien
 
 ## Status: redesign in progress
 
-`main` is partway through an approved redesign: steps 1 to 3 of 9 are done. The clients run on the new local core, sync is off until step 5, and the server is still the old one. Read both documents before changing architecture, sync, login or storage:
+`main` is partway through an approved redesign: steps 1 to 4 of 9 are done. The clients run on the new local core and the new server is built, but no client talks to it yet: sync is off until step 5. Read both documents before changing architecture, sync, login or storage:
 
 - `docs/plans/2026-11-10-system-redesign-design.md` - requirements, decisions and the target design
 - `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md` - build order, trials and clean-up
 
 Rules while the redesign is under way:
 
-- Do not extend code the design lists for deletion (section 14): what is left of `dirt-core/src/sync/` (the old HTTP clients), the login client in `dirt-core/src/auth/`, and the server's `routes_auth.rs`, `email.rs`, `rate_limit.rs` and `turso.rs`.
+- Do not extend code the design lists for deletion (section 14): what is left of `dirt-core/src/sync/` (the old HTTP clients) and the old login client in `dirt-core/src/auth/`. Step 5 replaces both.
 - No SQL, HTTP or cryptography in a client crate. They belong in `dirt-core`.
-- `rusqlite` (clients) and `libsql` (the old server) each compile their own SQLite and must never be linked into one program. `dirt-api` must not depend on `dirt-core`.
+- `dirt-api` must not depend on `dirt-core`. The two share only `dirt-proto`.
+- `rusqlite` is held at 0.39 by `sqlx` 0.9: see the comment in the root `Cargo.toml` before raising either.
+- The server's SQL is written with `sqlx::query` and `sqlx::query_as` on string literals, never the compile-time `query!` macros, so building needs no database.
 - Anything planned for later belongs in the design document now, with its place in the build order.
 - When a document goes out of date, archive it under `docs/archive/` with a banner; do not leave it in place.
 
@@ -30,11 +32,11 @@ What the code on `main` uses today:
 - **Notes**: one `yrs` CRDT document per note (`dirt-core::notes`)
 - **Local database**: SQLite through `rusqlite` with the bundled build, FTS5 for full-text search (`dirt-core::store`)
 - **Server**: `dirt-api`, axum on Vercel's serverless Rust runtime
-- **Server database**: Turso
-- **Login**: email magic codes sent through Resend; session token in the OS keychain
+- **Server database**: Postgres 18 through `sqlx`; Neon in production, Docker locally
+- **Login**: the server accepts a Clerk ID token and issues a device token. The clients still hold the old email-code sign-in until step 5
 - **Sync**: none at present. The old engine was removed with the old local database
 
-What the redesign still moves to: Postgres on Neon, Clerk for login, event-driven sync of encrypted documents, and end-to-end encryption. See the design's decision table.
+What the redesign still moves to: Clerk sign-in in the clients, event-driven sync of encrypted documents, and end-to-end encryption. See the design's decision table.
 
 ## Project Structure
 
@@ -43,7 +45,7 @@ api/axum.rs        # Vercel serverless entry point (root package `dirt-vercel`)
 crates/
 ├── dirt-proto/    # Types shared by the server and the clients
 ├── dirt-core/     # Notes as CRDT documents, the local store, export, old login client
-├── dirt-api/      # The old axum server: login and note endpoints (replaced in step 4)
+├── dirt-api/      # The server: device registry and encrypted note blobs on Postgres
 ├── dirt-desktop/  # Dioxus desktop application
 ├── dirt-mobile/   # Dioxus Android application
 └── dirt-cli/      # Command-line interface (`dirt`)

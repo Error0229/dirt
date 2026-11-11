@@ -1,9 +1,10 @@
 //! Types shared by the Dirt server and its clients.
 //!
 //! This crate holds what both sides must agree on and nothing else: no HTTP,
-//! no SQL and no cryptography. The request, response and error types of the
-//! redesigned protocol arrive with the server in step 4; until then the crate
-//! holds only the note identifier.
+//! no SQL and no cryptography. [`NoteId`] identifies a note; [`api`] holds
+//! the requests, responses, error codes and limits of the protocol.
+
+pub mod api;
 
 use std::fmt;
 use std::str::FromStr;
@@ -23,6 +24,18 @@ impl NoteId {
     #[must_use]
     pub fn new() -> Self {
         Self(Uuid::now_v7())
+    }
+
+    /// Wraps a UUID read from storage or from the wire.
+    #[must_use]
+    pub const fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+
+    /// The identifier as a UUID, for storage that has a UUID type.
+    #[must_use]
+    pub const fn as_uuid(&self) -> Uuid {
+        self.0
     }
 
     /// The identifier as text, in the usual hyphenated form.

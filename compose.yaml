@@ -1,0 +1,18 @@
+# Postgres for the server's tests and for running `dirt-api` locally.
+# Version 18 matches the Neon project.
+#
+#   docker compose up -d
+#   export DATABASE_URL=postgres://postgres:dirt@127.0.0.1:55432/postgres
+#   cargo test -p dirt-api
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: dirt
+    ports:
+      - "127.0.0.1:55432:5432"
+    # Each test creates and drops its own database, so durability is not
+    # needed and many connections are.
+    command: ["postgres", "-c", "fsync=off", "-c", "max_connections=300"]
+    tmpfs:
+      - /var/lib/postgresql

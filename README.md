@@ -12,11 +12,10 @@ A redesign is in progress, and `main` is partway through it.
 - **Build order:**
   [docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md](docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md)
 
-**Where it stands: step 3 of 9.** The desktop app, the CLI and the Android app
-run on the new local core. **Sync is off.** Notes stay on the device they were
-written on until the new server and protocol arrive in steps 4 and 5. The
-server in this repository is still the old one, and no client syncs notes with
-it.
+**Where it stands: step 4 of 9.** The desktop app, the CLI and the Android app
+run on the new local core, and the new server is built. **Sync is off:** no
+client talks to the new server yet. Notes stay on the device they were
+written on until step 5 connects the two.
 
 ## Workspace layout
 
@@ -27,7 +26,7 @@ it.
 | `dirt-desktop` | Dioxus desktop app. |
 | `dirt-mobile` | Dioxus Android app. |
 | `dirt-cli` | `dirt add`, `dirt list`, `dirt search`, `dirt export` and more. |
-| `dirt-api` | The old axum HTTP server, backed by Turso: email-code login under `/v1/auth/*` and the old note endpoints. Step 4 replaces it. |
+| `dirt-api` | The server, on axum and Postgres: it checks a Clerk sign-in, keeps the device registry, and stores encrypted note blobs it cannot read. See [docs/BACKEND_API.md](docs/BACKEND_API.md). |
 | `dirt-vercel` | Workspace-root package that hosts the Vercel serverless entry point at `api/axum.rs`. |
 
 ## Quick start
@@ -55,25 +54,22 @@ version is not read and not changed.
 cargo run -p dirt-desktop
 ```
 
-Settings → Account still signs in to the old server when `DIRT_API_BASE_URL`
-was set at build time. Signing in does not sync anything at this step.
+Settings → Account still holds the old email-code sign-in. It works only
+against a deployment of the old server, and signing in does not sync
+anything. Step 5 replaces it with sign-in through Clerk.
 
 ### Run the API server
 
 ```bash
-cp .env.server.example .env.server
-# Fill in TURSO_DATABASE_URL and TURSO_AUTH_TOKEN.
-cargo run -p dirt-api
-# Listens on 0.0.0.0:8080 by default.
+docker compose up -d                 # Postgres 18 for local work
+cp .env.server.example .env.server   # then set CLERK_ISSUER and CLERK_CLIENT_ID
+cargo run -p dirt-api -- migrate     # create the tables
+cargo run -p dirt-api                # listens on 0.0.0.0:8080
 ```
 
-`RESEND_API_KEY` and `RESEND_FROM_ADDRESS` are optional and must be set
-together. Without them the server does not send email; it writes each login
-code to its debug log instead. `.env.server.example` documents every variable.
-
-The deploy guide and API reference for this version are archived and partly
-out of date; see [docs/archive/](docs/archive/). New ones are written when the
-server is rebuilt.
+`.env.server.example` documents every variable.
+[docs/BACKEND_API.md](docs/BACKEND_API.md) describes the protocol and
+[docs/DEPLOY.md](docs/DEPLOY.md) how to deploy to Vercel and Neon.
 
 ## How the current code works
 
@@ -100,15 +96,17 @@ server is rebuilt.
   CLI only when it next reloads its list, for example on restart. If the CLI
   changes a note that is open in the desktop editor, the desktop app's next
   save replaces that change.
-- **Signing in does nothing for notes yet.** The account screen still talks to
-  the old server. Per-account stores are opened by the new sign-in in step 5
-  (issue #234).
-- **The old server's rate limits are unreliable.** They live in process
-  memory, which serverless instances do not share. Step 4 replaces them.
+- **Signing in does nothing for notes yet.** The account screens still hold
+  the old email-code sign-in, which this repository's server no longer
+  answers. Step 5 replaces it and opens a store per account (issue #234).
+- **The server cannot yet approve a second device.** The first device of an
+  account is approved at once; later ones wait for step 6.
 
 ## Testing
 
 ```bash
+docker compose up -d   # the server's tests need Postgres
+export DATABASE_URL=postgres://postgres:dirt@127.0.0.1:55432/postgres
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 bash .github/scripts/security-guard.sh   # secret-leak guardrails

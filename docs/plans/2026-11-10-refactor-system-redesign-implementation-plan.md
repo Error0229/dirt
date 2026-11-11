@@ -605,6 +605,12 @@ into an account are built and tested. #210 and #218 are closed.
 
 ### Step 4: Server
 
+**Result (2026-11-11): built, with the preview deployment still to do.**
+Detailed plan, decisions and what differed:
+`docs/plans/2026-11-11-step-4-server-plan.md`. Enrolment, recovery, and
+account reset and deletion are left to step 6, where the exchange they carry
+is designed.
+
 - **Deliverables:**
   - The Postgres schema, with migrations run against the direct endpoint.
   - The device registry and its status rules.

@@ -84,15 +84,60 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      # The server's integration tests need Postgres, which only the Linux
+      # job below provides. Its unit tests need nothing and run everywhere.
       - name: Run tests
         if: runner.os != 'Windows'
-        run: cargo test --all --verbose
+        run: |
+          cargo test --workspace --exclude dirt-api --verbose
+          cargo test -p dirt-api --lib --verbose
 
       - name: Run tests (Windows serialized)
         if: runner.os == 'Windows'
         run: |
           $env:RUST_TEST_THREADS = "1"
-          cargo test --all --verbose
+          cargo test --workspace --exclude dirt-api --verbose
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p dirt-api --lib --verbose
+
+  server-test:
+    name: Server tests (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      # Version 18 matches the Neon project.
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: dirt
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # Each test creates its own throwaway database on this server.
+      DATABASE_URL: postgres://postgres:dirt@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-server-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-server-
+
+      - name: Run the server's tests
+        run: cargo test -p dirt-api --verbose
 
   clippy:
     name: Clippy
