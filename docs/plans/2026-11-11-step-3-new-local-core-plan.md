@@ -82,7 +82,7 @@ Where the work differed from this plan:
 - **The Android app's clippy run was already failing** for the Android target
   before this step, in code CI only checked and never linted. It passes now.
 - **The Android binary links with plain cargo,** so the CI job builds it.
-- **Tests:** 323 pass and none is ignored. The eight CLI tests that were
+- **Tests:** 326 pass and none is ignored. The eight CLI tests that were
   ignored on Windows because of `libsql` now run.
 
 ## Work, in three pull requests

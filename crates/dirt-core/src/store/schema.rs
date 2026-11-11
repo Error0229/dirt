@@ -100,12 +100,16 @@ pub(super) fn write_transaction(connection: &mut Connection) -> Result<Transacti
     Ok(connection.transaction_with_behavior(TransactionBehavior::Immediate)?)
 }
 
-/// Creates the tables unless another process already has, and gives this
-/// install its CRDT client ID.
+/// Creates the tables unless another process already has, gives this install
+/// its CRDT client ID, and returns the database's own identifier.
+///
+/// The identifier is made once and kept in the file. Two connections hold
+/// the same database exactly when they read the same identifier, whatever
+/// path each was opened through.
 ///
 /// The version is read inside the write transaction, so two processes that
 /// start together cannot both run the set-up.
-pub(super) fn set_up(connection: &mut Connection) -> Result<()> {
+pub(super) fn set_up(connection: &mut Connection) -> Result<String> {
     let tx = write_transaction(connection)?;
     let version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version > SCHEMA_VERSION {
@@ -121,8 +125,23 @@ pub(super) fn set_up(connection: &mut Connection) -> Result<()> {
     if read_client_id(&tx)?.is_none() {
         write_client_id(&tx, new_client_id())?;
     }
+    let existing: Option<String> = tx
+        .query_row("SELECT value FROM meta WHERE key = 'store_id'", [], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    let store_id = if let Some(id) = existing {
+        id
+    } else {
+        let id = uuid::Uuid::now_v7().to_string();
+        tx.execute(
+            "INSERT INTO meta (key, value) VALUES ('store_id', ?1)",
+            [&id],
+        )?;
+        id
+    };
     tx.commit()?;
-    Ok(())
+    Ok(store_id)
 }
 
 /// The CRDT client ID every edit made through this file is written under.

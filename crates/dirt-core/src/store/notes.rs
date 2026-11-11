@@ -212,33 +212,63 @@ pub(super) fn merge_document(
     Ok(note)
 }
 
-/// Every note's document, deleted notes included.
-pub(super) fn documents(connection: &Connection) -> Result<Vec<(NoteId, Vec<u8>)>> {
-    let mut statement = connection.prepare("SELECT id, doc FROM notes ORDER BY rowid")?;
+/// One note's document as it stood at one revision.
+pub(super) struct Snapshot {
+    pub(super) id: NoteId,
+    pub(super) document: Vec<u8>,
+    pub(super) revision: i64,
+}
+
+/// Every note's document with the revision it was read at, deleted notes
+/// included.
+pub(super) fn snapshots(connection: &Connection) -> Result<Vec<Snapshot>> {
+    let mut statement = connection.prepare("SELECT id, doc, revision FROM notes ORDER BY rowid")?;
     let rows = statement.query_map([], |row| {
         let id: String = row.get(0)?;
-        let doc: Vec<u8> = row.get(1)?;
-        Ok((id, doc))
+        let document: Vec<u8> = row.get(1)?;
+        let revision: i64 = row.get(2)?;
+        Ok((id, document, revision))
     })?;
-    let mut documents = Vec::new();
+    let mut snapshots = Vec::new();
     for row in rows {
-        let (id, doc) = row?;
+        let (id, document, revision) = row?;
         let id = id
             .parse()
             .map_err(|_| Error::Database(format!("the store holds an invalid note ID: {id}")))?;
-        documents.push((id, doc));
+        snapshots.push(Snapshot {
+            id,
+            document,
+            revision,
+        });
     }
-    Ok(documents)
+    Ok(snapshots)
 }
 
-/// Removes every note, with its tags and search entries.
-pub(super) fn remove_all(connection: &mut Connection) -> Result<()> {
+/// Removes each listed note, with its tags and search entry, but only if it
+/// is still at the listed revision. A note changed since then stays.
+/// Returns how many were removed.
+pub(super) fn remove_at_revisions(
+    connection: &mut Connection,
+    notes: &[(NoteId, i64)],
+) -> Result<usize> {
     let tx = write_transaction(connection)?;
-    tx.execute("DELETE FROM notes_fts", [])?;
-    tx.execute("DELETE FROM note_tags", [])?;
-    tx.execute("DELETE FROM notes", [])?;
+    let mut removed = 0;
+    for (id, revision) in notes {
+        let row: Option<i64> = tx
+            .query_row(
+                "SELECT rowid FROM notes WHERE id = ?1 AND revision = ?2",
+                params![id.as_str(), revision],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(row) = row else { continue };
+        tx.execute("DELETE FROM notes_fts WHERE rowid = ?1", [row])?;
+        // The note's tag rows go with it, through the foreign key.
+        tx.execute("DELETE FROM notes WHERE rowid = ?1", [row])?;
+        removed += 1;
+    }
     tx.commit()?;
-    Ok(())
+    Ok(removed)
 }
 
 pub(super) fn get(connection: &Connection, id: &NoteId) -> Result<Option<Note>> {

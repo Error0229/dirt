@@ -40,6 +40,10 @@ pub struct Store {
 
 struct Inner {
     path: PathBuf,
+    /// The database's own identifier, read from the file. Two stores hold
+    /// the same database exactly when these are equal, however each was
+    /// opened.
+    store_id: String,
     // `Option` so that `drop` can close the channels before joining.
     writer: Option<mpsc::Sender<Job>>,
     readers: Option<mpsc::Sender<Job>>,
@@ -80,7 +84,7 @@ impl Store {
             std::fs::create_dir_all(folder)?;
         }
         let mut write_connection = schema::open_connection(&path)?;
-        schema::set_up(&mut write_connection)?;
+        let store_id = schema::set_up(&mut write_connection)?;
         // Open every connection before starting any thread, so that a
         // failure here leaves nothing running.
         let read_connections = (0..READERS)
@@ -116,6 +120,7 @@ impl Store {
         Ok(Self {
             inner: Arc::new(Inner {
                 path,
+                store_id,
                 writer: Some(writer),
                 readers: Some(readers),
                 threads,
@@ -240,7 +245,11 @@ impl Store {
 
     /// Every note's CRDT document, deleted notes included.
     pub async fn note_documents(&self) -> Result<Vec<(NoteId, Vec<u8>)>> {
-        self.read(|c| notes::documents(c)).await
+        let snapshots = self.read(|c| notes::snapshots(c)).await?;
+        Ok(snapshots
+            .into_iter()
+            .map(|snapshot| (snapshot.id, snapshot.document))
+            .collect())
     }
 
     /// Merges another copy of a note into this store, creating the note if
@@ -265,26 +274,43 @@ impl Store {
         self.read(move |c| notes::revision(c, &id)).await
     }
 
-    /// Moves every note of this store into `target`, merging with any copy
-    /// already there, and returns how many were moved.
+    /// Moves the notes of this store into `target`, merging each with any
+    /// copy already there, and returns how many were moved.
     ///
     /// This is how notes written before sign-in reach the account's store.
-    /// The notes are merged into the target first and removed from here
-    /// afterwards, so a failure in between loses nothing and the move can
-    /// simply be run again.
+    ///
+    /// Nothing is lost if the move is interrupted or if this store is
+    /// written to while it runs. Each note is merged into the target first,
+    /// and is then removed from here only if it has not changed since it was
+    /// read. A note that was created or edited in the meantime stays here,
+    /// so call this again until it returns zero if other writers may be
+    /// active. Merging the same note twice is harmless.
     pub async fn move_notes_into(&self, target: &Self) -> Result<usize> {
-        if self.inner.path == target.inner.path {
+        // Compared by the identifier kept inside each file, not by path: one
+        // file can be reached through several paths, and moving a database
+        // into itself would remove every note in it.
+        if self.inner.store_id == target.inner.store_id {
             return Err(Error::InvalidInput(
                 "a store cannot be moved into itself".to_owned(),
             ));
         }
-        let documents = self.note_documents().await?;
-        let moved = documents.len();
-        for (id, document) in documents {
-            target.merge_note_document(&id, document).await?;
+        let copied = self.copy_notes_into(target).await?;
+        self.write(move |c| notes::remove_at_revisions(c, &copied))
+            .await
+    }
+
+    /// Merges every note of this store into `target` and returns each note's
+    /// ID with the revision that was copied.
+    async fn copy_notes_into(&self, target: &Self) -> Result<Vec<(NoteId, i64)>> {
+        let snapshots = self.read(|c| notes::snapshots(c)).await?;
+        let mut copied = Vec::with_capacity(snapshots.len());
+        for snapshot in snapshots {
+            target
+                .merge_note_document(&snapshot.id, snapshot.document)
+                .await?;
+            copied.push((snapshot.id, snapshot.revision));
         }
-        self.write(notes::remove_all).await?;
-        Ok(moved)
+        Ok(copied)
     }
 
     // ---- Settings ----
@@ -304,4 +330,86 @@ fn spawn(name: &str, body: impl FnOnce() + Send + 'static) -> Result<JoinHandle<
     Ok(std::thread::Builder::new()
         .name(name.to_owned())
         .spawn(body)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pair() -> (tempfile::TempDir, Store, Store) {
+        let folder = tempfile::tempdir().unwrap();
+        let source = Store::open(folder.path().join("source.db")).unwrap();
+        let target = Store::open(folder.path().join("target.db")).unwrap();
+        (folder, source, target)
+    }
+
+    /// The window the move must survive: another writer changes the source
+    /// after its notes were copied and before they are removed.
+    #[tokio::test]
+    async fn notes_written_during_a_move_stay_in_the_source() {
+        let (_folder, source, target) = pair();
+        let untouched = source.create_note("untouched").await.unwrap();
+        let edited = source.create_note("before the move").await.unwrap();
+
+        let copied = source.copy_notes_into(&target).await.unwrap();
+        // Between the copy and the removal: an edit and a new note.
+        source
+            .update_note(&edited.id, "edited during the move")
+            .await
+            .unwrap();
+        let late = source.create_note("created during the move").await.unwrap();
+        let removed = source
+            .write(move |c| notes::remove_at_revisions(c, &copied))
+            .await
+            .unwrap();
+
+        assert_eq!(removed, 1, "only the untouched note was safe to remove");
+        assert_eq!(source.get_note(&untouched.id).await.unwrap(), None);
+        assert_eq!(
+            source.get_note(&edited.id).await.unwrap().unwrap().content,
+            "edited during the move"
+        );
+        assert!(source.get_note(&late.id).await.unwrap().is_some());
+        assert_eq!(source.search_notes("untouched", 10).await.unwrap().len(), 0);
+        assert_eq!(source.search_notes("during", 10).await.unwrap().len(), 2);
+
+        // A second pass moves what the first had to leave.
+        assert_eq!(source.move_notes_into(&target).await.unwrap(), 2);
+        assert!(source.note_documents().await.unwrap().is_empty());
+        assert_eq!(
+            target.get_note(&edited.id).await.unwrap().unwrap().content,
+            "edited during the move"
+        );
+        assert!(target.get_note(&late.id).await.unwrap().is_some());
+        assert_eq!(target.list_notes(10, 0).await.unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn one_database_reached_by_two_paths_is_not_moved_into_itself() {
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::create_dir(folder.path().join("sub")).unwrap();
+        let direct = folder.path().join("notes.db");
+        let roundabout = folder.path().join("sub").join("..").join("notes.db");
+        let first = Store::open(&direct).unwrap();
+        let second = Store::open(&roundabout).unwrap();
+        assert_ne!(first.path(), second.path(), "the test needs two spellings");
+        first.create_note("only copy").await.unwrap();
+
+        let error = first.move_notes_into(&second).await.unwrap_err();
+
+        assert!(matches!(error, Error::InvalidInput(_)), "{error}");
+        assert_eq!(first.list_notes(10, 0).await.unwrap().len(), 1);
+        assert_eq!(second.list_notes(10, 0).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn two_databases_have_different_identifiers_and_reopening_keeps_one() {
+        let (folder, source, target) = pair();
+        assert_ne!(source.inner.store_id, target.inner.store_id);
+
+        let before = source.inner.store_id.clone();
+        drop(source);
+        let reopened = Store::open(folder.path().join("source.db")).unwrap();
+        assert_eq!(reopened.inner.store_id, before);
+    }
 }
