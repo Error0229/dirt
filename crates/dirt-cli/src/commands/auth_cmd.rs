@@ -60,11 +60,11 @@ pub async fn run_auth(command: AuthCommands) -> Result<(), CliError> {
         AuthCommands::Login => {
             let base_url = require_api_base_url()?;
             let client = build_auth_client(&base_url)?;
-            let store = build_keyring_store()?;
+            let store = build_keyring_store();
             login_flow(&client, &store, stdin_read_line).await
         }
         AuthCommands::Logout => {
-            let store = build_keyring_store()?;
+            let store = build_keyring_store();
             // Defer building the AuthClient (and the
             // `require_api_base_url` failure path) until we know the
             // store actually has a token to revoke. A user on a fresh
@@ -104,7 +104,7 @@ pub async fn status_line() -> Result<String, CliError> {
         );
     };
 
-    let store: Arc<dyn TokenStore> = Arc::new(build_keyring_store()?);
+    let store: Arc<dyn TokenStore> = Arc::new(build_keyring_store());
 
     // Load once to extract the email for the diagnostic line. The
     // SessionApiClient::from_store call below performs its own
@@ -380,12 +380,12 @@ fn build_auth_client(base_url: &str) -> Result<AuthClient, CliError> {
 }
 
 #[cfg(not(target_os = "android"))]
-fn build_keyring_store() -> Result<KeyringTokenStore, CliError> {
+fn build_keyring_store() -> KeyringTokenStore {
     // Account discriminator is fixed at `KEYRING_ACCOUNT` so a login
     // from any client (CLI / desktop / mobile) lands in the same slot.
     // See the `KEYRING_ACCOUNT` doc-comment for why this isn't keyed
     // off the CLI profile.
-    Ok(KeyringTokenStore::new(KEYRING_SERVICE, KEYRING_ACCOUNT))
+    KeyringTokenStore::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
 }
 
 fn resolve_api_base_url() -> Result<Option<String>, CliError> {
