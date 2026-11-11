@@ -6,6 +6,10 @@ date: 2026-02-04
 
 # Phase 0 & 1: Foundation + Desktop MVP
 
+> **Archived on 2026-11-10.** This is the original February 2026 plan for
+> phases 0 and 1, kept as a record. It was completed long ago and does not
+> describe current work.
+
 ## Overview
 
 This plan covers the complete implementation of Dirt's foundation (Phase 0) and desktop MVP (Phase 1), including project scaffolding, core data layer, Dioxus desktop app, and all MVP features. Special emphasis on **excellent linting and formatting configuration** from day one.

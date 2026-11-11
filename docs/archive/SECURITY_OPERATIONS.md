@@ -1,5 +1,11 @@
 # Dirt Security Operations
 
+> **Archived on 2026-11-10.** This document describes Dirt before the
+> redesign and is no longer maintained. It was written for the shared-token
+> deployment that magic-code sessions replaced in May 2026. New security
+> documents are written with device enrolment (step 6 of the
+> [implementation plan](../plans/2026-11-10-refactor-system-redesign-implementation-plan.md)).
+
 Operational controls for `dirt-api` secret handling and incident
 response. Pairs with [docs/SECURITY_BASELINE.md](./SECURITY_BASELINE.md).
 

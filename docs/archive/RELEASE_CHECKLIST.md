@@ -1,5 +1,9 @@
 # Release Checklist
 
+> **Archived on 2026-11-10.** This checklist is no longer valid. It requires
+> the Managed Mode E2E workflow, whose test filters match no test that still
+> exists, and a `MANUAL_QA_MANAGED_MODE.md` that is not in the repository.
+
 Last updated: 2026-02-11
 
 Use this checklist before merging into any `release/*` branch.

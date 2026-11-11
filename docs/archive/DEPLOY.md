@@ -1,5 +1,11 @@
 # Deploying dirt-api
 
+> **Archived on 2026-11-10.** This document describes Dirt before the
+> redesign and is no longer maintained. It still lists `DIRT_SERVER_TOKEN`,
+> which the server no longer reads. A new deploy guide is written when the
+> server is rebuilt (step 4 of the
+> [implementation plan](../plans/2026-11-10-refactor-system-redesign-implementation-plan.md)).
+
 Phase 1 ships `dirt-api` as a single Rust binary fronted by Turso.
 This doc walks the production deploy + the rollback path. The
 "15-minute self-host" recipe in [BACKEND_API.md](./BACKEND_API.md)

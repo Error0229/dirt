@@ -1,5 +1,11 @@
 # Feature Parity Matrix
 
+> **Archived on 2026-11-10.** This document describes Dirt before the
+> redesign and is no longer maintained. The mobile shell rewrite it lists as
+> pending was merged in May 2026 (PR #226). A new matrix is written when the
+> clients are reconnected (step 7 of the
+> [implementation plan](../plans/2026-11-10-refactor-system-redesign-implementation-plan.md)).
+
 Tracks product parity across active Dirt clients during Phase 1.
 
 | Capability | Desktop (`dirt-desktop`) | CLI (`dirt-cli`) | Mobile (`dirt-mobile`) |

@@ -1,35 +1,48 @@
 # dirt
 
-> Do I Remember That? — a cross-platform note-taking app focused on
-> capturing fleeting thoughts with under-2-second friction.
+> Do I Remember That? A cross-platform note-taking app focused on capturing
+> fleeting thoughts with under 2 seconds of friction.
+
+## Status
+
+A redesign is in progress. The code on `main` is the system **before** that
+redesign; it works, and this README describes how to run it.
+
+- **What is changing and why:**
+  [docs/plans/2026-11-10-system-redesign-design.md](docs/plans/2026-11-10-system-redesign-design.md)
+- **Build order:**
+  [docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md](docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md)
+
+The redesign replaces sync, login and both database schemas. It adds automatic
+merging of concurrent edits and end-to-end encryption.
 
 ## Workspace layout
 
 | Crate | Purpose |
 |---|---|
-| `dirt-core` | Models, SQLite repository, sync engine. Platform-agnostic. |
-| `dirt-api` | axum HTTP server. `POST /v1/notes/push`, `GET /v1/notes/pull`, `/healthz`. Bearer-authed. Backed by Turso. |
-| `dirt-desktop` | Dioxus desktop app. Auto-syncs in the background. |
-| `dirt-mobile` | Dioxus Android app. Magic-link login wired up; mobile sync worker mirrors desktop. |
-| `dirt-cli` | `dirt add`, `dirt list`, `dirt sync`, etc. Local-first; sync runs when `DIRT_API_BASE_URL` is configured and a session is stored via `dirt auth login`. |
-| `dirt-vercel` | Workspace-root crate that hosts the Vercel serverless entry point at `api/axum.rs`. Pulls in `dirt-api` by path. |
+| `dirt-core` | Models, local SQLite repository, sync engine, login client. Shared by every client. |
+| `dirt-api` | axum HTTP server. Email-code login under `/v1/auth/*`, note sync at `POST /v1/notes/push` and `GET /v1/notes/pull`, and `/healthz`. Backed by Turso. |
+| `dirt-desktop` | Dioxus desktop app. Syncs in the background. |
+| `dirt-mobile` | Dioxus Android app, with login and a background sync worker. |
+| `dirt-cli` | `dirt add`, `dirt list`, `dirt search`, `dirt sync` and more. |
+| `dirt-vercel` | Workspace-root package that hosts the Vercel serverless entry point at `api/axum.rs`. |
 
 ## Quick start
 
 ### Local-only capture (no sync)
 
-Works on a fresh clone with zero env config:
+Works on a fresh clone with no configuration:
 
 ```bash
 cargo run -p dirt-cli "first thought"
 cargo run -p dirt-cli list
 ```
 
-The CLI captures locally to a SQLite file under your platform's data
-dir. Sync stays off until `DIRT_API_BASE_URL` is configured and you
-sign in with `dirt auth login` (the session lands in your OS keyring;
-the same slot is shared across `dirt-cli` and `dirt-desktop`, so a
-login from either gets you sync on both).
+The CLI saves to a SQLite file under your platform's data directory. Sync
+stays off until a server address is configured and you sign in with
+`dirt auth login`. The session is stored in the OS keychain, in a slot shared
+by `dirt-cli` and `dirt-desktop`, so signing in from either enables sync in
+both.
 
 ### Run the desktop app
 
@@ -39,46 +52,54 @@ cargo run -p dirt-desktop
 # Then sign in from Settings → Account.
 ```
 
-The window opens, the local DB initializes, and a background sync
-worker starts immediately. There is no manual "Sync now" button —
-sync runs on three triggers: app startup, a 30 s periodic timer, and
-a 1.5 s debounce after every successful local mutation. Failures back
-off exponentially (5 s → 15 s → 60 s → 300 s).
+`DIRT_API_BASE_URL` is read when the app is **built** and baked into the
+binary. The CLI reads the same variable at run time.
 
-If `DIRT_API_BASE_URL` is missing or the user is not signed in, the
-sync indicator shows red and the Settings → Sync / Account tab explains
-which one. Local capture still works.
+There is no "Sync now" button. Sync runs on three triggers: app startup, a
+30-second timer, and 1.5 seconds after each local change. Failures back off
+(5 s, 15 s, 60 s, then 300 s).
+
+If no server address is configured or you are not signed in, the sync
+indicator shows red and Settings explains which. Local capture still works.
 
 ### Run the API server
 
 ```bash
 cp .env.server.example .env.server
-# Fill in TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, DIRT_SERVER_TOKEN.
+# Fill in TURSO_DATABASE_URL and TURSO_AUTH_TOKEN.
 cargo run -p dirt-api
 # Listens on 0.0.0.0:8080 by default.
 ```
 
-See [docs/DEPLOY.md](docs/DEPLOY.md) for the production deploy and
-rollback procedure, and [docs/BACKEND_API.md](docs/BACKEND_API.md)
-for the full API contract + 15-minute self-host recipe.
+`RESEND_API_KEY` and `RESEND_FROM_ADDRESS` are optional and must be set
+together. Without them the server does not send email; it writes each login
+code to its debug log instead. `.env.server.example` documents every variable.
 
-## Key design points
+The deploy guide and API reference for this version are archived and partly
+out of date; see [docs/archive/](docs/archive/). New ones are written when the
+server is rebuilt.
 
-- **Offline-first.** Every mutation lands in local SQLite first. Sync
-  is additive; clients work fully offline and reconcile on reconnect.
-- **Server-authoritative timestamps.** Pull ordering uses
-  `server_updated_at_ms` exclusively; a misbehaving client clock can't
-  poison the cursor.
-- **Magic-link sessions (Phase 2).** Clients sign in via
-  `/v1/auth/{request,verify}` and persist the resulting session token
-  in the OS keychain. The session middleware on `dirt-api` resolves
-  the bearer to a user id before any note-shaped handler runs. The
-  Phase-1 `DIRT_CLIENT_TOKEN` shared bearer has been retired from all
-  three clients.
-- **No silent failures.** Misconfigured env vars surface visibly
-  (`SyncStatus::Error` with a populated `sync_issue`) instead of
-  pretending to be offline. The "no fallback" rule is a project-wide
-  invariant.
+## How the current code works
+
+- **Offline-first.** Every change is written to local SQLite first. Clients
+  work fully offline and sync when they can.
+- **Server-stamped ordering.** Pull ordering uses the server's timestamp only,
+  so a wrong device clock cannot disturb it.
+- **Email-code sessions.** Clients sign in through
+  `/v1/auth/{request,verify}` and keep the session token in the OS keychain.
+- **Visible failures.** A misconfigured server address shows as a sync error
+  with a reason, never as a silent "offline".
+
+### Known limitations
+
+The redesign exists to fix these.
+
+- **Concurrent edits are lost silently.** If two devices change the same note
+  before syncing, the server keeps whichever push arrives last.
+- **One local database for all accounts.** Signing in as a different account
+  on the same machine mixes notes (issue #234).
+- **Server rate limits are unreliable.** They live in process memory, which
+  serverless instances do not share.
 
 ## Testing
 
@@ -88,22 +109,19 @@ cargo clippy --workspace --all-targets -- -D warnings
 bash .github/scripts/security-guard.sh   # secret-leak guardrails
 ```
 
-A handful of CLI tests are `#[cfg_attr(windows, ignore)]` because
-libsql's file-handle behavior is flaky on Windows; they pass on
-macOS and Linux.
+Eight CLI tests are ignored on Windows because the `libsql` integration is
+flaky there. They run on macOS and Linux.
 
-## Documentation index
+## Documentation
 
-- [docs/BACKEND_API.md](docs/BACKEND_API.md) — endpoint reference,
-  error codes, self-host recipe.
-- [docs/DEPLOY.md](docs/DEPLOY.md) — Vercel deploy, snapshots, rollback.
-- [docs/DESIGN.md](docs/DESIGN.md) — architecture overview.
-- [docs/SECURITY_BASELINE.md](docs/SECURITY_BASELINE.md),
-  [docs/SECURITY_OPERATIONS.md](docs/SECURITY_OPERATIONS.md) —
-  security posture and operational runbooks.
-- [docs/feature-parity.md](docs/feature-parity.md) — parity status
-  with peer apps.
+- [docs/DESIGN.md](docs/DESIGN.md): product vision and standing decisions.
+- [docs/plans/](docs/plans/): the redesign and its implementation plan.
+- [docs/mobile-ui-conventions.md](docs/mobile-ui-conventions.md): conventions
+  for the Android interface.
+- [docs/archive/](docs/archive/): documents for the system before the
+  redesign.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT, as declared in `Cargo.toml`. The repository does not contain a `LICENSE`
+file yet.
