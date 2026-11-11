@@ -173,8 +173,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The action's default package list includes "tools", which the SDK
+      # repository no longer offers, so the step failed. Only sdkmanager on
+      # PATH is needed here; the NDK is installed in the next step.
       - name: Setup Android SDK tools
         uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
       - name: Install Android NDK
         run: sdkmanager "ndk;26.3.11579264"
