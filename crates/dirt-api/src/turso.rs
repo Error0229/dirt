@@ -23,7 +23,7 @@
 
 use std::sync::Arc;
 
-use dirt_core::models::{Note, NoteId};
+use dirt_proto::NoteId;
 use libsql::{Builder, Connection, TransactionBehavior};
 
 use crate::error::AppError;
@@ -205,7 +205,7 @@ impl TursoRepo {
         cursor_sua: i64,
         cursor_id: Option<&str>,
         limit: usize,
-    ) -> Result<Vec<Note>, AppError> {
+    ) -> Result<Vec<StoredNote>, AppError> {
         let conn = self.conn()?;
         // Defensive backstop. The routes layer clamps user input to
         // PULL_MAX_LIMIT and adds 1 as a "is there more?" probe row, so
@@ -719,12 +719,28 @@ impl Drop for TempDb {
     }
 }
 
-fn parse_pulled_note(row: &libsql::Row) -> Result<Note, AppError> {
+/// The fixed user ID that every row carried before sign-in existed. Rows
+/// with it are wiped once at start-up.
+const LEGACY_SOLO_USER_ID: &str = "01932a0c-3f8b-7e4c-8b1d-3a9c2f5e1234";
+
+/// One row of the server's `notes` table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredNote {
+    pub id: NoteId,
+    pub user_id: String,
+    pub content: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub server_updated_at: Option<i64>,
+    pub deleted_at: Option<i64>,
+}
+
+fn parse_pulled_note(row: &libsql::Row) -> Result<StoredNote, AppError> {
     let id: String = row.get(0)?;
     let id = id
         .parse::<NoteId>()
         .map_err(|_| AppError::internal(format!("invalid note id stored on server: {id}")))?;
-    Ok(Note {
+    Ok(StoredNote {
         id,
         user_id: row.get(1)?,
         content: row.get(2)?,
@@ -813,7 +829,7 @@ async fn bootstrap(conn: &Connection) -> Result<(), AppError> {
     }
 
     // P1 → P2.2 one-shot wipe. Phase 1 stamped every note with the
-    // shared placeholder `dirt_core::SOLO_USER_ID`; P2.2 binds notes to
+    // shared placeholder `LEGACY_SOLO_USER_ID`; P2.2 binds notes to
     // real users derived from the magic-code session, so any rows still
     // wearing the placeholder are dev junk that nothing will ever claim.
     // The DELETE is idempotent — running on a freshly-bootstrapped or
@@ -822,7 +838,7 @@ async fn bootstrap(conn: &Connection) -> Result<(), AppError> {
     // followup once we're confident every live server has run it.
     conn.execute(
         "DELETE FROM notes WHERE user_id = ?",
-        libsql::params![dirt_core::SOLO_USER_ID],
+        libsql::params![LEGACY_SOLO_USER_ID],
     )
     .await?;
 
@@ -946,7 +962,7 @@ mod tests {
     /// share a primary-key namespace.
     #[tokio::test(flavor = "current_thread")]
     async fn upsert_rejects_cross_user_note_id_takeover() {
-        use dirt_core::models::NoteId;
+        use dirt_proto::NoteId;
 
         let temp_db = TursoRepo::connect_temp_db().await.unwrap();
         let repo = &temp_db.repo;
@@ -1002,7 +1018,7 @@ mod tests {
     }
 
     /// The bootstrap migration wipes every `notes` row stamped with
-    /// `dirt_core::SOLO_USER_ID`. This proves it actually fires —
+    /// `LEGACY_SOLO_USER_ID`. This proves it actually fires —
     /// without the DELETE, the 3 dev rows on the live server would
     /// linger forever as orphans no real `user_id` can claim.
     #[tokio::test(flavor = "current_thread")]
@@ -1018,7 +1034,7 @@ mod tests {
         conn.execute(
             "INSERT INTO notes (id, user_id, content, created_at, client_updated_at, server_updated_at, deleted_at)
              VALUES (?, ?, ?, ?, ?, ?, NULL)",
-            libsql::params![phase1_id, dirt_core::SOLO_USER_ID, "phase1 junk", now, now, now],
+            libsql::params![phase1_id, LEGACY_SOLO_USER_ID, "phase1 junk", now, now, now],
         )
         .await
         .unwrap();

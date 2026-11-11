@@ -20,6 +20,9 @@ default = ["keyring-store"]
 keyring-store = ["dep:keyring"]
 
 [dependencies]
+dirt-proto = { path = "../dirt-proto" }
+yrs.workspace = true
+similar.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -53,6 +56,8 @@ zeroize = { version = "1.8", features = ["derive"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"], optional = true }
 
 [dev-dependencies]
+# The deletion tests compare against plain yrs behaviour.
+yrs.workspace = true
 pretty_assertions.workspace = true
 tempfile = "3"
 dotenvy = "0.15"

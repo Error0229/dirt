@@ -16,12 +16,8 @@ name = "dirt-api"
 path = "src/main.rs"
 
 [dependencies]
-# `default-features = false` opts out of dirt-core's `keyring-store`
-# feature: the server never persists a user's session token to a
-# platform secret store, and pulling `keyring` here would drag
-# `libdbus-sys` into the Linux build closure (Vercel server image,
-# headless CI runners) for no benefit.
-dirt-core = { path = "../dirt-core", default-features = false }
+# The server shares only wire-level types with the clients.
+dirt-proto = { path = "../dirt-proto" }
 
 axum = { version = "0.8", features = ["macros", "json"] }
 tokio.workspace = true

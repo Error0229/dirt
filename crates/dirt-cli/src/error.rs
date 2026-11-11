@@ -7,8 +7,6 @@ pub enum CliError {
     #[error(transparent)]
     Core(#[from] dirt_core::Error),
     #[error(transparent)]
-    LibSql(#[from] libsql::Error),
-    #[error(transparent)]
     Io(#[from] io::Error),
     #[error(transparent)]
     Serialization(#[from] serde_json::Error),

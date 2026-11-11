@@ -1,0 +1,17 @@
+[package]
+name = "dirt-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Types shared by the Dirt server and its clients"
+
+[dependencies]
+serde.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
