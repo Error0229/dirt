@@ -82,7 +82,7 @@ Completed on 2026-11-10, except Docker, which only needs to be running.
       emulator, an x86_64 system image, NDK 26.3.11579264, and an emulator
       device named `dirt-trial`. Hardware acceleration works. `ANDROID_HOME`,
       `NDK_HOME` and `ANDROID_NDK_HOME` are set.
-- [ ] Have Docker Desktop running. Docker 29.9.2 is already installed.
+- [x] Have Docker Desktop running. Docker 29.9.2 is already installed.
 - [x] Clerk application `Dirt` created as a development instance, with email
       code and Google sign-in on and passwords off.
 - [x] Neon project `dirt-trial` created in AWS US West 2, on Postgres 18.
@@ -202,6 +202,16 @@ byte cap under the 3 MB batch limit.
 **Question:** does `rusqlite` with its bundled SQLite build, link and run on
 Android, and can the desktop app and CLI safely share one database file?
 
+**Result (2026-11-11): pass, with one gap.** The app and a plain cargo
+binary build, link and run on the x86_64 emulator, and as arm64 through the
+emulator's ARM translation. No physical arm64 device was tested. Plain cargo
+links for Android, so CI does not need `dx`. Two processes lose no write and
+see no busy error, given `BEGIN IMMEDIATE` and an open routine that retries
+the switch to write-ahead-log mode. The trial used rusqlite 0.42, the
+current version. Every task below was done. Write-up:
+`docs/trials/2026-11-11-trial-2-rusqlite-android-and-two-processes.md` on
+the `trials/step-1` branch.
+
 **Known risks from research**
 
 - CI today runs only `cargo check` for `x86_64-linux-android`. It never links,
@@ -246,6 +256,15 @@ to `dx`.
 **Question:** can the desktop app, the CLI and the Android app sign in through
 Clerk in the system browser, and can our server verify the result with
 standard libraries?
+
+**Result so far (2026-11-11): not finished.** Done: the OAuth application
+(the Backend API accepted the custom scheme), the desktop flow, the verifier
+and its tests. Sign-in completed twice from a terminal program, on two
+ports, with a Clerk test address and an email code, and the verifier
+accepted both real ID tokens. Not run: Google sign-in, which needs a real
+Google account, and the whole Android task. Write-up, with the list of what
+is left: `docs/trials/2026-11-11-trial-3-clerk-sign-in.md` on the
+`trials/step-1` branch.
 
 **Confirmed by research**
 
@@ -304,6 +323,18 @@ when a redirect target is wrong.
 **Question:** does an axum function on Vercel reach Neon through `sqlx`, run
 the real push transaction correctly under concurrency, and stay within
 acceptable latency and cost?
+
+**Result (2026-11-11): pass.** One of 50 same-base pushes accepted; 500
+pushes numbered 1 to 500; no prepared-statement error across a redeploy;
+warm requests at 59 ms at the 95th percentile; first request after idle in
+0.99 s. `sqlx` 0.9 was kept: the builder's Rust 1.92.0 is too old for it,
+and a `rust-toolchain.toml` in the project fixed that. Recorded: 182.5
+CU-hours a month for one always-open client against the free 100; function
+size 2.61 MB; build 2 min 52 s cold and 44 s cached; request body limit
+between 4,493,163 and 4,494,140 bytes. Every task below was done, except
+that the polling run ended at 76.5 minutes when the machine went to sleep.
+Write-up: `docs/trials/2026-11-11-trial-4-postgres-on-neon-from-vercel.md`
+on the `trials/step-1` branch.
 
 **Known from research**
 
@@ -402,8 +433,9 @@ binary size, the build time, and the exact body limit observed.
 
 ### Step 1 exit
 
-- [ ] Four write-ups exist under `docs/trials/`.
-- [ ] Design section 13's table is updated with each verdict.
+- [ ] Four write-ups exist under `docs/trials/`. Trials 1, 2 and 4 are
+      complete. Trial 3's covers the desktop half and lists what is left.
+- [x] Design section 13's table is updated with each verdict so far.
 - [x] The approved amendments are applied to the design document.
 - [ ] You review the results and confirm, or change, the affected decisions.
 
@@ -514,7 +546,21 @@ proposed default; each needs a decision before that step's plan is written.
   - Desktop and CLI working locally on the new core.
 - **Constraint from research:** the async wrappers `tokio-rusqlite` and
   `deadpool-sqlite` do not yet support rusqlite 0.41. Use a hand-written
-  writer thread, or `r2d2_sqlite` for readers.
+  writer thread, or `r2d2_sqlite` for readers. Check again against 0.42,
+  which trial 2 used.
+- **From trial 2:**
+  - The open routine sets the busy timeout, then retries the switch to
+    write-ahead-log mode. The busy timeout alone does not cover it.
+  - Schema set-up checks the version inside a `BEGIN IMMEDIATE`
+    transaction.
+  - The two-process test is modelled on
+    `trials/sqlite-two-process/tests/two_process.rs` and keeps its two
+    controls. It runs on Windows, macOS and Linux in CI, because file
+    locking differs between them.
+  - The Android CI job changes from `cargo check` to `cargo build`.
+  - A waiting writer can wait far longer than one write takes: up to 1.3 s
+    with four processes writing without pause. Keep bulk work, such as an
+    import, in short transactions.
 - **Settle first:**
   - Where notes go while signed out, pending, or after sign-out, and which
     account inherits them. Default: one "local" store used whenever the
@@ -535,7 +581,9 @@ proposed default; each needs a decision before that step's plan is written.
   - The device registry and its status rules.
   - Push and pull with the version check and byte-capped batches.
   - Quotas and request counts in the database.
-  - Clerk ID-token verification with a server nonce.
+  - Clerk ID-token verification with a server nonce. Start from
+    `trials/clerk-signin/src/verify.rs` and its tests, which sign tokens
+    with a local key.
   - `compose.yaml` and a CI Postgres service.
   - Fresh `BACKEND_API.md` and `DEPLOY.md`.
   - Deletion of `routes_auth.rs`, `email.rs`, `rate_limit.rs` and `turso.rs`.
@@ -548,6 +596,19 @@ proposed default; each needs a decision before that step's plan is written.
   - Account-wide quota behaviour. Default: an account-level "storage full"
     state in which deletes are always accepted.
   - The exact quota numbers.
+- **From trial 4:**
+  - Use the trial's push statement, not the one in this plan. The plan's
+    inserted a missing note whatever base the client sent.
+  - The server uses the pooled endpoint with `sqlx` defaults. Migrations use
+    the direct endpoint.
+  - The repository's `rust-toolchain.toml` (pull request #247) makes Vercel
+    build with the pinned Rust. This also applies to the live project on its
+    next deploy.
+  - A 30-second poll opens a new database connection each time, because the
+    pool drops connections idle for 10 s. It costs about 75 ms a poll.
+    Default: leave it.
+  - The polling timer decision in design section 13 must be made before the
+    client's sync worker is planned in step 5.
 - **Exit:** tests for the version check under concurrency, account isolation,
   pending-device rights and quotas pass; the server is deployed to a preview.
 
@@ -604,7 +665,9 @@ erDiagram
 - **Deliverables:**
   - The crypto module: account key, and note encryption bound to the account,
     note, key version and format version.
-  - The identity module: Clerk sign-in and device registration.
+  - The identity module: Clerk sign-in and device registration. Start from
+    `trials/clerk-signin/src/flow.rs`. The client discards Clerk's access
+    and refresh tokens, and a sign-in that never returns times out.
   - The secrets module and the server client.
   - The sync cycle and background worker in `dirt-core`.
   - The session object and its states.
@@ -645,6 +708,12 @@ erDiagram
     warning on mismatch; a cap of three pending devices.
   - The stated limit that a removed device keeps the old key until rotation in
     step 8.
+  - From trial 3: whether to keep Clerk's consent screen, which asks on every
+    sign-in whether an application may "access Dirt" and names `127.0.0.1`.
+    Default: keep it until it is known whether Clerk allows it off for a
+    public client.
+  - From trial 3: sign-in for a CLI on a machine with no browser. Default:
+    Clerk's device-code grant, which is off by default and untested.
 - **Exit:** the enrolment tests pass, including a server that swaps a key.
 
 ### Step 7: Clients reconnected

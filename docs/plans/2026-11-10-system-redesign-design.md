@@ -164,6 +164,11 @@ and when they change.
   checks the issuer, the audience, the expiry and the nonce. It maps the Clerk
   issuer and user ID to an account, and issues a device token.
 - After that, Clerk is out of the path. Sync uses only the device token.
+- Clerk also returns an access token and a refresh token. The client
+  discards both without storing them.
+- A sign-in that never comes back must time out with a message. For a wrong
+  redirect target Clerk shows an error page in the browser and does not
+  return to the app.
 - No Clerk SDK is needed: a generic OAuth client and standard token
   verification are enough.
 - Clerk's free plan offers email code and up to three social logins. Passkeys
@@ -373,8 +378,11 @@ email inbox cannot destroy it.
 
 ### 7.4 Database
 
-- Postgres on Neon, through its pooled connection endpoint. Each serverless
-  instance holds one or two connections.
+- Postgres on Neon. The server always connects through the pooled endpoint.
+  Vercel runs about one instance per request in a burst (156 instances for
+  500 simultaneous requests in trial 4), so the number of instances, not the
+  pool size, sets the number of connections. The direct endpoint allows 112
+  at the smallest compute size.
 - `sqlx` as the driver. All SQL lives in one module and uses standard SQL only.
 - Migrations are SQL files applied at deploy time, not at server start. They
   run against Neon's direct endpoint, because the migration lock is not
@@ -387,13 +395,17 @@ email inbox cannot destroy it.
   users. Neon's free plan holds 1 GB, which covers somewhat under a thousand
   users; beyond that, storage is paid by use.
 - **Idle wake-up:** on the free plan the database sleeps after five idle
-  minutes and takes about half a second to wake. Acceptable for background
-  sync.
+  minutes. The first request after that took 0.99 s in trial 4, of which
+  0.7 s was the database. Acceptable for background sync.
 - **Compute allowance:** the free plan includes 100 compute-unit hours per
   project per month, which is 400 hours at the smallest size. A month has
   about 730 hours, and a client left open polls every 30 seconds and keeps the
   database awake. The free plan therefore cannot carry continuous use; expect
-  a paid plan once there are real users. Trial 4 measures the real figure.
+  a paid plan once there are real users. Trial 4 confirmed it: 154 polls over
+  76 minutes and the database never slept. One client left open all month
+  uses 182.5 hours of the allowance of 100, and the paid plan for that is
+  about $19 a month. Whether the timer keeps running while the app is not in
+  use is an open decision (section 13).
 - **Region:** a Neon project's region cannot be changed, and Neon has no Tokyo
   region. The trial project uses AWS US West 2 (Oregon), which is co-located
   with Vercel's `pdx1`. The function region must be pinned to match.
@@ -405,8 +417,14 @@ email inbox cannot destroy it.
 - The axum app stays on Vercel's serverless Rust runtime.
 - Vercel's free plan is for non-commercial use only. Charging for Dirt, or
   showing ads, requires the paid plan. Donations are exempt.
-- Vercel caps request and response bodies at 4.5 MB, which is why section 6.4
-  caps batches and pages by bytes.
+- Vercel caps request bodies at 4.5 MB, which is why section 6.4 caps batches
+  by bytes. Trial 4 measured it: 4,493,163 bytes accepted, 4,494,140
+  rejected. A 16 MB response was returned in full, but pull pages keep the
+  same cap so that the protocol does not depend on this host.
+- The deployed project must name its Rust toolchain in `rust-toolchain.toml`.
+  Vercel's builder ships Rust 1.92.0 and `sqlx` 0.9 needs 1.94.
+- Measured in trial 4: a warm pull takes 59 ms and a warm push 61 ms at the
+  95th percentile. The database share is 3 to 4 ms at the median.
 
 ### 7.6 Limits
 
@@ -467,8 +485,20 @@ Rule: no HTTP, SQL or cryptography lives in a client crate.
 - One write connection and separate read connections, in write-ahead-log mode.
   This addresses issues #210 and #218, where one locked connection blocks the
   interface during sync.
-- The desktop app and CLI open the same file from two processes, so a busy
-  timeout is set and write transactions are opened as immediate.
+- The desktop app and CLI open the same file from two processes. Trial 2
+  showed that two rules make this safe and that each is needed:
+  - Every write transaction starts with `BEGIN IMMEDIATE`. With plain
+    `BEGIN`, 850 of 2,000 writes failed with a busy error that no timeout
+    prevents.
+  - Opening the file sets the busy timeout first, then retries the switch to
+    write-ahead-log mode until that timeout has passed. The busy timeout
+    does not cover the switch: without the retry, one of two processes
+    opening a new file together failed in 70 of 100 attempts.
+- Schema set-up checks the schema version inside its write transaction, so
+  two processes starting together cannot both run it.
+- On Android the bundled SQLite keeps temporary data in memory. `rusqlite`
+  sets this at build time for Android targets, where an app has no shared
+  temporary folder. Full-text search is on in the bundled build everywhere.
 - `rusqlite` and `libsql` each compile their own SQLite and cannot be linked
   into one program. A program's dependencies must contain one or the other,
   which fixes how step 3 begins.
@@ -519,6 +549,9 @@ integration uses a Postgres service container.
 ### 9.3 Continuous integration
 
 - Kept: formatting, lints, tests and the Android build check.
+- Changed: the Android job runs `cargo build` in place of `cargo check`, so
+  that link failures show. Plain cargo links `rusqlite` for Android, so the
+  job does not need `dx` (trial 2).
 - Removed: the workflow named after the deleted "managed mode".
 - Updated: the secret-scanning script, which still guards token names that no
   longer exist.
@@ -603,16 +636,26 @@ import into the new one.
 
 ### To verify in step 1
 
-Trial 1 passed on 2026-11-10: 15.3 KB after 1,000 edits, about 15 bytes per
-edit. The write-up is `docs/trials/2026-11-10-trial-1-yrs-document-size.md` on
-the `trials/step-1` branch. The other three trials are still open.
+Trials 1, 2 and 4 have passed. Trial 3 is part done. The write-ups are in
+`docs/trials/` on the `trials/step-1` branch.
+
+- **Trial 1, passed 2026-11-10:** 15.3 KB after 1,000 edits, about 15 bytes
+  per edit.
+- **Trial 2, passed 2026-11-11:** `rusqlite` builds, links and runs on
+  Android, and two processes share one file safely given the two rules in
+  section 8.4. No physical arm64 device was tested.
+- **Trial 3, part done 2026-11-11:** sign-in from a desktop client works with
+  an email code, and the server-side check accepts Clerk's ID token. Google
+  sign-in and Android have not been run.
+- **Trial 4, passed 2026-11-11:** every criterion met. It also showed that
+  polling keeps the database awake (section 7.4).
 
 | Assumption | Trial | If it fails |
 |---|---|---|
 | yrs documents stay small (verified) | Measure document size after about a thousand edits to a short note | Compare Loro and Automerge; revisit the sync shape for long notes |
-| `rusqlite` builds for Android | Build and run a query in the mobile shell | Keep `libsql` for the local file |
-| Clerk works from a native client | Sign in from desktop (loopback) and Android (custom URL scheme) with a public PKCE client | Fall back to the existing email-code login |
-| Postgres works from the Vercel Rust runtime | Deploy a function that runs one transaction against Neon's pooled endpoint | Reconsider the host before the database |
+| `rusqlite` builds for Android (verified) | Build and run a query in the mobile shell | Keep `libsql` for the local file |
+| Clerk works from a native client (desktop verified; Android open) | Sign in from desktop (loopback) and Android (custom URL scheme) with a public PKCE client | Fall back to the existing email-code login |
+| Postgres works from the Vercel Rust runtime (verified) | Deploy a function that runs one transaction against Neon's pooled endpoint | Reconsider the host before the database |
 
 The trials need Rust 1.95 or newer. The development machine had 1.85 when this
 was written.
@@ -625,6 +668,9 @@ was written.
 
 ### Details not yet decided
 
+- **When the polling timer runs** (decision 4). Trial 4's write-up gives
+  three options. Recommended: run the 30-second timer only while the app is
+  in use, and sync at once when the person returns. Awaiting your decision.
 - The exact quota numbers.
 - Purging deleted notes: when a deleted note's blob is finally removed, and
   what a device does if it still holds unseen edits for a purged note.
