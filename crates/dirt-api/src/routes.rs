@@ -10,7 +10,7 @@ use axum::extract::{Extension, Query, State};
 use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use dirt_core::models::NoteId;
+use dirt_proto::NoteId;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthenticatedUser;

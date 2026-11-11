@@ -3,8 +3,6 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::fmt;
-use std::str::FromStr;
 use std::sync::OnceLock;
 
 /// Returns the pre-compiled regex for extracting `#tag` patterns from note content.
@@ -12,47 +10,9 @@ fn tag_regex() -> &'static Regex {
     static TAG_REGEX: OnceLock<Regex> = OnceLock::new();
     TAG_REGEX.get_or_init(|| Regex::new(r"#([a-zA-Z][a-zA-Z0-9_-]*)").expect("Invalid regex"))
 }
-use uuid::Uuid;
+pub use dirt_proto::NoteId;
 
 use crate::SOLO_USER_ID;
-
-/// A unique identifier for a note, using UUID v7 (time-sortable)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct NoteId(Uuid);
-
-impl NoteId {
-    /// Create a new unique note ID using UUID v7
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::now_v7())
-    }
-
-    /// Get the string representation of this ID
-    #[must_use]
-    pub fn as_str(&self) -> String {
-        self.0.to_string()
-    }
-}
-
-impl Default for NoteId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl fmt::Display for NoteId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl FromStr for NoteId {
-    type Err = uuid::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self(Uuid::parse_str(s)?))
-    }
-}
 
 /// A note in the system.
 ///

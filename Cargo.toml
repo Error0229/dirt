@@ -51,6 +51,11 @@ regex = "1.0"
 # Database
 libsql = "0.9"
 
+# Note documents. yrs is pinned exactly: its encoding is what gets stored and,
+# from step 5, uploaded, so a version change is a format decision.
+yrs = "=0.28.1"
+similar = "2"
+
 # Async
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "rt", "sync", "time"] }
 

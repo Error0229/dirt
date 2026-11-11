@@ -10,6 +10,7 @@ pub mod db;
 pub mod error;
 pub mod export;
 pub mod models;
+pub mod notes;
 pub mod search;
 pub mod services;
 pub mod state;
