@@ -605,7 +605,8 @@ into an account are built and tested. #210 and #218 are closed.
 
 ### Step 4: Server
 
-**Result (2026-11-11): built, with the preview deployment still to do.**
+**Result (2026-11-11): done.** Built, deployed to the `dirt-trial` Vercel
+project, and checked there end to end with a real Clerk sign-in.
 Detailed plan, decisions and what differed:
 `docs/plans/2026-11-11-step-4-server-plan.md`. Enrolment, recovery, and
 account reset and deletion are left to step 6, where the exchange they carry

@@ -2,7 +2,7 @@
 title: "Step 4: server on Postgres"
 type: plan
 date: 2026-11-11
-status: in progress
+status: done
 parent: docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md
 tracking: "#240"
 ---
@@ -59,8 +59,21 @@ Decisions this plan adds:
 
 ## Result (2026-11-11)
 
-The server is rewritten and its tests pass. The preview deployment is the one
-item still open.
+The server is rewritten, its tests pass, and it runs on the `dirt-trial`
+Vercel project against the `dirt-trial` Neon database.
+
+**The deployed server was checked end to end** with a real Clerk sign-in for
+the test user: a nonce from the server, the sign-in in a browser, registration
+(approved, first device), the same nonce refused a second time, a push
+accepted with change number 1, the same push refused as stale with the
+server's copy returned, the blob pulled back unchanged, a bad token and no
+token both refused, and the device's token refused after it was revoked. The
+account was deleted from the trial database afterwards.
+
+**Deploying turned up one fault,** fixed in the same pull request:
+`.vercelignore` replaces `.gitignore` for uploads and named only three env
+files, so a local file holding connection strings would have been uploaded.
+It now excludes every `.env*` file.
 
 Where the work differed from this plan:
 
@@ -173,7 +186,7 @@ CREATE TABLE request_counts (
 - [x] `docs/BACKEND_API.md` and `docs/DEPLOY.md`, written fresh.
       `.env.server.example` for the new variables. `security-guard.sh` guards
       the new server-only names.
-- [ ] Deploy to the `dirt-trial` Vercel project against the `dirt-trial` Neon
+- [x] Deploy to the `dirt-trial` Vercel project against the `dirt-trial` Neon
       database, and run a registration, a push and a pull against it. The live
       `dirt-api` project is left alone.
 
@@ -198,4 +211,4 @@ Each of these is an exit condition.
 
 - [ ] Every test above passes locally and in CI.
 - [x] `libsql` is gone from the workspace.
-- [ ] The server answers on a preview deployment.
+- [x] The server answers on a preview deployment.
