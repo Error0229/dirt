@@ -1,0 +1,463 @@
+//! Registration, device rights, and the request limit, against Postgres.
+//!
+//! Start the database with `docker compose up -d` at the repository root and
+//! set `DATABASE_URL` as `compose.yaml` shows. Each test runs in its own
+//! throwaway database.
+
+mod common;
+
+use axum::http::{Method, StatusCode};
+use common::{
+    app, call, claims, get, nonce, note_id, post, pull, push_one, register, registration, sign,
+    sign_with_another_key, try_register,
+};
+use dirt_proto::api::{
+    limits, DeviceInfo, DeviceList, DeviceStatus, PushOutcome, RegisterDeviceResponse,
+    EPOCH_HEADER, PROTOCOL_HEADER,
+};
+use serde_json::json;
+use sqlx::PgPool;
+
+// ---- Health and protocol ----
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn health_answers_and_unknown_paths_get_a_protocol_error(pool: PgPool) {
+    let app = app(pool);
+    let health = get(&app, "/healthz", None).await;
+    assert_eq!(health.status, StatusCode::OK);
+    assert_eq!(health.body["ok"], true);
+
+    let missing = get(&app, "/v1/nothing-here", None).await;
+    assert_eq!(missing.status, StatusCode::NOT_FOUND);
+    assert_eq!(missing.code(), "not_found");
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_client_on_a_newer_protocol_is_told_to_update(pool: PgPool) {
+    let app = app(pool);
+    for (version, status, code) in [
+        ("1", StatusCode::OK, ""),
+        ("2", StatusCode::UPGRADE_REQUIRED, "unsupported_protocol"),
+        ("one", StatusCode::BAD_REQUEST, "invalid_request"),
+    ] {
+        let request = axum::http::Request::builder()
+            .uri("/healthz")
+            .header(PROTOCOL_HEADER, version)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = tower::ServiceExt::oneshot(app.clone(), request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status, "version {version}");
+        if !code.is_empty() {
+            let bytes = http_body_util::BodyExt::collect(response.into_body())
+                .await
+                .unwrap()
+                .to_bytes();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["code"], code);
+        }
+    }
+}
+
+// ---- Registration ----
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn the_first_device_is_approved_and_later_ones_wait(pool: PgPool) {
+    let app = app(pool);
+    let first = register(&app, "alice", "Laptop").await;
+    assert_eq!(first.status, DeviceStatus::Approved);
+    assert!(first.first_device);
+    assert_eq!(first.epoch, 1);
+
+    let second = register(&app, "alice", "Phone").await;
+    assert_eq!(second.status, DeviceStatus::Pending);
+    assert!(!second.first_device);
+    assert_eq!(second.account_id, first.account_id);
+    assert_ne!(second.device_id, first.device_id);
+    assert_ne!(second.token, first.token);
+
+    let other = register(&app, "bob", "Laptop").await;
+    assert_ne!(other.account_id, first.account_id);
+    assert!(other.first_device);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_nonce_works_once(pool: PgPool) {
+    let app = app(pool);
+    let nonce = nonce(&app).await;
+    let id_token = sign(&claims("alice", &nonce));
+    let body = registration(&id_token, &nonce, "Laptop");
+
+    assert_eq!(
+        post(&app, "/v1/devices", None, body.clone()).await.status,
+        StatusCode::OK
+    );
+
+    // The same token and nonce again: the token is still valid for minutes,
+    // but the nonce is spent.
+    let replay = post(&app, "/v1/devices", None, body).await;
+    assert_eq!(replay.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(replay.code(), "sign_in_rejected");
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_nonce_the_server_never_issued_or_that_expired_is_refused(pool: PgPool) {
+    let app = app(pool.clone());
+    let invented = "a-nonce-the-server-never-issued";
+    let id_token = sign(&claims("alice", invented));
+    let answer = post(
+        &app,
+        "/v1/devices",
+        None,
+        registration(&id_token, invented, "Laptop"),
+    )
+    .await;
+    assert_eq!(answer.code(), "sign_in_rejected");
+
+    let nonce = nonce(&app).await;
+    sqlx::query("UPDATE nonces SET expires_at = now() - interval '1 second'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let id_token = sign(&claims("alice", &nonce));
+    let answer = post(
+        &app,
+        "/v1/devices",
+        None,
+        registration(&id_token, &nonce, "Laptop"),
+    )
+    .await;
+    assert_eq!(answer.code(), "sign_in_rejected");
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_bad_id_token_is_refused_and_does_not_spend_the_nonce(pool: PgPool) {
+    let app = app(pool);
+    let nonce = nonce(&app).await;
+    let good = claims("alice", &nonce);
+
+    let mut wrong_client = good.clone();
+    wrong_client["aud"] = json!(["some-other-client"]);
+    let mut expired = good.clone();
+    expired["exp"] = json!(1);
+    let mut other_nonce = good.clone();
+    other_nonce["nonce"] = json!("a-different-nonce");
+
+    for (what, id_token) in [
+        ("issued for another client", sign(&wrong_client)),
+        ("expired", sign(&expired)),
+        ("carrying another nonce", sign(&other_nonce)),
+        ("signed by another key", sign_with_another_key(&good)),
+        ("not a token", "garbage".to_owned()),
+    ] {
+        let answer = post(
+            &app,
+            "/v1/devices",
+            None,
+            registration(&id_token, &nonce, "Laptop"),
+        )
+        .await;
+        assert_eq!(answer.status, StatusCode::UNAUTHORIZED, "{what}");
+        assert_eq!(answer.code(), "sign_in_rejected", "{what}");
+    }
+
+    // None of those attempts used the nonce up.
+    let answer = post(
+        &app,
+        "/v1/devices",
+        None,
+        registration(&sign(&good), &nonce, "Laptop"),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_bad_name_or_public_key_is_refused(pool: PgPool) {
+    let app = app(pool);
+    let nonce = nonce(&app).await;
+    let id_token = sign(&claims("alice", &nonce));
+
+    let mut empty_name = registration(&id_token, &nonce, "   ");
+    let long_name = registration(&id_token, &nonce, &"x".repeat(101));
+    let mut short_key = registration(&id_token, &nonce, "Laptop");
+    short_key["public_key"] = json!("AAAA");
+    empty_name["name"] = json!("   ");
+
+    for body in [
+        empty_name,
+        long_name,
+        short_key,
+        json!({"not": "a registration"}),
+    ] {
+        let answer = post(&app, "/v1/devices", None, body).await;
+        assert_eq!(answer.status, StatusCode::BAD_REQUEST);
+        assert_eq!(answer.code(), "invalid_request");
+    }
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn devices_registering_at_the_same_moment_yield_one_approved_device(pool: PgPool) {
+    let app = app(pool.clone());
+    let mut tasks = Vec::new();
+    for index in 0..8 {
+        let app = app.clone();
+        tasks.push(tokio::spawn(async move {
+            try_register(&app, "alice", &format!("Device {index}")).await
+        }));
+    }
+    let mut approved = 0;
+    let mut pending = 0;
+    let mut refused = 0;
+    for task in tasks {
+        let answer = task.await.unwrap();
+        if answer.status == StatusCode::OK {
+            let device: RegisterDeviceResponse = answer.json();
+            match device.status {
+                DeviceStatus::Approved => {
+                    assert!(device.first_device);
+                    approved += 1;
+                }
+                DeviceStatus::Pending => {
+                    assert!(!device.first_device);
+                    pending += 1;
+                }
+                DeviceStatus::Revoked => panic!("a new device cannot be revoked"),
+            }
+        } else {
+            assert_eq!(answer.code(), "too_many_pending_devices");
+            refused += 1;
+        }
+    }
+    assert_eq!(approved, 1, "exactly one device creates the account key");
+    assert_eq!(approved + pending + refused, 8);
+    assert!(pending >= 1);
+
+    let (accounts,): (i64,) = sqlx::query_as("SELECT count(*) FROM accounts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(accounts, 1, "one person, one account");
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn an_account_may_have_only_so_many_devices_waiting(pool: PgPool) {
+    let app = app(pool);
+    register(&app, "alice", "First").await;
+    for index in 0..limits::MAX_PENDING_DEVICES {
+        let device = register(&app, "alice", &format!("Waiting {index}")).await;
+        assert_eq!(device.status, DeviceStatus::Pending);
+    }
+    let answer = try_register(&app, "alice", "One too many").await;
+    assert_eq!(answer.status, StatusCode::CONFLICT);
+    assert_eq!(answer.code(), "too_many_pending_devices");
+}
+
+// ---- Device rights ----
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn without_a_good_token_nothing_is_served(pool: PgPool) {
+    let app = app(pool);
+    register(&app, "alice", "Laptop").await;
+    for token in [None, Some("not-a-token"), Some("")] {
+        for path in ["/v1/devices", "/v1/devices/me", "/v1/notes/pull"] {
+            let answer = get(&app, path, token).await;
+            assert_eq!(
+                answer.status,
+                StatusCode::UNAUTHORIZED,
+                "{path} with {token:?}"
+            );
+            assert_eq!(answer.code(), "unauthenticated");
+        }
+    }
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_pending_device_can_only_ask_about_itself(pool: PgPool) {
+    let app = app(pool);
+    let first = register(&app, "alice", "Laptop").await;
+    let pending = register(&app, "alice", "Phone").await;
+    let note = note_id();
+    assert!(matches!(
+        push_one(&app, &first.token, note, 0, b"secret").await,
+        PushOutcome::Accepted { .. }
+    ));
+
+    let me = get(&app, "/v1/devices/me", Some(&pending.token)).await;
+    let info: DeviceInfo = me.json();
+    assert_eq!(info.status, DeviceStatus::Pending);
+    assert!(info.current);
+    assert_eq!(me.headers[EPOCH_HEADER], "1");
+
+    for (method, path) in [
+        (Method::GET, "/v1/devices".to_owned()),
+        (Method::GET, "/v1/notes/pull".to_owned()),
+        (Method::DELETE, format!("/v1/devices/{}", first.device_id)),
+    ] {
+        let answer = call(&app, method, &path, Some(&pending.token), None).await;
+        assert_eq!(answer.status, StatusCode::FORBIDDEN, "{path}");
+        assert_eq!(answer.code(), "device_pending");
+    }
+    let push = common::try_push(
+        &app,
+        &pending.token,
+        vec![common::item(
+            note_id(),
+            0,
+            b"from a pending device".to_vec(),
+        )],
+    )
+    .await;
+    assert_eq!(push.code(), "device_pending");
+
+    // Nothing the pending device tried had any effect.
+    assert_eq!(pull(&app, &first.token, 0).await.items.len(), 1);
+    let devices: DeviceList = get(&app, "/v1/devices", Some(&first.token)).await.json();
+    assert_eq!(devices.devices.len(), 2);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn revoking_a_device_stops_its_token_at_once(pool: PgPool) {
+    let app = app(pool);
+    let first = register(&app, "alice", "Laptop").await;
+    let second = register(&app, "alice", "Phone").await;
+    assert_eq!(
+        get(&app, "/v1/devices/me", Some(&second.token))
+            .await
+            .status,
+        StatusCode::OK
+    );
+
+    let path = format!("/v1/devices/{}", second.device_id);
+    let answer = call(&app, Method::DELETE, &path, Some(&first.token), None).await;
+    assert_eq!(answer.status, StatusCode::OK);
+
+    let after = get(&app, "/v1/devices/me", Some(&second.token)).await;
+    assert_eq!(after.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(after.code(), "device_revoked");
+
+    // The device stays in the list, marked as revoked.
+    let devices: DeviceList = get(&app, "/v1/devices", Some(&first.token)).await.json();
+    let revoked = devices
+        .devices
+        .iter()
+        .find(|d| d.id == second.device_id)
+        .unwrap();
+    assert_eq!(revoked.status, DeviceStatus::Revoked);
+    let current = devices
+        .devices
+        .iter()
+        .find(|d| d.id == first.device_id)
+        .unwrap();
+    assert!(current.current && !revoked.current);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn one_account_cannot_see_or_revoke_anothers_devices(pool: PgPool) {
+    let app = app(pool);
+    let alice = register(&app, "alice", "Laptop").await;
+    let bob = register(&app, "bob", "Laptop").await;
+
+    let devices: DeviceList = get(&app, "/v1/devices", Some(&alice.token)).await.json();
+    assert_eq!(devices.devices.len(), 1);
+    assert_eq!(devices.devices[0].id, alice.device_id);
+
+    let path = format!("/v1/devices/{}", bob.device_id);
+    let answer = call(&app, Method::DELETE, &path, Some(&alice.token), None).await;
+    assert_eq!(answer.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        get(&app, "/v1/devices/me", Some(&bob.token)).await.status,
+        StatusCode::OK,
+        "bob's device still works"
+    );
+
+    for path in [
+        "/v1/devices/not-a-uuid",
+        "/v1/devices/01932aaa-0000-7000-8000-000000000123",
+    ] {
+        let answer = call(&app, Method::DELETE, path, Some(&alice.token), None).await;
+        assert_eq!(answer.code(), "not_found", "{path}");
+    }
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_token_unused_for_too_long_stops_working(pool: PgPool) {
+    let app = app(pool.clone());
+    let device = register(&app, "alice", "Laptop").await;
+
+    // Just inside the limit: still good, and using it refreshes "last seen".
+    sqlx::query("UPDATE devices SET last_seen = now() - make_interval(days => 89)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        get(&app, "/v1/devices/me", Some(&device.token))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let (recent,): (bool,) =
+        sqlx::query_as("SELECT last_seen > now() - interval '1 minute' FROM devices")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(recent, "a request refreshes last_seen");
+
+    sqlx::query("UPDATE devices SET last_seen = now() - make_interval(days => 91)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let answer = get(&app, "/v1/devices/me", Some(&device.token)).await;
+    assert_eq!(answer.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(answer.code(), "device_expired");
+}
+
+// ---- The request limit ----
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn an_account_over_its_request_limit_is_told_to_wait(pool: PgPool) {
+    let app = app(pool.clone());
+    let alice = register(&app, "alice", "Laptop").await;
+    let bob = register(&app, "bob", "Laptop").await;
+
+    // One request opens the window; then the count is moved to the limit.
+    assert_eq!(
+        get(&app, "/v1/devices/me", Some(&alice.token)).await.status,
+        StatusCode::OK
+    );
+    sqlx::query("UPDATE request_counts SET requests = $1 WHERE account_id = $2")
+        .bind(limits::REQUESTS_PER_WINDOW)
+        .bind(alice.account_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let answer = get(&app, "/v1/devices/me", Some(&alice.token)).await;
+    assert_eq!(answer.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(answer.code(), "rate_limited");
+    let wait = answer.body["retry_after_secs"].as_i64().unwrap();
+    assert!((1..=limits::REQUEST_WINDOW_SECS).contains(&wait), "{wait}");
+
+    // The limit is per account.
+    assert_eq!(
+        get(&app, "/v1/devices/me", Some(&bob.token)).await.status,
+        StatusCode::OK
+    );
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn requests_are_counted_per_account(pool: PgPool) {
+    let app = app(pool.clone());
+    let alice = register(&app, "alice", "Laptop").await;
+    for _ in 0..5 {
+        get(&app, "/v1/devices/me", Some(&alice.token)).await;
+    }
+    let (requests,): (i64,) =
+        sqlx::query_as("SELECT sum(requests)::bigint FROM request_counts WHERE account_id = $1")
+            .bind(alice.account_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(requests, 5);
+}

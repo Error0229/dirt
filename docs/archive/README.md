@@ -10,8 +10,8 @@ For the current design, read
 | File | What it was | Replaced by |
 |---|---|---|
 | `DESIGN-2026-02.md` | The original design document: roadmap, data model, decisions | `../DESIGN.md` for the product vision; the redesign document for architecture |
-| `BACKEND_API.md` | API reference for the shared-token server | Written fresh in build step 4 |
-| `DEPLOY.md` | Deploy and rollback guide for the Turso-backed server | Written fresh in build step 4 |
+| `BACKEND_API.md` | API reference for the shared-token server | Replaced by `docs/BACKEND_API.md` |
+| `DEPLOY.md` | Deploy and rollback guide for the Turso-backed server | Replaced by `docs/DEPLOY.md` |
 | `SECURITY_BASELINE.md` | Security requirements for the shared-token deployment | Redesign document, section 3.4; new documents in build step 6 |
 | `SECURITY_OPERATIONS.md` | Secret rotation and incident runbooks | New documents in build step 6 |
 | `feature-parity.md` | Which client had which feature | Written fresh in build step 7 |

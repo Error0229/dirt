@@ -1,250 +1,221 @@
-//! Session-token authentication middleware.
+//! Who is calling: device tokens and the checks made on every request.
 //!
-//! Phase 2.2 replaces the shared `DIRT_SERVER_TOKEN` bearer with
-//! per-user session tokens minted by `/v1/auth/verify`. The middleware
-//! peels the bearer off the request, sha256-hashes it, looks up the
-//! `auth_sessions` row, and attaches the resolved `user_id` to the
-//! request as an `Extension<UserId>`. Notes handlers downstream pull
-//! that extension instead of reading a hard-coded `SOLO_USER_ID`.
-//!
-//! Every "missing / malformed / unknown / revoked / expired token"
-//! condition collapses to `SESSION_EXPIRED` (401) on the wire — the
-//! client's response is always the same ("show the login screen"), and
-//! distinguishing the cases would let an attacker probe for live
-//! `token_hash` values via differential error messages.
-//!
-//! The hash helpers live here (rather than in `routes_auth`) because
-//! both modules need them and the auth module is the right home for
-//! anything that handles session tokens.
+//! A device proves itself with the token it was given at registration. The
+//! server keeps only the token's SHA-256 hash, so a copy of the database
+//! yields no usable token.
 
-use axum::extract::{Request, State};
-use axum::http::{header, HeaderMap};
-use axum::middleware::Next;
-use axum::response::Response;
+use axum::extract::{FromRef, FromRequestParts};
+use axum::http::request::Parts;
+use axum::http::{header, HeaderName, HeaderValue};
+use axum::response::{IntoResponse, Response};
+use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use dirt_proto::api::{limits, DeviceStatus, ErrorCode, EPOCH_HEADER};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
+use sqlx::PgPool;
+use uuid::Uuid;
 
-use crate::error::AppError;
+use crate::error::{ApiError, ApiResult};
 use crate::AppState;
 
-pub(crate) const BEARER_PREFIX_LEN: usize = "Bearer ".len();
-
-/// Resolved user id for an authenticated request.
-///
-/// Attached as an extension by `require_session` so the notes handlers
-/// can pull it out without re-doing the session lookup. Wrapped in a
-/// newtype so a stray `Extension<String>` somewhere else in the stack
-/// can't accidentally collide with it.
-#[derive(Debug, Clone)]
-pub struct AuthenticatedUser {
-    pub user_id: String,
+/// A new random token: 256 bits, as URL-safe text.
+#[must_use]
+pub fn new_token() -> String {
+    URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>())
 }
 
-/// Middleware applied to `/v1/notes/*`. Verifies the session token,
-/// throttle-bumps `last_used_at`, and inserts an `AuthenticatedUser`
-/// extension for the handler.
-pub async fn require_session(
-    State(state): State<AppState>,
-    mut request: Request,
-    next: Next,
-) -> Result<Response, AppError> {
-    let token = extract_bearer(request.headers())?;
-    let token_hash = sha256_b64url(token.as_bytes());
-    let now_ms = chrono::Utc::now().timestamp_millis();
-
-    let session = state
-        .repo
-        .lookup_session_by_token_hash(&token_hash, now_ms)
-        .await?
-        .ok_or_else(|| AppError::session_expired("session token is invalid or expired"))?;
-
-    request.extensions_mut().insert(AuthenticatedUser {
-        user_id: session.user_id,
-    });
-    Ok(next.run(request).await)
+/// What the server stores in place of a token or a nonce.
+#[must_use]
+pub fn hash_secret(secret: &str) -> Vec<u8> {
+    Sha256::digest(secret.as_bytes()).to_vec()
 }
 
-/// Pull the bearer token off the `Authorization` header. Every error
-/// path returns `SESSION_EXPIRED` so client responses are uniform.
-pub(crate) fn extract_bearer(headers: &HeaderMap) -> Result<String, AppError> {
-    let header_value = headers
-        .get(header::AUTHORIZATION)
-        .ok_or_else(|| AppError::session_expired("missing Authorization header"))?;
-    let header_str = header_value
+pub fn status_from_text(text: &str) -> ApiResult<DeviceStatus> {
+    match text {
+        "pending" => Ok(DeviceStatus::Pending),
+        "approved" => Ok(DeviceStatus::Approved),
+        "revoked" => Ok(DeviceStatus::Revoked),
+        other => {
+            tracing::error!("a device row holds the unknown status {other:?}");
+            Err(ApiError::new(ErrorCode::ServerError, "corrupt device row"))
+        }
+    }
+}
+
+#[must_use]
+pub const fn status_text(status: DeviceStatus) -> &'static str {
+    match status {
+        DeviceStatus::Pending => "pending",
+        DeviceStatus::Approved => "approved",
+        DeviceStatus::Revoked => "revoked",
+    }
+}
+
+/// The device that made a request, once its token has been checked.
+#[derive(Debug, Clone, Copy)]
+pub struct Device {
+    pub id: Uuid,
+    pub account_id: Uuid,
+    pub status: DeviceStatus,
+    pub epoch: i32,
+}
+
+impl Device {
+    /// A JSON response carrying the account's epoch in its header, as every
+    /// authenticated response must.
+    pub fn respond<T: Serialize>(&self, body: T) -> Response {
+        let mut response = Json(body).into_response();
+        response.headers_mut().insert(
+            HeaderName::from_static(EPOCH_HEADER),
+            HeaderValue::from(self.epoch),
+        );
+        response
+    }
+}
+
+fn bearer_token(parts: &Parts) -> Option<&str> {
+    parts
+        .headers
+        .get(header::AUTHORIZATION)?
         .to_str()
-        .map_err(|_| AppError::session_expired("Authorization header is not valid UTF-8"))?;
-    if header_str.len() < BEARER_PREFIX_LEN
-        || !header_str[..BEARER_PREFIX_LEN].eq_ignore_ascii_case("Bearer ")
-    {
-        return Err(AppError::session_expired(
-            "Authorization header must start with 'Bearer '",
+        .ok()?
+        .strip_prefix("Bearer ")
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+}
+
+/// Checks the token and counts the request. Accepts pending and approved
+/// devices; refuses unknown tokens, revoked devices and tokens left unused
+/// for too long.
+async fn authenticate(pool: &PgPool, parts: &Parts) -> ApiResult<Device> {
+    let token = bearer_token(parts)
+        .ok_or_else(|| ApiError::new(ErrorCode::Unauthenticated, "a device token is required"))?;
+
+    let row: Option<(Uuid, Uuid, String, i32, bool, bool)> = sqlx::query_as(
+        "SELECT d.id, d.account_id, d.status, a.epoch, \
+                d.last_seen < now() - make_interval(days => $2), \
+                d.last_seen < now() - interval '1 hour' \
+           FROM devices d JOIN accounts a ON a.id = d.account_id \
+          WHERE d.token_hash = $1",
+    )
+    .bind(hash_secret(token))
+    .bind(i32::try_from(limits::DEVICE_TOKEN_IDLE_DAYS).unwrap_or(i32::MAX))
+    .fetch_optional(pool)
+    .await?;
+    let (id, account_id, status, epoch, expired, last_seen_is_old) =
+        row.ok_or_else(|| ApiError::new(ErrorCode::Unauthenticated, "unknown device token"))?;
+
+    let status = status_from_text(&status)?;
+    if status == DeviceStatus::Revoked {
+        return Err(ApiError::new(
+            ErrorCode::DeviceRevoked,
+            "this device was removed from the account",
         ));
     }
-    Ok(header_str[BEARER_PREFIX_LEN..].to_string())
+    if expired {
+        return Err(ApiError::new(
+            ErrorCode::DeviceExpired,
+            "this device's token went unused for too long; sign in again",
+        ));
+    }
+
+    count_request(pool, account_id).await?;
+
+    // "Last seen" only has to be accurate enough for the 90-day rule and for
+    // the device list, so it is written at most once an hour.
+    if last_seen_is_old {
+        sqlx::query("UPDATE devices SET last_seen = now() WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(Device {
+        id,
+        account_id,
+        status,
+        epoch,
+    })
 }
 
-/// sha256(input), base64url-no-pad. The on-disk encoding for every
-/// secret hash in the auth schema (`magic_codes.code_hash`,
-/// `auth_sessions.token_hash`).
-pub(crate) fn sha256_b64url(input: &[u8]) -> String {
-    let digest = Sha256::digest(input);
-    URL_SAFE_NO_PAD.encode(digest)
+/// Adds one to the account's count for the current window and refuses the
+/// request if that passes the limit.
+///
+/// The count lives in the database because serverless instances share no
+/// memory.
+async fn count_request(pool: &PgPool, account_id: Uuid) -> ApiResult<()> {
+    let (requests, seconds_left): (i32, i32) = sqlx::query_as(
+        "WITH w AS ( \
+             SELECT to_timestamp((floor(extract(epoch FROM now()) / $2::bigint) * $2::bigint)::float8) AS start \
+         ) \
+         INSERT INTO request_counts (account_id, window_start, requests) \
+         SELECT $1, w.start, 1 FROM w \
+         ON CONFLICT (account_id, window_start) \
+            DO UPDATE SET requests = request_counts.requests + 1 \
+         RETURNING requests, \
+                   ceil(extract(epoch FROM window_start) + $2::bigint - extract(epoch FROM now()))::int",
+    )
+    .bind(account_id)
+    .bind(limits::REQUEST_WINDOW_SECS)
+    .fetch_one(pool)
+    .await?;
+
+    if requests == 1 {
+        // The first request of a window clears the account's old windows.
+        sqlx::query(
+            "DELETE FROM request_counts \
+              WHERE account_id = $1 AND window_start < now() - interval '1 day'",
+        )
+        .bind(account_id)
+        .execute(pool)
+        .await?;
+    }
+    if requests > limits::REQUESTS_PER_WINDOW {
+        return Err(
+            ApiError::new(ErrorCode::RateLimited, "too many requests; slow down")
+                .retry_after(u32::try_from(seconds_left.max(1)).unwrap_or(1)),
+        );
+    }
+    Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::AppConfig;
-    use crate::TursoRepo;
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
-    use axum::routing::get;
-    use axum::{middleware, Extension, Router};
-    use std::sync::Arc;
-    use tower::ServiceExt;
+/// Extractor: any device whose token is good, approved or still pending.
+pub struct AnyDevice(pub Device);
 
-    /// End-to-end smoke test: a real session row in the DB, a real
-    /// bearer header, the middleware resolves it and the inner handler
-    /// sees the `AuthenticatedUser` extension.
-    #[tokio::test(flavor = "current_thread")]
-    async fn valid_session_token_attaches_user_id() {
-        let temp_db = TursoRepo::connect_temp_db().await.unwrap();
-        let now = chrono::Utc::now().timestamp_millis();
-        let user_id = temp_db
-            .repo
-            .upsert_user_by_email("auth@example.com", now)
-            .await
-            .unwrap();
-        let raw_token = "test-bearer-token-with-enough-bytes";
-        let token_hash = sha256_b64url(raw_token.as_bytes());
-        temp_db
-            .repo
-            .insert_auth_session(&user_id, &token_hash, now, now + 1_000_000)
-            .await
-            .unwrap();
+/// Extractor: an approved device. A pending device is refused, so it can
+/// read and write nothing.
+pub struct Approved(pub Device);
 
-        let state = test_state(Arc::clone(&temp_db.repo));
-        let router = Router::new()
-            .route(
-                "/probe",
-                get(|Extension(user): Extension<AuthenticatedUser>| async move { user.user_id }),
-            )
-            .layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_session,
+impl<S> FromRequestParts<S> for AnyDevice
+where
+    AppState: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let state = AppState::from_ref(state);
+        authenticate(&state.pool, parts).await.map(Self)
+    }
+}
+
+impl<S> FromRequestParts<S> for Approved
+where
+    AppState: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let AnyDevice(device) = AnyDevice::from_request_parts(parts, state).await?;
+        if device.status == DeviceStatus::Approved {
+            Ok(Self(device))
+        } else {
+            Err(ApiError::new(
+                ErrorCode::DevicePending,
+                "this device is waiting to be approved by another device",
             ))
-            .with_state(state);
-
-        let resp = router
-            .oneshot(
-                Request::builder()
-                    .uri("/probe")
-                    .header("authorization", format!("Bearer {raw_token}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        assert_eq!(std::str::from_utf8(&bytes).unwrap(), user_id);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn missing_header_returns_session_expired() {
-        let temp_db = TursoRepo::connect_temp_db().await.unwrap();
-        let state = test_state(Arc::clone(&temp_db.repo));
-        let router = build_probe(state);
-
-        let resp = router
-            .oneshot(
-                Request::builder()
-                    .uri("/probe")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn unknown_token_returns_session_expired() {
-        let temp_db = TursoRepo::connect_temp_db().await.unwrap();
-        let state = test_state(Arc::clone(&temp_db.repo));
-        let router = build_probe(state);
-
-        let resp = router
-            .oneshot(
-                Request::builder()
-                    .uri("/probe")
-                    .header("authorization", "Bearer never-minted-this-token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn revoked_session_returns_session_expired() {
-        let temp_db = TursoRepo::connect_temp_db().await.unwrap();
-        let now = chrono::Utc::now().timestamp_millis();
-        let user_id = temp_db
-            .repo
-            .upsert_user_by_email("revoked@example.com", now)
-            .await
-            .unwrap();
-        let raw_token = "soon-to-be-revoked-bearer-token";
-        let token_hash = sha256_b64url(raw_token.as_bytes());
-        let session_id = temp_db
-            .repo
-            .insert_auth_session(&user_id, &token_hash, now, now + 1_000_000)
-            .await
-            .unwrap();
-        let revoked = temp_db.repo.revoke_session(&session_id, now).await.unwrap();
-        assert!(revoked, "first revoke should flip the row");
-
-        let state = test_state(Arc::clone(&temp_db.repo));
-        let router = build_probe(state);
-
-        let resp = router
-            .oneshot(
-                Request::builder()
-                    .uri("/probe")
-                    .header("authorization", format!("Bearer {raw_token}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    fn build_probe(state: AppState) -> Router {
-        Router::new()
-            .route("/probe", get(|| async { "ok" }))
-            .layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_session,
-            ))
-            .with_state(state)
-    }
-
-    fn test_state(repo: Arc<TursoRepo>) -> AppState {
-        let config = AppConfig {
-            bind_addr: "127.0.0.1:0".into(),
-            turso_database_url: "libsql://unused.test".into(),
-            turso_auth_token: "unused".into(),
-        };
-        AppState {
-            config: Arc::new(config),
-            repo,
-            email: Arc::new(crate::email::EmailSender::log_only()),
         }
     }
 }

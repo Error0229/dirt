@@ -48,11 +48,14 @@ uuid = { version = "1.0", features = ["v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1.0"
 
-# Database. The clients use rusqlite; the server still uses libsql until step 4
-# of the redesign. The two each compile their own SQLite and must never be
-# linked into one program.
-rusqlite = { version = "0.42", features = ["bundled"] }
-libsql = "0.9"
+# The clients' local database.
+#
+# Held at 0.39 by the server's database driver. sqlx 0.9 lists an optional
+# SQLite driver that needs libsqlite3-sys below 0.38, and Cargo allows one
+# version of that crate in a workspace whether or not the driver is turned
+# on. rusqlite 0.39 is the newest release that uses libsqlite3-sys 0.37.
+# Raise this together with sqlx.
+rusqlite = { version = "0.39", features = ["bundled"] }
 
 # Note documents. yrs is pinned exactly: its encoding is what gets stored and,
 # from step 5, uploaded, so a version change is a format decision.
