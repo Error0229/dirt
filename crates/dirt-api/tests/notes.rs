@@ -107,6 +107,7 @@ async fn a_push_on_an_old_version_is_stale_and_returns_what_the_server_has(pool:
     assert_eq!(
         late,
         PushOutcome::Stale {
+            current_change: Some(2),
             current: Some(current.clone())
         }
     );
@@ -115,12 +116,19 @@ async fn a_push_on_an_old_version_is_stale_and_returns_what_the_server_has(pool:
     assert_eq!(
         again,
         PushOutcome::Stale {
+            current_change: Some(2),
             current: Some(current)
         }
     );
     // Naming a version of a note the server has never had.
     let orphan = push_one(&app, &device.token, note_id(), 7, b"orphan").await;
-    assert_eq!(orphan, PushOutcome::Stale { current: None });
+    assert_eq!(
+        orphan,
+        PushOutcome::Stale {
+            current_change: None,
+            current: None
+        }
+    );
 
     // None of the refused pushes changed anything or used a change number.
     assert_eq!(usage(&pool, device.account_id).await, (2, 1, 2));
@@ -136,56 +144,98 @@ async fn a_push_on_an_old_version_is_stale_and_returns_what_the_server_has(pool:
 async fn a_batch_reports_each_note_separately_and_in_order(pool: PgPool) {
     let app = app(pool);
     let device = register(&app, "alice", "Laptop").await;
-    let (first, second) = (note_id(), note_id());
-    push_one(&app, &device.token, first, 0, b"exists").await;
+    let (stale, current, new) = (note_id(), note_id(), note_id());
+    push_one(&app, &device.token, stale, 0, b"exists").await;
+    push_one(&app, &device.token, current, 0, b"exists too").await;
 
     let outcomes = push(
         &app,
         &device.token,
         vec![
-            item(second, 0, b"new".to_vec()),
-            item(first, 0, b"stale".to_vec()),
-            item(first, 1, b"good".to_vec()),
+            item(new, 0, b"new".to_vec()),
+            item(stale, 0, b"claims to be new".to_vec()),
+            item(current, 2, b"on the right base".to_vec()),
             item(note_id(), 0, vec![0; limits::MAX_NOTE_BYTES + 1]),
         ],
     )
     .await;
 
-    assert_eq!(outcomes[0], PushOutcome::Accepted { change: 2 });
+    assert_eq!(outcomes[0], PushOutcome::Accepted { change: 3 });
     assert!(matches!(outcomes[1], PushOutcome::Stale { .. }));
-    assert_eq!(outcomes[2], PushOutcome::Accepted { change: 3 });
+    assert_eq!(outcomes[2], PushOutcome::Accepted { change: 4 });
     assert_eq!(rejection(&outcomes[3]), Some(ErrorCode::NoteTooLarge));
 }
 
-#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
-async fn pull_pages_by_size_and_always_makes_progress(pool: PgPool) {
-    let app = app(pool);
-    let device = register(&app, "alice", "Laptop").await;
-    // Five notes of the largest size. Three fit under the page limit: the
-    // fourth starts past it.
-    for _ in 0..5 {
-        let outcome = push_one(
-            &app,
-            &device.token,
-            note_id(),
-            0,
-            &vec![9; limits::MAX_NOTE_BYTES],
-        )
-        .await;
+/// Pushes notes of the given sizes, in order. They take change numbers 1, 2,
+/// 3 and so on.
+async fn push_sizes(app: &axum::Router, token: &str, sizes: &[usize]) {
+    for size in sizes {
+        let outcome = push_one(app, token, note_id(), 0, &vec![9; *size]).await;
         assert!(accepted(&outcome).is_some());
     }
+}
 
-    let first = pull(&app, &device.token, 0).await;
-    let changes: Vec<i64> = first.items.iter().map(|note| note.change).collect();
-    assert_eq!(changes, vec![1, 2, 3]);
-    assert_eq!(first.next_after, 3);
-    assert!(first.more);
+/// Pulls every page from the start and returns, per page, the change numbers
+/// it held and the bytes of ciphertext it carried.
+async fn pull_all_pages(app: &axum::Router, token: &str) -> Vec<(Vec<i64>, usize)> {
+    let mut pages = Vec::new();
+    let mut after = 0;
+    loop {
+        let page = pull(app, token, after).await;
+        let bytes = page
+            .items
+            .iter()
+            .map(|note| note.ciphertext.as_ref().map_or(0, Vec::len))
+            .sum();
+        pages.push((page.items.iter().map(|note| note.change).collect(), bytes));
+        assert_eq!(
+            page.next_after,
+            page.items.last().map_or(after, |note| note.change)
+        );
+        if !page.more {
+            return pages;
+        }
+        assert!(page.next_after > after, "a page must make progress");
+        after = page.next_after;
+    }
+}
 
-    let second = pull(&app, &device.token, first.next_after).await;
-    let changes: Vec<i64> = second.items.iter().map(|note| note.change).collect();
-    assert_eq!(changes, vec![4, 5]);
-    assert_eq!(second.next_after, 5);
-    assert!(!second.more);
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn pull_pages_never_exceed_the_batch_limit(pool: PgPool) {
+    let app = app(pool);
+    let device = register(&app, "alice", "Laptop").await;
+    // Five notes of the largest size: two fit in a page, a third would not.
+    push_sizes(&app, &device.token, &[limits::MAX_NOTE_BYTES; 5]).await;
+
+    let pages = pull_all_pages(&app, &device.token).await;
+    let changes: Vec<&[i64]> = pages.iter().map(|page| page.0.as_slice()).collect();
+    assert_eq!(changes, [&[1, 2][..], &[3, 4][..], &[5][..]]);
+    for (_, bytes) in &pages {
+        assert!(
+            *bytes <= limits::MAX_BATCH_BYTES,
+            "a page held {bytes} bytes"
+        );
+    }
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_note_that_would_overflow_a_page_starts_the_next_one(pool: PgPool) {
+    let app = app(pool);
+    let device = register(&app, "alice", "Laptop").await;
+    // Three notes that together sit just under the limit, then a large one.
+    // Counting only the notes before it would let the fourth in, for a page
+    // of about 4 MB.
+    push_sizes(
+        &app,
+        &device.token,
+        &[990_000, 990_000, 990_000, limits::MAX_NOTE_BYTES, 10],
+    )
+    .await;
+
+    let pages = pull_all_pages(&app, &device.token).await;
+    assert_eq!(pages[0], (vec![1, 2, 3], 2_970_000));
+    assert_eq!(pages[1], (vec![4, 5], limits::MAX_NOTE_BYTES + 10));
+    assert_eq!(pages.len(), 2);
 }
 
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
@@ -221,6 +271,80 @@ async fn malformed_requests_are_refused_in_the_protocol_format(pool: PgPool) {
         assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{path}");
         assert_eq!(answer.code(), "invalid_request");
     }
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn stale_answers_stop_carrying_blobs_once_the_response_is_full(pool: PgPool) {
+    let app = app(pool);
+    let device = register(&app, "alice", "Laptop").await;
+    // Four notes of the largest size on the server.
+    let notes: Vec<_> = (0..4).map(|_| note_id()).collect();
+    for note in &notes {
+        push_one(
+            &app,
+            &device.token,
+            *note,
+            0,
+            &vec![5; limits::MAX_NOTE_BYTES],
+        )
+        .await;
+    }
+
+    // One small push per note, each on a base that is out of date. Every
+    // answer is stale, and each stale answer may carry a 1 MiB copy.
+    let items = notes.iter().map(|note| item(*note, 99, vec![1])).collect();
+    let outcomes = push(&app, &device.token, items).await;
+
+    let mut carried = 0;
+    let mut left_out = 0;
+    let mut returned_bytes = 0;
+    for (index, outcome) in outcomes.iter().enumerate() {
+        let PushOutcome::Stale {
+            current_change,
+            current,
+        } = outcome
+        else {
+            panic!("expected stale, got {outcome:?}");
+        };
+        // The change number is always there, so the client knows the note
+        // exists and that a pull will bring it.
+        assert_eq!(*current_change, Some(i64::try_from(index).unwrap() + 1));
+        match current {
+            Some(blob) => {
+                carried += 1;
+                returned_bytes += blob.ciphertext.as_ref().map_or(0, Vec::len);
+            }
+            None => left_out += 1,
+        }
+    }
+    assert_eq!((carried, left_out), (2, 2));
+    assert!(returned_bytes <= limits::MAX_BATCH_BYTES);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_batch_that_names_a_note_twice_is_refused(pool: PgPool) {
+    let app = app(pool.clone());
+    let device = register(&app, "alice", "Laptop").await;
+    let note = note_id();
+
+    let answer = try_push(
+        &app,
+        &device.token,
+        vec![
+            item(note, 0, vec![1]),
+            item(note_id(), 0, vec![2]),
+            item(note, 1, vec![3]),
+        ],
+    )
+    .await;
+
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST);
+    assert_eq!(answer.code(), "invalid_request");
+    assert_eq!(
+        usage(&pool, device.account_id).await,
+        (0, 0, 0),
+        "nothing was stored"
+    );
 }
 
 // ---- The version check under concurrency ----
@@ -322,7 +446,10 @@ async fn one_account_never_sees_or_touches_anothers_notes(pool: PgPool) {
     // is new, so a base of 1 is stale and a base of 0 creates it.
     assert_eq!(
         push_one(&app, &bob.token, note, 1, b"overwrite?").await,
-        PushOutcome::Stale { current: None }
+        PushOutcome::Stale {
+            current_change: None,
+            current: None
+        }
     );
     assert_eq!(
         push_one(&app, &bob.token, note, 0, b"bob's own").await,

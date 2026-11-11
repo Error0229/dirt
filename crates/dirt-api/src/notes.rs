@@ -13,6 +13,8 @@ use dirt_proto::api::{
     PushResult,
 };
 use dirt_proto::NoteId;
+use std::collections::HashSet;
+
 use serde::Deserialize;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -69,7 +71,12 @@ async fn push_one(pool: &PgPool, account_id: Uuid, item: &PushItem) -> ApiResult
         // The client believes the note is new and it is.
         None if item.base_change == 0 => None,
         // The client names a version of a note the server has never had.
-        None => return Ok(PushOutcome::Stale { current: None }),
+        None => {
+            return Ok(PushOutcome::Stale {
+                current_change: None,
+                current: None,
+            })
+        }
         Some((change, _, _, ref blob)) if change == item.base_change => {
             Some(to_len(blob.as_ref().map_or(0, Vec::len)))
         }
@@ -77,6 +84,7 @@ async fn push_one(pool: &PgPool, account_id: Uuid, item: &PushItem) -> ApiResult
         // client can merge and push again without a separate pull.
         Some((change, key_version, format_version, ciphertext)) => {
             return Ok(PushOutcome::Stale {
+                current_change: Some(change),
                 current: Some(NoteBlob {
                     note_id: item.note_id,
                     change,
@@ -163,11 +171,35 @@ pub async fn push(
         ));
     }
 
+    // A batch names each note once. Without this rule one request could ask
+    // for the same stored blob hundreds of times over.
+    let mut seen = HashSet::with_capacity(request.items.len());
+    if !request.items.iter().all(|item| seen.insert(item.note_id)) {
+        return Err(ApiError::invalid("a push may name each note only once"));
+    }
+
+    // A stale item is answered with the server's copy, which can be far
+    // larger than what was sent. The copies returned are held to the same
+    // limit as a batch; past it, a stale item reports only the change
+    // number, and the client gets the copy from its next pull.
+    let mut returned_bytes = 0usize;
     let mut results = Vec::with_capacity(request.items.len());
     for item in &request.items {
+        let mut outcome = push_one(&state.pool, device.account_id, item).await?;
+        if let PushOutcome::Stale { current, .. } = &mut outcome {
+            let size = current
+                .as_ref()
+                .and_then(|blob| blob.ciphertext.as_ref())
+                .map_or(0, Vec::len);
+            if returned_bytes + size > limits::MAX_BATCH_BYTES {
+                *current = None;
+            } else {
+                returned_bytes += size;
+            }
+        }
         results.push(PushResult {
             note_id: item.note_id,
-            outcome: push_one(&state.pool, device.account_id, item).await?,
+            outcome,
         });
     }
     Ok(device.respond(PushResponse {
@@ -184,9 +216,9 @@ pub struct PullParams {
 
 /// `GET /v1/notes/pull?after=N`
 ///
-/// A page holds notes in change order until their blobs add up to the batch
-/// limit. The first note of a page is always included, whatever its size, so
-/// a pull always makes progress.
+/// A page holds notes in change order for as long as their blobs fit in the
+/// batch limit together. The first note of a page is always included, so a
+/// pull always makes progress; a note is never larger than the limit.
 pub async fn pull(
     State(state): State<AppState>,
     Approved(device): Approved,
@@ -199,13 +231,13 @@ pub async fn pull(
     let rows: Vec<(Uuid, i64, i32, i32, Option<Vec<u8>>)> = sqlx::query_as(
         "SELECT note_id, change_number, key_version, format_version, ciphertext FROM ( \
              SELECT *, \
-                    coalesce(sum(coalesce(octet_length(ciphertext), 0)) OVER ( \
-                        ORDER BY change_number \
-                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS bytes_before \
+                    sum(coalesce(octet_length(ciphertext), 0)) \
+                        OVER (ORDER BY change_number) AS bytes_through, \
+                    row_number() OVER (ORDER BY change_number) AS position \
                FROM notes \
               WHERE account_id = $1 AND change_number > $2 \
          ) page \
-          WHERE bytes_before < $3 \
+          WHERE bytes_through <= $3 OR position = 1 \
           ORDER BY change_number \
           LIMIT $4",
     )

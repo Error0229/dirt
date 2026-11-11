@@ -112,18 +112,21 @@ order:
 ```json
 { "epoch": 1, "results": [
     { "note_id": "…", "status": "accepted", "change": 12 },
-    { "note_id": "…", "status": "stale", "current": { "note_id": "…", "change": 9, "key_version": 1,
-                                                        "format_version": 1, "ciphertext": "…" } },
+    { "note_id": "…", "status": "stale", "current_change": 9,
+      "current": { "note_id": "…", "change": 9, "key_version": 1, "format_version": 1, "ciphertext": "…" } },
     { "note_id": "…", "status": "rejected", "code": "note_too_large", "message": "…" } ] }
 ```
 
 - **accepted:** stored, with the note's new change number.
-- **stale:** somebody wrote the note first. `current` is what the server
-  holds, so the client can merge and push again without a separate pull. It
-  is `null` when the base names a note the server does not have.
+- **stale:** somebody wrote the note first. `current_change` is the change
+  number the server holds, or `null` if it has no such note. `current` is the
+  server's copy, so the client can merge and push again without a separate
+  pull. The copies returned in one response are held to the batch limit;
+  past it `current` is `null` and the client gets the copy from its next
+  pull.
 - **rejected:** refused for a reason that concerns this note alone.
 
-A refused item uses no change number.
+A refused item uses no change number. A push may name each note only once.
 
 ### `GET /v1/notes/pull?after=N`
 
@@ -135,8 +138,8 @@ Blobs changed after change number `N`, lowest first:
   "next_after": 12, "more": false }
 ```
 
-A page holds notes until their blobs add up to the batch limit; the first
-note of a page is always included. `more` says whether to pull again from
+A page holds notes for as long as their blobs fit in the batch limit
+together, and always at least one. `more` says whether to pull again from
 `next_after`. A purged note has `"ciphertext": null`.
 
 ## Limits

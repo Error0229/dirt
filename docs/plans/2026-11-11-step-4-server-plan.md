@@ -75,6 +75,16 @@ account was deleted from the trial database afterwards.
 files, so a local file holding connection strings would have been uploaded.
 It now excludes every `.env*` file.
 
+**Review of the pull request found two faults in the protocol,** both fixed
+before merging:
+
+- A pull page could pass the 3 MB limit by one note, because the size check
+  did not count the note being added.
+- A push with many stale items was answered with the server's copy of each,
+  with no bound. A push now names each note once, and the copies returned
+  are held to the batch limit; past it a stale answer carries only the change
+  number, and the client gets the copy from its next pull.
+
 Where the work differed from this plan:
 
 - **`rusqlite` moved from 0.42 to 0.39.** `sqlx` 0.9 lists an optional SQLite
@@ -89,7 +99,7 @@ Where the work differed from this plan:
   is removed.
 - **`sqlx` 0.9 accepts only string literals as SQL,** which rules out building
   a query with `format!`. Shared column lists are a macro.
-- **The old server had 56 tests; the new one has 43,** of which 32 need
+- **The old server had 56 tests; the new one has 46,** of which 35 need
   Postgres. CI runs those in a Linux job with a Postgres 18 service.
 
 ## Protocol

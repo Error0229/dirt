@@ -254,10 +254,17 @@ pub enum PushOutcome {
     /// Stored. `change` is the note's new change number.
     Accepted { change: i64 },
     /// Somebody else wrote the note first, or the base named a version the
-    /// server does not have. `current` is what the server holds, to merge
-    /// with before pushing again; it is `None` if the server has no such
-    /// note.
-    Stale { current: Option<NoteBlob> },
+    /// server does not have.
+    Stale {
+        /// The change number of the version the server holds, or `None`
+        /// if it has no such note.
+        current_change: Option<i64>,
+        /// The server's copy, to merge with before pushing again. It is
+        /// left out when the server has no such note, and when the
+        /// response already carries as much as a batch may: the client
+        /// then gets the copy from its next pull.
+        current: Option<NoteBlob>,
+    },
     /// Refused for a reason that concerns this note alone.
     Rejected { code: ErrorCode, message: String },
 }
@@ -410,7 +417,10 @@ mod tests {
 
         let stale = PushResult {
             note_id: note(),
-            outcome: PushOutcome::Stale { current: None },
+            outcome: PushOutcome::Stale {
+                current_change: None,
+                current: None,
+            },
         };
         let json = serde_json::to_value(&stale).unwrap();
         assert_eq!(json["status"], "stale");
