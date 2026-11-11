@@ -1,7 +1,17 @@
-target/**
-!target/release
-!target/x86_64-unknown-linux-gnu/release/**
-!target/aarch64-unknown-linux-gnu/release/**
-.env
-.env.server
-.env.client
+# What `vercel deploy` must not upload. When this file exists Vercel uses it
+# in place of .gitignore, so every local secret has to be named here too.
+
+# Local environment files, whatever their suffix. The server's settings come
+# from the Vercel project's environment, never from an uploaded file.
+.env*
+
+# Build output. The builder compiles from source.
+target/
+
+# Not needed to build the function.
+.git/
+.github/
+docs/
+trials/
+compose.yaml
+Makefile
