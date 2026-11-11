@@ -1,9 +1,9 @@
 //! Mobile shell state types and context object.
 //!
-//! `SyncStatus` and `View` are pure data and stay outside any cfg guard
-//! so the sync-worker tests on a non-android host can construct them
-//! freely. The `AppState` context object pulls in dioxus signals and is
-//! therefore android-only.
+//! `AuthDeps` has no Dioxus dependency and stays outside any cfg guard
+//! so the sign-in flow tests on a non-android host can construct it
+//! freely. `View` and the `AppState` context object are only used by
+//! the Dioxus components and are therefore android-only.
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
 use std::sync::Arc;
@@ -15,33 +15,15 @@ use dirt_core::auth::StoredToken;
 use dirt_core::auth::{AuthClient, TokenStore};
 #[cfg(target_os = "android")]
 use dirt_core::models::{Note, NoteId};
-#[cfg(target_os = "android")]
-use dirt_core::sync::session_client::SessionApiClient;
-#[cfg(target_os = "android")]
-use tokio::sync::mpsc::UnboundedSender;
 
 #[cfg(target_os = "android")]
 use crate::data::MobileNoteStore;
+
+/// What the interface says wherever it would otherwise report on sync.
 #[cfg(target_os = "android")]
-use crate::services::{SyncEvent, SyncWorkerHandle};
-
-/// Coarse sync status surfaced to the UI by the worker.
-///
-/// Re-exports the cross-platform `dirt_core::state::SyncState` so the
-/// mobile shell speaks the same vocabulary as desktop and any future
-/// shared UI helpers.
-pub use dirt_core::state::SyncState as SyncStatus;
-
-/// Short label suitable for an indicator chip.
-#[must_use]
-pub const fn sync_status_label(status: SyncStatus) -> &'static str {
-    match status {
-        SyncStatus::Offline => "Offline",
-        SyncStatus::Syncing => "Syncing",
-        SyncStatus::Synced => "Synced",
-        SyncStatus::Error => "Error",
-    }
-}
+pub const SYNC_UNAVAILABLE_MESSAGE: &str =
+    "Sync is unavailable while Dirt's sync is being rebuilt. \
+     Your notes are stored on this device only.";
 
 /// Top-level navigation state for the shell.
 #[cfg(target_os = "android")]
@@ -89,43 +71,12 @@ pub struct AppState {
     pub notes: Signal<Vec<Note>>,
     pub selected_note_id: Signal<Option<NoteId>>,
     pub view: Signal<View>,
-    pub sync_status: Signal<SyncStatus>,
-    pub sync_issue: Signal<Option<String>>,
-    pub last_sync_at: Signal<Option<i64>>,
+    /// A failure from startup that the list view shows: the local
+    /// database could not be opened, or the saved session could not be
+    /// read.
+    pub startup_issue: Signal<Option<String>>,
     pub store: Signal<Option<Arc<MobileNoteStore>>>,
-    pub sync_worker: Signal<Option<SyncWorkerHandle>>,
     /// Currently signed-in user, if any. Source of truth for "is the
     /// user signed in"; the Account row in Settings reads this.
     pub signed_in: Signal<Option<StoredToken>>,
-    /// Refreshing session API client. Present iff `signed_in` is
-    /// present; the sync worker holds its own `Arc<SessionApiClient>`
-    /// so swapping this signal doesn't kill the running worker.
-    pub session_client: Signal<Option<Arc<SessionApiClient>>>,
-    /// Long-lived [`SyncEvent`] sender shared by every worker spawn
-    /// (startup-hydrate, post-login). Owned by `AppShell` along with
-    /// the corresponding drainer task — both live in the root scope,
-    /// so the bridge from worker → UI signals stays alive when the
-    /// user navigates between List / Editor / Settings.
-    ///
-    /// A previous version spawned the drainer inside
-    /// `spawn_session_worker`, but Dioxus' `spawn` attaches the task
-    /// to the *calling* component's scope. When the Settings view
-    /// re-spawned the worker after sign-in and the user navigated
-    /// back to the list, the drainer was cancelled — leaving the
-    /// worker alive but its status events silently dropped.
-    pub events_tx: Signal<Option<UnboundedSender<SyncEvent>>>,
-}
-
-#[cfg(target_os = "android")]
-impl AppState {
-    /// Kick the sync worker so a pending mutation reaches the server
-    /// quickly. No-op when the worker isn't running (signed out,
-    /// misconfigured env). Mutation sites call this after a successful
-    /// DB write so the worker debounces local edits into a single
-    /// sync cycle.
-    pub fn trigger_sync(&self) {
-        if let Some(handle) = (self.sync_worker)().as_ref() {
-            handle.trigger();
-        }
-    }
 }

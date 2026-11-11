@@ -2,7 +2,7 @@
 
 use dioxus::prelude::*;
 
-use crate::components::{create_note_optimistic, NoteEditor, NoteList, Toolbar};
+use crate::components::{create_note, NoteEditor, NoteList, Toolbar};
 use crate::state::AppState;
 
 /// Home view component - the main application screen
@@ -19,7 +19,7 @@ pub fn Home() -> Element {
 
         if is_new_note_shortcut {
             evt.prevent_default();
-            create_note_optimistic(&mut state);
+            create_note(&state);
             return;
         }
 
@@ -56,6 +56,15 @@ pub fn Home() -> Element {
             onkeydown: handle_keydown,
 
             Toolbar {}
+
+            if let Some(message) = (state.startup_error)() {
+                div {
+                    class: "startup-error",
+                    role: "alert",
+                    style: "padding: 8px 12px; background: #b3261e; color: #ffffff; font-size: 13px;",
+                    "{message}"
+                }
+            }
 
             div {
                 class: "content-area",

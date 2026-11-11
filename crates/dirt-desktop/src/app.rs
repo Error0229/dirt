@@ -1,14 +1,11 @@
 //! Main application component.
 //!
-//! Sync runs in the background — there is no manual "Sync now" button.
-//! The worker (see `services::sync_worker`) handles startup-pull,
-//! 30 s periodic, and post-mutation kicks; mutation sites call
-//! `AppState::trigger_sync()` after a successful DB write.
+//! Notes are kept in the local store on this device; nothing syncs them.
 //!
 //! The session bearer lives in the OS-native keyring
-//! ([`KeyringTokenStore`]), not in an environment variable. When the
-//! keyring is empty, sync stays Offline and the worker doesn't spawn —
-//! sync is an opt-in feature surfaced through Settings → Account.
+//! ([`KeyringTokenStore`]), not in an environment variable. Signing in
+//! through Settings → Account records who is signed in and has no other
+//! effect.
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -16,15 +13,15 @@ use std::time::Duration;
 
 use dioxus::desktop::{window, LogicalPosition, LogicalSize};
 use dioxus::prelude::*;
-use dirt_core::auth::{AuthClient, KeyringTokenStore};
+use dirt_core::auth::{AuthClient, KeyringTokenStore, StoredToken};
 use dirt_core::models::Note;
-use dirt_core::sync::session_client::SessionApiClient;
+use dirt_core::Store;
 
 use crate::bootstrap_config::{load_bootstrap_config, BootstrapConfig};
 use crate::components::{QuickCapture, SettingsPanel};
 use crate::queries::use_notes_query;
-use crate::services::{spawn_sync_worker, DatabaseService, SyncEvent, SyncWorkerHandle};
-use crate::state::{AppState, AuthDeps, SyncStatus};
+use crate::services::open_local_store;
+use crate::state::{AppState, AuthDeps};
 use crate::theme::{resolve_theme, ResolvedTheme};
 use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
 use crate::views::Home;
@@ -54,31 +51,15 @@ pub fn App() -> Element {
     let mut quick_capture_open = use_signal(|| false);
     let note_list_visible = use_signal(|| true);
     let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
-    let mut db_service: Signal<Option<Arc<DatabaseService>>> = use_signal(|| None);
-    let sync_worker: Signal<Option<SyncWorkerHandle>> = use_signal(|| None);
-    let mut sync_worker_started = use_signal(|| false);
+    let mut db_service: Signal<Option<Arc<Store>>> = use_signal(|| None);
+    let mut startup_error: Signal<Option<String>> = use_signal(|| None);
     let mut signed_in = use_signal(|| None);
-    let mut session_client: Signal<Option<Arc<SessionApiClient>>> = use_signal(|| None);
     // Bootstrap is build-baked (see `bootstrap_config::load_bootstrap_config`)
-    // and never changes at runtime — the Phase-1 managed-architecture's
-    // `/v1/bootstrap` fetch was removed when the server-side route was
-    // deleted. Loading it into a local rather than a `Signal` lets us
-    // build `auth_deps` synchronously below: critical because the
-    // `_db_init_task` `use_resource` reads `auth_deps` early to decide
-    // whether to spawn the sync worker, and a `use_effect`-based
-    // population (the previous shape) could race ahead and leave the
-    // user offline on every startup despite a valid keyring entry.
+    // and never changes at runtime. Loading it into a local rather than a
+    // `Signal` lets us build `auth_deps` synchronously below: the
+    // `_db_init_task` `use_resource` reads `auth_deps` early to restore
+    // the signed-in account, and must see the final value when it does.
     let bootstrap = load_bootstrap_config();
-
-    let sync_status = use_signal(|| SyncStatus::Offline);
-    let sync_issue = use_signal(|| None::<String>);
-    let last_sync_at = use_signal(|| None::<i64>);
-    let pending_sync_count = use_signal(|| 0usize);
-    let pending_sync_note_ids = use_signal(Vec::new);
-
-    let mut sync_status_signal = sync_status;
-    let mut sync_issue_signal = sync_issue;
-    let last_sync_at_signal = last_sync_at;
 
     // Build the auth deps once from `bootstrap`. Same pattern as
     // `dirt-mobile::app_shell::build_auth_deps`: every field is
@@ -88,24 +69,19 @@ pub fn App() -> Element {
     // `Signal` only so it can be shared via `use_context_provider`.
     let auth_deps: Signal<AuthDeps> = use_signal(|| build_auth_deps(&bootstrap));
 
-    // Initialize the local database; once it's ready, hydrate any
-    // pre-existing session from the keyring and (only if a token is
-    // present) spawn the auto-sync worker. A missing token leaves
-    // sync_status at Offline — sync is opt-in.
+    // Open the local store and load the settings; once that is done,
+    // restore the signed-in account from the keyring.
     let _db_init_task = use_resource(move || async move {
-        match DatabaseService::new().await {
+        match open_local_store() {
             Ok(db) => {
                 let db = Arc::new(db);
 
-                let loaded_settings = match db.load_settings_with_large_stack().await {
+                let loaded_settings = match db.load_settings().await {
                     Ok(settings) => settings,
                     Err(error) => {
                         tracing::error!("Failed to load desktop settings: {error}");
-                        sync_status_signal.set(SyncStatus::Error);
-                        sync_issue_signal
-                            .set(Some(format!("Failed to load desktop settings: {error}")));
+                        startup_error.set(Some(format!("Could not read your settings: {error}")));
                         db_service.set(None);
-                        sync_worker_started.set(false);
                         return;
                     }
                 };
@@ -113,56 +89,15 @@ pub fn App() -> Element {
                 settings.set(loaded_settings);
                 theme.set(resolved_theme);
 
-                db_service.set(Some(db.clone()));
+                db_service.set(Some(db));
 
-                if !sync_worker_started() {
-                    sync_worker_started.set(true);
-                    let deps = auth_deps.read().clone();
-                    match hydrate_session(&deps) {
-                        Ok(Some(session)) => {
-                            let stored = deps.token_store.load().ok().flatten();
-                            signed_in.set(stored);
-                            let session_arc = Arc::new(session);
-                            session_client.set(Some(session_arc.clone()));
-                            spawn_session_worker(
-                                db,
-                                session_arc,
-                                sync_worker,
-                                sync_status_signal,
-                                sync_issue_signal,
-                                last_sync_at_signal,
-                            );
-                        }
-                        Ok(None) => {
-                            // No token in keyring — sync is opt-in. Leave
-                            // the worker unspawned and the status at
-                            // Offline; the user can sign in via Settings
-                            // → Account when they want sync.
-                            signed_in.set(None);
-                            session_client.set(None);
-                            sync_status_signal.set(SyncStatus::Offline);
-                            sync_issue_signal.set(None);
-                        }
-                        Err(error) => {
-                            tracing::error!("Session hydrate failed: {error}");
-                            sync_status_signal.set(SyncStatus::Error);
-                            sync_issue_signal.set(Some(error));
-                        }
-                    }
-                }
+                let stored = stored_session(&auth_deps.read());
+                signed_in.set(stored);
             }
             Err(error) => {
                 tracing::error!("Failed to initialize database: {error}");
-                // Surface the failure on the same channel a sync error
-                // would use. Without this the user sees a blank app and
-                // no indication of what's wrong.
-                sync_status_signal.set(SyncStatus::Error);
-                sync_issue_signal.set(Some(format!("Database failed to open: {error}")));
+                startup_error.set(Some(format!("Could not open your notes: {error}")));
                 db_service.set(None);
-                // Allow another bootstrap pass to retry — the
-                // `use_resource` only re-runs if its read state changes,
-                // so we have to release the gate ourselves.
-                sync_worker_started.set(false);
             }
         }
     });
@@ -281,14 +216,8 @@ pub fn App() -> Element {
         settings,
         theme,
         db_service,
+        startup_error,
         signed_in,
-        session_client,
-        sync_worker,
-        sync_status,
-        sync_issue,
-        last_sync_at,
-        pending_sync_count,
-        pending_sync_note_ids,
         settings_open,
         quick_capture_open,
         note_list_visible,
@@ -333,24 +262,14 @@ pub fn App() -> Element {
     }
 }
 
-/// Try to hydrate a `SessionApiClient` from the keyring.
-///
-/// Returns `Ok(None)` when sync is unconfigured (no auth client / no
-/// base URL — sync just isn't available, not a loud failure) or when
-/// the keyring slot is empty (user hasn't logged in yet). `Err(msg)`
-/// is reserved for real misconfigurations the user should see in the
-/// UI (malformed base URL, keyring backend failure).
 /// Build the per-process auth dependencies from the build-baked
 /// bootstrap.
 ///
-/// Synchronous on purpose: the previous shape — initialize with
-/// `None`/`None` then populate via `use_effect(bootstrap_config)` —
-/// raced the `_db_init_task` `use_resource` and could leave a
-/// signed-in user offline on every launch, because the resource read
-/// `auth_deps` before the effect fired (#235 review). Building
-/// everything here at signal init eliminates the race entirely;
-/// `bootstrap` is constant for the lifetime of the process so there
-/// is nothing for the reactive layer to react to anyway.
+/// Synchronous on purpose: the `_db_init_task` `use_resource` reads
+/// `auth_deps` as soon as the store is open, so every field must hold
+/// its final value at signal init. `bootstrap` is constant for the
+/// lifetime of the process, so there is nothing for the reactive layer
+/// to react to anyway.
 fn build_auth_deps(bootstrap: &BootstrapConfig) -> AuthDeps {
     let api_base_url = bootstrap
         .dirt_api_base_url
@@ -374,53 +293,18 @@ fn build_auth_deps(bootstrap: &BootstrapConfig) -> AuthDeps {
     }
 }
 
-fn hydrate_session(deps: &AuthDeps) -> Result<Option<SessionApiClient>, String> {
-    let Some(auth_client) = deps.auth_client.as_ref() else {
-        // No base URL configured — sync just isn't available. Not an
-        // error: the app still works offline.
-        return Ok(None);
-    };
-    let Some(base_url) = deps.api_base_url.as_ref() else {
-        return Ok(None);
-    };
-    SessionApiClient::from_store(
-        base_url.clone(),
-        (**auth_client).clone(),
-        deps.token_store.clone(),
-    )
-    .map_err(|err| err.to_string())
-}
-
-/// Spawn the sync worker and the UI-bridge consumer that drains its
-/// status channel into Dioxus signals. Factored out so login/logout
-/// flows can call into the same setup path without duplicating the
-/// channel wiring.
-// Reachable only from `app.rs` and `account_settings.rs`, but routed
-// through the (private) `app` module — so `pub` would be misleadingly
-// broad. The `redundant_pub_crate` lint would prefer plain `pub`
-// because the enclosing module is private; we override it because the
-// `pub(crate)` is documenting *intent* (callable anywhere inside
-// dirt-desktop) rather than just satisfying the type checker.
-#[allow(clippy::redundant_pub_crate)]
-pub(crate) fn spawn_session_worker(
-    db: Arc<DatabaseService>,
-    session: Arc<SessionApiClient>,
-    mut sync_worker_signal: Signal<Option<SyncWorkerHandle>>,
-    mut sync_status_signal: Signal<SyncStatus>,
-    mut sync_issue_signal: Signal<Option<String>>,
-    mut last_sync_at_signal: Signal<Option<i64>>,
-) {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SyncEvent>();
-    let handle = spawn_sync_worker(db, session, tx);
-    sync_worker_signal.set(Some(handle));
-    spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                SyncEvent::Status(status) => sync_status_signal.set(status),
-                SyncEvent::Issue(issue) => sync_issue_signal.set(issue),
-                SyncEvent::LastSync(ts) => last_sync_at_signal.set(Some(ts)),
-            }
+/// The session saved in the keyring, if there is one.
+///
+/// Returns `None` when no API base URL is configured: the Account tab
+/// can then neither sign in nor sign out, so it does not show a saved
+/// session as signed in.
+fn stored_session(deps: &AuthDeps) -> Option<StoredToken> {
+    deps.auth_client.as_ref()?;
+    match deps.token_store.load() {
+        Ok(stored) => stored,
+        Err(error) => {
+            tracing::error!("Failed to read the saved session: {error}");
+            None
         }
-    });
-    tracing::info!("Sync worker spawned");
+    }
 }

@@ -5,31 +5,34 @@
 
 ## Status
 
-A redesign is in progress. The code on `main` is the system **before** that
-redesign; it works, and this README describes how to run it.
+A redesign is in progress, and `main` is partway through it.
 
 - **What is changing and why:**
   [docs/plans/2026-11-10-system-redesign-design.md](docs/plans/2026-11-10-system-redesign-design.md)
 - **Build order:**
   [docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md](docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md)
 
-The redesign replaces sync, login and both database schemas. It adds automatic
-merging of concurrent edits and end-to-end encryption.
+**Where it stands: step 3 of 9.** The desktop app, the CLI and the Android app
+run on the new local core. **Sync is off.** Notes stay on the device they were
+written on until the new server and protocol arrive in steps 4 and 5. The
+server in this repository is still the old one, and no client syncs notes with
+it.
 
 ## Workspace layout
 
 | Crate | Purpose |
 |---|---|
-| `dirt-core` | Models, local SQLite repository, sync engine, login client. Shared by every client. |
-| `dirt-api` | axum HTTP server. Email-code login under `/v1/auth/*`, note sync at `POST /v1/notes/push` and `GET /v1/notes/pull`, and `/healthz`. Backed by Turso. |
-| `dirt-desktop` | Dioxus desktop app. Syncs in the background. |
-| `dirt-mobile` | Dioxus Android app, with login and a background sync worker. |
-| `dirt-cli` | `dirt add`, `dirt list`, `dirt search`, `dirt sync` and more. |
+| `dirt-proto` | Types shared by the server and the clients. |
+| `dirt-core` | Everything the clients share: notes as mergeable documents, the local store (notes, tags, search, settings), export, and the old sign-in client. |
+| `dirt-desktop` | Dioxus desktop app. |
+| `dirt-mobile` | Dioxus Android app. |
+| `dirt-cli` | `dirt add`, `dirt list`, `dirt search`, `dirt export` and more. |
+| `dirt-api` | The old axum HTTP server, backed by Turso: email-code login under `/v1/auth/*` and the old note endpoints. Step 4 replaces it. |
 | `dirt-vercel` | Workspace-root package that hosts the Vercel serverless entry point at `api/axum.rs`. |
 
 ## Quick start
 
-### Local-only capture (no sync)
+### Capture from the terminal
 
 Works on a fresh clone with no configuration:
 
@@ -38,29 +41,22 @@ cargo run -p dirt-cli "first thought"
 cargo run -p dirt-cli list
 ```
 
-The CLI saves to a SQLite file under your platform's data directory. Sync
-stays off until a server address is configured and you sign in with
-`dirt auth login`. The session is stored in the OS keychain, in a slot shared
-by `dirt-cli` and `dirt-desktop`, so signing in from either enables sync in
-both.
+Notes are saved to `dirt/stores/local/notes.db` under your platform's data
+directory (`%APPDATA%` on Windows). The desktop app opens the same file, so
+both show the same notes, and both can run at the same time. `--db-path` or
+`DIRT_DB_PATH` selects another file.
+
+`dirt sync` reports that sync is unavailable. A `dirt.db` left by an earlier
+version is not read and not changed.
 
 ### Run the desktop app
 
 ```bash
-export DIRT_API_BASE_URL="https://dirt-api.vercel.app"
 cargo run -p dirt-desktop
-# Then sign in from Settings → Account.
 ```
 
-`DIRT_API_BASE_URL` is read when the app is **built** and baked into the
-binary. The CLI reads the same variable at run time.
-
-There is no "Sync now" button. Sync runs on three triggers: app startup, a
-30-second timer, and 1.5 seconds after each local change. Failures back off
-(5 s, 15 s, 60 s, then 300 s).
-
-If no server address is configured or you are not signed in, the sync
-indicator shows red and Settings explains which. Local capture still works.
+Settings → Account still signs in to the old server when `DIRT_API_BASE_URL`
+was set at build time. Signing in does not sync anything at this step.
 
 ### Run the API server
 
@@ -81,25 +77,34 @@ server is rebuilt.
 
 ## How the current code works
 
-- **Offline-first.** Every change is written to local SQLite first. Clients
-  work fully offline and sync when they can.
-- **Server-stamped ordering.** Pull ordering uses the server's timestamp only,
-  so a wrong device clock cannot disturb it.
-- **Email-code sessions.** Clients sign in through
-  `/v1/auth/{request,verify}` and keep the session token in the OS keychain.
-- **Visible failures.** A misconfigured server address shows as a sync error
-  with a reason, never as a silent "offline".
+- **Local first, and for now local only.** Every change is one transaction in
+  a local SQLite file. Nothing waits on a network.
+- **A note is a document that merges.** Each note is stored as a CRDT
+  document. Its text, tags, search entry and last-edited time are derived from
+  the document on every change. An edit records only the parts of the text
+  that changed, so two copies of a note edited separately can be merged
+  without losing either edit. A delete is a marker in the document, which is
+  why it can be undone.
+- **One file, several processes.** The store has one thread that writes and
+  two that read, so a write never blocks a read. Every write begins by taking
+  the write lock, which is what lets the desktop app and the CLI share the
+  file.
+- **A store per account.** Stores live in `stores/local/` and
+  `stores/account-<id>/`. Only `local` is used until sign-in opens an account
+  store in step 5.
 
 ### Known limitations
 
-The redesign exists to fix these.
-
-- **Concurrent edits are lost silently.** If two devices change the same note
-  before syncing, the server keeps whichever push arrives last.
-- **One local database for all accounts.** Signing in as a different account
-  on the same machine mixes notes (issue #234).
-- **Server rate limits are unreliable.** They live in process memory, which
-  serverless instances do not share.
+- **No sync** until step 5.
+- **The desktop app does not watch the file.** It shows a note written by the
+  CLI only when it next reloads its list, for example on restart. If the CLI
+  changes a note that is open in the desktop editor, the desktop app's next
+  save replaces that change.
+- **Signing in does nothing for notes yet.** The account screen still talks to
+  the old server. Per-account stores are opened by the new sign-in in step 5
+  (issue #234).
+- **The old server's rate limits are unreliable.** They live in process
+  memory, which serverless instances do not share. Step 4 replaces them.
 
 ## Testing
 
@@ -109,8 +114,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 bash .github/scripts/security-guard.sh   # secret-leak guardrails
 ```
 
-Eight CLI tests are ignored on Windows because the `libsql` integration is
-flaky there. They run on macOS and Linux.
+The store's two-process tests start copies of the test program as worker
+processes, so they run wherever `cargo test` does.
 
 ## Documentation
 

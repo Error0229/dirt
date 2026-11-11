@@ -55,7 +55,7 @@ async fn run() -> Result<(), CliError> {
         Some(Commands::Completions { shell, output }) => {
             commands::completions::run_completions(shell, output.as_deref())?;
         }
-        Some(Commands::Sync) => commands::sync::run_sync(&db_path).await?,
+        Some(Commands::Sync) => commands::sync::run_sync()?,
         Some(Commands::Config { command }) => {
             commands::config::run_config(command, global_profile.as_deref())?;
         }

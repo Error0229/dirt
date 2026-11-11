@@ -26,15 +26,12 @@
 //! unchanged will fail again.
 
 use std::fmt;
-use std::str::FromStr;
 
 use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::models::{Note, NoteId};
 use crate::util::{is_http_url, normalize_text_option};
-use crate::SOLO_USER_ID;
 
 const PUSH_PATH: &str = "/v1/notes/push";
 const PULL_PATH: &str = "/v1/notes/pull";
@@ -226,39 +223,6 @@ impl ApiClient {
     }
 }
 
-// ---- Conversions ----
-
-impl From<&Note> for PushNote {
-    fn from(note: &Note) -> Self {
-        Self {
-            id: note.id.to_string(),
-            content: note.content.clone(),
-            created_at_ms: note.created_at,
-            client_updated_at_ms: note.updated_at,
-            deleted_at_ms: note.deleted_at,
-        }
-    }
-}
-
-impl TryFrom<PullNote> for Note {
-    type Error = ApiClientError;
-
-    fn try_from(remote: PullNote) -> Result<Self, Self::Error> {
-        let id = NoteId::from_str(&remote.id).map_err(|err| {
-            ApiClientError::Decode(format!("invalid note id '{}': {err}", remote.id))
-        })?;
-        Ok(Self {
-            id,
-            user_id: SOLO_USER_ID.to_string(),
-            content: remote.content,
-            created_at: remote.created_at_ms,
-            updated_at: remote.client_updated_at_ms,
-            server_updated_at: Some(remote.server_updated_at_ms),
-            deleted_at: remote.deleted_at_ms,
-        })
-    }
-}
-
 // ---- Helpers ----
 
 async fn parse_response<T: serde::de::DeserializeOwned>(resp: Response) -> ApiClientResult<T> {
@@ -359,53 +323,6 @@ mod tests {
         let rendered = format!("{client:?}");
         assert!(!rendered.contains(TEST_TOKEN));
         assert!(rendered.contains("[REDACTED]"));
-    }
-
-    #[test]
-    fn pushnote_from_note_roundtrips_timestamps() {
-        let mut note = Note::new("hello #world");
-        note.created_at = 1;
-        note.updated_at = 2;
-        note.deleted_at = Some(3);
-        let push: PushNote = (&note).into();
-        assert_eq!(push.id, note.id.to_string());
-        assert_eq!(push.content, "hello #world");
-        assert_eq!(push.created_at_ms, 1);
-        assert_eq!(push.client_updated_at_ms, 2);
-        assert_eq!(push.deleted_at_ms, Some(3));
-    }
-
-    #[test]
-    fn note_tryfrom_pullnote_preserves_server_updated_at() {
-        let pull = PullNote {
-            id: "01932aaa-0000-7000-8000-000000000abc".into(),
-            content: "pulled".into(),
-            created_at_ms: 10,
-            client_updated_at_ms: 20,
-            server_updated_at_ms: 30,
-            deleted_at_ms: Some(25),
-        };
-        let note: Note = pull.try_into().expect("well-formed uuid parses");
-        assert_eq!(note.user_id, SOLO_USER_ID);
-        assert_eq!(note.created_at, 10);
-        assert_eq!(note.updated_at, 20);
-        assert_eq!(note.server_updated_at, Some(30));
-        assert_eq!(note.deleted_at, Some(25));
-        assert!(note.is_deleted());
-    }
-
-    #[test]
-    fn note_tryfrom_pullnote_rejects_invalid_id() {
-        let pull = PullNote {
-            id: "not-a-uuid".into(),
-            content: "x".into(),
-            created_at_ms: 0,
-            client_updated_at_ms: 0,
-            server_updated_at_ms: 0,
-            deleted_at_ms: None,
-        };
-        let err = Note::try_from(pull).unwrap_err();
-        assert!(matches!(err, ApiClientError::Decode(_)));
     }
 
     #[tokio::test]

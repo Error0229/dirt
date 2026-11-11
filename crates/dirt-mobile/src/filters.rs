@@ -1,4 +1,7 @@
 //! Mobile note list filtering helpers (search + tag filtering).
+// The Android interface does not call this module yet; only the host
+// tests do.
+#![allow(dead_code)]
 
 use std::collections::BTreeSet;
 

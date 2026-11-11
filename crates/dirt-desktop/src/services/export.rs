@@ -6,10 +6,8 @@ use dirt_core::export::{
     render_notes_export, suggested_export_file_name as core_suggested_export_file_name,
     ExportFormat,
 };
-use dirt_core::Note;
+use dirt_core::{Note, Store};
 use thiserror::Error;
-
-use super::DatabaseService;
 
 const PAGE_SIZE: usize = 500;
 
@@ -42,7 +40,7 @@ pub enum NotesExportError {
 
 /// Export all non-deleted notes to the destination path.
 pub async fn export_notes_to_path(
-    db: &DatabaseService,
+    db: &Store,
     format: NotesExportFormat,
     output_path: &Path,
 ) -> Result<usize, NotesExportError> {
@@ -59,7 +57,7 @@ pub fn suggested_export_file_name(format: NotesExportFormat, timestamp_ms: i64) 
     core_suggested_export_file_name(format.into(), timestamp_ms)
 }
 
-async fn list_all_notes(db: &DatabaseService) -> Result<Vec<Note>, dirt_core::Error> {
+async fn list_all_notes(db: &Store) -> Result<Vec<Note>, dirt_core::Error> {
     let mut notes = Vec::new();
     let mut offset = 0usize;
 
@@ -80,7 +78,6 @@ async fn list_all_notes(db: &DatabaseService) -> Result<Vec<Note>, dirt_core::Er
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::DatabaseService;
 
     #[test]
     fn suggested_export_file_name_uses_format_extension() {
@@ -96,7 +93,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn export_notes_to_path_writes_markdown() {
-        let db = DatabaseService::in_memory().await.unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let db = Store::open(folder.path().join("notes.db")).unwrap();
         db.create_note("Desktop export #one").await.unwrap();
         db.create_note("Desktop export #two").await.unwrap();
 

@@ -8,14 +8,16 @@ The project is also a system design case study. Multi-user accounts, three clien
 
 ## Status: redesign in progress
 
-The code on `main` is the system before an approved redesign. Read both documents before changing architecture, sync, login or storage:
+`main` is partway through an approved redesign: steps 1 to 3 of 9 are done. The clients run on the new local core, sync is off until step 5, and the server is still the old one. Read both documents before changing architecture, sync, login or storage:
 
 - `docs/plans/2026-11-10-system-redesign-design.md` - requirements, decisions and the target design
 - `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md` - build order, trials and clean-up
 
 Rules while the redesign is under way:
 
-- Do not extend code the design lists for deletion (section 14): the sync engine and merge resolver in `dirt-core/src/sync/`, the login client in `dirt-core/src/auth/`, the server's `routes_auth.rs`, `email.rs` and `rate_limit.rs`, and both `sync_worker.rs` files.
+- Do not extend code the design lists for deletion (section 14): what is left of `dirt-core/src/sync/` (the old HTTP clients), the login client in `dirt-core/src/auth/`, and the server's `routes_auth.rs`, `email.rs`, `rate_limit.rs` and `turso.rs`.
+- No SQL, HTTP or cryptography in a client crate. They belong in `dirt-core`.
+- `rusqlite` (clients) and `libsql` (the old server) each compile their own SQLite and must never be linked into one program. `dirt-api` must not depend on `dirt-core`.
 - Anything planned for later belongs in the design document now, with its place in the build order.
 - When a document goes out of date, archive it under `docs/archive/` with a banner; do not leave it in place.
 
@@ -25,21 +27,23 @@ What the code on `main` uses today:
 
 - **UI Framework**: Dioxus 0.7 (desktop and Android)
 - **CLI**: clap
-- **Local database**: SQLite through the `libsql` crate, with FTS5 for full-text search
+- **Notes**: one `yrs` CRDT document per note (`dirt-core::notes`)
+- **Local database**: SQLite through `rusqlite` with the bundled build, FTS5 for full-text search (`dirt-core::store`)
 - **Server**: `dirt-api`, axum on Vercel's serverless Rust runtime
 - **Server database**: Turso
 - **Login**: email magic codes sent through Resend; session token in the OS keychain
-- **Sync**: HTTP push and pull between clients and `dirt-api`
+- **Sync**: none at present. The old engine was removed with the old local database
 
-What the redesign moves to: `rusqlite` locally, Postgres on Neon, Clerk for login, one `yrs` CRDT document per note, and end-to-end encryption. See the design's decision table.
+What the redesign still moves to: Postgres on Neon, Clerk for login, event-driven sync of encrypted documents, and end-to-end encryption. See the design's decision table.
 
 ## Project Structure
 
 ```
 api/axum.rs        # Vercel serverless entry point (root package `dirt-vercel`)
 crates/
-├── dirt-core/     # Shared models, local database, sync engine, login client
-├── dirt-api/      # axum server: login and note sync
+├── dirt-proto/    # Types shared by the server and the clients
+├── dirt-core/     # Notes as CRDT documents, the local store, export, old login client
+├── dirt-api/      # The old axum server: login and note endpoints (replaced in step 4)
 ├── dirt-desktop/  # Dioxus desktop application
 ├── dirt-mobile/   # Dioxus Android application
 └── dirt-cli/      # Command-line interface (`dirt`)
@@ -103,7 +107,10 @@ Android builds run Gradle, which may need a different JDK from the machine's def
 ### Database
 - All IDs use UUID v7 (time-sortable, client-generated)
 - Timestamps stored as Unix milliseconds (i64)
-- Deleted notes keep their row with a `deleted_at` timestamp, so deletes can sync
+- A note's creation time is read from its ID and is not stored
+- A note's row holds its CRDT document plus values derived from it (text, edit time, deleted flag); tags and the search index are derived too. Every write updates all of them in one `BEGIN IMMEDIATE` transaction
+- A deleted note keeps its row and document, marked deleted, so the delete can sync and be undone
+- Tests that need a store open one on a temporary file; in-memory databases do not support the store's connection model
 - FTS5 for full-text search
 
 ### Tags

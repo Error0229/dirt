@@ -37,8 +37,8 @@ pub enum CliError {
     #[error("auth error: {0}")]
     Auth(String),
     #[error(
-        "Sync is not configured. Run `dirt config init --api-base-url <URL>` to point \
-         the CLI at a dirt-api endpoint, then `dirt auth login` to sign in."
+        "Sync is unavailable while Dirt's sync is being rebuilt. \
+         Your notes are stored on this device only."
     )]
-    SyncNotConfigured,
+    SyncUnavailable,
 }

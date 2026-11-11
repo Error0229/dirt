@@ -12,9 +12,17 @@ pub enum Error {
     #[error("Database error: {0}")]
     Database(String),
 
-    /// libSQL error
-    #[error("libSQL error: {0}")]
-    LibSql(#[from] libsql::Error),
+    /// An error from SQLite
+    #[error("Database error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+
+    /// A note document that cannot be read or merged
+    #[error(transparent)]
+    Document(#[from] crate::notes::DocError),
+
+    /// The store's threads have stopped, so nothing more can be asked of it
+    #[error("The note store is closed")]
+    StoreClosed,
 
     /// IO error
     #[error("IO error: {0}")]

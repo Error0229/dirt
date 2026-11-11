@@ -25,26 +25,6 @@ pub fn format_short_time(timestamp_ms: i64) -> String {
     format!("{}w", delta / WEEK_MS)
 }
 
-/// Format a timestamp as a relative label with suffix (e.g. "just now", "5m ago").
-#[must_use]
-pub fn format_relative_time(timestamp_ms: i64) -> String {
-    let delta = delta_ms(timestamp_ms);
-
-    if delta < MINUTE_MS {
-        return "just now".to_string();
-    }
-    if delta < HOUR_MS {
-        return format!("{}m ago", delta / MINUTE_MS);
-    }
-    if delta < DAY_MS {
-        return format!("{}h ago", delta / HOUR_MS);
-    }
-    if delta < WEEK_MS {
-        return format!("{}d ago", delta / DAY_MS);
-    }
-    format!("{}w ago", delta / WEEK_MS)
-}
-
 fn delta_ms(timestamp_ms: i64) -> i64 {
     let now_ms = chrono::Utc::now().timestamp_millis();
     (now_ms - timestamp_ms).max(0)
@@ -97,22 +77,5 @@ mod tests {
     fn short_time_future_timestamp_clamps_to_now() {
         let ts = now_ms() + 60_000;
         assert_eq!(format_short_time(ts), "now");
-    }
-
-    #[test]
-    fn relative_time_just_now() {
-        assert_eq!(format_relative_time(now_ms()), "just now");
-    }
-
-    #[test]
-    fn relative_time_minutes() {
-        let ts = now_ms() - MINUTE_MS;
-        assert_eq!(format_relative_time(ts), "1m ago");
-    }
-
-    #[test]
-    fn relative_time_weeks() {
-        let ts = now_ms() - (3 * WEEK_MS);
-        assert_eq!(format_relative_time(ts), "3w ago");
     }
 }

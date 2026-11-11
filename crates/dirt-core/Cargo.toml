@@ -29,14 +29,10 @@ thiserror.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 regex.workspace = true
-libsql.workspace = true
+rusqlite.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-# Cursor codec for the sync engine (must match the server's encoding in
-# `dirt-api::routes::encode_cursor`).
-base64 = "0.22"
-urlencoding = "2.1"
 # Best-effort scrub of `StoredToken`'s session_token / session_id heap
 # allocations on drop. Already a transitive dep through `keyring`, so
 # promoting it to direct costs nothing in the lockfile.
@@ -58,9 +54,7 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 [dev-dependencies]
 # The deletion tests compare against plain yrs behaviour.
 yrs.workspace = true
-pretty_assertions.workspace = true
 tempfile = "3"
-dotenvy = "0.15"
 # Mock HTTP server for api_client + auth client tests. Pinned in
 # `[workspace.dependencies]` so dirt-core and dirt-cli share one version
 # (the `0.6` line pairs cleanly with reqwest 0.12).

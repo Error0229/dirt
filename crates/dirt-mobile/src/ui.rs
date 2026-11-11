@@ -80,6 +80,8 @@ pub enum ButtonVariant {
     #[default]
     Primary,
     Secondary,
+    // No button uses this style yet.
+    #[allow(dead_code)]
     Outline,
     Ghost,
     Danger,

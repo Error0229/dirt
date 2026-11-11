@@ -1,32 +1,25 @@
 //! Settings → Account tab: magic-code sign-in + sign-out.
 //!
-//! Sync is an opt-in feature; this tab is the only entry point that
-//! arms it. The flow mirrors `dirt-cli auth login`:
+//! The flow mirrors `dirt-cli auth login`:
 //!
 //!   1. User enters email → `POST /v1/auth/request` returns a
 //!      `request_id` and emails a 6-digit code.
 //!   2. User enters the code → `POST /v1/auth/verify` swaps it for a
 //!      `StoredToken` which we persist via the injected `TokenStore`.
-//!   3. On success we hydrate a `SessionApiClient` and spawn the sync
-//!      worker so background pull/push kicks off immediately — the
-//!      user doesn't need to restart the app.
+//!   3. On success the app shows the account as signed in.
 //!
 //! Sign-out reverses the steps: revoke the bearer server-side, clear
-//! the keyring slot, shut the worker down, and reset the sync status
-//! signals to Offline.
-
-use std::sync::Arc;
+//! the keyring slot, and show the account as signed out.
+//!
+//! Signing in does not sync notes; they stay on this device.
 
 use dioxus::prelude::*;
 use dirt_core::auth::{AuthError, StoredToken, TokenStoreError};
-use dirt_core::sync::session_client::SessionApiClient;
 
 use super::row::SettingRow;
-use crate::app::spawn_session_worker;
 use crate::components::button::{Button, ButtonVariant};
 use crate::components::input::Input;
-use crate::services::SyncWorkerHandle;
-use crate::state::{AppState, AuthDeps, SyncStatus};
+use crate::state::{AppState, AuthDeps};
 
 /// Discriminator for the inline status banner.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -70,7 +63,7 @@ pub(super) fn AccountSettingsTab() -> Element {
                         message.set(None);
                         spawn(async move {
                             let outcome = perform_logout(&deps_for_task).await;
-                            apply_logout_outcome(outcome, state, &mut message).await;
+                            apply_logout_outcome(outcome, state, &mut message);
                             busy.set(false);
                         });
                     },
@@ -143,8 +136,7 @@ pub(super) fn AccountSettingsTab() -> Element {
                                 &mut code_input,
                                 &mut request_id,
                                 &mut message,
-                            )
-                            .await;
+                            );
                             busy.set(false);
                         });
                     },
@@ -170,7 +162,7 @@ fn SignedInRow(email: String, busy: bool, on_logout: EventHandler<MouseEvent>) -
     rsx! {
         SettingRow {
             label: "Account",
-            description: "Sign out to stop syncing this device and revoke the session.",
+            description: "Sign out to revoke this device's session.",
 
             div {
                 class: "auth-panel",
@@ -206,7 +198,7 @@ fn SignedOutRow(
         return rsx! {
             SettingRow {
                 label: "Account",
-                description: "Sign in to enable cloud sync across devices.",
+                description: "Sign in to your Dirt account.",
                 div {
                     class: "auth-panel",
                     div {
@@ -285,11 +277,11 @@ fn SignedOutRow(
 
 // ---- Login / logout flow helpers (pure-ish, testable). ----
 
-/// Outcome of `verify_magic_code` + downstream persistence + worker
-/// startup. Splits success into "what got persisted" so the apply
-/// helper can update reactive signals without a second store load.
+/// Outcome of `verify_magic_code` + downstream persistence. Success
+/// carries what got persisted so the apply helper can update reactive
+/// signals without a second store load.
 enum LoginOutcome {
-    Success(StoredToken, Arc<SessionApiClient>),
+    Success(StoredToken),
     Failure(String),
 }
 
@@ -323,28 +315,17 @@ async fn perform_verify(deps: &AuthDeps, request_id: &str, code: &str) -> LoginO
     if let Err(err) = deps.token_store.save(&stored) {
         return LoginOutcome::Failure(describe_store_error(&err));
     }
-    let Some(base_url) = deps.api_base_url.clone() else {
-        return LoginOutcome::Failure(
-            "Sign-in succeeded but the API base URL is missing — sync cannot start.".into(),
-        );
-    };
-    match SessionApiClient::from_store(base_url, (**auth).clone(), deps.token_store.clone()) {
-        Ok(Some(session)) => LoginOutcome::Success(stored, Arc::new(session)),
-        Ok(None) => LoginOutcome::Failure(
-            "Token was saved but the keyring read back empty. Try signing in again.".into(),
-        ),
-        Err(err) => LoginOutcome::Failure(format!("Could not build sync client: {err}")),
-    }
+    LoginOutcome::Success(stored)
 }
 
 async fn perform_logout(deps: &AuthDeps) -> LogoutOutcome {
     // Read the freshest bearer from the keyring rather than reusing
-    // the snapshot we captured at sign-in. Silent refresh in the sync
-    // worker rotates the token in the keyring without touching the
-    // `signed_in` signal, so logging out with the signal's value
-    // would `POST /v1/auth/logout` with an already-revoked token,
-    // receive `SESSION_EXPIRED`, and treat that as success — leaving
-    // the live token on the server until it expires naturally.
+    // the snapshot we captured at sign-in. The CLI shares this keyring
+    // slot and can replace the token without touching the `signed_in`
+    // signal, so logging out with the signal's value could
+    // `POST /v1/auth/logout` with an already-revoked token, receive
+    // `SESSION_EXPIRED`, and treat that as success — leaving the live
+    // token on the server until it expires naturally.
     let current = match deps.token_store.load() {
         Ok(Some(token)) => token,
         Ok(None) => {
@@ -399,7 +380,7 @@ async fn perform_logout(deps: &AuthDeps) -> LogoutOutcome {
 // when called on subfields. The lint flags the raw byte count without
 // noticing that every field is a cheap `Arc`-backed handle.
 #[allow(clippy::large_types_passed_by_value)]
-async fn apply_login_outcome(
+fn apply_login_outcome(
     outcome: LoginOutcome,
     mut state: AppState,
     deps: &AuthDeps,
@@ -409,36 +390,8 @@ async fn apply_login_outcome(
     message: &mut Signal<Option<(MessageKind, String)>>,
 ) {
     match outcome {
-        LoginOutcome::Success(token, session) => {
-            // Tear down the previous worker (if any — happens during
-            // re-login after a permanent failure) before starting a
-            // fresh one. The await joins the old task so two workers
-            // never run a `sync_once` against the same DB concurrently.
-            shutdown_existing_worker(state.sync_worker).await;
-
+        LoginOutcome::Success(token) => {
             state.signed_in.set(Some(token));
-            state.session_client.set(Some(session.clone()));
-
-            let db = state.db_service.read().clone();
-            if let Some(db) = db {
-                spawn_session_worker(
-                    db,
-                    session,
-                    state.sync_worker,
-                    state.sync_status,
-                    state.sync_issue,
-                    state.last_sync_at,
-                );
-            } else {
-                // Database isn't ready yet — extremely unlikely (the
-                // settings panel can't open before the DB hydrates) but
-                // worth a loud error rather than silently skipping
-                // worker startup.
-                state.sync_status.set(SyncStatus::Error);
-                state.sync_issue.set(Some(
-                    "Database is not ready; sync worker not started.".into(),
-                ));
-            }
 
             email_input.set(String::new());
             code_input.set(String::new());
@@ -454,37 +407,19 @@ async fn apply_login_outcome(
 
 // See the rationale on [`apply_login_outcome`].
 #[allow(clippy::large_types_passed_by_value)]
-async fn apply_logout_outcome(
+fn apply_logout_outcome(
     outcome: LogoutOutcome,
     mut state: AppState,
     message: &mut Signal<Option<(MessageKind, String)>>,
 ) {
     match outcome {
         LogoutOutcome::Success => {
-            shutdown_existing_worker(state.sync_worker).await;
             state.signed_in.set(None);
-            state.session_client.set(None);
-            state.sync_status.set(SyncStatus::Offline);
-            state.sync_issue.set(None);
             message.set(Some((MessageKind::Info, "Signed out.".into())));
         }
         LogoutOutcome::Failure(reason) => {
             message.set(Some((MessageKind::Error, reason)));
         }
-    }
-}
-
-/// Drop the currently-tracked worker handle and wait for the
-/// underlying tokio task to finish its in-flight `sync_once`. The
-/// await is critical — without it a fresh worker spawned right after
-/// can run a startup sync concurrently with the old worker's
-/// not-yet-cancelled push cycle, producing two simultaneous bearer
-/// tokens against the same server endpoint.
-async fn shutdown_existing_worker(mut sync_worker: Signal<Option<SyncWorkerHandle>>) {
-    let handle = sync_worker.read().clone();
-    sync_worker.set(None);
-    if let Some(handle) = handle {
-        handle.shutdown().await;
     }
 }
 

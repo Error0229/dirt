@@ -200,7 +200,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-android-
 
-      - name: Check dirt-mobile for Android target
+      # A build, not a check: only linking shows whether the bundled SQLite
+      # and the rest of the native code fit together for Android.
+      - name: Build dirt-mobile for the Android target
         run: |
           export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           export ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/26.3.11579264"
@@ -211,4 +213,4 @@ jobs:
           export CC_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android${ANDROID_API}-clang"
           export CXX_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android${ANDROID_API}-clang++"
           export AR_x86_64_linux_android="$TOOLCHAIN/llvm-ar"
-          cargo check -p dirt-mobile --target x86_64-linux-android
+          cargo build -p dirt-mobile --target x86_64-linux-android

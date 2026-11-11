@@ -1,7 +1,8 @@
 //! Note list view.
 //!
-//! Newest-first list of locally stored notes with a sync status banner
-//! at the top, a "New note" button, and tap-to-edit on each card.
+//! List of locally stored notes, most recently edited first, with a
+//! banner at the top saying that sync is unavailable, a "New note"
+//! button, and tap-to-edit on each card.
 //! Search and tag filtering land in the M4 follow-up; this view stays
 //! deliberately minimal so the shell rewrite can ship without dragging
 //! every old feature back at once.
@@ -9,7 +10,7 @@
 use dioxus::prelude::*;
 use dirt_core::models::Note;
 
-use crate::state::{sync_status_label, AppState, SyncStatus, View};
+use crate::state::{AppState, View, SYNC_UNAVAILABLE_MESSAGE};
 use crate::ui::{ButtonVariant, UiButton};
 
 const PREVIEW_MAX_CHARS: usize = 140;
@@ -18,14 +19,28 @@ const PREVIEW_MAX_CHARS: usize = 140;
 pub fn List() -> Element {
     let mut state = use_context::<AppState>();
     let notes = (state.notes)();
-    let status = (state.sync_status)();
-    let issue = (state.sync_issue)();
+    let issue = (state.startup_issue)();
 
     rsx! {
         div {
             style: "padding: 12px 16px; display: flex; flex-direction: column; gap: 12px;",
 
-            SyncBanner { status, issue: issue.clone() }
+            SyncBanner {}
+
+            if let Some(message) = issue {
+                p {
+                    style: "
+                        margin: 0;
+                        padding: 10px 12px;
+                        background: #fee2e2;
+                        color: #b91c1c;
+                        border-radius: 10px;
+                        font-size: 13px;
+                        line-height: 1.4;
+                    ",
+                    "{message}"
+                }
+            }
 
             div {
                 style: "display: flex; gap: 8px;",
@@ -62,46 +77,20 @@ pub fn List() -> Element {
     }
 }
 
+/// Says that sync is unavailable.
 #[component]
-fn SyncBanner(status: SyncStatus, issue: Option<String>) -> Element {
-    let (bg, fg) = match status {
-        SyncStatus::Offline => ("#f3f4f6", "#6b7280"),
-        SyncStatus::Syncing => ("#dbeafe", "#1d4ed8"),
-        SyncStatus::Synced => ("#dcfce7", "#15803d"),
-        SyncStatus::Error => ("#fee2e2", "#b91c1c"),
-    };
-    let label = sync_status_label(status);
-
+fn SyncBanner() -> Element {
     rsx! {
         div {
             style: "
-                display: flex;
-                flex-direction: column;
-                gap: 4px;
                 padding: 10px 12px;
-                background: {bg};
-                color: {fg};
+                background: #f3f4f6;
+                color: #6b7280;
                 border-radius: 10px;
                 font-size: 13px;
+                line-height: 1.4;
             ",
-            div {
-                style: "display: flex; align-items: center; gap: 8px;",
-                span {
-                    style: "
-                        width: 8px;
-                        height: 8px;
-                        border-radius: 999px;
-                        background: {fg};
-                    ",
-                }
-                span { style: "font-weight: 600;", "{label}" }
-            }
-            if let Some(message) = issue {
-                p {
-                    style: "margin: 0; font-size: 12px; line-height: 1.4;",
-                    "{message}"
-                }
-            }
+            "{SYNC_UNAVAILABLE_MESSAGE}"
         }
     }
 }
@@ -167,7 +156,7 @@ fn note_title(note: &Note) -> String {
     note.content
         .lines()
         .next()
-        .map(|line| line.trim())
+        .map(str::trim)
         .filter(|line| !line.is_empty())
         .map_or_else(|| "(untitled)".to_string(), str::to_string)
 }

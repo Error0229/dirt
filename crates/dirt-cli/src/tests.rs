@@ -1,10 +1,10 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use dirt_core::db::{Database, LibSqlNoteRepository, NoteRepository};
 use dirt_core::export::render_markdown_export;
-use dirt_core::Note;
+use dirt_core::notes::NoteDoc;
+use dirt_core::{Note, NoteId, Store};
+use tempfile::TempDir;
 use tokio::time::sleep;
 
 use crate::cli::{CompletionShell, ExportFormat};
@@ -52,19 +52,17 @@ fn note_preview_truncates_with_ellipsis() {
     assert_eq!(preview, "This is a very lo...");
 }
 
-#[cfg_attr(windows, ignore = "libsql integration is flaky on windows CI")]
 #[tokio::test(flavor = "current_thread")]
 async fn list_notes_respects_limit_and_tag_filter() {
-    let db_path = unique_test_db_path();
+    let (_folder, db_path) = temp_db();
     {
-        let db = Database::open(&db_path).await.unwrap();
-        let repo = LibSqlNoteRepository::new(db.connection());
+        let store = Store::open(&db_path).unwrap();
 
-        repo.create("First #work").await.unwrap();
+        store.create_note("First #work").await.unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create("Second #personal").await.unwrap();
+        store.create_note("Second #personal").await.unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create("Third #work").await.unwrap();
+        store.create_note("Third #work").await.unwrap();
     }
 
     let recent = list_notes(2, None, &db_path).await.unwrap();
@@ -75,30 +73,24 @@ async fn list_notes_respects_limit_and_tag_filter() {
     let work_only = list_notes(10, Some("work"), &db_path).await.unwrap();
     assert_eq!(work_only.len(), 2);
     assert!(work_only.iter().all(|note| note.content.contains("#work")));
-
-    cleanup_db_files(&db_path);
 }
 
-#[cfg_attr(windows, ignore = "libsql integration is flaky on windows CI")]
 #[tokio::test(flavor = "current_thread")]
 async fn search_notes_finds_matches_with_limit() {
-    let db_path = unique_test_db_path();
+    let (_folder, db_path) = temp_db();
     {
-        let db = Database::open(&db_path).await.unwrap();
-        let repo = LibSqlNoteRepository::new(db.connection());
+        let store = Store::open(&db_path).unwrap();
 
-        repo.create("Milk and eggs").await.unwrap();
+        store.create_note("Milk and eggs").await.unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create("Milkshake recipe").await.unwrap();
+        store.create_note("Milkshake recipe").await.unwrap();
         sleep(Duration::from_millis(2)).await;
-        repo.create("Unrelated note").await.unwrap();
+        store.create_note("Unrelated note").await.unwrap();
     }
 
     let matches = search_notes("milk", 1, &db_path).await.unwrap();
     assert_eq!(matches.len(), 1);
     assert!(matches[0].content.to_lowercase().contains("milk"));
-
-    cleanup_db_files(&db_path);
 }
 
 #[test]
@@ -122,183 +114,77 @@ fn normalize_note_identifier_rejects_empty() {
     );
 }
 
-#[cfg_attr(windows, ignore = "libsql integration is flaky on windows CI")]
 #[tokio::test(flavor = "current_thread")]
 async fn resolve_note_for_edit_supports_exact_and_prefix_id() {
-    let db_path = unique_test_db_path();
-    let db = Database::open(&db_path).await.unwrap();
-    let repo = LibSqlNoteRepository::new(db.connection());
+    let (_folder, db_path) = temp_db();
+    let store = open_database(&db_path).unwrap();
+    insert_note(&store, "11111111-1111-7111-8111-111111111111", "Note A").await;
+    insert_note(&store, "11111111-1111-7111-8111-222222222222", "Note B").await;
 
-    let note_a = Note {
-        id: "11111111-1111-7111-8111-111111111111".parse().unwrap(),
-        content: "Note A".to_string(),
-        created_at: 1000,
-        updated_at: 1000,
-        user_id: dirt_core::SOLO_USER_ID.to_string(),
-        server_updated_at: None,
-        deleted_at: None,
-    };
-    let note_b = Note {
-        id: "11111111-1111-7111-8111-222222222222".parse().unwrap(),
-        content: "Note B".to_string(),
-        created_at: 1001,
-        updated_at: 1001,
-        user_id: dirt_core::SOLO_USER_ID.to_string(),
-        server_updated_at: None,
-        deleted_at: None,
-    };
-    repo.create_with_note(&note_a).await.unwrap();
-    repo.create_with_note(&note_b).await.unwrap();
-    drop(db);
-
-    let service = open_database(&db_path).await.unwrap();
-
-    let by_exact = resolve_note_for_edit("11111111-1111-7111-8111-111111111111", &service)
+    let by_exact = resolve_note_for_edit("11111111-1111-7111-8111-111111111111", &store)
         .await
         .unwrap();
     assert_eq!(by_exact.content, "Note A");
 
-    let by_prefix = resolve_note_for_edit("11111111-1111-7111-8111-2", &service)
+    let by_prefix = resolve_note_for_edit("11111111-1111-7111-8111-2", &store)
         .await
         .unwrap();
     assert_eq!(by_prefix.content, "Note B");
-
-    cleanup_db_files(&db_path);
 }
 
-#[cfg_attr(windows, ignore = "libsql integration is flaky on windows CI")]
 #[tokio::test(flavor = "current_thread")]
 async fn resolve_note_for_edit_rejects_ambiguous_prefix() {
-    let db_path = unique_test_db_path();
-    let db = Database::open(&db_path).await.unwrap();
-    let repo = LibSqlNoteRepository::new(db.connection());
+    let (_folder, db_path) = temp_db();
+    let store = open_database(&db_path).unwrap();
+    insert_note(&store, "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa", "Left").await;
+    insert_note(&store, "aaaaaaaa-aaaa-7aaa-8aaa-bbbbbbbbbbbb", "Right").await;
 
-    let note_a = Note {
-        id: "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa".parse().unwrap(),
-        content: "Left".to_string(),
-        created_at: 1000,
-        updated_at: 1000,
-        user_id: dirt_core::SOLO_USER_ID.to_string(),
-        server_updated_at: None,
-        deleted_at: None,
-    };
-    let note_b = Note {
-        id: "aaaaaaaa-aaaa-7aaa-8aaa-bbbbbbbbbbbb".parse().unwrap(),
-        content: "Right".to_string(),
-        created_at: 1001,
-        updated_at: 1001,
-        user_id: dirt_core::SOLO_USER_ID.to_string(),
-        server_updated_at: None,
-        deleted_at: None,
-    };
-    repo.create_with_note(&note_a).await.unwrap();
-    repo.create_with_note(&note_b).await.unwrap();
-    drop(db);
-
-    let service = open_database(&db_path).await.unwrap();
-
-    let error = resolve_note_for_edit("aaaaaaaa-aaaa-7aaa-8aaa", &service)
+    let error = resolve_note_for_edit("aaaaaaaa-aaaa-7aaa-8aaa", &store)
         .await
         .unwrap_err();
     assert!(matches!(error, CliError::AmbiguousNoteId(_)));
-
-    cleanup_db_files(&db_path);
 }
 
-#[cfg_attr(windows, ignore = "libsql integration is flaky on windows CI")]
 #[tokio::test(flavor = "current_thread")]
 async fn resolve_note_for_edit_rejects_missing_note() {
-    let db_path = unique_test_db_path();
-    let service = open_database(&db_path).await.unwrap();
+    let (_folder, db_path) = temp_db();
+    let store = open_database(&db_path).unwrap();
 
-    let error = resolve_note_for_edit("does-not-exist", &service)
+    let error = resolve_note_for_edit("does-not-exist", &store)
         .await
         .unwrap_err();
     assert!(matches!(error, CliError::NoteNotFound(_)));
-
-    cleanup_db_files(&db_path);
 }
 
-#[cfg_attr(windows, ignore = "libsql integration is flaky on windows CI")]
 #[tokio::test(flavor = "current_thread")]
 async fn run_delete_soft_deletes_note_by_exact_and_prefix_id() {
-    let db_path = unique_test_db_path();
-    let db = Database::open(&db_path).await.unwrap();
-    let repo = LibSqlNoteRepository::new(db.connection());
-
-    let note_a = Note {
-        id: "bbbbbbbb-bbbb-7bbb-8bbb-111111111111".parse().unwrap(),
-        content: "Keep me".to_string(),
-        created_at: 1000,
-        updated_at: 1000,
-        user_id: dirt_core::SOLO_USER_ID.to_string(),
-        server_updated_at: None,
-        deleted_at: None,
-    };
-    let note_b = Note {
-        id: "bbbbbbbb-bbbb-7bbb-8bbb-222222222222".parse().unwrap(),
-        content: "Delete me".to_string(),
-        created_at: 1001,
-        updated_at: 1001,
-        user_id: dirt_core::SOLO_USER_ID.to_string(),
-        server_updated_at: None,
-        deleted_at: None,
-    };
-    repo.create_with_note(&note_a).await.unwrap();
-    repo.create_with_note(&note_b).await.unwrap();
-    drop(db);
+    let (_folder, db_path) = temp_db();
+    let store = Store::open(&db_path).unwrap();
+    let note_a = insert_note(&store, "bbbbbbbb-bbbb-7bbb-8bbb-111111111111", "Keep me").await;
+    let note_b = insert_note(&store, "bbbbbbbb-bbbb-7bbb-8bbb-222222222222", "Delete me").await;
 
     run_delete("bbbbbbbb-bbbb-7bbb-8bbb-2", &db_path)
         .await
         .unwrap();
 
-    let db = Database::open(&db_path).await.unwrap();
-    let repo = LibSqlNoteRepository::new(db.connection());
-    assert!(repo.get(&note_b.id).await.unwrap().is_none());
-    assert!(repo.get(&note_a.id).await.unwrap().is_some());
-    drop(db);
+    assert!(store.get_note(&note_b).await.unwrap().is_none());
+    assert!(store.get_note(&note_a).await.unwrap().is_some());
 
     run_delete("bbbbbbbb-bbbb-7bbb-8bbb-111111111111", &db_path)
         .await
         .unwrap();
 
-    let db = Database::open(&db_path).await.unwrap();
-    let repo = LibSqlNoteRepository::new(db.connection());
-    assert!(repo.get(&note_a.id).await.unwrap().is_none());
-
-    cleanup_db_files(&db_path);
+    assert!(store.get_note(&note_a).await.unwrap().is_none());
 }
 
-#[cfg_attr(windows, ignore = "libsql integration is flaky on windows CI")]
-#[tokio::test(flavor = "current_thread")]
-#[allow(unsafe_code)]
-async fn run_sync_requires_sync_configuration() {
-    let db_path = unique_test_db_path();
-
-    // Force the unconfigured path so the test doesn't accidentally pick
-    // up a developer's real DIRT_API_BASE_URL. Post-2.8 there is no
-    // client-side bearer env var to clear — auth flows through the
-    // keyring, which the CLI guards against silently in
-    // `commands::sync::build_session` (Auth error if empty).
-    // SAFETY: tests in this module run on a current_thread runtime, so
-    // there's no concurrent reader of these vars within the process.
-    unsafe {
-        std::env::remove_var("DIRT_API_BASE_URL");
-        std::env::set_var("DIRT_PROFILE", "this-profile-does-not-exist");
-    }
-
-    let error = run_sync(&db_path).await.unwrap_err();
-    // No api_base_url is `SyncNotConfigured`. The contract is that
-    // `dirt sync` refuses to run rather than silently no-oping.
-    assert!(
-        matches!(error, CliError::SyncNotConfigured | CliError::Config(_)),
-        "unexpected error variant: {error:?}",
+#[test]
+fn run_sync_fails_because_sync_is_unavailable() {
+    let error = run_sync().unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Sync is unavailable while Dirt's sync is being rebuilt. \
+         Your notes are stored on this device only."
     );
-
-    unsafe {
-        std::env::remove_var("DIRT_PROFILE");
-    }
-    cleanup_db_files(&db_path);
 }
 
 #[test]
@@ -316,9 +202,6 @@ fn render_markdown_export_includes_frontmatter_and_content() {
         content: "Hello export #tag".to_string(),
         created_at: 123,
         updated_at: 456,
-        user_id: dirt_core::SOLO_USER_ID.to_string(),
-        server_updated_at: None,
-        deleted_at: None,
     };
 
     let rendered = render_markdown_export(&[note]);
@@ -329,14 +212,12 @@ fn render_markdown_export_includes_frontmatter_and_content() {
     assert!(rendered.contains("Hello export #tag"));
 }
 
-#[cfg_attr(windows, ignore = "libsql integration is flaky on windows CI")]
 #[tokio::test(flavor = "current_thread")]
 async fn run_export_writes_json_file() {
-    let db_path = unique_test_db_path();
+    let (_folder, db_path) = temp_db();
     {
-        let db = Database::open(&db_path).await.unwrap();
-        let repo = LibSqlNoteRepository::new(db.connection());
-        repo.create("Export me #one").await.unwrap();
+        let store = Store::open(&db_path).unwrap();
+        store.create_note("Export me #one").await.unwrap();
     }
 
     let output_path = std::env::temp_dir().join(format!(
@@ -355,7 +236,6 @@ async fn run_export_writes_json_file() {
     assert!(exported.contains("\"tags\": [\n      \"one\"\n    ]"));
 
     let _ = std::fs::remove_file(output_path);
-    cleanup_db_files(&db_path);
 }
 
 #[test]
@@ -377,24 +257,22 @@ fn run_completions_writes_bash_script_file() {
     let _ = std::fs::remove_file(output_path);
 }
 
-fn unique_test_db_path() -> PathBuf {
-    static NEXT_TEST_DB_ID: AtomicU64 = AtomicU64::new(0);
-
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_nanos());
-    let sequence = NEXT_TEST_DB_ID.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("dirt-cli-list-test-{timestamp}-{sequence}.db"))
+/// A database path inside a new temporary folder. The folder is removed
+/// when the returned guard is dropped.
+fn temp_db() -> (TempDir, PathBuf) {
+    let folder = tempfile::tempdir().unwrap();
+    let db_path = folder.path().join("notes.db");
+    (folder, db_path)
 }
 
-fn cleanup_db_files(path: &PathBuf) {
-    // On Windows, libsql can keep file handles alive briefly after drop.
-    // Removing test DB files eagerly can trigger intermittent access violations.
-    if cfg!(windows) {
-        return;
-    }
-
-    let _ = std::fs::remove_file(path);
-    let _ = std::fs::remove_file(path.with_extension("db-shm"));
-    let _ = std::fs::remove_file(path.with_extension("db-wal"));
+/// Stores a note under a chosen ID, which `Store::create_note` cannot do.
+async fn insert_note(store: &Store, id: &str, content: &str) -> NoteId {
+    let id: NoteId = id.parse().unwrap();
+    let document = NoteDoc::new(1);
+    document.set_text(content, 1000);
+    store
+        .merge_note_document(&id, document.encode())
+        .await
+        .unwrap();
+    id
 }

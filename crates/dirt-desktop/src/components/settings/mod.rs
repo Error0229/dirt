@@ -1,14 +1,13 @@
 //! Settings panel component.
 //!
 //! The Account tab drives the magic-code sign-in/sign-out flow against
-//! `dirt-api`'s `/v1/auth/*` endpoints. The Sync tab shows the runtime
-//! health of the auto-sync worker; it surfaces `Offline` until the
-//! user signs in on the Account tab.
+//! `dirt-api`'s `/v1/auth/*` endpoints. The Sync tab says that sync is
+//! unavailable and that notes are kept on this device only.
 
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 
-use dirt_core::models::{NoteId, Settings, ThemeMode};
+use dirt_core::models::{Settings, ThemeMode};
 
 use super::button::{Button, ButtonVariant};
 use super::dialog::{DialogContent, DialogRoot, DialogTitle};
@@ -73,11 +72,6 @@ pub fn SettingsPanel() -> Element {
         ThemeMode::Dark => "dark",
         ThemeMode::System => "system",
     };
-    let sync_status = (state.sync_status)();
-    let sync_issue = (state.sync_issue)();
-    let pending_sync_count = (state.pending_sync_count)();
-    let pending_sync_note_ids = (state.pending_sync_note_ids)();
-    let pending_sync_preview = format_pending_sync_preview(&pending_sync_note_ids);
     let mut export_busy = use_signal(|| false);
     let mut export_message = use_signal(|| None::<String>);
 
@@ -269,57 +263,12 @@ pub fn SettingsPanel() -> Element {
                             export_message: export_message(),
                         }
                     },
-                    SettingsTab::Sync => rsx! {
-                        SyncSettingsTab {
-                            sync_status: sync_status,
-                            sync_issue: sync_issue,
-                            pending_sync_count: pending_sync_count,
-                            pending_sync_preview: pending_sync_preview,
-                        }
-                    },
+                    SettingsTab::Sync => rsx! { SyncSettingsTab {} },
                     SettingsTab::Account => rsx! { AccountSettingsTab {} },
                 }
 
                 } // settings-body
             }
         }
-    }
-}
-
-fn format_pending_sync_preview(note_ids: &[NoteId]) -> String {
-    if note_ids.is_empty() {
-        return "none".to_string();
-    }
-
-    let preview = note_ids
-        .iter()
-        .take(5)
-        .map(std::string::ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    if note_ids.len() > 5 {
-        format!("{preview}, +{}", note_ids.len() - 5)
-    } else {
-        preview
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn format_pending_sync_preview_shows_overflow_suffix() {
-        let ids = vec![
-            "11111111-1111-7111-8111-111111111111".parse().unwrap(),
-            "11111111-1111-7111-8111-222222222222".parse().unwrap(),
-            "11111111-1111-7111-8111-333333333333".parse().unwrap(),
-            "11111111-1111-7111-8111-444444444444".parse().unwrap(),
-            "11111111-1111-7111-8111-555555555555".parse().unwrap(),
-            "11111111-1111-7111-8111-666666666666".parse().unwrap(),
-        ];
-        let preview = format_pending_sync_preview(&ids);
-        assert!(preview.contains("+1"));
     }
 }

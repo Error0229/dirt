@@ -42,9 +42,6 @@ pub fn NoteList() -> Element {
     let mut filtered_notes = Vec::new();
 
     for note in &all_notes {
-        if note.is_deleted() {
-            continue;
-        }
         total_notes += 1;
 
         let tags = note.tags();

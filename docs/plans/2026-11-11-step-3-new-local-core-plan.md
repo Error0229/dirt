@@ -2,7 +2,7 @@
 title: "Step 3: new local core"
 type: plan
 date: 2026-11-11
-status: in progress
+status: done
 parent: docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md
 tracking: "#239"
 ---
@@ -59,6 +59,32 @@ Decisions this plan adds:
 | Async interface | The store's functions are `async`. Each sends a job to the store's own threads and awaits the answer. No tokio runtime is required to call them |
 | Tests that need a database | Use a temporary file, not an in-memory database. Write-ahead-log mode and separate read connections do not work on `:memory:` |
 
+## Result (2026-11-11)
+
+Done, in two pull requests instead of three: 3b and 3c were merged into one,
+because the two-process test is the proof that the store in 3b is safe.
+
+Where the work differed from this plan:
+
+- **The two-process test has no control runs.** The controls in trial 2
+  turned each rule off. The store has no switch for that, and should not have
+  one. In its place the test was run once with the write rule broken by hand:
+  three of its four tests failed with "database is locked".
+- **An update replaces the text as it stands when the write happens.** The
+  diff is taken against the stored text, not against the text the caller
+  started from. If the CLI changes a note that is open in the desktop editor,
+  the editor's next save undoes that change. Closing this needs the desktop
+  app to notice changes to the file, which the parent plan places in step 5.
+- **The desktop app had no undo for a delete,** so nothing calls
+  `restore_note` yet. The CLI and both apps can use it when they add one.
+- **A store that fails to open is now shown on screen** in the desktop app.
+  The removed sync indicator used to be the only sign of it.
+- **The Android app's clippy run was already failing** for the Android target
+  before this step, in code CI only checked and never linted. It passes now.
+- **The Android binary links with plain cargo,** so the CI job builds it.
+- **Tests:** 326 pass and none is ignored. The eight CLI tests that were
+  ignored on Windows because of `libsql` now run.
+
 ## Work, in three pull requests
 
 `rusqlite` and `libsql` cannot be linked into one program, so the store cannot
@@ -69,12 +95,12 @@ removes `libsql` from the clients.
 
 No behaviour changes.
 
-- [ ] New crate `dirt-proto` with `NoteId`. `dirt-core` re-exports it.
-- [ ] `dirt-api`: remove the `dirt-core` dependency (amendment C1). It gets its
+- [x] New crate `dirt-proto` with `NoteId`. `dirt-core` re-exports it.
+- [x] `dirt-api`: remove the `dirt-core` dependency (amendment C1). It gets its
       own row type in place of `dirt_core::Note`, and its own constant for the
       fixed user ID.
-- [ ] `dirt-cli`: remove the direct `libsql` dependency.
-- [ ] `dirt-core::notes`: the CRDT document, ported from
+- [x] `dirt-cli`: remove the direct `libsql` dependency.
+- [x] `dirt-core::notes`: the CRDT document, ported from
       `trials/yrs-size/` with its tests.
   - `diff`: old text and new text to the smallest inserts and deletes.
   - `NoteDoc`: text, edit counts and edit time per device, deletion markers
@@ -85,7 +111,7 @@ No behaviour changes.
 
 ### 3b: the store, and the clients moved onto it
 
-- [ ] `dirt-core::store`, on `rusqlite` with the `bundled` feature.
+- [x] `dirt-core::store`, on `rusqlite` with the `bundled` feature.
   - Opening: busy timeout first, then the switch to write-ahead-log mode with
     a retry, then `synchronous=FULL` and foreign keys.
   - Set-up: schema version checked inside a `BEGIN IMMEDIATE` transaction.
@@ -100,30 +126,30 @@ No behaviour changes.
   - Tags as rows of note ID and tag. The full-text index updated by the same
     write, not by triggers.
   - Settings as key and value rows.
-- [ ] Store locations: `<data folder>/dirt/stores/local/` and
+- [x] Store locations: `<data folder>/dirt/stores/local/` and
       `<data folder>/dirt/stores/<account id>/`, and the function that moves
       local notes into an account store.
-- [ ] Delete `db/`, `services/database.rs`, `sync/engine.rs`, `sync/merge.rs`
+- [x] Delete `db/`, `services/database.rs`, `sync/engine.rs`, `sync/merge.rs`
       and the conversions between `Note` and the old wire types. Remove
       `libsql` from `dirt-core`.
-- [ ] `Note` loses `user_id`, `server_updated_at` and `deleted_at`. It keeps
+- [x] `Note` loses `user_id`, `server_updated_at` and `deleted_at`. It keeps
       `id`, `content`, `created_at` and `updated_at`, so the interfaces change
       little. `created_at` now comes from the note's ID.
-- [ ] Desktop, CLI and Android: call the store. Remove the two sync workers
+- [x] Desktop, CLI and Android: call the store. Remove the two sync workers
       and the large-stack workaround that `libsql` needed on Windows. Undo of
       a delete becomes a restore of the same note.
-- [ ] `dirt sync` and the Sync settings tab report that sync is unavailable
+- [x] `dirt sync` and the Sync settings tab report that sync is unavailable
       until the redesign's sync lands.
 
 ### 3c: tests across processes, and CI
 
-- [ ] A two-process test in `dirt-core`, modelled on
+- [x] A two-process test in `dirt-core`, modelled on
       `trials/sqlite-two-process/`, with its two controls. It runs on Windows,
       macOS and Linux.
-- [ ] The convergence and deletion tests from trial 1 run in `dirt-core`.
-- [ ] The Android CI job builds and links, in place of `cargo check`, if the
+- [x] The convergence and deletion tests from trial 1 run in `dirt-core`.
+- [x] The Android CI job builds and links, in place of `cargo check`, if the
       mobile binary links with plain cargo. If it does not, record why.
-- [ ] Close #210 and #218. Update the parent plan.
+- [x] Close #210 and #218. Update the parent plan.
 
 ## Schema of the new store
 
@@ -172,9 +198,9 @@ CREATE TABLE settings (
 
 ## Exit
 
-- [ ] The convergence, deletion and two-process tests pass in `dirt-core`.
-- [ ] Create, edit, delete, restore, search, tags and export work in the
+- [x] The convergence, deletion and two-process tests pass in `dirt-core`.
+- [x] Create, edit, delete, restore, search, tags and export work in the
       desktop app and the CLI.
-- [ ] `libsql` appears in the dependencies of `dirt-api` only.
-- [ ] #210 and #218 are closed. #234 is linked to step 5.
-- [ ] The README says that sync is off until step 5.
+- [x] `libsql` appears in the dependencies of `dirt-api` only.
+- [x] #210 and #218 are closed. #234 is linked to step 5.
+- [x] The README says that sync is off until step 5.
