@@ -255,16 +255,20 @@ A delete covers only what the deleting device had seen. If another device
 edited the note without knowing about the delete, the merge brings the note
 back with that edit.
 
-Mechanism: each device that deletes a note writes its own marker, holding the
-document state that device had observed. The note counts as deleted while at
-least one marker covers every edit in the document. Restoring a note is an
-ordinary edit.
+Mechanism, as proven in trial 1:
 
-Two details make this sound in yrs:
+- The document keeps a count of edits per device. Every edit raises the
+  editing device's count, in the same write that records the edit time.
+- A device that deletes a note writes its own marker: a copy of the counts it
+  had seen.
+- The note counts as deleted while at least one marker covers every count.
+  Restoring a note is an ordinary edit.
 
-- Every edit also writes the last-edited time. A text edit that only deletes
-  characters does not advance the state the marker is compared against, so on
-  its own it would go unseen.
+Two details matter:
+
+- The counts are kept in the document, not taken from yrs's own state vector.
+  The state vector does not move when an edit only removes characters, so such
+  an edit would count as already seen.
 - There is one marker per device. With a single shared marker, two devices
   deleting the same note could bring it back.
 
@@ -279,7 +283,7 @@ promise of never losing a thought.
 | Change number | The account's next number from a single counter, taken at each accepted write. It is both the note's version and the pull cursor, so the protocol contains no clocks |
 | Key version | Which account key encrypted the blob |
 | Format version | Which document format is inside, so the CRDT library can be changed later |
-| Ciphertext | The whole CRDT document, encrypted |
+| Ciphertext | The whole CRDT document in the yrs v2 encoding, encrypted. Trial 1 measured v1 at 3.6 times the size |
 
 The account ID, note ID, key version and format version are bound into the
 encryption as associated data, so the server cannot move one note's blob to
@@ -599,9 +603,13 @@ import into the new one.
 
 ### To verify in step 1
 
+Trial 1 passed on 2026-11-10: 15.3 KB after 1,000 edits, about 15 bytes per
+edit. The write-up is `docs/trials/2026-11-10-trial-1-yrs-document-size.md` on
+the `trials/step-1` branch. The other three trials are still open.
+
 | Assumption | Trial | If it fails |
 |---|---|---|
-| yrs documents stay small | Measure document size after about a thousand edits to a short note | Compare Loro and Automerge; revisit the sync shape for long notes |
+| yrs documents stay small (verified) | Measure document size after about a thousand edits to a short note | Compare Loro and Automerge; revisit the sync shape for long notes |
 | `rusqlite` builds for Android | Build and run a query in the mobile shell | Keep `libsql` for the local file |
 | Clerk works from a native client | Sign in from desktop (loopback) and Android (custom URL scheme) with a public PKCE client | Fall back to the existing email-code login |
 | Postgres works from the Vercel Rust runtime | Deploy a function that runs one transaction against Neon's pooled endpoint | Reconsider the host before the database |

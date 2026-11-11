@@ -128,19 +128,28 @@ Notes from the setup:
 
 ### Step 0: Toolchain
 
-- [ ] `rust-toolchain.toml`: replace `channel = "stable"` with the exact
-      current stable version.
-- [ ] `.github/workflows/ci.yml`: make every job read the toolchain file
-      instead of `dtolnay/rust-toolchain@stable`.
-- [ ] Run `cargo clippy --all-targets --all-features -- -D warnings`. The jump
-      from 1.85 will surface new lints, since `nursery` is enabled. Fix cheap
-      ones. For crates due for rewrite, allow the specific new lints in the
-      workspace lint table with a comment naming the step that removes them.
+Done in pull request #247, which is open:
+
+- [x] `rust-toolchain.toml` pins 1.99.1.
+- [x] Every CI job runs `rustup toolchain install`, which installs what the
+      file names, instead of `dtolnay/rust-toolchain@stable`.
+- [x] Clippy passes across the whole workspace on 1.99.1. Three small fixes
+      were needed, and `assert_is_empty` is allowed in the workspace lint
+      table.
+
+Found on the way: CI ran `cargo check` and `cargo clippy` without
+`--workspace`. The root manifest is also a package, so only the server and
+core libraries were linted. #247 adds the flag.
 
 ### Trial 1: yrs document size and the deletion rule
 
 **Question:** does a note's CRDT document stay small enough to re-upload in
 full on every edit, and can the deletion rule be implemented correctly?
+
+**Result (2026-11-10): pass.** 15.3 KB after 1,000 diffed edits in the v2
+encoding, about 15 bytes per edit, and all 31 tests pass. Code and write-up
+are on the `trials/step-1` branch. Every task below was done; the deletion
+marker holds edit counts kept in the document instead of the yrs state vector.
 
 **Baseline from research** (yrs 0.25.0, a 52-byte note, small client IDs, one
 transaction per edit): 12,618 bytes after 1,000 edits in the v2 encoding and

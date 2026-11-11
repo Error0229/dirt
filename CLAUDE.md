@@ -72,8 +72,8 @@ cargo test --all
 # Format code
 cargo fmt --all
 
-# Lint code
-cargo clippy --all-targets --all-features -- -D warnings
+# Lint code (--workspace is required: without it cargo lints only the root package)
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # List Makefile shortcuts
 make help
