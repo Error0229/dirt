@@ -295,7 +295,8 @@ impl Store {
     /// Nothing is lost if the move is interrupted or if this store is
     /// written to while it runs. Each note is merged into the target first,
     /// and is then removed from here only if it has not changed since it was
-    /// read. A note that was created or edited in the meantime stays here,
+    /// read. A note that was created, edited or merged with a version from
+    /// the server in the meantime stays here,
     /// so call this again until it returns zero if other writers may be
     /// active. Merging the same note twice is harmless.
     pub async fn move_notes_into(&self, target: &Self) -> Result<usize> {
@@ -308,20 +309,20 @@ impl Store {
             ));
         }
         let copied = self.copy_notes_into(target).await?;
-        self.write(move |c| notes::remove_at_revisions(c, &copied))
+        self.write(move |c| notes::remove_unchanged(c, &copied))
             .await
     }
 
     /// Merges every note of this store into `target` and returns each note's
-    /// ID with the revision that was copied.
-    async fn copy_notes_into(&self, target: &Self) -> Result<Vec<(NoteId, i64)>> {
+    /// ID with the document that was copied.
+    async fn copy_notes_into(&self, target: &Self) -> Result<Vec<(NoteId, Vec<u8>)>> {
         let snapshots = self.read(|c| notes::snapshots(c)).await?;
         let mut copied = Vec::with_capacity(snapshots.len());
         for snapshot in snapshots {
             target
-                .merge_note_document(&snapshot.id, snapshot.document)
+                .merge_note_document(&snapshot.id, snapshot.document.clone())
                 .await?;
-            copied.push((snapshot.id, snapshot.revision));
+            copied.push((snapshot.id, snapshot.document));
         }
         Ok(copied)
     }
@@ -457,6 +458,37 @@ mod tests {
         (folder, source, target)
     }
 
+    /// A merge from the server changes a note without raising its revision.
+    /// The move must still see that the note is no longer what it copied.
+    #[tokio::test]
+    async fn a_note_merged_from_the_server_during_a_move_stays_in_the_source() {
+        let (_folder, source, target) = pair();
+        let note = source.create_note("buy milk").await.unwrap();
+        let document = source.note_documents().await.unwrap().remove(0).1;
+        let elsewhere =
+            crate::notes::NoteDoc::from_bytes(7_100_000_000_000_001, &document).unwrap();
+        elsewhere.set_text("buy milk and bread", 1_800_000_000_000);
+
+        let copied = source.copy_notes_into(&target).await.unwrap();
+        let revision = source.note_revision(&note.id).await.unwrap();
+        source
+            .apply_remote_note(&note.id, elsewhere.encode(), 3)
+            .await
+            .unwrap();
+        assert_eq!(source.note_revision(&note.id).await.unwrap(), revision);
+        let removed = source
+            .write(move |c| notes::remove_unchanged(c, &copied))
+            .await
+            .unwrap();
+
+        assert_eq!(removed, 0, "the target holds only the older document");
+        assert_eq!(source.move_notes_into(&target).await.unwrap(), 1);
+        assert_eq!(
+            target.get_note(&note.id).await.unwrap().unwrap().content,
+            "buy milk and bread"
+        );
+    }
+
     /// The window the move must survive: another writer changes the source
     /// after its notes were copied and before they are removed.
     #[tokio::test]
@@ -473,7 +505,7 @@ mod tests {
             .unwrap();
         let late = source.create_note("created during the move").await.unwrap();
         let removed = source
-            .write(move |c| notes::remove_at_revisions(c, &copied))
+            .write(move |c| notes::remove_unchanged(c, &copied))
             .await
             .unwrap();
 

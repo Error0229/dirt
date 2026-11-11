@@ -255,48 +255,44 @@ pub(super) fn merge_document(
 pub(super) struct Snapshot {
     pub(super) id: NoteId,
     pub(super) document: Vec<u8>,
-    pub(super) revision: i64,
 }
 
-/// Every note's document with the revision it was read at, deleted notes
-/// included.
+/// Every note's document, deleted notes included.
 pub(super) fn snapshots(connection: &Connection) -> Result<Vec<Snapshot>> {
-    let mut statement = connection.prepare("SELECT id, doc, revision FROM notes ORDER BY rowid")?;
+    let mut statement = connection.prepare("SELECT id, doc FROM notes ORDER BY rowid")?;
     let rows = statement.query_map([], |row| {
         let id: String = row.get(0)?;
         let document: Vec<u8> = row.get(1)?;
-        let revision: i64 = row.get(2)?;
-        Ok((id, document, revision))
+        Ok((id, document))
     })?;
     let mut snapshots = Vec::new();
     for row in rows {
-        let (id, document, revision) = row?;
+        let (id, document) = row?;
         let id = id
             .parse()
             .map_err(|_| Error::Database(format!("the store holds an invalid note ID: {id}")))?;
-        snapshots.push(Snapshot {
-            id,
-            document,
-            revision,
-        });
+        snapshots.push(Snapshot { id, document });
     }
     Ok(snapshots)
 }
 
 /// Removes each listed note, with its tags and search entry, but only if it
-/// is still at the listed revision. A note changed since then stays.
-/// Returns how many were removed.
-pub(super) fn remove_at_revisions(
+/// still holds exactly the listed document. A note changed since then
+/// stays. Returns how many were removed.
+///
+/// The document is compared, not the revision: a merge of a document from
+/// the server changes a note without raising its revision.
+pub(super) fn remove_unchanged(
     connection: &mut Connection,
-    notes: &[(NoteId, i64)],
+    notes: &[(NoteId, Vec<u8>)],
 ) -> Result<usize> {
     let tx = write_transaction(connection)?;
     let mut removed = 0;
-    for (id, revision) in notes {
+    for (id, document) in notes {
         let row: Option<i64> = tx
             .query_row(
-                "SELECT rowid FROM notes WHERE id = ?1 AND revision = ?2",
-                params![id.as_str(), revision],
+                "SELECT rowid FROM notes WHERE id = ?1 AND doc = ?2",
+                params![id.as_str(), document],
                 |row| row.get(0),
             )
             .optional()?;
