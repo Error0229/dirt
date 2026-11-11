@@ -28,8 +28,9 @@ flows are listed per step under "Settle first".
 
 ## Amendments to the design (approved 2026-11-10)
 
-All 21 amendments below were approved on 2026-11-10 and are applied to the
-design document.
+The 21 amendments in the first three tables were approved on 2026-11-10. The
+last table was approved on 2026-11-11. All are applied to the design
+document.
 
 Sources: current documentation for yrs, rusqlite, Clerk, sqlx, Neon and
 Vercel, and a gap check of the design's user flows. "Affects" names the step
@@ -70,6 +71,12 @@ the item bears on.
 | C4 | Step 2 deletes only code with no live dependents. The CLI profiles and the old sync and login code are deleted by the step that replaces them. | Removing them earlier means editing code that is about to be deleted. |
 | C5 | Step 2 archives the stale docs instead of rewriting them. Each is written fresh by the step that defines its subject. | The API and deploy docs would be rewritten twice otherwise. |
 | C6 | A policy is needed for `dirt-mobile` between steps 3 and 7. | It will not compile against the new core until it is reconnected, yet CI checks its build. |
+
+### Decision changed after the trials (approved 2026-11-11)
+
+| # | Change | Why |
+|---|---|---|
+| D1 | Decision 4: the 30-second polling timer is removed. Clients sync on app start, on return to the app, after each local change and on a manual sync button, and retry only while changes are unsent. The device-approval screen is the one place that polls. Server push over a socket was considered again and rejected. | Trial 4 showed that a polling client keeps the Neon database awake for as long as it is open. The timer's only benefit was that an app left open updated by itself, and one person rarely uses two devices at the same moment. |
 
 ## Prerequisites
 
@@ -604,11 +611,9 @@ proposed default; each needs a decision before that step's plan is written.
   - The repository's `rust-toolchain.toml` (pull request #247) makes Vercel
     build with the pinned Rust. This also applies to the live project on its
     next deploy.
-  - A 30-second poll opens a new database connection each time, because the
-    pool drops connections idle for 10 s. It costs about 75 ms a poll.
-    Default: leave it.
-  - The polling timer decision in design section 13 must be made before the
-    client's sync worker is planned in step 5.
+  - With no polling timer (amendment D1), most syncs arrive on a new database
+    connection and many on a sleeping database. A new connection costs about
+    75 ms and a wake-up about 1 s. Neither needs work.
 - **Exit:** tests for the version check under concurrency, account isolation,
   pending-device rights and quotas pass; the server is deployed to a preview.
 
@@ -669,7 +674,9 @@ erDiagram
     `trials/clerk-signin/src/flow.rs`. The client discards Clerk's access
     and refresh tokens, and a sign-in that never returns times out.
   - The secrets module and the server client.
-  - The sync cycle and background worker in `dirt-core`.
+  - The sync cycle and background worker in `dirt-core`. The worker is driven
+    by events and has no timer (amendment D1): app start, return to the app,
+    a local change, the sync button, and retry while changes are unsent.
   - The session object and its states.
   - The multi-device simulation harness (amendment C3).
   - Deletion of `dirt-core/src/sync/`, `dirt-core/src/auth/` and both
@@ -690,7 +697,8 @@ erDiagram
 ### Step 6: More devices
 
 - **Deliverables:**
-  - The approval exchange.
+  - The approval exchange, with polling only while the approval screen is
+    open (amendment D1).
   - The recovery phrase.
   - The device list with removal.
   - Account reset and account deletion (amendment C2).
@@ -721,7 +729,9 @@ erDiagram
 - **Order:** desktop, then CLI, then Android.
 - **Deliverables:**
   - The session states and approval prompt in each interface.
-  - The sync status view.
+  - The sync status view, with a manual sync button and the time of the last
+    sync, in every client (amendment D1).
+  - Sync on return to the app: window focus on desktop, resume on Android.
   - CLI commands for sign-in, devices and verbose sync.
   - Deletion of `config_profiles.rs` and the old `auth_cmd.rs`.
   - The Android return from the browser.
@@ -765,7 +775,7 @@ erDiagram
 | Risk | Likelihood | Response |
 |---|---|---|
 | New lints from the toolchain jump break `-D warnings` across code due for deletion | High | Allow specific lints per crate with a comment naming the removing step |
-| Neon's free compute is exhausted by polling | High once clients stay open | Measure in trial 4; lengthen the timer when nothing changes; poll only while the app is in the foreground; budget for a paid plan |
+| Neon's free compute is exhausted | Low at first; rises as more people sync through the day | The polling timer is removed (amendment D1), so the database is awake only around real use. Budget for a paid plan |
 | Android tooling setup takes longer than the trials | Medium | Run trials 1 and 4 and the desktop half of trial 3 first |
 | The Vercel Rust runtime is in beta, with an open issue about suspended instances | Medium | Do no work after the response; the server stays a plain axum app, so changing host is a deployment change |
 | `dirt-mobile` rots between steps 3 and 7 | Medium | Decide amendment C6 before step 3 |

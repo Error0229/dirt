@@ -107,7 +107,7 @@ and when they change.
 | 1 | Scale target | Small real product, with 100x notes | Design for a million users; three explicit tiers |
 | 2 | Feature scope | Text sync now; attachments specified, built last | Attachments first-class now; everything that ever existed |
 | 3 | Concurrent edits | Automatic merge, one text CRDT per note | Last push wins; conflict copies; three-way merge |
-| 4 | Freshness | Poll: on startup, after local changes, on a timer | Server push; live typing |
+| 4 | Freshness | Sync on events: app start, return to the app, after local changes, and a sync button. No timer | A polling timer; server push over a socket; live typing |
 | 5 | Privacy | End-to-end encrypted | Server-readable; server-readable with opaque payloads |
 | 6 | New devices | Approval from an existing device; optional recovery phrase | Forced recovery phrase; user passphrase; QR pairing; passkeys |
 | 7 | Existing code | Rebuild core and server; keep client interfaces | Step-by-step migration; fresh repository |
@@ -129,6 +129,18 @@ and when they change.
   still left to the application.
 - **Three-way merge (decision 3):** merges edits to different parts of a note
   but still needs a fallback when edits overlap, so it is not fully automatic.
+- **A polling timer (decision 4):** the design first had a 30-second timer.
+  Its only benefit is that an app left open updates by itself. One person
+  rarely uses two devices at the same moment, so syncing when they return to
+  the app gives nearly the same result. Trial 4 showed the cost: a polling
+  client keeps the database awake for as long as it is open. The timer was
+  removed on 2026-11-11.
+- **Server push over a socket (decision 4):** it needs an always-on service
+  holding a connection for every client, which the serverless function is
+  not. The server cannot read notes, so the message could only say "pull
+  now". On Android a background socket costs battery, and the proper tool,
+  platform push, is a third component. A "pull now" signal can be added
+  later without changing the protocol (section 11).
 - **Passkeys (decision 6):** the lowest friction where passkeys already sync
   between devices, but support in native desktop apps and a CLI is uneven. The
   key design leaves room to add them: every device receives its own wrapped
@@ -202,8 +214,10 @@ and when they change.
 1. The new device logs in through Clerk and uploads its public key. It is
    marked pending and can read nothing.
 2. Existing devices see the pending device at their next sync and show
-   "Approve new device?". While enrolment is in progress, both devices poll
-   quickly.
+   "Approve new device?". While the approval screen is open on a device,
+   that device polls every few seconds, because each side is waiting for the
+   other. This is the only polling in the system. It stops when the screen
+   closes, and after a few minutes in any case.
 3. Both devices display the same short code. It comes from a commit-then-reveal
    exchange, so the server cannot choose keys that produce a matching code.
 4. On approval, the existing device encrypts the account key to the new
@@ -398,14 +412,17 @@ email inbox cannot destroy it.
   minutes. The first request after that took 0.99 s in trial 4, of which
   0.7 s was the database. Acceptable for background sync.
 - **Compute allowance:** the free plan includes 100 compute-unit hours per
-  project per month, which is 400 hours at the smallest size. A month has
-  about 730 hours, and a client left open polls every 30 seconds and keeps the
-  database awake. The free plan therefore cannot carry continuous use; expect
-  a paid plan once there are real users. Trial 4 confirmed it: 154 polls over
-  76 minutes and the database never slept. One client left open all month
-  uses 182.5 hours of the allowance of 100, and the paid plan for that is
-  about $19 a month. Whether the timer keeps running while the app is not in
-  use is an open decision (section 13).
+  project per month, which is 400 awake hours at the smallest size, about 13
+  a day. The database stays awake for five minutes after each request.
+  Trial 4 showed that a client polling every 30 seconds keeps it awake
+  without a break: 154 polls over 76 minutes and it never slept. That would
+  use 182.5 hours a month for one open client. This is why sync has no timer
+  (decision 4): the database is awake for about five minutes after each
+  sync and asleep otherwise.
+- **When the free plan runs out:** the allowance is shared by all users, so
+  it lasts until people between them sync through more than about 13 hours
+  of the day. Expect a paid plan at that point. A database of this size that
+  never sleeps costs about $19 a month.
 - **Region:** a Neon project's region cannot be changed, and Neon has no Tokyo
   region. The trial project uses AWS US West 2 (Oregon), which is co-located
   with Vercel's `pdx1`. The function region must be pinned to match.
@@ -470,8 +487,17 @@ Rule: no HTTP, SQL or cryptography lives in a client crate.
 
 - **Capture never waits:** a note is written to the local store and returned at
   once, then the sync worker is nudged.
-- **Sync triggers:** startup, a debounced nudge after each local change, and a
-  30-second timer, with backoff after failures.
+- **Sync triggers:** events only. There is no timer. The worker syncs:
+  - on app start;
+  - when the person returns to the app, which is window focus on desktop and
+    resume on Android, unless it synced within the last 30 seconds;
+  - after each local change, debounced;
+  - when the person presses the sync button;
+  - again, with backoff, only while local changes are still unsent, for
+    example after being offline.
+- **Sync button:** every client has a manual sync action and shows when it
+  last synced. An app that is open but untouched does not update until the
+  person returns to it or presses the button.
 - **Sign-out:** the app syncs, then deletes that account's local database and
   keys. If unsynced notes cannot be uploaded, it warns and offers an export
   first.
@@ -594,7 +620,7 @@ integration uses a Postgres service container.
 | Area | What breaks first | Way out |
 |---|---|---|
 | Sync shape | Long, heavily edited notes re-upload in full on every edit | A per-note log of encrypted edits, for those notes only |
-| Freshness | Polling cost grows with the number of open clients | Server push over long-lived connections |
+| Freshness | An app left open does not update until the person returns to it, which matters more once people expect live updates | A "pull now" signal from the server: platform push on Android, a long-lived connection on desktop. The protocol does not change |
 | Hosting | Cold starts, and a database round trip on every request | An always-on server, which push also requires |
 | Database | Connection limits | The same always-on server with a real pool |
 | Login | Nothing of ours; abuse of sign-in is Clerk's problem | Clerk's paid plan above its free allowance |
@@ -647,8 +673,9 @@ Trials 1, 2 and 4 have passed. Trial 3 is part done. The write-ups are in
 - **Trial 3, part done 2026-11-11:** sign-in from a desktop client works with
   an email code, and the server-side check accepts Clerk's ID token. Google
   sign-in and Android have not been run.
-- **Trial 4, passed 2026-11-11:** every criterion met. It also showed that
-  polling keeps the database awake (section 7.4).
+- **Trial 4, passed 2026-11-11:** every criterion met. It also showed that a
+  polling timer keeps the database awake (section 7.4). Decision 4 was
+  changed the same day as a result: sync is driven by events, with no timer.
 
 | Assumption | Trial | If it fails |
 |---|---|---|
@@ -668,9 +695,6 @@ was written.
 
 ### Details not yet decided
 
-- **When the polling timer runs** (decision 4). Trial 4's write-up gives
-  three options. Recommended: run the 30-second timer only while the app is
-  in use, and sync at once when the person returns. Awaiting your decision.
 - The exact quota numbers.
 - Purging deleted notes: when a deleted note's blob is finally removed, and
   what a device does if it still holds unseen edits for a purged note.
