@@ -1,0 +1,20 @@
+[package]
+name = "clerk-signin-android-trial"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Trial 3 of the Dirt redesign: Clerk sign-in from an Android app"
+
+[dependencies]
+clerk-signin-trial = { path = "../clerk-signin" }
+serde_json = "1"
+url = "2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Pinned to the installed dx. Trial 2 found that dx warns when they differ.
+dioxus = { version = "=0.7.9", features = ["mobile"] }
+tokio = { version = "1", features = ["time"] }
+webbrowser = "1.2"
+
+# An empty workspace table keeps this crate out of the main Dirt workspace.
+[workspace]

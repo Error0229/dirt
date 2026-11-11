@@ -1,0 +1,9 @@
+attempt saved by process 3971; browser opened
+app started as process 5127
+redirect received through dev.dirt.app://: code of 48 characters, state matches, issuer matches
+attempt started by process 3971, finished by process 5127: the app was restarted in between
+ID token verified
+user ID: user_3Lx8lz6sK33iGRerdI3R3nnXivs
+claims: at_hash, aud, auth_time, email, email_verified, exp, family_name, given_name, iat, iss, jti, name, nonce, rat, sid, sub
+refresh token: issued
+RESULT: PASS

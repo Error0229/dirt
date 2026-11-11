@@ -11,8 +11,8 @@
 use std::time::Duration;
 
 use clerk_signin_trial::flow::{
-    bind_loopback, discover, exchange_code, fetch_keys, peek_claims, wait_for_code, AnyError,
-    Attempt,
+    bind_loopback, discover, exchange_code, fetch_keys, http_client, peek_claims, wait_for_code,
+    AnyError, Attempt,
 };
 use clerk_signin_trial::verify::verify_id_token;
 
@@ -26,9 +26,7 @@ async fn main() -> Result<(), AnyError> {
     let open_browser = !std::env::args().any(|arg| arg == "--no-browser");
     let scopes = std::env::var("TRIAL_SCOPES").unwrap_or_else(|_| SCOPES.to_owned());
 
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
+    let http = http_client()?;
     let discovery = discover(&http, &issuer).await?;
     println!("issuer: {}", discovery.issuer);
 

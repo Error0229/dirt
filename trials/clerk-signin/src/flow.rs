@@ -6,7 +6,7 @@ use std::time::Duration;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use jsonwebtoken::jwk::JwkSet;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -22,6 +22,32 @@ pub struct Discovery {
     pub token_endpoint: String,
     pub userinfo_endpoint: String,
     pub jwks_uri: String,
+}
+
+/// The HTTP client every request in the flow uses.
+#[cfg(not(target_os = "android"))]
+pub fn http_client() -> Result<reqwest::Client, AnyError> {
+    Ok(reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?)
+}
+
+/// The HTTP client every request in the flow uses. On Android it carries
+/// its own TLS configuration: ring, and Mozilla's root certificates compiled
+/// in, so that nothing has to be fetched from the system through JNI.
+#[cfg(target_os = "android")]
+pub fn http_client() -> Result<reqwest::Client, AnyError> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let tls = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(reqwest::Client::builder()
+        .tls_backend_preconfigured(tls)
+        .timeout(Duration::from_secs(30))
+        .build()?)
 }
 
 pub async fn discover(http: &reqwest::Client, issuer: &str) -> Result<Discovery, AnyError> {
@@ -62,7 +88,7 @@ pub fn challenge_for(verifier: &str) -> String {
 
 /// One sign-in attempt. In the real client the verifier must be stored
 /// before the browser opens, because the app may be killed while it is open.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attempt {
     pub verifier: String,
     pub state: String,

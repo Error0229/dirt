@@ -1,0 +1,8 @@
+attempt saved by process 5127; browser opened
+redirect received through dev.dirt.app://: code of 48 characters, state matches, issuer matches
+attempt started by process 5127, finished by process 5127: the app stayed alive
+ID token verified
+user ID: user_<removed: a real account>
+claims: at_hash, aud, auth_time, email, email_verified, exp, family_name, given_name, iat, iss, jti, name, nonce, picture, rat, sid, sub
+refresh token: issued
+RESULT: PASS

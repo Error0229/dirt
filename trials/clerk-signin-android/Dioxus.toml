@@ -1,0 +1,10 @@
+[application]
+name = "clerk-signin-android-trial"
+# Both files replace what dx generates. The manifest adds the intent filter
+# for the redirect, and the activity hands the redirect address to Rust.
+android_manifest = "android/AndroidManifest.xml"
+android_main_activity = "android/MainActivity.kt"
+
+[bundle]
+identifier = "dev.dirt.trial.signin"
+publisher = "Dirt"
