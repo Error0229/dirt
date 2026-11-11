@@ -17,8 +17,8 @@ use dirt_core::sync::session_client::SessionApiClient;
 use crate::state::AuthDeps;
 
 /// Outcome of `verify_magic_code` + downstream persistence + session
-/// client construction. The UI layer matches on this to either drive
-/// the post-login worker startup or surface a Failure message.
+/// client construction. The UI layer matches on this to either show
+/// the signed-in state or surface a Failure message.
 pub enum LoginOutcome {
     Success(StoredToken, Arc<SessionApiClient>),
     Failure(String),
@@ -45,8 +45,8 @@ pub async fn send_magic_code(deps: &AuthDeps, email: &str) -> Result<String, Str
 }
 
 /// `POST /v1/auth/verify` with the user-entered 6-digit code, persist
-/// the resulting `StoredToken`, and build a `SessionApiClient` ready
-/// for the sync worker.
+/// the resulting `StoredToken`, and build a `SessionApiClient` from
+/// the saved token, which also proves the token reads back.
 pub async fn perform_verify(deps: &AuthDeps, request_id: &str, code: &str) -> LoginOutcome {
     let Some(auth) = deps.auth_client.as_ref() else {
         return LoginOutcome::Failure(
@@ -62,25 +62,22 @@ pub async fn perform_verify(deps: &AuthDeps, request_id: &str, code: &str) -> Lo
         return LoginOutcome::Failure(describe_store_error(&err));
     }
     let Some(base_url) = deps.api_base_url.clone() else {
-        return LoginOutcome::Failure(
-            "Sign-in succeeded but the API base URL is missing — sync cannot start.".into(),
-        );
+        return LoginOutcome::Failure("Sign-in succeeded but the API base URL is missing.".into());
     };
     match SessionApiClient::from_store(base_url, (**auth).clone(), deps.token_store.clone()) {
         Ok(Some(session)) => LoginOutcome::Success(stored, Arc::new(session)),
         Ok(None) => LoginOutcome::Failure(
             "Token was saved but the keystore read back empty. Try signing in again.".into(),
         ),
-        Err(err) => LoginOutcome::Failure(format!("Could not build sync client: {err}")),
+        Err(err) => LoginOutcome::Failure(format!("Could not build session client: {err}")),
     }
 }
 
 /// Revoke the server-side session, then clear the local slot.
 ///
-/// Reads the *freshest* bearer from the store rather than reusing a
-/// snapshot — silent refresh in the sync worker rotates the token
-/// without touching the UI's `signed_in` signal, so a stale snapshot
-/// would `POST /v1/auth/logout` with an already-revoked token, receive
+/// Reads the bearer from the store rather than reusing the UI's
+/// `signed_in` snapshot, so the session that is revoked is always the
+/// one that is saved. Revoking a stale snapshot would receive
 /// `SESSION_EXPIRED`, treat that as success, and leave the live token
 /// on the server until it expired naturally.
 ///

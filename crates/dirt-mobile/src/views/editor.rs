@@ -1,13 +1,8 @@
 //! Note editor view.
 //!
 //! Single textarea for the full note body. Save runs the appropriate
-//! create/update against `MobileNoteStore`, refreshes the list signal
-//! so the new state is visible immediately, then kicks the sync worker
-//! so the change reaches the server inside the debounce window.
-//!
-//! Mutations are last-write-wins on the local DB. The sync engine's
-//! merge resolver upstream of the API is responsible for cross-device
-//! reconciliation; this view only owns the local edit.
+//! create/update against `MobileNoteStore`, then refreshes the list
+//! signal so the new state is visible immediately.
 
 use dioxus::prelude::*;
 
@@ -59,7 +54,6 @@ pub fn Editor() -> Element {
             match outcome {
                 Ok(()) => {
                     refresh_notes_signal(&store, &mut state).await;
-                    state.trigger_sync();
                     state.view.set(View::List);
                     state.selected_note_id.set(None);
                 }
@@ -90,7 +84,6 @@ pub fn Editor() -> Element {
             match store.delete_note(&id).await {
                 Ok(()) => {
                     refresh_notes_signal(&store, &mut state).await;
-                    state.trigger_sync();
                     state.view.set(View::List);
                     state.selected_note_id.set(None);
                 }

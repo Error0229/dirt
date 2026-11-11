@@ -1,5 +1,7 @@
 //! Mobile note export helpers.
-#![cfg_attr(not(target_os = "android"), allow(dead_code))]
+// The Android interface does not call this module yet; only the host
+// tests do.
+#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -88,14 +90,12 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn export_notes_to_path_writes_markdown() {
-        let store = Arc::new(MobileNoteStore::open_in_memory().await.unwrap());
+        let (folder, store) = MobileNoteStore::open_temporary();
+        let store = Arc::new(store);
         store.create_note("Mobile export #one").await.unwrap();
         store.create_note("Mobile export #two").await.unwrap();
 
-        let output_path = std::env::temp_dir().join(format!(
-            "dirt-mobile-export-test-{}.md",
-            chrono::Utc::now().timestamp_millis()
-        ));
+        let output_path = folder.path().join("export.md");
 
         let exported_count =
             export_notes_to_path(store, MobileExportFormat::Markdown, &output_path)
@@ -106,7 +106,5 @@ mod tests {
         let exported = std::fs::read_to_string(&output_path).unwrap();
         assert!(exported.contains("Mobile export #one"));
         assert!(exported.contains("Mobile export #two"));
-
-        let _ = std::fs::remove_file(output_path);
     }
 }

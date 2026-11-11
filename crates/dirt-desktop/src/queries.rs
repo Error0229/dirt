@@ -6,12 +6,11 @@ use std::sync::Arc;
 use dioxus_query::prelude::*;
 
 use dirt_core::models::Note;
-
-use crate::services::DatabaseService;
+use dirt_core::Store;
 
 /// Query capability for fetching all notes
 #[derive(Clone)]
-pub struct NotesQuery(pub Option<Arc<DatabaseService>>);
+pub struct NotesQuery(pub Option<Arc<Store>>);
 
 impl PartialEq for NotesQuery {
     fn eq(&self, other: &Self) -> bool {
@@ -53,7 +52,7 @@ pub async fn invalidate_notes_query() {
 }
 
 /// Hook to use the notes query (always call unconditionally - uses enable flag)
-pub fn use_notes_query(db: Option<Arc<DatabaseService>>) -> UseQuery<NotesQuery> {
+pub fn use_notes_query(db: Option<Arc<Store>>) -> UseQuery<NotesQuery> {
     let enabled = db.is_some();
     use_query(Query::new((), NotesQuery(db)).enable(enabled))
 }

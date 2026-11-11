@@ -51,11 +51,7 @@ pub fn NoteEditor() -> Element {
     });
 
     // Shared save logic used by both debounced auto-save and immediate save.
-    let mut persist_note = move |version: u64, note_id: Option<NoteId>, content_to_save: String| {
-        if let Some(id) = note_id {
-            state.enqueue_pending_change(id);
-        }
-
+    let persist_note = move |version: u64, note_id: Option<NoteId>, content_to_save: String| {
         let db = state.db_service.read().clone();
         spawn(async move {
             if let Some(id) = note_id {
@@ -65,7 +61,6 @@ pub fn NoteEditor() -> Element {
                             tracing::debug!("Saved note: {}", id);
                             last_saved_version.set(version);
                             invalidate_notes_query().await;
-                            state.trigger_sync();
                         }
                         Err(error) => {
                             tracing::error!("Failed to save note: {}", error);
@@ -85,7 +80,7 @@ pub fn NoteEditor() -> Element {
 
         let note_id = current_note_id();
         let content_to_save = content();
-        let mut persist = persist_note;
+        let persist = persist_note;
 
         spawn(async move {
             tokio::time::sleep(Duration::from_millis(IDLE_SAVE_MS)).await;
@@ -98,7 +93,7 @@ pub fn NoteEditor() -> Element {
         });
     });
 
-    let mut perform_save_now = move || {
+    let perform_save_now = move || {
         let current_version = save_version();
         if current_version == 0 || current_version == last_saved_version() {
             return;

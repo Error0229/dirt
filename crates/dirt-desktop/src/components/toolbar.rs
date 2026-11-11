@@ -3,33 +3,22 @@
 use dioxus::prelude::*;
 
 use super::button::{Button, ButtonVariant};
-use super::create_note_optimistic;
-use crate::state::{AppState, SyncStatus};
-use crate::time_format::format_relative_time;
+use super::create_note;
+use crate::state::AppState;
 
-/// Compact 44px toolbar: hamburger, search, new note, sync dot, settings
+/// Compact 44px toolbar: hamburger, search, new note, settings
 #[component]
 pub fn Toolbar() -> Element {
     let mut state = use_context::<AppState>();
     let colors = (state.theme)().palette();
-    let sync_status = (state.sync_status)();
-    let last_sync_at = (state.last_sync_at)();
     let note_list_visible = (state.note_list_visible)();
-
-    let sync_dot_color = match sync_status {
-        SyncStatus::Synced => colors.success,
-        SyncStatus::Syncing => colors.warning,
-        SyncStatus::Offline => colors.text_muted,
-        SyncStatus::Error => colors.error,
-    };
-    let sync_title = format_sync_status_text(sync_status, last_sync_at);
 
     let toggle_list = move |_| {
         state.note_list_visible.set(!note_list_visible);
     };
 
     let create_note = move |_| {
-        create_note_optimistic(&mut state);
+        create_note(&state);
     };
 
     let open_settings = move |_| {
@@ -89,18 +78,6 @@ pub fn Toolbar() -> Element {
                 "+"
             }
 
-            // Sync dot
-            div {
-                title: "{sync_title}",
-                style: "
-                    width: 10px; height: 10px;
-                    border-radius: 50%;
-                    background: {sync_dot_color};
-                    flex-shrink: 0;
-                    -webkit-app-region: no-drag;
-                ",
-            }
-
             // Settings
             Button {
                 variant: ButtonVariant::Ghost,
@@ -112,17 +89,5 @@ pub fn Toolbar() -> Element {
                 "⚙"
             }
         }
-    }
-}
-
-fn format_sync_status_text(status: SyncStatus, last_sync_at: Option<i64>) -> String {
-    match status {
-        SyncStatus::Synced => last_sync_at.map_or_else(
-            || "Synced".to_string(),
-            |timestamp| format!("Synced {}", format_relative_time(timestamp)),
-        ),
-        SyncStatus::Syncing => "Syncing...".to_string(),
-        SyncStatus::Offline => "Offline".to_string(),
-        SyncStatus::Error => "Sync error".to_string(),
     }
 }

@@ -3,9 +3,9 @@
 //! All four subcommands (`status` / `login` / `logout` and any future
 //! additions) route through [`dirt_core::auth::AuthClient`] +
 //! [`dirt_core::auth::KeyringTokenStore`]. Phase 2.8 finished the cutover:
-//! `status` now probes with the keyring-stored session token and shares
-//! the silent-refresh path with `dirt sync`, so the CLI has no remaining
-//! dependency on `DIRT_CLIENT_TOKEN`.
+//! `status` now probes with the keyring-stored session token and
+//! refreshes it silently, so the CLI has no remaining dependency on
+//! `DIRT_CLIENT_TOKEN`.
 
 use std::env;
 use std::io::{self, BufRead, Write};
@@ -31,10 +31,9 @@ use crate::error::CliError;
 /// up verbatim in Keychain Access / Credential Manager / `seahorse` so
 /// a user looking for "where does dirt store its session" can find it.
 ///
-/// Pub-in-crate so `dirt sync` and `dirt auth status` reach the same
-/// slot — the three commands MUST hit identical `(service, account)`
-/// keyring coordinates or a login from one command leaves the others
-/// stranded.
+/// Every command that reads the session MUST hit identical
+/// `(service, account)` keyring coordinates or a login from one command
+/// leaves the others stranded.
 pub const KEYRING_SERVICE: &str = "dev.dirt.session";
 
 /// Per-user discriminator inside the keyring service slot.
@@ -84,9 +83,8 @@ pub async fn run_auth(command: AuthCommands) -> Result<(), CliError> {
 /// can assert exact strings.
 ///
 /// Reads the keyring-stored session token planted by `dirt auth login`
-/// and probes the API with it. Shares the silent-refresh path with
-/// `dirt sync` so a freshly rotated session keeps reporting `online`
-/// without nudging the user.
+/// and probes the API with it. Refreshes silently so a freshly rotated
+/// session keeps reporting `online` without nudging the user.
 ///
 /// Output forms (exact prefixes are part of the contract — scripts grep
 /// for `^online:` to detect a healthy state):
@@ -176,8 +174,7 @@ async fn probe_session_status(
 /// Bearer was rejected mid-probe. Try one silent refresh and re-probe
 /// so a long-running CLI session (e.g. shell prompt integration that
 /// invokes `dirt auth status` every minute) doesn't flap to `offline:`
-/// the first time the token rotates. Matches the policy in
-/// `commands::sync::run_session_sync`.
+/// the first time the token rotates.
 async fn handle_status_unauthorized(session: &SessionApiClient, email: &str) -> String {
     match session.refresh().await {
         Ok(()) => {
@@ -706,8 +703,7 @@ mod tests {
 
     /// 401 on the probe + transient 5xx on refresh → must report a
     /// retry-shortly hint and keep the stored token intact so the next
-    /// `dirt auth status` (or `dirt sync`) can recover when the server
-    /// settles down.
+    /// `dirt auth status` can recover when the server settles down.
     #[tokio::test(flavor = "current_thread")]
     async fn probe_session_status_transient_refresh_error() {
         let server = MockServer::start().await;

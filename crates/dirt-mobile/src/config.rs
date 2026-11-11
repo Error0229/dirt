@@ -1,10 +1,7 @@
 //! Runtime configuration handling for mobile.
 //!
-//! Post-Supabase shape: just the data directory plumbing. The sync URL
-//! and Turso auth-token persistence that lived here previously are gone
-//! along with the embedded-replica sync path; the new ApiClient-driven
-//! flow keeps the bearer token in the OS secure-storage layer that lands
-//! with the mobile sync worker (next commit).
+//! Just the data directory plumbing. The bearer token is not kept here;
+//! it lives in the OS secure-storage layer (see `services::auth_store`).
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
 use std::path::PathBuf;
@@ -25,14 +22,15 @@ pub fn default_mobile_data_directory() -> PathBuf {
 
 #[cfg(target_os = "android")]
 fn fallback_mobile_data_directory() -> PathBuf {
-    android_process_name()
-        .map(|process_name| {
+    android_process_name().map_or_else(
+        || std::env::temp_dir().join("dirt"),
+        |process_name| {
             PathBuf::from("/data/user/0")
                 .join(process_name)
                 .join("files")
                 .join("dirt")
-        })
-        .unwrap_or_else(|| std::env::temp_dir().join("dirt"))
+        },
+    )
 }
 
 #[cfg(not(target_os = "android"))]

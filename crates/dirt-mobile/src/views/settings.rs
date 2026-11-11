@@ -10,25 +10,20 @@
 //!      `request_id` and emails a 6-digit code.
 //!   2. User enters the code → `POST /v1/auth/verify` swaps it for a
 //!      `StoredToken` which we persist via the injected `TokenStore`.
-//!   3. On success we hydrate a `SessionApiClient` and spawn the sync
-//!      worker so background pull / push kicks off immediately — the
-//!      user doesn't need to restart the app.
+//!   3. On success the view switches to the signed-in panel.
 //!
-//! Sign-out reverses the steps: revoke the bearer server-side, clear
-//! the stored slot, shut the worker down, and reset the sync status
-//! signals to Offline. The shutdown is awaited (see
-//! `shutdown_existing_worker`) so a freshly spawned worker after
-//! re-login cannot race the previous one's in-flight `sync_once`.
+//! Sign-out reverses the steps: revoke the bearer server-side and clear
+//! the stored slot.
+//!
+//! Signing in does not sync notes; the signed-in panel says so.
 
 use dioxus::prelude::*;
 
-use crate::app_shell::spawn_session_worker;
 use crate::services::auth_flow::{
     perform_logout, perform_verify, send_magic_code, validate_code, validate_email, LoginOutcome,
     LogoutOutcome,
 };
-use crate::services::SyncWorkerHandle;
-use crate::state::{AppState, AuthDeps, SyncStatus, View};
+use crate::state::{AppState, AuthDeps, View, SYNC_UNAVAILABLE_MESSAGE};
 use crate::ui::{ButtonVariant, UiButton};
 
 /// Discriminator for the inline status banner.
@@ -89,17 +84,8 @@ pub fn Settings() -> Element {
                             busy.set(true);
                             message.set(None);
                             spawn(async move {
-                                // Shut down (and await) the worker *before*
-                                // talking to the server. Otherwise a parallel
-                                // `sync_once` that hits a 401 can call
-                                // `session.refresh()` mid-logout and persist
-                                // a fresh token to the store after
-                                // `perform_logout` has cleared it — leaving
-                                // the device "signed in" while the UI claims
-                                // it's signed out.
-                                shutdown_existing_worker(state.sync_worker).await;
                                 let outcome = perform_logout(&deps_for_task).await;
-                                apply_logout_outcome(outcome, state, &mut message).await;
+                                apply_logout_outcome(outcome, state, &mut message);
                                 busy.set(false);
                             });
                         },
@@ -175,8 +161,7 @@ pub fn Settings() -> Element {
                                     &mut code_input,
                                     &mut request_id,
                                     &mut message,
-                                )
-                                .await;
+                                );
                                 busy.set(false);
                             });
                         },
@@ -223,7 +208,11 @@ fn SignedInPanel(email: String, busy: bool, on_logout: EventHandler<MouseEvent>)
             }
             p {
                 style: "margin: 0; font-size: 12px; color: #9ca3af; line-height: 1.4;",
-                "Sign out to stop syncing this device and revoke the session."
+                "Sign out to revoke this device's session."
+            }
+            p {
+                style: "margin: 0; font-size: 12px; color: #9ca3af; line-height: 1.4;",
+                "{SYNC_UNAVAILABLE_MESSAGE}"
             }
         }
     }
@@ -395,7 +384,7 @@ fn MessageBanner(kind: MessageKind, text: String) -> Element {
 // when called on subfields. The lint flags the raw byte count without
 // noticing that every field is a cheap `Arc`-backed handle.
 #[allow(clippy::large_types_passed_by_value)]
-async fn apply_login_outcome(
+fn apply_login_outcome(
     outcome: LoginOutcome,
     mut state: AppState,
     email_input: &mut Signal<String>,
@@ -404,35 +393,9 @@ async fn apply_login_outcome(
     message: &mut Signal<Option<(MessageKind, String)>>,
 ) {
     match outcome {
-        LoginOutcome::Success(token, session) => {
-            // Tear down the previous worker (if any — happens during
-            // re-login after a permanent failure) before starting a
-            // fresh one. The await joins the old task so two workers
-            // never run a `sync_once` against the same DB concurrently.
-            shutdown_existing_worker(state.sync_worker).await;
-
+        // Nothing syncs, so the session's API client is not kept.
+        LoginOutcome::Success(token, _session) => {
             state.signed_in.set(Some(token));
-            state.session_client.set(Some(session.clone()));
-
-            let store = state.store.read().clone();
-            let events_tx = state.events_tx.read().clone();
-            match (store, events_tx) {
-                (Some(store), Some(events_tx)) => {
-                    spawn_session_worker(store, session, events_tx, state.sync_worker);
-                }
-                // Either the local DB or the long-lived event bridge is
-                // missing. Both should be present by the time the
-                // Settings view is reachable (they're hydrated in
-                // `AppShell`'s startup `use_resource`), so this is a
-                // hard error — surface loudly rather than silently
-                // skipping worker startup.
-                _ => {
-                    state.sync_status.set(SyncStatus::Error);
-                    state.sync_issue.set(Some(
-                        "Local database / sync bridge not ready; sync worker not started.".into(),
-                    ));
-                }
-            }
 
             email_input.set(String::new());
             code_input.set(String::new());
@@ -446,15 +409,8 @@ async fn apply_login_outcome(
 }
 
 // See the rationale on [`apply_login_outcome`].
-//
-// Logout shuts the worker down *before* this runs (in the on_logout
-// handler) — so this function does not call `shutdown_existing_worker`.
-// Calling it again here would be a no-op (the handle has been removed
-// from the signal already), but documenting the ordering up front keeps
-// future refactors honest: the shutdown must happen ahead of
-// `perform_logout` to close the refresh-after-revoke race.
 #[allow(clippy::large_types_passed_by_value)]
-async fn apply_logout_outcome(
+fn apply_logout_outcome(
     outcome: LogoutOutcome,
     mut state: AppState,
     message: &mut Signal<Option<(MessageKind, String)>>,
@@ -462,27 +418,10 @@ async fn apply_logout_outcome(
     match outcome {
         LogoutOutcome::Success => {
             state.signed_in.set(None);
-            state.session_client.set(None);
-            state.sync_status.set(SyncStatus::Offline);
-            state.sync_issue.set(None);
             message.set(Some((MessageKind::Info, "Signed out.".into())));
         }
         LogoutOutcome::Failure(reason) => {
             message.set(Some((MessageKind::Error, reason)));
         }
-    }
-}
-
-/// Drop the currently-tracked worker handle and wait for the
-/// underlying tokio task to finish its in-flight `sync_once`. The
-/// await is critical — without it a fresh worker spawned right after
-/// can run a startup sync concurrently with the old worker's
-/// not-yet-cancelled push cycle, producing two simultaneous bearer
-/// tokens against the same server endpoint.
-async fn shutdown_existing_worker(mut sync_worker: Signal<Option<SyncWorkerHandle>>) {
-    let handle = sync_worker.read().clone();
-    sync_worker.set(None);
-    if let Some(handle) = handle {
-        handle.shutdown().await;
     }
 }

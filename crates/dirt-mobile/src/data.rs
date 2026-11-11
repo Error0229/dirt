@@ -3,11 +3,10 @@
 #[cfg(target_os = "android")]
 use std::path::PathBuf;
 
-use std::ops::Deref;
-
 use dirt_core::models::{Note, NoteId};
-use dirt_core::services::DatabaseService as CoreDatabaseService;
-use dirt_core::{Error, Result};
+#[cfg(target_os = "android")]
+use dirt_core::store::{store_path, StoreName};
+use dirt_core::{Error, Result, Store};
 
 #[cfg(target_os = "android")]
 use crate::config::default_mobile_data_directory;
@@ -15,45 +14,33 @@ use crate::config::default_mobile_data_directory;
 const DEFAULT_NOTES_LIMIT: usize = 100;
 const EXPORT_NOTES_PAGE_SIZE: usize = 500;
 
-/// Thin async wrapper around shared core database service APIs.
-///
-/// Derefs to the inner `CoreDatabaseService` so that consumers like
-/// `SyncEngine::new(&store, ..)` work without an explicit getter — the
-/// engine wants the core type, and the mobile-specific surface here is
-/// just sugar over it.
+/// Thin wrapper around the shared core [`Store`] that adds the mobile
+/// app's defaults: where the database lives, how many notes the list
+/// shows, and trimming of note content.
 #[derive(Clone)]
 pub struct MobileNoteStore {
-    db: CoreDatabaseService,
-}
-
-impl Deref for MobileNoteStore {
-    type Target = CoreDatabaseService;
-
-    fn deref(&self) -> &Self::Target {
-        &self.db
-    }
+    db: Store,
 }
 
 impl MobileNoteStore {
-    /// Open the default local mobile database path.
+    /// Open the local store at the default mobile database path.
     #[cfg(target_os = "android")]
-    pub async fn open_default() -> Result<Self> {
-        let db_path = default_db_path();
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let db = CoreDatabaseService::open_local_path(db_path).await?;
+    pub fn open_default() -> Result<Self> {
+        let db = Store::open(default_db_path())?;
         Ok(Self { db })
     }
 
-    /// Open an in-memory database for tests.
+    /// Open a store on a file inside a new temporary folder, for tests.
+    /// The folder is removed when the returned guard is dropped, so the
+    /// caller keeps the guard for as long as it uses the store.
     #[cfg(test)]
-    pub async fn open_in_memory() -> Result<Self> {
-        let db = CoreDatabaseService::open_in_memory().await?;
-        Ok(Self { db })
+    pub fn open_temporary() -> (tempfile::TempDir, Self) {
+        let folder = tempfile::tempdir().unwrap();
+        let db = Store::open(folder.path().join("notes.db")).unwrap();
+        (folder, Self { db })
     }
 
-    /// List notes newest-first.
+    /// List notes, most recently edited first.
     pub async fn list_notes(&self) -> Result<Vec<Note>> {
         self.db.list_notes(DEFAULT_NOTES_LIMIT, 0).await
     }
@@ -89,7 +76,7 @@ impl MobileNoteStore {
         self.db.update_note(id, &normalized).await
     }
 
-    /// Soft delete a note.
+    /// Delete a note.
     pub async fn delete_note(&self, id: &NoteId) -> Result<()> {
         self.db.delete_note(id).await
     }
@@ -105,10 +92,10 @@ fn normalize_content(content: &str) -> Result<String> {
     Ok(normalized.to_string())
 }
 
-/// Build a mobile-friendly local DB path.
+/// The database file of the local store under the mobile data directory.
 #[cfg(target_os = "android")]
 pub fn default_db_path() -> PathBuf {
-    default_mobile_data_directory().join("dirt-mobile.db")
+    store_path(&default_mobile_data_directory(), &StoreName::Local)
 }
 
 #[cfg(test)]
@@ -117,7 +104,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn create_update_delete_roundtrip() {
-        let store = MobileNoteStore::open_in_memory().await.unwrap();
+        let (_folder, store) = MobileNoteStore::open_temporary();
 
         let created = store.create_note("  Hello mobile  ").await.unwrap();
         assert_eq!(created.content, "Hello mobile");
@@ -136,7 +123,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn create_rejects_empty_content() {
-        let store = MobileNoteStore::open_in_memory().await.unwrap();
+        let (_folder, store) = MobileNoteStore::open_temporary();
         let err = store.create_note("   ").await.unwrap_err();
 
         match err {
@@ -147,7 +134,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn list_all_notes_returns_full_collection() {
-        let store = MobileNoteStore::open_in_memory().await.unwrap();
+        let (_folder, store) = MobileNoteStore::open_temporary();
         store.create_note("One").await.unwrap();
         store.create_note("Two").await.unwrap();
         store.create_note("Three").await.unwrap();

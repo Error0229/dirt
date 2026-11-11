@@ -31,8 +31,6 @@ path = "src/main.rs"
 dirt-core = { path = "../dirt-core", default-features = false }
 tracing.workspace = true
 tracing-subscriber.workspace = true
-tokio.workspace = true
-chrono.workspace = true
 serde_json.workspace = true
 dirs = "6"
 thiserror.workspace = true
@@ -54,10 +52,14 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-# `services::sync_worker` tests construct a `SessionApiClient` against
-# a mock HTTP server to exercise the refresh-on-401 path end-to-end
-# (mirrors the dirt-desktop dev-deps so a developer running
-# `cargo test -p dirt-mobile` on Windows / Linux gets the same checks).
+# The host tests are async and open the note store on a file inside a
+# temporary folder.
+tokio.workspace = true
+tempfile = "3"
+# `services::auth_flow` tests run the request / verify / logout steps
+# against a mock HTTP server, so a developer running
+# `cargo test -p dirt-mobile` on Windows / Linux exercises the sign-in
+# flow without an Android emulator.
 wiremock = { workspace = true }
 
 [lints]

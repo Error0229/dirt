@@ -82,7 +82,7 @@ pub enum Commands {
         #[arg(short, long, value_name = "PATH")]
         output: Option<PathBuf>,
     },
-    /// Sync local replica with remote Turso database
+    /// Sync notes with other devices (unavailable while sync is being rebuilt)
     Sync,
     /// Configure CLI managed profiles
     Config {

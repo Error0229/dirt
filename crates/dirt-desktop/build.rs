@@ -11,8 +11,6 @@ struct DesktopBootstrapConfig {
 }
 
 fn main() {
-    configure_windows_stack_size();
-
     println!("cargo:rerun-if-env-changed=DIRT_DESKTOP_API_BASE_URL");
     println!("cargo:rerun-if-env-changed=DIRT_API_BASE_URL");
     println!("cargo:rerun-if-changed=../../.env.client");
@@ -20,20 +18,6 @@ fn main() {
 
     if let Err(error) = write_desktop_bootstrap_config() {
         println!("cargo:warning=failed to generate desktop bootstrap config: {error}");
-    }
-}
-
-#[allow(clippy::missing_const_for_fn)]
-fn configure_windows_stack_size() {
-    #[cfg(target_os = "windows")]
-    {
-        let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
-        if target_env == "msvc" {
-            // Increase the main-thread stack for deep libSQL call paths on Windows.
-            println!("cargo:rustc-link-arg=/STACK:16777216");
-        } else {
-            println!("cargo:rustc-link-arg=-Wl,--stack,16777216");
-        }
     }
 }
 

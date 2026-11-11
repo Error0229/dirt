@@ -13,7 +13,6 @@ path = "src/main.rs"
 [dependencies]
 dirt-core = { path = "../dirt-core" }
 dioxus = { workspace = true, features = ["desktop"] }
-serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -34,10 +33,7 @@ serde_json.workspace = true
 dotenvy = "0.15"
 
 [dev-dependencies]
-serde_json.workspace = true
-# `services::sync_worker` tests construct a `SessionApiClient` against
-# a mock HTTP server to exercise the refresh-on-401 path end-to-end.
-wiremock = { workspace = true }
+tempfile = "3"
 
 [lints]
 workspace = true

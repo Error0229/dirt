@@ -1,4 +1,7 @@
 //! Launch argument parsing for mobile quick-capture and share-intent flows.
+// The Android interface does not call this module yet; only the host
+// tests do.
+#![allow(dead_code)]
 
 const QUICK_CAPTURE_FLAG: &str = "--quick-capture";
 const SHARE_TEXT_FLAG: &str = "--share-text";

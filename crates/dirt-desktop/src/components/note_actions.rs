@@ -1,36 +1,30 @@
 //! Shared note actions used by UI components.
 
 use dioxus::prelude::*;
-use dirt_core::models::Note;
 use dirt_core::NoteId;
 
 use crate::queries::invalidate_notes_query;
 use crate::state::AppState;
 
-/// Create a new note with optimistic UI update and background persistence.
-pub fn create_note_optimistic(state: &mut AppState) {
-    // Create optimistic note with client-generated ID (UUID v7)
-    let optimistic_note = Note::new("");
-    let note_id = optimistic_note.id;
-
-    // Update UI immediately (optimistic)
-    state.notes.write().insert(0, optimistic_note.clone());
-    state.current_note_id.set(Some(note_id));
-    state.enqueue_pending_change(note_id);
-
-    tracing::info!("Created new note (optimistic): {}", note_id);
-
-    // Persist in background
+/// Create a new empty note and select it once the store has saved it.
+///
+/// The store assigns the note's ID, so the note joins the list only after
+/// the write returns.
+pub fn create_note(state: &AppState) {
     let db = state.db_service.read().clone();
-    let worker = state.sync_worker.read().clone();
+    let mut state = *state;
     spawn(async move {
         if let Some(db) = db {
-            if let Err(e) = db.create_note_with_id(&optimistic_note).await {
-                tracing::error!("Failed to persist note: {}", e);
-            } else {
-                invalidate_notes_query().await;
-                if let Some(worker) = worker {
-                    worker.trigger();
+            match db.create_note("").await {
+                Ok(note) => {
+                    tracing::info!("Created new note: {}", note.id);
+                    let note_id = note.id;
+                    state.notes.write().insert(0, note);
+                    state.current_note_id.set(Some(note_id));
+                    invalidate_notes_query().await;
+                }
+                Err(e) => {
+                    tracing::error!("Failed to persist note: {}", e);
                 }
             }
         }
@@ -43,27 +37,14 @@ pub fn delete_note_optimistic(state: &mut AppState, note_id: NoteId) {
     if (state.current_note_id)() == Some(note_id) {
         state.current_note_id.set(None);
     }
-    // Remove from pending sync queue — the note no longer exists locally,
-    // so it should not be treated as a pending edit.
-    {
-        let mut pending = state.pending_sync_note_ids.write();
-        pending.retain(|id| *id != note_id);
-        state.pending_sync_count.set(pending.len());
-    }
 
     tracing::info!("Deleted note (optimistic): {}", note_id);
 
     let db = state.db_service.read().clone();
-    let worker = state.sync_worker.read().clone();
     spawn(async move {
         if let Some(db) = db {
             if let Err(e) = db.delete_note(&note_id).await {
                 tracing::error!("Failed to persist delete: {}", e);
-            } else if let Some(worker) = worker {
-                // Push the tombstone now so other devices see the
-                // delete promptly. Sync trigger only fires on success;
-                // a failed delete has nothing to push.
-                worker.trigger();
             }
             // Always re-sync the query: on success to confirm, on failure to rollback the optimistic removal.
             invalidate_notes_query().await;

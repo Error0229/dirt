@@ -8,10 +8,8 @@ use dioxus::prelude::*;
 
 use dirt_core::auth::{AuthClient, StoredToken, TokenStore};
 use dirt_core::models::{Note, NoteId, Settings};
-pub use dirt_core::state::SyncState as SyncStatus;
-use dirt_core::sync::session_client::SessionApiClient;
+use dirt_core::Store;
 
-use crate::services::{DatabaseService, SyncWorkerHandle};
 use crate::theme::ResolvedTheme;
 
 /// Auth dependencies that live for the lifetime of the process.
@@ -30,8 +28,8 @@ pub struct AuthDeps {
     /// Persistent token store. Always present (the keyring backend
     /// doesn't touch the OS until a load/save/clear actually fires).
     pub token_store: Arc<dyn TokenStore>,
-    /// Normalized API base URL used to (re)build `SessionApiClient`
-    /// after login. `None` mirrors `auth_client.is_none()`.
+    /// Normalized API base URL, shown on the Account tab. `None`
+    /// mirrors `auth_client.is_none()`.
     pub api_base_url: Option<String>,
 }
 
@@ -50,30 +48,15 @@ pub struct AppState {
     pub settings: Signal<Settings>,
     /// Resolved theme (light/dark based on settings and system preference)
     pub theme: Signal<ResolvedTheme>,
-    /// Database service (wrapped in Arc for sharing)
-    pub db_service: Signal<Option<Arc<DatabaseService>>>,
+    /// The local note store (wrapped in Arc for sharing)
+    pub db_service: Signal<Option<Arc<Store>>>,
+    /// Why the note store could not be opened, if it could not. The app
+    /// has no notes to show in that case, and must say why.
+    pub startup_error: Signal<Option<String>>,
     /// Currently signed-in user, if any. `Some(stored)` is the source
     /// of truth for "is the user signed in" — UI surfaces (settings
     /// account row, future toolbar) read this signal.
     pub signed_in: Signal<Option<StoredToken>>,
-    /// Refreshing session API client. Present iff `signed_in` is
-    /// present; the sync worker holds its own `Arc<SessionApiClient>`
-    /// so swapping this signal doesn't kill the running worker.
-    pub session_client: Signal<Option<Arc<SessionApiClient>>>,
-    /// Sync worker handle. `None` means no sync is running — either
-    /// the user is signed out, or the worker was shut down after a
-    /// failed configuration.
-    pub sync_worker: Signal<Option<SyncWorkerHandle>>,
-    /// Current sync status
-    pub sync_status: Signal<SyncStatus>,
-    /// Last sync subsystem error shown in settings diagnostics
-    pub sync_issue: Signal<Option<String>>,
-    /// Timestamp (unix ms) of the most recent successful sync
-    pub last_sync_at: Signal<Option<i64>>,
-    /// Count of local changes pending cloud sync
-    pub pending_sync_count: Signal<usize>,
-    /// Unique note IDs currently represented in pending changes
-    pub pending_sync_note_ids: Signal<Vec<NoteId>>,
     /// Whether settings panel is open
     pub settings_open: Signal<bool>,
     /// Whether quick capture overlay is active
@@ -88,25 +71,5 @@ impl AppState {
     pub fn current_note(&self) -> Option<Note> {
         let current_id = (self.current_note_id)();
         current_id.and_then(|id| (self.notes)().into_iter().find(|note| note.id == id))
-    }
-
-    /// Track a pending change for a note until the next successful sync.
-    pub fn enqueue_pending_change(&mut self, note_id: NoteId) {
-        let mut pending_notes = self.pending_sync_note_ids.write();
-        if !pending_notes.contains(&note_id) {
-            pending_notes.push(note_id);
-            self.pending_sync_count.set(pending_notes.len());
-        }
-    }
-
-    /// Kick the sync worker so a pending mutation reaches the server
-    /// quickly. No-op when the worker isn't running (signed out,
-    /// misconfigured env). Mutation sites call this after a successful
-    /// DB write so the worker debounces local edits into a single
-    /// sync cycle.
-    pub fn trigger_sync(&self) {
-        if let Some(handle) = (self.sync_worker)().as_ref() {
-            handle.trigger();
-        }
     }
 }
