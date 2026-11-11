@@ -235,8 +235,7 @@ mod tests {
                 // suffix short and collision-free for the test lifetime.
                 let nanos = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0);
+                    .map_or(0, |d| d.as_nanos());
                 let path = std::env::temp_dir().join(format!("{prefix}-{nanos}"));
                 fs::create_dir_all(&path)?;
                 Ok(Self(path))

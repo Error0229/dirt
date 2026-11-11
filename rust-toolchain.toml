@@ -1,3 +1,6 @@
+# Pinned so that local builds and CI use the same compiler and the same lint
+# set. CI installs whatever this file names. Raise it deliberately; the
+# redesign's dependencies need 1.95 or newer.
 [toolchain]
-channel = "stable"
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
