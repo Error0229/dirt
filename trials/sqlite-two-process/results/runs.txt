@@ -1,0 +1,31 @@
+== start-up race: 100 rounds, 2 processes, open=plain
+rounds with a failed start: 70; failed workers: 70
+x70: open: database is locked
+== start-up race: 100 rounds, 2 processes, open=retry
+rounds with a failed start: 0; failed workers: 0
+== 2 processes, 1000 writes each, rule=immediate, open=retry, busy timeout 5000 ms, 200 us inside and 300 us between transactions
+worker=1 migrated=1 writes=1000 busy_errors=0 other_errors=0 reads=77616 torn_reads=0 reader_busy=0 elapsed_ms=1218 slowest_write_ms=93 first_write_ms=1794382371057 last_write_ms=1794382372276
+worker=2 migrated=0 writes=1000 busy_errors=0 other_errors=0 reads=64464 torn_reads=0 reader_busy=0 elapsed_ms=1043 slowest_write_ms=123 first_write_ms=1794382371151 last_write_ms=1794382372194
+expected=2000 counter=2000 log_rows=2000 distinct_totals=2000 complete_writers=2 integrity=ok journal_mode=wal
+set-up ran in 1 process(es); all workers were writing together for 1043 ms
+busy errors reaching a caller: 0; torn reads: 0; lost writes: none -> PASS
+== 4 processes, 1000 writes each, rule=immediate, open=retry, busy timeout 5000 ms, 200 us inside and 300 us between transactions
+worker=1 migrated=0 writes=1000 busy_errors=0 other_errors=0 reads=152357 torn_reads=0 reader_busy=0 elapsed_ms=2450 slowest_write_ms=1306 first_write_ms=1794382372900 last_write_ms=1794382375351
+worker=2 migrated=0 writes=1000 busy_errors=0 other_errors=0 reads=110182 torn_reads=0 reader_busy=0 elapsed_ms=1827 slowest_write_ms=216 first_write_ms=1794382372929 last_write_ms=1794382374756
+worker=3 migrated=0 writes=1000 busy_errors=0 other_errors=0 reads=112946 torn_reads=0 reader_busy=0 elapsed_ms=1795 slowest_write_ms=263 first_write_ms=1794382372891 last_write_ms=1794382374686
+worker=4 migrated=1 writes=1000 busy_errors=0 other_errors=0 reads=146429 torn_reads=0 reader_busy=0 elapsed_ms=2423 slowest_write_ms=650 first_write_ms=1794382372866 last_write_ms=1794382375289
+expected=4000 counter=4000 log_rows=4000 distinct_totals=4000 complete_writers=4 integrity=ok journal_mode=wal
+set-up ran in 1 process(es); all workers were writing together for 1757 ms
+busy errors reaching a caller: 0; torn reads: 0; lost writes: none -> PASS
+== 2 processes, 10000 writes each, rule=immediate, open=retry, busy timeout 5000 ms, 0 us inside and 0 us between transactions
+worker=1 migrated=0 writes=10000 busy_errors=0 other_errors=0 reads=24397 torn_reads=0 reader_busy=0 elapsed_ms=1520 slowest_write_ms=642 first_write_ms=1794382376221 last_write_ms=1794382377742
+worker=2 migrated=1 writes=10000 busy_errors=0 other_errors=0 reads=10282 torn_reads=0 reader_busy=0 elapsed_ms=922 slowest_write_ms=16 first_write_ms=1794382375941 last_write_ms=1794382376864
+expected=20000 counter=20000 log_rows=20000 distinct_totals=20000 complete_writers=2 integrity=ok journal_mode=wal
+set-up ran in 1 process(es); all workers were writing together for 643 ms
+busy errors reaching a caller: 0; torn reads: 0; lost writes: none -> PASS
+== 2 processes, 1000 writes each, rule=deferred, open=retry, busy timeout 5000 ms, 200 us inside and 300 us between transactions
+worker=1 migrated=0 writes=1000 busy_errors=439 other_errors=0 reads=68275 torn_reads=0 reader_busy=0 elapsed_ms=1101 slowest_write_ms=4 first_write_ms=1794382378361 last_write_ms=1794382379462
+worker=2 migrated=1 writes=1000 busy_errors=411 other_errors=0 reads=70232 torn_reads=0 reader_busy=0 elapsed_ms=1106 slowest_write_ms=7 first_write_ms=1794382378343 last_write_ms=1794382379449
+expected=2000 counter=2000 log_rows=2000 distinct_totals=2000 complete_writers=2 integrity=ok journal_mode=wal
+set-up ran in 1 process(es); all workers were writing together for 1088 ms
+busy errors reaching a caller: 850; torn reads: 0; lost writes: none -> FAIL

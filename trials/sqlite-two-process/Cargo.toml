@@ -1,0 +1,12 @@
+[package]
+name = "sqlite-two-process-trial"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Trial 2 of the Dirt redesign: two processes sharing one SQLite file"
+
+[dependencies]
+rusqlite = { version = "0.42", features = ["bundled"] }
+
+# An empty workspace table keeps this crate out of the main Dirt workspace.
+[workspace]

@@ -1,0 +1,19 @@
+[package]
+name = "rusqlite-android-trial"
+version = "0.0.0"
+edition = "2021"
+publish = false
+default-run = "rusqlite-android-trial"
+description = "Trial 2 of the Dirt redesign: rusqlite with bundled SQLite on Android"
+
+[dependencies]
+# No libsql anywhere in this graph: the two cannot be linked together.
+rusqlite = { version = "0.42", features = ["bundled"] }
+
+# The app shell exists only on Android. On the host, `cargo run` prints the
+# same report to the terminal.
+[target.'cfg(target_os = "android")'.dependencies]
+dioxus = { version = "0.7", features = ["mobile"] }
+
+# An empty workspace table keeps this crate out of the main Dirt workspace.
+[workspace]

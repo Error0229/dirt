@@ -1,0 +1,6 @@
+[application]
+name = "rusqlite-android-trial"
+
+[bundle]
+identifier = "dev.dirt.trial.rusqlite"
+publisher = "Dirt"
