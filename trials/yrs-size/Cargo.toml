@@ -1,0 +1,13 @@
+[package]
+name = "yrs-size-trial"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Trial 1 of the Dirt redesign: yrs document size and the deletion rule"
+
+[dependencies]
+yrs = "=0.28.1"
+similar = "2"
+
+# An empty workspace table keeps this crate out of the main Dirt workspace.
+[workspace]
