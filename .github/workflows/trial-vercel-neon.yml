@@ -1,0 +1,42 @@
+name: Trial 4 (vercel-neon)
+
+# Lives only on the trials branch. Runs the trial's push and pull tests
+# against a Postgres 18 service container, the version the Neon project uses.
+on:
+  push:
+    branches: [trials/step-1]
+    paths:
+      - trials/vercel-neon/**
+      - .github/workflows/trial-vercel-neon.yml
+
+jobs:
+  test:
+    name: Test against Postgres 18
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: trial
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: trials/vercel-neon
+    env:
+      CARGO_TERM_COLOR: always
+      DATABASE_URL: postgres://postgres:trial@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs what trials/vercel-neon/rust-toolchain.toml names.
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Run tests
+        run: cargo test --locked

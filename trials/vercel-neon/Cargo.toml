@@ -1,0 +1,45 @@
+[package]
+name = "vercel-neon-trial"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Trial 4 of the Dirt redesign: Postgres on Neon from the Vercel Rust runtime"
+
+[lib]
+path = "src/lib.rs"
+
+# Vercel's Rust runtime builds each `api/*.rs` file as a function. One binary
+# holds the whole router, as the real server will.
+[[bin]]
+name = "axum"
+path = "api/axum.rs"
+
+[dependencies]
+axum = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The function API (`sqlx::query_as`) is used throughout, never the
+# compile-time `query!` macros, so the Vercel build needs no database. The
+# `macros` feature is on only for `#[sqlx::test]` and `sqlx::migrate!`.
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring-webpki",
+    "postgres",
+    "migrate",
+    "macros",
+    "uuid",
+] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tower = "0.5"
+uuid = { version = "1", features = ["v4", "serde"] }
+vercel_runtime = { version = "2.4", features = ["axum"] }
+
+[dev-dependencies]
+# Only the load script (`examples/load.rs`) uses this. native-tls avoids
+# building a second TLS stack on the developer machine.
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "http2"] }
+# `examples/serve.rs` listens on a local port.
+tokio = { version = "1", features = ["net"] }
+
+# An empty workspace table keeps this crate out of the main Dirt workspace.
+[workspace]

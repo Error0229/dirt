@@ -1,0 +1,6 @@
+# Vercel's builder ships Rust 1.92.0, and sqlx 0.9 needs 1.94. The builder's
+# cargo is a rustup proxy, so naming a toolchain here makes it download that
+# one. Same version as the repository's own pin.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"

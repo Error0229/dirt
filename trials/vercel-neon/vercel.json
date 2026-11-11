@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["pdx1"],
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/axum"
+    }
+  ]
+}

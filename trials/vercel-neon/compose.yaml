@@ -1,0 +1,12 @@
+# Local Postgres for `cargo test`. Version 18 matches the Neon project.
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: trial
+    ports:
+      - "127.0.0.1:54329:5432"
+    # Tests create and drop a database each; durability is not needed.
+    command: ["postgres", "-c", "fsync=off", "-c", "max_connections=200"]
+    tmpfs:
+      - /var/lib/postgresql
