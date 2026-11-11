@@ -96,6 +96,7 @@ Output of the runs recorded in `trials/sqlite-two-process/results/runs.txt`:
 | 2 processes × 1,000 writes, `BEGIN IMMEDIATE` | 0 | 0 | 0 | 123 ms |
 | 4 processes × 1,000 writes, `BEGIN IMMEDIATE` | 0 | 0 | 0 | 1,306 ms |
 | 2 processes × 10,000 writes, no pauses, `BEGIN IMMEDIATE` | 0 | 0 | 0 | 642 ms |
+| 2 processes × 1,000 writes, `BEGIN IMMEDIATE`, `synchronous=FULL` | 0 | 0 | 0 | 262 ms |
 | 2 processes × 1,000 writes, plain `BEGIN` (control) | 850 | 0 | 0 | 7 ms |
 
 | Start-up race, 100 fresh files, 2 processes | Rounds in which one process failed to open |
@@ -105,6 +106,10 @@ Output of the runs recorded in `trials/sqlite-two-process/results/runs.txt`:
 
 In the first run both processes were writing at the same time for 1,043 ms.
 The workers read about 140,000 times during it.
+
+Every run but one used `synchronous=NORMAL`. Step 3 proposes `FULL`, where
+each commit waits for the disk. The `FULL` run and a start-up race under
+`FULL` (50 files, no failure) are in `results/runs-synchronous-full.txt`.
 
 ## Findings
 

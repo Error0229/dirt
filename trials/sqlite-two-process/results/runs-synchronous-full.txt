@@ -1,0 +1,17 @@
+# TRIAL_SYNCHRONOUS=FULL
+== 2 processes, 1000 writes each, rule=immediate, open=retry, busy timeout 5000 ms, 200 us inside and 300 us between transactions
+worker=1 migrated=1 writes=1000 busy_errors=0 other_errors=0 reads=134082 torn_reads=0 reader_busy=0 elapsed_ms=1884 slowest_write_ms=156 first_write_ms=1794384769908 last_write_ms=1794384771793
+worker=2 migrated=0 writes=1000 busy_errors=0 other_errors=0 reads=177434 torn_reads=0 reader_busy=0 elapsed_ms=2358 slowest_write_ms=262 first_write_ms=1794384770002 last_write_ms=1794384772360
+expected=2000 counter=2000 log_rows=2000 distinct_totals=2000 complete_writers=2 integrity=ok journal_mode=wal
+set-up ran in 1 process(es); all workers were writing together for 1791 ms
+busy errors reaching a caller: 0; torn reads: 0; lost writes: none -> PASS
+== 4 processes, 500 writes each, rule=immediate, open=retry, busy timeout 5000 ms, 200 us inside and 300 us between transactions
+worker=1 migrated=0 writes=500 busy_errors=0 other_errors=0 reads=186152 torn_reads=0 reader_busy=0 elapsed_ms=2500 slowest_write_ms=1191 first_write_ms=1794384772982 last_write_ms=1794384775482
+worker=2 migrated=0 writes=500 busy_errors=0 other_errors=0 reads=97091 torn_reads=0 reader_busy=0 elapsed_ms=1285 slowest_write_ms=540 first_write_ms=1794384773869 last_write_ms=1794384775154
+worker=3 migrated=0 writes=500 busy_errors=0 other_errors=0 reads=75202 torn_reads=0 reader_busy=0 elapsed_ms=1107 slowest_write_ms=110 first_write_ms=1794384773096 last_write_ms=1794384774203
+worker=4 migrated=1 writes=500 busy_errors=0 other_errors=0 reads=78412 torn_reads=0 reader_busy=0 elapsed_ms=1183 slowest_write_ms=202 first_write_ms=1794384772948 last_write_ms=1794384774131
+expected=2000 counter=2000 log_rows=2000 distinct_totals=2000 complete_writers=4 integrity=ok journal_mode=wal
+set-up ran in 1 process(es); all workers were writing together for 262 ms
+busy errors reaching a caller: 0; torn reads: 0; lost writes: none -> PASS
+== start-up race: 50 rounds, 2 processes, open=retry
+rounds with a failed start: 0; failed workers: 0

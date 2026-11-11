@@ -219,7 +219,10 @@ fn open(path: &Path, busy_timeout_ms: u64, retry: bool) -> rusqlite::Result<Conn
             Err(error) => return Err(error),
         }
     }
-    connection.pragma_update(None, "synchronous", "NORMAL")?;
+    // NORMAL by default. Set TRIAL_SYNCHRONOUS=FULL to make every commit wait
+    // for the disk, which is the setting step 3 proposes; workers inherit it.
+    let synchronous = std::env::var("TRIAL_SYNCHRONOUS").unwrap_or_else(|_| "NORMAL".to_owned());
+    connection.pragma_update(None, "synchronous", synchronous)?;
     Ok(connection)
 }
 
