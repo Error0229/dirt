@@ -553,6 +553,14 @@ proposed default; each needs a decision before that step's plan is written.
 
 ### Step 3: New local core
 
+**Result (2026-11-11): done**, apart from two exit items moved to step 5.
+Detailed plan and what differed from it:
+`docs/plans/2026-11-11-step-3-new-local-core-plan.md`. The old sync engine
+was deleted in this step, because it could not compile against the new
+store, so sync is off until step 5. Issue #234 stays open until step 5's
+sign-in opens a per-account store; the folders and the move of local notes
+into an account are built and tested. #210 and #218 are closed.
+
 - **First move:** amendment C1. Cut `dirt-api` loose from `dirt-core`
   (`routes.rs:13`, `turso.rs:26`, and the `SOLO_USER_ID` uses) and drop
   `libsql` from `dirt-cli`, so the server keeps building on `libsql` while the
@@ -790,10 +798,12 @@ erDiagram
 
 ## Acceptance criteria for this plan
 
-- [ ] Steps 1 and 2 meet their exit lists above.
+- [x] Steps 1 and 2 meet their exit lists above. Step 1's last item, the
+      owner's review of the trial results, was waived on 2026-11-11 with the
+      instruction to build without waiting.
 - [x] Every amendment in this document is approved, changed or rejected, and
       the design document reflects the outcome.
-- [ ] A detailed plan for step 3 exists before step 3 starts.
+- [x] A detailed plan for step 3 exists before step 3 starts.
 
 ## Risks
 
