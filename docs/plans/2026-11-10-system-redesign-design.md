@@ -166,8 +166,10 @@ and when they change.
 - The app opens the system browser on Clerk's hosted sign-in page using OAuth
   with PKCE, requesting the `openid` scope so that Clerk returns an ID token.
   Desktop and CLI receive the result on `127.0.0.1` with a port chosen at run
-  time. Android receives it through a custom URL scheme, or an app link if
-  Clerk refuses the scheme.
+  time. Android receives it through the custom URL scheme
+  `dev.dirt.app://callback`, which Clerk accepts. Any app can claim a custom
+  scheme; PKCE is what makes a stolen redirect useless. An https app link on
+  our own domain can be added once that domain exists.
 - Before sign-in, the client asks our server for a single-use nonce and passes
   it to Clerk. The ID token stays valid for a day, so without the nonce it
   could be replayed.
@@ -178,9 +180,16 @@ and when they change.
 - After that, Clerk is out of the path. Sync uses only the device token.
 - Clerk also returns an access token and a refresh token. The client
   discards both without storing them.
-- A sign-in that never comes back must time out with a message. For a wrong
-  redirect target Clerk shows an error page in the browser and does not
-  return to the app.
+- The client checks the `iss` parameter of the callback against the issuer
+  it started with.
+- A sign-in may never come back: for a wrong redirect target Clerk shows an
+  error page in the browser and does not return to the app. The desktop
+  client therefore listens until the person cancels, not for a fixed time. A
+  client that has stopped listening leaves the browser on a connection
+  error.
+- On Android the client saves the attempt (verifier, state and nonce) before
+  it opens the browser, and uses it once. Android may kill the app while the
+  browser is in front; the restarted app then finishes the saved attempt.
 - No Clerk SDK is needed: a generic OAuth client and standard token
   verification are enough.
 - Clerk's free plan offers email code and up to three social logins. Passkeys
@@ -662,17 +671,18 @@ import into the new one.
 
 ### To verify in step 1
 
-Trials 1, 2 and 4 have passed. Trial 3 is part done. The write-ups are in
-`docs/trials/` on the `trials/step-1` branch.
+All four trials have passed. The write-ups are in `docs/trials/`, and the
+trial code is on the `trials/step-1` branch.
 
 - **Trial 1, passed 2026-11-10:** 15.3 KB after 1,000 edits, about 15 bytes
   per edit.
 - **Trial 2, passed 2026-11-11:** `rusqlite` builds, links and runs on
   Android, and two processes share one file safely given the two rules in
   section 8.4. No physical arm64 device was tested.
-- **Trial 3, part done 2026-11-11:** sign-in from a desktop client works with
-  an email code, and the server-side check accepts Clerk's ID token. Google
-  sign-in and Android have not been run.
+- **Trial 3, passed 2026-11-11:** sign-in works from a desktop client and
+  from an Android app, with an email code and with Google, including when
+  Android kills the app while the browser is open. The server-side check
+  accepts Clerk's ID token. Android was tested on the emulator only.
 - **Trial 4, passed 2026-11-11:** every criterion met. It also showed that a
   polling timer keeps the database awake (section 7.4). Decision 4 was
   changed the same day as a result: sync is driven by events, with no timer.
@@ -681,7 +691,7 @@ Trials 1, 2 and 4 have passed. Trial 3 is part done. The write-ups are in
 |---|---|---|
 | yrs documents stay small (verified) | Measure document size after about a thousand edits to a short note | Compare Loro and Automerge; revisit the sync shape for long notes |
 | `rusqlite` builds for Android (verified) | Build and run a query in the mobile shell | Keep `libsql` for the local file |
-| Clerk works from a native client (desktop verified; Android open) | Sign in from desktop (loopback) and Android (custom URL scheme) with a public PKCE client | Fall back to the existing email-code login |
+| Clerk works from a native client (verified) | Sign in from desktop (loopback) and Android (custom URL scheme) with a public PKCE client | Fall back to the existing email-code login |
 | Postgres works from the Vercel Rust runtime (verified) | Deploy a function that runs one transaction against Neon's pooled endpoint | Reconsider the host before the database |
 
 The trials need Rust 1.95 or newer. The development machine had 1.85 when this

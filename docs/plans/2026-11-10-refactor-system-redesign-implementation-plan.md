@@ -264,14 +264,15 @@ to `dx`.
 Clerk in the system browser, and can our server verify the result with
 standard libraries?
 
-**Result so far (2026-11-11): not finished.** Done: the OAuth application
-(the Backend API accepted the custom scheme), the desktop flow, the verifier
-and its tests. Sign-in completed twice from a terminal program, on two
-ports, with a Clerk test address and an email code, and the verifier
-accepted both real ID tokens. Not run: Google sign-in, which needs a real
-Google account, and the whole Android task. Write-up, with the list of what
-is left: `docs/trials/2026-11-11-trial-3-clerk-sign-in.md` on the
-`trials/step-1` branch.
+**Result (2026-11-11): pass, with one gap.** Sign-in completed from a
+terminal program on three ports and from an Android app, with an email code
+and with Google, and once with the Android app killed while the browser was
+open. The verifier accepted every real ID token and rejects the bad cases in
+its 13 tests. The user ID matched between desktop and Android. Android was
+tested on the emulator with Chrome only. Every task below was done; the
+Android flow is its own app, `trials/clerk-signin-android/`, not an addition
+to the trial 2 app. Write-up:
+`docs/trials/2026-11-11-trial-3-clerk-sign-in.md`.
 
 **Confirmed by research**
 
@@ -440,9 +441,8 @@ binary size, the build time, and the exact body limit observed.
 
 ### Step 1 exit
 
-- [ ] Four write-ups exist under `docs/trials/`. Trials 1, 2 and 4 are
-      complete. Trial 3's covers the desktop half and lists what is left.
-- [x] Design section 13's table is updated with each verdict so far.
+- [x] Four write-ups exist under `docs/trials/`.
+- [x] Design section 13's table is updated with each verdict.
 - [x] The approved amendments are applied to the design document.
 - [ ] You review the results and confirm, or change, the affected decisions.
 
@@ -672,7 +672,13 @@ erDiagram
     note, key version and format version.
   - The identity module: Clerk sign-in and device registration. Start from
     `trials/clerk-signin/src/flow.rs`. The client discards Clerk's access
-    and refresh tokens, and a sign-in that never returns times out.
+    and refresh tokens, checks the callback's `iss` parameter, and on
+    desktop listens until the person cancels.
+  - A choice of TLS set-up for Android. Trial 3 used rustls with `ring` and
+    root certificates compiled in, which builds with no extra tooling but
+    ignores certificates the user installed. `reqwest`'s own options need
+    either OpenSSL built for Android or a platform verifier with Kotlin
+    code. Default: the trial's set-up.
   - The secrets module and the server client.
   - The sync cycle and background worker in `dirt-core`. The worker is driven
     by events and has no timer (amendment D1): app start, return to the app,
@@ -734,7 +740,12 @@ erDiagram
   - Sync on return to the app: window focus on desktop, resume on Android.
   - CLI commands for sign-in, devices and verbose sync.
   - Deletion of `config_profiles.rs` and the old `auth_cmd.rs`.
-  - The Android return from the browser.
+  - The Android return from the browser. Start from
+    `trials/clerk-signin-android/`: a `singleTask` activity, an intent
+    filter for the custom scheme, and the attempt saved before the browser
+    opens. Replace the trial's file hand-off with a JNI call, and consider
+    opening a custom tab in place of a full browser tab.
+  - One sign-in on a physical Android device, which no trial covered.
   - A fresh feature-parity document.
 - **Settle first:**
   - Android process death during sign-in. Default: persist the verifier and
