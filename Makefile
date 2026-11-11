@@ -46,8 +46,6 @@ Dirt workspace commands
   check-mobile             Check dirt-mobile
   test-mobile              Test dirt-mobile
   run-mobile-android       Run mobile app on Android (MOBILE_DEV_PORT=8081)
-  run-mobile-ios           Run mobile app on iOS (MOBILE_DEV_PORT=8081)
-  run-mobile-web           Run mobile package on web (MOBILE_DEV_PORT=8081)
   build-mobile-android     Build Android release
                            (Android targets use the JDK named by
                            DIRT_ANDROID_JAVA_HOME when it is set)
@@ -62,7 +60,6 @@ Desktop: make run-desktop
 API:     make run-api
 CLI:     make run-cli CLI_ARGS="--help"
 Android: make run-mobile-android
-iOS:     make run-mobile-ios
 endef
 
 .PHONY: \
@@ -73,7 +70,7 @@ endef
 	check-cli test-cli run-cli build-cli \
 	check-api test-api run-api build-api \
 	check-desktop test-desktop run-desktop build-desktop \
-	check-mobile test-mobile run-mobile-android run-mobile-ios run-mobile-web build-mobile-android \
+	check-mobile test-mobile run-mobile-android build-mobile-android \
 	check-platforms test-platforms run-platforms
 
 help: ## Show available targets
@@ -159,12 +156,6 @@ endif
 
 run-mobile-android: ## Run mobile app on Android (Dioxus)
 	$(DX) serve --platform android --package dirt-mobile --port $(MOBILE_DEV_PORT)
-
-run-mobile-ios: ## Run mobile app on iOS (Dioxus)
-	$(DX) serve --platform ios --package dirt-mobile --port $(MOBILE_DEV_PORT)
-
-run-mobile-web: ## Run mobile package on web target (quick UI validation)
-	$(DX) serve --platform web --package dirt-mobile --port $(MOBILE_DEV_PORT)
 
 build-mobile-android: ## Build Android APK/AAB (release)
 	$(DX) build --platform android --package dirt-mobile --release

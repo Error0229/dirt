@@ -26,8 +26,6 @@ pub struct Settings {
     pub theme: ThemeMode,
     /// Global capture hotkey (e.g., "Ctrl+Shift+D")
     pub capture_hotkey: String,
-    /// Whether newly recorded voice memos should be transcribed automatically.
-    pub voice_memo_transcription_enabled: bool,
 }
 
 impl Default for Settings {
@@ -37,7 +35,6 @@ impl Default for Settings {
             font_size: 14,
             theme: ThemeMode::System,
             capture_hotkey: "Ctrl+Shift+D".to_string(),
-            voice_memo_transcription_enabled: false,
         }
     }
 }

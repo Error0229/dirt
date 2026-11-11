@@ -20,7 +20,7 @@ fi
 
 # Guardrail 2: block tracing macros that interpolate secret-like variable names.
 if rg --line-number --pcre2 \
-  "tracing::(?:trace|debug|info|warn|error)!\\([^\\n)]*\\{[^}]*\\b(?:token|secret|password|access_key|refresh_token|auth_token|client_token|server_token|turso_auth_token|dirt_server_token|dirt_client_token)\\b[^}]*\\}[^\\n)]*\\)" \
+  "tracing::(?:trace|debug|info|warn|error)!\\([^\\n)]*\\{[^}]*\\b(?:token|secret|password|access_key|refresh_token|auth_token|client_token|server_token|turso_auth_token)\\b[^}]*\\}[^\\n)]*\\)" \
   crates \
   -g '*.rs'; then
   echo "ERROR: tracing call appears to interpolate a secret-like variable."
@@ -28,17 +28,16 @@ if rg --line-number --pcre2 \
 fi
 
 # Guardrail 3: block server-only secret identifiers from client crates.
-# DIRT_SERVER_TOKEN is the post-Supabase shared bearer token: client
-# crates must never reference it; only `DIRT_CLIENT_TOKEN` belongs on
-# the client side. TURSO_AUTH_TOKEN is the database-scoped admin token
-# the server holds; it must never reach a client.
+# TURSO_AUTH_TOKEN is the database-scoped admin token the server holds; it
+# must never reach a client. Step 4 of the redesign replaces Turso with
+# Postgres and must replace these names with the new ones.
 CLIENT_CRATES=(
   crates/dirt-cli
   crates/dirt-desktop
   crates/dirt-mobile
 )
 if rg --line-number --pcre2 \
-  "\\b(?:DIRT_SERVER_TOKEN|TURSO_AUTH_TOKEN|TURSO_DATABASE_URL|TURSO_ADMIN_AUTH_TOKEN|TURSO_GROUP_TOKEN|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)\\b" \
+  "\\b(?:TURSO_AUTH_TOKEN|TURSO_DATABASE_URL)\\b" \
   "${CLIENT_CRATES[@]}" \
   -g '*.rs'; then
   echo "ERROR: server-only secret identifier referenced in a client crate."

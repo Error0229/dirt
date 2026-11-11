@@ -8,11 +8,9 @@
 mod database;
 mod export;
 mod sync_worker;
-mod transcription;
 
 pub use sync_worker::{spawn_sync_worker, SyncEvent, SyncWorkerHandle};
 
 // Re-export desktop-specific services
 pub use database::DatabaseService;
 pub use export::{export_notes_to_path, suggested_export_file_name, NotesExportFormat};
-pub use transcription::{TranscriptionConfigStatus, TranscriptionService};

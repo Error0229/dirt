@@ -5,8 +5,6 @@
 //! health of the auto-sync worker; it surfaces `Offline` until the
 //! user signs in on the Account tab.
 
-use std::sync::Arc;
-
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 
@@ -14,19 +12,16 @@ use dirt_core::models::{NoteId, Settings, ThemeMode};
 
 use super::button::{Button, ButtonVariant};
 use super::dialog::{DialogContent, DialogRoot, DialogTitle};
-use crate::services::{
-    export_notes_to_path, suggested_export_file_name, NotesExportFormat, TranscriptionConfigStatus,
-    TranscriptionService,
-};
+use crate::services::{export_notes_to_path, suggested_export_file_name, NotesExportFormat};
 use crate::state::AppState;
 use crate::theme::resolve_theme;
 use account_settings::AccountSettingsTab;
-use media_settings::MediaSettingsTab;
+use data_settings::DataSettingsTab;
 use sync_settings::SyncSettingsTab;
 use theme_settings::ThemeSettingsTab;
 
 mod account_settings;
-mod media_settings;
+mod data_settings;
 mod row;
 mod sync_settings;
 mod theme_settings;
@@ -34,7 +29,7 @@ mod theme_settings;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsTab {
     Appearance,
-    Media,
+    Data,
     Sync,
     Account,
 }
@@ -78,28 +73,6 @@ pub fn SettingsPanel() -> Element {
         ThemeMode::Dark => "dark",
         ThemeMode::System => "system",
     };
-    let mut transcription_service_signal = state.transcription_service;
-    let transcription_service = transcription_service_signal.read().clone();
-    let transcription_config_status = transcription_service
-        .as_ref()
-        .map(|service| service.config_status());
-    let transcription_available = transcription_config_status
-        .as_ref()
-        .is_some_and(|status| status.enabled);
-    let transcription_status_text = transcription_status_text(
-        transcription_config_status.as_ref(),
-        current_settings.voice_memo_transcription_enabled,
-    );
-    let transcription_toggle_disabled =
-        !transcription_available && !current_settings.voice_memo_transcription_enabled;
-    let mut openai_api_key_input = use_signal(String::new);
-    let mut openai_api_key_message = use_signal(|| None::<String>);
-    let mut openai_api_key_configured = use_signal(|| {
-        TranscriptionService::has_stored_api_key().unwrap_or_else(|error| {
-            tracing::warn!("Failed to check stored OpenAI API key: {}", error);
-            false
-        })
-    });
     let sync_status = (state.sync_status)();
     let sync_issue = (state.sync_issue)();
     let pending_sync_count = (state.pending_sync_count)();
@@ -154,56 +127,6 @@ pub fn SettingsPanel() -> Element {
 
     let export_json = move |_: MouseEvent| export_notes(NotesExportFormat::Json);
     let export_markdown = move |_: MouseEvent| export_notes(NotesExportFormat::Markdown);
-
-    let save_openai_api_key = move |_: MouseEvent| {
-        let api_key = openai_api_key_input().trim().to_string();
-        if api_key.is_empty() {
-            openai_api_key_message.set(Some("Enter an OpenAI API key.".to_string()));
-            return;
-        }
-
-        match TranscriptionService::store_api_key(&api_key) {
-            Ok(()) => {
-                openai_api_key_input.set(String::new());
-                openai_api_key_configured.set(true);
-                openai_api_key_message.set(Some(
-                    "OpenAI API key saved to secure OS storage.".to_string(),
-                ));
-            }
-            Err(error) => {
-                openai_api_key_message.set(Some(format!("Failed to save API key: {error}")));
-            }
-        }
-
-        match TranscriptionService::new() {
-            Ok(service) => transcription_service_signal.set(Some(Arc::new(service))),
-            Err(error) => {
-                tracing::warn!("Voice transcription service unavailable: {}", error);
-                transcription_service_signal.set(None);
-            }
-        }
-    };
-
-    let clear_openai_api_key = move |_: MouseEvent| {
-        match TranscriptionService::clear_api_key() {
-            Ok(()) => {
-                openai_api_key_input.set(String::new());
-                openai_api_key_configured.set(false);
-                openai_api_key_message.set(Some("OpenAI API key cleared.".to_string()));
-            }
-            Err(error) => {
-                openai_api_key_message.set(Some(format!("Failed to clear API key: {error}")));
-            }
-        }
-
-        match TranscriptionService::new() {
-            Ok(service) => transcription_service_signal.set(Some(Arc::new(service))),
-            Err(error) => {
-                tracing::warn!("Voice transcription service unavailable: {}", error);
-                transcription_service_signal.set(None);
-            }
-        }
-    };
 
     let mut active_tab = use_signal(|| SettingsTab::Appearance);
 
@@ -284,7 +207,7 @@ pub fn SettingsPanel() -> Element {
                         {
                             let tabs = [
                                 (SettingsTab::Appearance, "Appearance"),
-                                (SettingsTab::Media, "Media"),
+                                (SettingsTab::Data, "Data"),
                                 (SettingsTab::Sync, "Sync"),
                                 (SettingsTab::Account, "Account"),
                             ];
@@ -338,28 +261,8 @@ pub fn SettingsPanel() -> Element {
                             on_font_size_change: on_font_size_change,
                         }
                     },
-                    SettingsTab::Media => rsx! {
-                        MediaSettingsTab {
-                            current_settings: current_settings,
-                            transcription_status_text: transcription_status_text,
-                            transcription_toggle_disabled: transcription_toggle_disabled,
-                            on_toggle_transcription: {
-                                let mut save = save_settings;
-                                move |_| {
-                                    let mut new_settings = settings();
-                                    new_settings.voice_memo_transcription_enabled =
-                                        !new_settings.voice_memo_transcription_enabled;
-                                    save(new_settings);
-                                }
-                            },
-                            openai_api_key_input: openai_api_key_input(),
-                            on_openai_api_key_input: move |value: String| {
-                                openai_api_key_input.set(value);
-                            },
-                            on_save_openai_api_key: save_openai_api_key,
-                            on_clear_openai_api_key: clear_openai_api_key,
-                            openai_api_key_configured: openai_api_key_configured(),
-                            openai_api_key_message: openai_api_key_message(),
+                    SettingsTab::Data => rsx! {
+                        DataSettingsTab {
                             export_busy: export_busy(),
                             on_export_json: export_json,
                             on_export_markdown: export_markdown,
@@ -379,26 +282,6 @@ pub fn SettingsPanel() -> Element {
 
                 } // settings-body
             }
-        }
-    }
-}
-
-fn transcription_status_text(status: Option<&TranscriptionConfigStatus>, enabled: bool) -> String {
-    let toggle = if enabled { "enabled" } else { "disabled" };
-
-    match status {
-        Some(status) if status.enabled => {
-            let model = status.model.as_deref().unwrap_or("default");
-            format!(
-                "Optional transcription is {toggle}. Provider: {} ({model}).",
-                status.provider
-            )
-        }
-        Some(_) => {
-            format!("Optional transcription is {toggle}. Add an OpenAI API key in API Keys.")
-        }
-        None => {
-            format!("Optional transcription is {toggle}. Service failed to initialize.")
         }
     }
 }

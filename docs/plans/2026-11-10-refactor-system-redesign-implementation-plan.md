@@ -450,32 +450,46 @@ binary size, the build time, and the exact body limit observed.
 
 Rule (amendment C4): delete only what nothing live depends on.
 
+**Result (2026-11-11): done.** Every item below is complete. Four things
+differ from the list as written:
+
+- **The Media tab also held the Export buttons,** which are a live feature.
+  The tab is replaced by a "Data" tab that keeps Export and nothing else.
+- **No stored OpenAI key was found** in the Windows credential store, so there
+  was nothing to remove.
+- **More dependencies went than the list named.** With the transcription code
+  gone, the desktop crate uses none of `reqwest`, `keyring`, `image`,
+  `mime_guess`, `base64` or `urlencoding` directly, so all six were removed.
+  `cargo machete` is not installed; each was checked by search and by the
+  build.
+- **Six tests went with the deleted code,** leaving 309 passing and 8 ignored.
+
 ### Dead feature code
 
-- [ ] Delete `crates/dirt-desktop/src/services/transcription.rs` and its entry
+- [x] Delete `crates/dirt-desktop/src/services/transcription.rs` and its entry
       in `services/mod.rs`. Note the keychain service name it uses first, then
       remove the stored OpenAI key from your own keychain.
-- [ ] Delete `crates/dirt-desktop/src/components/settings/media_settings.rs`
+- [x] Delete `crates/dirt-desktop/src/components/settings/media_settings.rs`
       and the Media tab in `components/settings/mod.rs`.
-- [ ] Remove `transcription_service` from `crates/dirt-desktop/src/state.rs`
+- [x] Remove `transcription_service` from `crates/dirt-desktop/src/state.rs`
       and `app.rs`.
-- [ ] Remove `voice_memo_transcription_enabled` from
+- [x] Remove `voice_memo_transcription_enabled` from
       `crates/dirt-core/src/models/settings.rs` and
       `db/settings_repository.rs`, with its three tests. Settings are stored
       as key and value rows, so the old row is simply never read again.
-- [ ] `crates/dirt-desktop/Cargo.toml`: drop the `multipart` feature of
+- [x] `crates/dirt-desktop/Cargo.toml`: drop the `multipart` feature of
       `reqwest`. Run `cargo machete` and remove what it confirms unused. A
       search found no use of `mime_guess`, `base64`, `urlencoding` or `image`
       in the desktop crate.
 
 ### Continuous integration
 
-- [ ] Delete `.github/workflows/managed-mode-e2e.yml` and
+- [x] Delete `.github/workflows/managed-mode-e2e.yml` and
       `.github/scripts/managed-mode-e2e.sh`. The script runs name filters for
       tests in modules that no longer exist. Cargo exits successfully when a
       filter matches nothing, so the workflow reported success nightly while
       checking nothing, until GitHub disabled it for inactivity in July.
-- [ ] `.github/scripts/security-guard.sh`: remove the names that no longer
+- [x] `.github/scripts/security-guard.sh`: remove the names that no longer
       exist (`DIRT_SERVER_TOKEN`, `TURSO_ADMIN_AUTH_TOKEN`,
       `TURSO_GROUP_TOKEN`, the AWS keys). Keep the Turso names until step 4
       replaces them.
@@ -502,7 +516,7 @@ Done on 2026-11-10, except the `Makefile` item:
       section, the correct server variables, and the known limitations.
 - [x] `api/axum.rs`: the header said Vercel's Root Directory is
       `crates/dirt-api/`; it is the workspace root. Comment fixed.
-- [ ] `Makefile`: remove `run-mobile-ios` and `run-mobile-web`, which are out
+- [x] `Makefile`: remove `run-mobile-ios` and `run-mobile-web`, which are out
       of scope.
 
 ### Issues
@@ -518,19 +532,19 @@ All 14 open issues, with a comment on each linking the redesign document.
 | Keep, link to step 5 | #211, #216 | Fixed by the shared sync worker and the four error classes |
 | Keep, link to step 7 | #217 | Replaced by the sync status view |
 
-- [ ] Verify each "obsolete" claim against the code before closing.
+- [x] Verify each "obsolete" claim against the code before closing.
 - [x] Created the "Redesign" milestone with one tracking issue per build
       step: #237 (step 1) through #245 (step 9). The six issues kept open
       above are in the milestone too.
 
 ### Step 2 exit
 
-- [ ] `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`
+- [x] `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`
       and `cargo test --all` pass.
-- [ ] The desktop app starts, and Settings opens with no Media tab.
-- [ ] A case-insensitive search for `transcri` under `crates/` returns nothing.
-- [ ] No document in the root of `docs/` describes a shared bearer token.
-- [ ] Every open issue is linked to a build step.
+- [x] The desktop app starts, and Settings opens with no Media tab.
+- [x] A case-insensitive search for `transcri` under `crates/` returns nothing.
+- [x] No document in the root of `docs/` describes a shared bearer token.
+- [x] Every open issue is linked to a build step.
 
 ## Steps 3 to 9: outline
 
