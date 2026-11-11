@@ -23,9 +23,7 @@ use dirt_core::sync::session_client::SessionApiClient;
 use crate::bootstrap_config::{load_bootstrap_config, BootstrapConfig};
 use crate::components::{QuickCapture, SettingsPanel};
 use crate::queries::use_notes_query;
-use crate::services::{
-    spawn_sync_worker, DatabaseService, SyncEvent, SyncWorkerHandle, TranscriptionService,
-};
+use crate::services::{spawn_sync_worker, DatabaseService, SyncEvent, SyncWorkerHandle};
 use crate::state::{AppState, AuthDeps, SyncStatus};
 use crate::theme::{resolve_theme, ResolvedTheme};
 use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
@@ -61,14 +59,6 @@ pub fn App() -> Element {
     let mut sync_worker_started = use_signal(|| false);
     let mut signed_in = use_signal(|| None);
     let mut session_client: Signal<Option<Arc<SessionApiClient>>> = use_signal(|| None);
-    let transcription_service: Signal<Option<Arc<TranscriptionService>>> =
-        use_signal(|| match TranscriptionService::new() {
-            Ok(service) => Some(Arc::new(service)),
-            Err(error) => {
-                tracing::warn!("Voice transcription service unavailable: {}", error);
-                None
-            }
-        });
     // Bootstrap is build-baked (see `bootstrap_config::load_bootstrap_config`)
     // and never changes at runtime — the Phase-1 managed-architecture's
     // `/v1/bootstrap` fetch was removed when the server-side route was
@@ -291,7 +281,6 @@ pub fn App() -> Element {
         settings,
         theme,
         db_service,
-        transcription_service,
         signed_in,
         session_client,
         sync_worker,

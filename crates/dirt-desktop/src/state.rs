@@ -11,7 +11,7 @@ use dirt_core::models::{Note, NoteId, Settings};
 pub use dirt_core::state::SyncState as SyncStatus;
 use dirt_core::sync::session_client::SessionApiClient;
 
-use crate::services::{DatabaseService, SyncWorkerHandle, TranscriptionService};
+use crate::services::{DatabaseService, SyncWorkerHandle};
 use crate::theme::ResolvedTheme;
 
 /// Auth dependencies that live for the lifetime of the process.
@@ -52,8 +52,6 @@ pub struct AppState {
     pub theme: Signal<ResolvedTheme>,
     /// Database service (wrapped in Arc for sharing)
     pub db_service: Signal<Option<Arc<DatabaseService>>>,
-    /// Optional transcription service.
-    pub transcription_service: Signal<Option<Arc<TranscriptionService>>>,
     /// Currently signed-in user, if any. `Some(stored)` is the source
     /// of truth for "is the user signed in" — UI surfaces (settings
     /// account row, future toolbar) read this signal.
