@@ -1,8 +1,8 @@
 # Trial 4: Postgres on Neon from the Vercel Rust runtime
 
 - **Date:** 2026-11-11
-- **Verdict:** pass on every criterion. The cost measurement needs a decision
-  from you (see "Cost of polling")
+- **Verdict:** pass on every criterion. The cost measurement led to a change
+  in decision 4 (see "Cost of polling")
 - **Code:** `trials/vercel-neon/` on the `trials/step-1` branch
 - **Plan:** `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md`, Step 1
 - **Tracking issue:** #237
@@ -173,10 +173,27 @@ The design says a client polls on a 30-second timer (decision 4). The options:
 | B | Run the timer only while the app is in use: stop it after a few minutes without input or when the window is hidden, and sync at once on return | Awake time follows real use. The free plan lasts until use across all users passes about 13 hours a day. No change to the protocol or the server |
 | C | Lengthen the timer to ten minutes | Fits the free plan, but a second device can be ten minutes behind |
 
-I recommend B. Sync on startup and after each local change stay as they are,
-so a person who is typing still sees their other device's changes within 30
-seconds. A paid plan is still expected once there are real users (amendment
-A2); B decides how soon.
+I recommended B.
+
+#### Decision (2026-11-11)
+
+None of the three. The timer is removed altogether, because one person rarely
+uses two devices at the same moment and the timer's only benefit was that an
+app left open updated by itself. Clients sync:
+
+- on app start;
+- on return to the app, which is window focus on desktop and resume on
+  Android;
+- after each local change;
+- when the person presses a sync button;
+- again, with backoff, only while local changes are unsent.
+
+The device-approval screen polls for the few minutes it is open. Server push
+over a socket was considered and rejected: it needs an always-on service, and
+with end-to-end encryption the message could only say "pull now".
+
+The database is now awake for about five minutes after each sync and asleep
+otherwise. This is amendment D1 in the plan and decision 4 in the design.
 
 ## Findings
 
@@ -223,7 +240,8 @@ A2); B decides how soon.
   and compute use.
 - **Section 7.6:** the request limit is confirmed at 4.5 MB. The 3 MB batch
   cap from amendment A3 leaves a third of it spare.
-- **Polling:** see the decision under "Cost of polling".
+- **Decision 4 changed:** sync is driven by events, with no polling timer.
+  See "Cost of polling".
 
 ## Not covered
 
