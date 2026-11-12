@@ -121,8 +121,11 @@ impl SyncError {
             // The session reads the keys again when the person comes back
             // to the app, and syncs with them.
             Self::Store(_) | Self::Superseded | Self::KeysNotStored(_) => ErrorClass::TryAgainLater,
-            // Trying again will not help. Signing in again makes this a
-            // new device, which another device lets in with the key the
+            // Trying again will not help. A device that fell too far
+            // behind to follow the key is put back among those waiting by
+            // the server, which answers `device_pending` before this is
+            // ever reached. Signing in again shows the device that it is
+            // waiting, and another device lets it in with the key the
             // account has now.
             Self::KeyUnavailable | Self::KeyRejected => ErrorClass::StopUntilSignedIn,
         }

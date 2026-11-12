@@ -284,10 +284,10 @@ bound:
 - **Copies of later account keys: the 100 latest versions for each device.**
   Every change of the key left a copy for every device for ever, and they
   counted against nothing. A device further behind than that cannot follow
-  and is let in again, which the client already did when a copy was missing.
+  and waits to be let in again.
 
-Each has a test that fails with the bound undone: 20 changes to the code
-were tried, and all 20 were caught.
+Each has a test that fails with the bound undone: 27 changes to the code
+were tried, and all 27 were caught.
 
 What review showed:
 
@@ -301,6 +301,18 @@ What review showed:
   the limit, and the device it lets in can remove the lost ones. A reset
   can be asked for whatever the account holds. Three tests, and seven more
   changes to the code tried against them. Found in review.
+- **A device too far behind to follow the key was stuck for good.** Sync
+  told it to sign in again. Signing in again sends the token it had, the
+  server knows it by that, and it stayed the approved device it was, with a
+  key that opened nothing. This was already so for any device with a copy
+  missing; keeping only 100 copies made it reachable. The server now sees
+  it when the device asks for its copies: the one that follows its key is
+  gone. It makes the device wait again, as a new one does, without removing
+  it. Signing in again then shows the device that it is waiting, another
+  device or the recovery phrase lets it in with the present key, and the
+  notes it wrote while away are sent. No client code changed: the test in
+  `dirt-sim` now runs through signing in again and being let in, and ends
+  with both devices holding every note. Found in review.
 
 What the measurements showed:
 

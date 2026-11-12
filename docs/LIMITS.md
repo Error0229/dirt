@@ -138,7 +138,7 @@ away from the database. That is the firewall's part, below.
 | A request to join lapses | after 7 days | Long enough to reach another device. The request can be renewed by signing in again |
 | A removed device, or an unanswered request, is forgotten | after 30 days | Until then a removed device is told that it was removed, which is the more useful message. Afterwards its token is unknown |
 | Removed devices remembered | 20 | Signing out of a device removes it, so a device that signs in and out would otherwise add a row each time |
-| Copies of later keys kept for a device | 100 versions | A device follows the key by opening each copy it missed in turn. Nobody misses 100 changes; a device that did is let in again as a new one |
+| Copies of later keys kept for a device | 100 versions | A device follows the key by opening each copy it missed in turn. Nobody misses 100 changes. A device that did is put back among those waiting and let in again, with the notes it holds |
 | A device token unused | stops working after 90 days | A lost device stops being a way in without anyone acting. The device signs in again and stays the device it was |
 | Device name | 100 bytes | It is shown in a list |
 | A reset asked for by a waiting device | takes effect after 7 days | Time for a device that is still in the account to refuse it |
@@ -174,7 +174,11 @@ bytes, and an exchange holds 3 at its end against 32 allowed.
   20 removed devices are kept.
 - **Every change of the key left a copy for every device for ever.** One
   account could fill the database with them at the rate its request limit
-  allows. The 100 latest versions are kept.
+  allows. The 100 latest versions are kept. Review showed that a device
+  further behind than that was stuck: it was told to sign in again, and
+  signing in again left it the same approved device with the same old key.
+  The server now puts such a device back among those waiting, so that
+  signing in again leads to being let in with the present key.
 - **The apps' lists stopped at 100 notes.** Search and the tag row already
   asked the store, which looks through every note. The list now has "Show
   older notes", which adds 100 at a time. Showing them all at once was not

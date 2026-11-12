@@ -326,7 +326,16 @@ again at 1.
 The server keeps the copies of the 100 latest versions for each device. A
 device opens the copies it missed one after another, so one that was away
 through more than 100 changes of the key finds the copy that follows its own
-key gone. It can no longer follow, and is let in again as a new device.
+key gone, and can no longer follow.
+
+`GET /v1/account/keys?after=V` sees this: the account is past version `V`,
+the device has a copy of the present key, and it has none of version
+`V + 1`. The server then makes the device `pending` again, with a new seven
+days to be answered, removes its copies, and answers `device_pending`. The
+device is still the account's, and keeps its ID. It signs in again, learns
+that it is waiting, and is let in by another device or the recovery phrase
+with the present key, as a new device is. Notes it wrote while away are
+still on it and are sent then.
 
 ### `POST /v1/notes/push`
 
@@ -399,7 +408,7 @@ stored under an older one. `GET /v1/devices/me` reports `key_version` too.
 | Approved devices | 20 per account, and 3 more by the recovery phrase |
 | A removed device, or an unanswered request to join | forgotten after 30 days |
 | Removed devices remembered | 20 per account |
-| Copies of later account keys kept for a device | the 100 latest versions |
+| Copies of later account keys kept for a device | the 100 latest versions. A device further behind waits to be let in again |
 | A request to join | lapses after 7 days |
 | Messages in one approval exchange | 32, of 1 KiB each |
 | An encrypted copy of the account key | 256 bytes |
