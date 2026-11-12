@@ -50,29 +50,43 @@ A file stops being wanted in two ways, and they differ:
   removal in the document wins over every edit that did not re-add the
   file, and nothing re-adds one.
 
-**Decision: the server knows which note a file belongs to, and a file's
-last thirty days start from an event the server sees.**
+**Decision: the server knows which notes refer to a file, and a file's
+last thirty days start when the last of them stops.**
+
+One note is not enough. Step 8e keeps an unsent edit to a purged note as a
+new note, and two devices that were both away each make their own. Both
+new notes hold the same files. So the server keeps a list of references, a
+file and a note each, and a file is wanted for as long as it has one.
 
 | Event | What the server does |
 |---|---|
-| The file's note is purged | Marks the note's files to be deleted thirty days on |
-| A device says the file was removed from its note | Marks that file to be deleted thirty days on |
-| A device confirms the file for a note, the same or another | Clears the mark |
+| A device confirms the file for a note | Adds that reference. If the file was marked for deletion, clears the mark |
+| A note is purged | Removes that note's references |
+| A device says the file was removed from a note | Removes that reference |
+| A file's last reference is removed | Marks the file to be deleted thirty days on |
 | The mark's time comes | Deletes the object, then the row |
 
-The second thirty days after a purge are for the device that was away with
-an unsent edit. Step 8e keeps its text as a new note. With attachments, the
-new note keeps the files too: the device confirms them for the new note,
-which clears the mark. Without the wait its files would already be gone.
+The thirty days after the last reference goes are for the device that was
+away with an unsent edit. Its new note keeps the files: the device confirms
+them for the new note, which adds a reference and clears the mark. Without
+the wait the files would already be gone. If two devices do this, the file
+has two references, and purging one of the new notes later leaves the
+other's files alone.
+
+A file is counted against the account once, however many notes refer to it.
 
 A device asks for a file's removal by the same rule as a purge: it has
 itself seen the note without the file for thirty days, with nothing unsent.
 So a file removed from a living note goes sixty days after the person
 removed it, and a file of a deleted note sixty days after the delete.
 
-**What this costs in privacy.** The server learns which note a file belongs
-to, and so how many files each note has and how large. It already sees each
-note's size. `docs/SECURITY.md` will say so.
+**What this costs in privacy.** The server learns which notes refer to a
+file, and so how many files each note has and how large. It already sees
+each note's size. `docs/SECURITY.md` will say so.
+
+**Rejected:** giving each new note its own copies of the files. The device
+would have to hold every file to upload it again, and the account would be
+charged twice for the same bytes.
 
 **Rejected:** files that the server cannot link to notes, deleted only when
 a device asks. A device that purged a note and stopped before asking would
@@ -182,13 +196,14 @@ account.
 
 - [ ] `compose.yaml` gains an S3-compatible store for tests. CI gets the
       same.
-- [ ] Tables for files: the account, the file, its note, its size, whether
-      it is confirmed, and when it is to be deleted.
+- [ ] Tables for files: the account, the file, its size, whether it is
+      confirmed, and when it is to be deleted; and for references, a file
+      and a note each. A file with no reference left is marked.
 - [ ] `POST /v1/files`: an upload link for a file of a stated size, counted
       against the account. `GET /v1/files/{id}`: a download link.
 - [ ] `POST /v1/files/confirm` and `POST /v1/files/release`: review item 1.
-- [ ] A purge marks the note's files. Deleting or resetting an account
-      deletes its files.
+- [ ] A purge removes the note's references. Deleting or resetting an
+      account deletes its files.
 - [ ] Deleting what is due: when the account next asks for a link, and once
       a day for every account by a scheduled request.
 - [ ] `docs/DEPLOY.md` gains the storage's set-up.
@@ -206,7 +221,10 @@ account.
 - [ ] A purged note's files go from the device. A note kept as new after a
       purge keeps its files and confirms them (review item 1).
 - [ ] `dirt-sim`: two devices, a file added on one and read on the other;
-      offline; the purge cases of step 8e with files; a restore.
+      offline; the purge cases of step 8e with files; a restore. And three
+      devices: two were away with edits when the third purged the note,
+      each keeps its own new note, both show the file, and purging one of
+      the new notes leaves the other's file readable.
 
 ### 9c: the CLI
 
