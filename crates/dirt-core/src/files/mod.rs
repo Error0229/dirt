@@ -73,22 +73,25 @@ pub fn media_type_for(name: &str) -> &'static str {
 /// account, and reaches this one inside a note. It is not trusted to be a
 /// plain name: saved as it stands, `../../.profile` would be written
 /// outside the folder the person chose. What comes back has no folder in
-/// it, none of the characters a file system refuses, and is not one of
-/// the names Windows keeps for devices.
+/// it, none of the characters a file system refuses, is not one of the
+/// names Windows keeps for devices, and is short enough to be a file's
+/// name anywhere.
 #[must_use]
 pub fn safe_file_name(name: &str) -> String {
-    const MOST: usize = 200;
     // Whatever stands after the last separator of either kind: a name
     // made on Windows may be saved on Linux, and the other way round.
     let last = name.rsplit(['/', '\\']).next().unwrap_or_default();
     let cleaned: String = last
         .chars()
         .filter(|c| !c.is_control() && !matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
-        .take(MOST)
         .collect();
     // Windows drops dots and spaces from the end of a name, so `..` and
     // `con.` would come to mean something else.
-    let cleaned = cleaned.trim().trim_end_matches(['.', ' ']);
+    let ends = |name: &str| name.trim().trim_end_matches(['.', ' ']).to_owned();
+    // Shortened, and then its end looked at again: the cut may have left
+    // a dot or a space there.
+    let cleaned = ends(&shortened(&ends(&cleaned)));
+    let cleaned = cleaned.as_str();
     if cleaned.is_empty() {
         return "file".to_owned();
     }
@@ -105,6 +108,33 @@ pub fn safe_file_name(name: &str) -> String {
     } else {
         cleaned.to_owned()
     }
+}
+
+/// `name`, cut to what a file system takes as one name.
+///
+/// The limit is in bytes, as file systems count: 255 on most, and a name
+/// in Chinese takes three bytes a character. 200 leaves room for what a
+/// program may add to it, such as ` (1)`. The ending that says what kind
+/// of file it is survives the cut, and no character is cut in two.
+fn shortened(name: &str) -> String {
+    const MOST_BYTES: usize = 200;
+    /// Longer than this, what follows the last dot is not an ending.
+    const MOST_ENDING_BYTES: usize = 16;
+    if name.len() <= MOST_BYTES {
+        return name.to_owned();
+    }
+    let (stem, ending) = match name.rsplit_once('.') {
+        Some((stem, ending)) if !stem.is_empty() && ending.len() <= MOST_ENDING_BYTES => {
+            (stem, Some(ending))
+        }
+        _ => (name, None),
+    };
+    let mut room = MOST_BYTES - ending.map_or(0, |ending| ending.len() + 1);
+    while !stem.is_char_boundary(room) {
+        room -= 1;
+    }
+    let stem = &stem[..room];
+    ending.map_or_else(|| stem.to_owned(), |ending| format!("{stem}.{ending}"))
 }
 
 /// The key that encrypts one file.
@@ -388,10 +418,39 @@ mod tests {
         assert_eq!(safe_file_name("a<b>c:d\"e|f?g*.txt"), "abcdefg.txt");
         assert_eq!(safe_file_name("line\nbreak\u{0}.txt"), "linebreak.txt");
         assert_eq!(safe_file_name("trailing. . "), "trailing");
-        assert_eq!(safe_file_name(&"x".repeat(500)).chars().count(), 200);
+        assert_eq!(safe_file_name(&"x".repeat(500)).len(), 200);
         // Names in other scripts are left as they are, whatever their
         // length in bytes.
         assert_eq!(safe_file_name("éé.txt"), "éé.txt");
+        assert_eq!(safe_file_name("白板.jpg"), "白板.jpg");
+    }
+
+    /// A file system counts a name in bytes, and a name in another
+    /// script takes several a character. A name is cut to fit, keeps the
+    /// ending that says what it is, and is never cut inside a character.
+    #[test]
+    fn a_long_name_is_cut_to_what_a_file_system_takes() {
+        // A hundred characters, three bytes each, and an ending.
+        let long = format!("{}.txt", "白".repeat(100));
+        assert_eq!(long.chars().count(), 104);
+        let cut = safe_file_name(&long);
+        assert!(cut.len() <= 200, "{} bytes", cut.len());
+        assert_eq!(cut, format!("{}.txt", "白".repeat(65)));
+
+        // Two bytes a character: the cut falls between two, not in one.
+        let cut = safe_file_name(&format!("x{}.jpeg", "é".repeat(150)));
+        assert!(cut.len() <= 200, "{} bytes", cut.len());
+        assert_eq!(cut.rsplit_once('.').map(|(_, ending)| ending), Some("jpeg"));
+        assert_eq!(cut.chars().filter(|c| *c == 'é').count(), 97);
+
+        // No ending, or something after a dot that is too long to be one.
+        assert_eq!(safe_file_name(&"白".repeat(100)), "白".repeat(66));
+        let sentence = format!("see. {}", "y".repeat(300));
+        assert_eq!(safe_file_name(&sentence).len(), 200);
+        // A cut that leaves a dot or a space at the end loses it too.
+        let spaced = format!("{} tail.{}", "z".repeat(199), "w".repeat(40));
+        assert_eq!(safe_file_name(&spaced), "z".repeat(199));
+        // Short names are as they were.
         assert_eq!(safe_file_name("白板.jpg"), "白板.jpg");
     }
 

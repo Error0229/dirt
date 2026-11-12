@@ -201,11 +201,10 @@ pub async fn run_save(
     let files = store.attached_files(&note).await?;
     let file = file_named(file, &files)?;
     let target = destination(path, &file.attachment);
+    // Said now, before a file is fetched for nothing. It is checked again
+    // when the copy is written.
     if target.exists() && !replace {
-        return Err(CliError::Files(format!(
-            "{} is already there. Give another path, or pass --force to replace it",
-            target.display()
-        )));
+        return Err(already_there(&target));
     }
 
     let file_id = file.attachment.file_id;
@@ -215,9 +214,49 @@ pub async fn run_save(
     }
     .map_err(|error| CliError::Files(why_not_fetched(&error, context.session.is_some())))?;
 
-    std::fs::copy(&held, &target)?;
+    copy_to(&held, &target, replace)?;
     println!("{}", target.display());
     Ok(target)
+}
+
+fn already_there(target: &Path) -> CliError {
+    CliError::Files(format!(
+        "{} is already there. Give another path, or pass --force to replace it",
+        target.display()
+    ))
+}
+
+/// Writes a copy of `held` at `target`.
+///
+/// Unless `replace` is set, the copy is made only if nothing is at
+/// `target` at the moment it is opened. Looking first and writing after
+/// would not do: fetching a file takes a while, and something may have
+/// come to be there meanwhile, put by another program or by another
+/// `dirt save`.
+pub fn copy_to(held: &Path, target: &Path, replace: bool) -> Result<(), CliError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true);
+    if replace {
+        options.create(true).truncate(true);
+    } else {
+        options.create_new(true);
+    }
+    let mut to = options.open(target).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            already_there(target)
+        } else {
+            CliError::Io(error)
+        }
+    })?;
+    let copied = std::fs::File::open(held).and_then(|mut from| std::io::copy(&mut from, &mut to));
+    if let Err(error) = copied {
+        // Half a file under the name of the whole is worse than none.
+        // It is this command's own: it was made, or emptied, just now.
+        drop(to);
+        let _ = std::fs::remove_file(target);
+        return Err(error.into());
+    }
+    Ok(())
 }
 
 /// Why a file could not be had, in words that say what can be done.

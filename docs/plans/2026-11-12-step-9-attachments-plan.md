@@ -520,6 +520,18 @@ What that showed:
   `127.0.0.1`:** the clients read the one as the other, on purpose. They
   need two ports.
 
+What review showed:
+
+- **`dirt save` looked whether a file was there, fetched, and then wrote.**
+  A file that came to be there while it fetched was replaced without
+  `--force`. The copy is now refused by the file system at the moment it
+  is written, and a copy that fails half-way leaves nothing behind.
+- **A name was cut to 200 characters, and file systems count bytes.** A
+  hundred Chinese characters are 300 bytes, more than one name may be on
+  Linux, so the file could be attached and not saved. A name is now cut
+  to 200 bytes, between characters, keeping the ending that says what
+  kind of file it is.
+
 **For trying a client by hand** there is now `cargo run -p dirt-sim
 --example serve`: the real server on two ports of this machine, with the
 file storage and a sign-in that needs no account and no browser. It is what

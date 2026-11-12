@@ -576,3 +576,36 @@ fn a_sync_says_which_files_did_not_go() {
         ["Not sent: film.mp4, attached to: holiday (The account's storage for files is full)."]
     );
 }
+
+/// A file that came to be there after `dirt save` looked, while it was
+/// fetching, is not replaced: the copy is refused at the moment of writing.
+#[test]
+fn a_copy_is_not_written_over_a_file_that_appeared_meanwhile() {
+    use crate::commands::files::copy_to;
+
+    let folder = tempfile::tempdir().unwrap();
+    let held = folder.path().join("held");
+    std::fs::write(&held, b"the file from the note").unwrap();
+    let target = folder.path().join("target.txt");
+
+    // Nothing there: written.
+    copy_to(&held, &target, false).unwrap();
+    assert_eq!(std::fs::read(&target).unwrap(), b"the file from the note");
+
+    // Something there now, as if another program had just put it.
+    std::fs::write(&target, b"somebody else's").unwrap();
+    let refused = copy_to(&held, &target, false).unwrap_err();
+    assert!(refused.to_string().contains("already there"), "{refused}");
+    assert_eq!(std::fs::read(&target).unwrap(), b"somebody else's");
+
+    // Asked to replace it: replaced whole, with nothing of the old left.
+    std::fs::write(&target, b"somebody else's, and much longer than the file").unwrap();
+    copy_to(&held, &target, true).unwrap();
+    assert_eq!(std::fs::read(&target).unwrap(), b"the file from the note");
+
+    // A copy that cannot be made leaves nothing under the name.
+    let fresh = folder.path().join("fresh.txt");
+    let error = copy_to(&folder.path().join("no such file"), &fresh, false).unwrap_err();
+    assert!(matches!(error, CliError::Io(_)), "{error}");
+    assert!(!fresh.exists());
+}
