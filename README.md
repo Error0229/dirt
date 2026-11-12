@@ -12,7 +12,7 @@ A redesign is in progress, and `main` is partway through it.
 - **Build order:**
   [docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md](docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md)
 
-**Where it stands: step 7 of 9.** Devices sign in through Clerk and sync
+**Where it stands: step 8 of 9.** Devices sign in through Clerk and sync
 their notes through the new server, which stores only ciphertext it cannot
 read. A second device is let into an account by comparing a short code with
 a device that is already in, or with the account's recovery phrase. The

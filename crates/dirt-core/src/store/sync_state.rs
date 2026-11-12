@@ -251,6 +251,163 @@ pub(super) fn resend(connection: &mut Connection, id: &NoteId) -> Result<bool> {
     Ok(marked > 0)
 }
 
+/// A deleted note that this device may ask the server to purge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PurgeCandidate {
+    pub id: NoteId,
+    /// The local revision counter when the note was listed.
+    pub revision: i64,
+    /// The change number of the version the server holds, which is the
+    /// version this device holds.
+    pub server_change: i64,
+}
+
+/// What became of this device's copy of a note that the server has purged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PurgeApplied {
+    /// This device does not hold the note.
+    NotHeld,
+    /// The copy was removed. Everything in it was in the version that was
+    /// purged, or the note is deleted here too.
+    Dropped,
+    /// The copy held an edit that the purge did not cover and the note is
+    /// not deleted here. Its text was kept, as this new note.
+    KeptAsNew(NoteId),
+}
+
+/// Deleted notes that this device has seen deleted since before
+/// `deleted_before_ms`, and that the server holds exactly as this device
+/// does. Up to `max`, in the store's order.
+///
+/// A note with a change not yet sent is left out: the server would refuse
+/// to purge a version it does not hold. So is a note with a sync problem.
+pub(super) fn purge_candidates(
+    connection: &Connection,
+    deleted_before_ms: i64,
+    max: usize,
+) -> Result<Vec<PurgeCandidate>> {
+    let mut statement = connection.prepare(
+        "SELECT id, revision, server_change FROM notes \
+          WHERE deleted = 1 AND deleted_at <= ?1 \
+            AND pushed_revision = revision AND server_change > 0 \
+            AND id NOT IN (SELECT note_id FROM sync_problems) \
+          ORDER BY rowid LIMIT ?2",
+    )?;
+    let rows = statement.query_map(params![deleted_before_ms, to_sql_count(max)], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+        ))
+    })?;
+    let mut candidates = Vec::new();
+    for row in rows {
+        let (id, revision, server_change) = row?;
+        let id = id
+            .parse()
+            .map_err(|_| Error::Database(format!("the store holds an invalid note ID: {id}")))?;
+        candidates.push(PurgeCandidate {
+            id,
+            revision,
+            server_change,
+        });
+    }
+    Ok(candidates)
+}
+
+fn remove_row(tx: &rusqlite::Transaction<'_>, row: i64, id: &NoteId) -> Result<()> {
+    tx.execute("DELETE FROM notes_fts WHERE rowid = ?1", [row])?;
+    tx.execute(
+        "DELETE FROM sync_problems WHERE note_id = ?1",
+        [id.as_str()],
+    )?;
+    // The note's tag rows go with it, through the foreign key.
+    tx.execute("DELETE FROM notes WHERE rowid = ?1", [row])?;
+    Ok(())
+}
+
+/// Removes a note that the server purged at this device's request, if the
+/// note is still deleted and has not changed since it was listed. Returns
+/// whether it was removed.
+///
+/// A note that changed in the meantime stays. The purge marker reaches
+/// this device at its next pull, and [`apply_purge`] decides then.
+pub(super) fn drop_purged(connection: &mut Connection, id: &NoteId, revision: i64) -> Result<bool> {
+    let tx = write_transaction(connection)?;
+    let row: Option<i64> = tx
+        .query_row(
+            "SELECT rowid FROM notes \
+              WHERE id = ?1 AND deleted = 1 AND revision = ?2 AND pushed_revision = ?2",
+            params![id.as_str(), revision],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(row) = row else {
+        return Ok(false);
+    };
+    remove_row(&tx, row, id)?;
+    tx.commit()?;
+    Ok(true)
+}
+
+/// Takes the news that the server has purged a note.
+///
+/// The device that asked for the purge had seen the note deleted for a
+/// long time, and the server purged exactly the version that device held.
+/// So whatever this device had sent of the note was in that version and
+/// was covered by the delete, and its copy can go.
+///
+/// The one thing the purge cannot have covered is a change this device has
+/// not sent. If the note is deleted here as well, that change is the
+/// delete, and nothing is lost. If it is not, the person wrote something
+/// here that no other device has seen, and it is never thrown away: the
+/// text is kept as a new note, which syncs like any other.
+pub(super) fn apply_purge(connection: &mut Connection, id: &NoteId) -> Result<PurgeApplied> {
+    let tx = write_transaction(connection)?;
+    let held: Option<(i64, Vec<u8>, bool, bool)> = tx
+        .query_row(
+            "SELECT rowid, doc, deleted, \
+                    pushed_revision IS NULL OR pushed_revision <> revision \
+               FROM notes WHERE id = ?1",
+            [id.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    let Some((row, document, deleted, unsent)) = held else {
+        // A note this device could never read is listed as a problem
+        // without being held: it joined after a change of the key, say.
+        // The note is gone now, and the problem with it. Left behind, it
+        // would be reported for ever, with no later version to cure it.
+        tx.execute(
+            "DELETE FROM sync_problems WHERE note_id = ?1",
+            [id.as_str()],
+        )?;
+        tx.commit()?;
+        return Ok(PurgeApplied::NotHeld);
+    };
+    let applied = if unsent && !deleted {
+        let me = client_id(&tx)?;
+        let old = NoteDoc::from_bytes(me, &document)?;
+        let kept = NoteId::new();
+        let fresh = NoteDoc::new(me);
+        // The note keeps the time it was last edited, so that it stays
+        // where it was in the list.
+        let edited_at = old.edited_at_ms().unwrap_or_else(crate::util::now_ms);
+        fresh.set_text(&old.text(), edited_at);
+        if old.text().is_empty() {
+            // As for any new note with no text: this gives it an edit time.
+            fresh.restore(edited_at);
+        }
+        save(&tx, &kept, &fresh, None, Origin::Local)?;
+        PurgeApplied::KeptAsNew(kept)
+    } else {
+        PurgeApplied::Dropped
+    };
+    remove_row(&tx, row, id)?;
+    tx.commit()?;
+    Ok(applied)
+}
+
 pub(super) fn progress(connection: &Connection) -> Result<SyncProgress> {
     let read = |key: &str| -> Result<Option<i64>> {
         Ok(meta_get(connection, key)?.and_then(|value| value.parse().ok()))

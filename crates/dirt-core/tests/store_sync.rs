@@ -342,3 +342,317 @@ async fn forgetting_the_servers_version_offers_the_note_as_new() {
     let unsent = store.unsent_notes(0, 10, 1_000_000).await.unwrap();
     assert_eq!(unsent[0].base_change, 0);
 }
+
+// ---- Purging ----
+
+/// A time comfortably after now, so that a note deleted in the test counts
+/// as having been deleted long enough.
+fn later() -> i64 {
+    dirt_core::util::now_ms() + 60_000
+}
+
+async fn rows(store: &Store) -> usize {
+    store.note_documents().await.unwrap().len()
+}
+
+#[tokio::test]
+async fn a_note_may_be_purged_only_once_it_has_been_deleted_and_sent_for_long_enough() {
+    let (_folder, store) = temp_store();
+    let live = store.create_note("live").await.unwrap();
+    let deleted = store.create_note("deleted").await.unwrap();
+    store.mark_note_pushed(&live.id, 1, 1).await.unwrap();
+    store.mark_note_pushed(&deleted.id, 1, 2).await.unwrap();
+    assert!(store
+        .purge_candidates(later(), 10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    store.delete_note(&deleted.id).await.unwrap();
+    // The delete has not been sent: the server would be asked to purge a
+    // version it does not hold.
+    assert!(store
+        .purge_candidates(later(), 10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    store.mark_note_pushed(&deleted.id, 2, 3).await.unwrap();
+    let candidates = store.purge_candidates(later(), 10).await.unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(
+        (
+            candidates[0].id,
+            candidates[0].revision,
+            candidates[0].server_change
+        ),
+        (deleted.id, 2, 3)
+    );
+    // Not yet, by a clock that says it was deleted only just now.
+    let a_minute_ago = dirt_core::util::now_ms() - 60_000;
+    assert!(store
+        .purge_candidates(a_minute_ago, 10)
+        .await
+        .unwrap()
+        .is_empty());
+    // No more than asked for.
+    assert!(store.purge_candidates(later(), 0).await.unwrap().is_empty());
+
+    // A note with a sync problem is left alone.
+    store
+        .flag_note_problem(&deleted.id, "held".to_owned(), ProblemKind::Held)
+        .await
+        .unwrap();
+    assert!(store
+        .purge_candidates(later(), 10)
+        .await
+        .unwrap()
+        .is_empty());
+    store.clear_note_problem(&deleted.id).await.unwrap();
+
+    // A note that comes back is no longer one to purge, and if it is
+    // deleted again the wait starts again.
+    store.restore_note(&deleted.id).await.unwrap();
+    store.mark_note_pushed(&deleted.id, 3, 4).await.unwrap();
+    assert!(store
+        .purge_candidates(later(), 10)
+        .await
+        .unwrap()
+        .is_empty());
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let before_the_second_delete = dirt_core::util::now_ms() - 1;
+    store.delete_note(&deleted.id).await.unwrap();
+    store.mark_note_pushed(&deleted.id, 4, 5).await.unwrap();
+    assert!(store
+        .purge_candidates(before_the_second_delete, 10)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(store.purge_candidates(later(), 10).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_delete_that_arrives_from_another_device_starts_the_wait_here() {
+    let (_folder, store) = temp_store();
+    let id = NoteId::new();
+    let doc = NoteDoc::new(7_100_000_000_000_001);
+    doc.set_text("written elsewhere", 1_700_000_000_000);
+    store.apply_remote_note(&id, doc.encode(), 1).await.unwrap();
+    assert!(store
+        .purge_candidates(later(), 10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // The other device deleted it long ago by its own clock. This device
+    // counts from when it saw the delete.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let just_before = dirt_core::util::now_ms() - 1;
+    doc.delete();
+    store.apply_remote_note(&id, doc.encode(), 2).await.unwrap();
+
+    assert!(store
+        .purge_candidates(just_before, 10)
+        .await
+        .unwrap()
+        .is_empty());
+    let candidates = store.purge_candidates(later(), 10).await.unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!((candidates[0].id, candidates[0].server_change), (id, 2));
+
+    // The note is written again while it stays deleted: a third device
+    // deleted it too. The wait is not started again by that.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let after_the_delete_was_seen = dirt_core::util::now_ms() - 1;
+    let third = NoteDoc::from_bytes(7_100_000_000_000_002, &doc.encode()).unwrap();
+    third.delete();
+    store
+        .apply_remote_note(&id, third.encode(), 3)
+        .await
+        .unwrap();
+    let candidates = store
+        .purge_candidates(after_the_delete_was_seen, 10)
+        .await
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].server_change, 3);
+}
+
+#[tokio::test]
+async fn a_purged_note_is_dropped_unless_it_changed_after_it_was_listed() {
+    let (_folder, store) = temp_store();
+    let note = store.create_note("deleted #tag").await.unwrap();
+    store.delete_note(&note.id).await.unwrap();
+    store.mark_note_pushed(&note.id, 2, 1).await.unwrap();
+    let listed = store.purge_candidates(later(), 10).await.unwrap()[0];
+
+    // The person brings the note back while the purge is being asked for.
+    store.restore_note(&note.id).await.unwrap();
+    assert!(!store
+        .drop_purged_note(&listed.id, listed.revision)
+        .await
+        .unwrap());
+    assert_eq!(rows(&store).await, 1);
+    assert_eq!(store.list_notes(10, 0).await.unwrap().len(), 1);
+
+    // Deleted again and sent, it is listed afresh and can go.
+    store.delete_note(&note.id).await.unwrap();
+    store.mark_note_pushed(&note.id, 4, 2).await.unwrap();
+    let listed = store.purge_candidates(later(), 10).await.unwrap()[0];
+    assert!(store
+        .drop_purged_note(&listed.id, listed.revision)
+        .await
+        .unwrap());
+    assert_eq!(rows(&store).await, 0);
+    assert_eq!(store.note_server_change(&note.id).await.unwrap(), None);
+    // Asked again, there is nothing to drop.
+    assert!(!store
+        .drop_purged_note(&listed.id, listed.revision)
+        .await
+        .unwrap());
+}
+
+#[tokio::test]
+async fn news_of_a_purge_removes_a_copy_that_holds_nothing_unsent() {
+    use dirt_core::store::PurgeApplied;
+    let (_folder, store) = temp_store();
+
+    // A note this device does not hold.
+    assert_eq!(
+        store.apply_note_purge(&NoteId::new()).await.unwrap(),
+        PurgeApplied::NotHeld
+    );
+    // A note it does not hold because it could never read it: a blob under
+    // a key from before this device joined. It is listed as a problem, and
+    // the purge is the last that will ever be heard of it.
+    let unreadable = NoteId::new();
+    store
+        .flag_note_problem(
+            &unreadable,
+            "encrypted with a key this device does not have".to_owned(),
+            ProblemKind::Held,
+        )
+        .await
+        .unwrap();
+    assert_eq!(store.note_problems().await.unwrap().len(), 1);
+    assert_eq!(
+        store.apply_note_purge(&unreadable).await.unwrap(),
+        PurgeApplied::NotHeld
+    );
+    assert!(store.note_problems().await.unwrap().is_empty());
+
+    // Live here, and sent: this device never saw the delete. What it holds
+    // was in the version that was purged.
+    let never_saw = store.create_note("deleted elsewhere #gone").await.unwrap();
+    store.mark_note_pushed(&never_saw.id, 1, 1).await.unwrap();
+    // Deleted here too, with the delete not yet sent.
+    let also_deleted = store.create_note("deleted on both").await.unwrap();
+    store
+        .mark_note_pushed(&also_deleted.id, 1, 2)
+        .await
+        .unwrap();
+    store.delete_note(&also_deleted.id).await.unwrap();
+    // Held back by a sync problem: the problem goes with the note.
+    let troubled = store.create_note("could not be read").await.unwrap();
+    store.mark_note_pushed(&troubled.id, 1, 3).await.unwrap();
+    store
+        .flag_note_problem(&troubled.id, "held".to_owned(), ProblemKind::Held)
+        .await
+        .unwrap();
+    let kept = store
+        .create_note("nothing to do with it #kept")
+        .await
+        .unwrap();
+
+    for id in [never_saw.id, also_deleted.id, troubled.id] {
+        assert_eq!(
+            store.apply_note_purge(&id).await.unwrap(),
+            PurgeApplied::Dropped
+        );
+        assert_eq!(store.get_note(&id).await.unwrap(), None);
+        assert_eq!(store.note_server_change(&id).await.unwrap(), None);
+    }
+    assert_eq!(rows(&store).await, 1);
+    assert_eq!(store.list_notes(10, 0).await.unwrap()[0].id, kept.id);
+    // Search, the tags and the problems no longer know the notes.
+    assert!(store
+        .find_notes("deleted", None, 10)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(store.list_tags().await.unwrap(), [("kept".to_owned(), 1)]);
+    assert!(store.note_problems().await.unwrap().is_empty());
+    // Nothing is left unsent but the note that was never sent.
+    assert_eq!(store.unsent_count().await.unwrap(), 1);
+}
+
+/// The one thing a purge cannot have covered is an edit this device has
+/// not sent. If the note is not deleted here, the person wrote something
+/// no other device has seen, and it is never thrown away.
+#[tokio::test]
+async fn news_of_a_purge_keeps_an_unsent_edit_as_a_new_note() {
+    use dirt_core::store::PurgeApplied;
+    let (_folder, store) = temp_store();
+    let note = store.create_note("a thought").await.unwrap();
+    store.mark_note_pushed(&note.id, 1, 1).await.unwrap();
+    let edited = store
+        .update_note(&note.id, "a thought, and more of it #more")
+        .await
+        .unwrap();
+
+    let PurgeApplied::KeptAsNew(kept) = store.apply_note_purge(&note.id).await.unwrap() else {
+        panic!("the edit should have been kept");
+    };
+
+    assert_ne!(kept, note.id);
+    assert_eq!(store.get_note(&note.id).await.unwrap(), None);
+    let new = store.get_note(&kept).await.unwrap().unwrap();
+    assert_eq!(new.content, "a thought, and more of it #more");
+    // It stays where it was in the list.
+    assert_eq!(new.updated_at, edited.updated_at);
+    assert_eq!(rows(&store).await, 1);
+    // It is a new note to the server, found by search and by its tag.
+    let unsent = store.unsent_notes(0, 10, 1_000_000).await.unwrap();
+    assert_eq!(unsent.len(), 1);
+    assert_eq!((unsent[0].id, unsent[0].base_change), (kept, 0));
+    assert_eq!(
+        store
+            .find_notes("thought", Some("more"), 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // A note that was never sent at all is kept the same way.
+    let draft = store.create_note("never sent").await.unwrap();
+    assert!(matches!(
+        store.apply_note_purge(&draft.id).await.unwrap(),
+        PurgeApplied::KeptAsNew(_)
+    ));
+    assert_eq!(rows(&store).await, 2);
+}
+
+/// A device that joins an account pulls notes that were deleted before it
+/// came. It has never seen them live, and its wait starts when they arrive.
+#[tokio::test]
+async fn a_note_that_arrives_already_deleted_starts_its_wait_on_arrival() {
+    let (_folder, store) = temp_store();
+    let id = NoteId::new();
+    let doc = NoteDoc::new(7_100_000_000_000_001);
+    doc.set_text("deleted before this device joined", 1_700_000_000_000);
+    doc.delete();
+    let just_before = dirt_core::util::now_ms() - 1;
+
+    store.apply_remote_note(&id, doc.encode(), 4).await.unwrap();
+
+    assert!(store.list_notes(10, 0).await.unwrap().is_empty());
+    assert!(store
+        .purge_candidates(just_before, 10)
+        .await
+        .unwrap()
+        .is_empty());
+    let candidates = store.purge_candidates(later(), 10).await.unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!((candidates[0].id, candidates[0].server_change), (id, 4));
+}

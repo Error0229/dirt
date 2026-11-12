@@ -27,6 +27,11 @@ pull request.
 A deleted note keeps its document, so it can be brought back and the store
 has the operation for it. No client offers it. See "Not built" below.
 
+In an account, a deleted note is purged thirty days after a device saw it
+deleted: its document goes from the server and from every device, and it
+can no longer be brought back. Notes kept on a device alone, with nobody
+signed in, are not purged: there is no limit for them to count against.
+
 ## Finding a note
 
 | | Desktop | Android | CLI |

@@ -9,8 +9,8 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Response;
 use dirt_proto::api::{
-    limits, ErrorCode, NoteBlob, PullResponse, PushItem, PushOutcome, PushRequest, PushResponse,
-    PushResult,
+    limits, ErrorCode, NoteBlob, PullResponse, PurgeItem, PurgeOutcome, PurgeRequest,
+    PurgeResponse, PurgeResult, PushItem, PushOutcome, PushRequest, PushResponse, PushResult,
 };
 use dirt_proto::NoteId;
 use std::collections::HashSet;
@@ -85,6 +85,21 @@ async fn push_one(pool: &PgPool, account_id: Uuid, item: &PushItem) -> ApiResult
         Some((_, stored_under, _, Some(_))) if *stored_under < key_version
     );
     let old_size = match existing {
+        // The note was purged. Nothing is ever stored in its place: a
+        // device that still holds an edit for it is handed the marker, and
+        // keeps the edit as a new note.
+        Some((change, key_version, format_version, None)) => {
+            return Ok(PushOutcome::Stale {
+                current_change: Some(change),
+                current: Some(NoteBlob {
+                    note_id: item.note_id,
+                    change,
+                    key_version,
+                    format_version,
+                    ciphertext: None,
+                }),
+            });
+        }
         // The client believes the note is new and it is.
         None if item.base_change == 0 => None,
         // The client names a version of a note the server has never had.
@@ -226,6 +241,122 @@ pub async fn push(
         epoch: device.epoch,
         results,
     }))
+}
+
+/// `POST /v1/notes/purge`
+///
+/// The server cannot tell a deleted note from a live one, so it purges
+/// what an approved device names. A device can already replace any note of
+/// its account with whatever it likes; this gives it no more power than
+/// that.
+pub async fn purge(
+    State(state): State<AppState>,
+    Approved(device): Approved,
+    ApiJson(request): ApiJson<PurgeRequest>,
+) -> ApiResult<Response> {
+    if request.items.len() > limits::MAX_BATCH_ITEMS {
+        return Err(ApiError::new(
+            ErrorCode::PayloadTooLarge,
+            format!("a purge may name at most {} notes", limits::MAX_BATCH_ITEMS),
+        ));
+    }
+    let mut seen = HashSet::with_capacity(request.items.len());
+    if !request.items.iter().all(|item| seen.insert(item.note_id)) {
+        return Err(ApiError::invalid("a purge may name each note only once"));
+    }
+    if request.items.iter().any(|item| item.base_change <= 0) {
+        return Err(ApiError::invalid(
+            "a purge names the version of each note that the server holds",
+        ));
+    }
+    let mut results = Vec::with_capacity(request.items.len());
+    for item in &request.items {
+        results.push(PurgeResult {
+            note_id: item.note_id,
+            outcome: purge_one(&state.pool, device.account_id, item).await?,
+        });
+    }
+    Ok(device.respond(PurgeResponse {
+        epoch: device.epoch,
+        results,
+    }))
+}
+
+/// Removes one note's blob if the server still holds the version named.
+///
+/// The row stays, with no blob and the account's next change number, so
+/// that every device pulls the purge as it pulls any other change. The
+/// account row is locked first, as for a push, so a push and a purge of one
+/// note happen one after the other.
+async fn purge_one(pool: &PgPool, account_id: Uuid, item: &PurgeItem) -> ApiResult<PurgeOutcome> {
+    let note = item.note_id.as_uuid();
+    let mut tx = pool.begin().await?;
+    let (counter, key_version, purged): (i64, i32, i64) = sqlx::query_as(
+        "SELECT change_counter, key_version, purged_count \
+           FROM accounts WHERE id = $1 FOR UPDATE",
+    )
+    .bind(account_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let existing: Option<(i64, i32, Option<i32>)> = sqlx::query_as(
+        "SELECT change_number, key_version, octet_length(ciphertext) \
+           FROM notes WHERE account_id = $1 AND note_id = $2",
+    )
+    .bind(account_id)
+    .bind(note)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let (stored_under, size) = match existing {
+        None => {
+            return Ok(PurgeOutcome::Stale {
+                current_change: None,
+            })
+        }
+        // Another device purged it first. The answer is the same.
+        Some((change, _, None)) => return Ok(PurgeOutcome::Purged { change }),
+        // The note changed after the device looked. It may be live again.
+        Some((change, _, _)) if change != item.base_change => {
+            return Ok(PurgeOutcome::Stale {
+                current_change: Some(change),
+            })
+        }
+        Some((_, stored_under, Some(size))) => (stored_under, i64::from(size)),
+    };
+    if purged >= limits::MAX_PURGED_NOTES_PER_ACCOUNT {
+        return Ok(PurgeOutcome::Rejected {
+            code: ErrorCode::QuotaExceeded,
+            message: "the account has purged as many notes as it may".to_owned(),
+        });
+    }
+
+    let change = counter + 1;
+    sqlx::query(
+        "UPDATE notes SET ciphertext = NULL, change_number = $3 \
+          WHERE account_id = $1 AND note_id = $2",
+    )
+    .bind(account_id)
+    .bind(note)
+    .bind(change)
+    .execute(&mut *tx)
+    .await?;
+    // A note that was still under an older key is one fewer to send again.
+    sqlx::query(
+        "UPDATE accounts \
+            SET change_counter = $2, \
+                note_count = GREATEST(note_count - 1, 0), \
+                bytes_used = GREATEST(bytes_used - $3, 0), \
+                old_key_notes = GREATEST(old_key_notes - $4, 0), \
+                purged_count = purged_count + 1 \
+          WHERE id = $1",
+    )
+    .bind(account_id)
+    .bind(change)
+    .bind(size)
+    .bind(i64::from(stored_under < key_version))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(PurgeOutcome::Purged { change })
 }
 
 #[derive(Deserialize)]

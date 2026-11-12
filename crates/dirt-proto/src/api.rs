@@ -34,10 +34,20 @@ pub mod limits {
     pub const MAX_BATCH_BYTES: usize = 3_000_000;
     /// Most notes in one push batch.
     pub const MAX_BATCH_ITEMS: usize = 500;
-    /// Most notes one account may hold, deleted notes included.
+    /// Most notes one account may hold. A deleted note counts until it is
+    /// purged.
     pub const MAX_NOTES_PER_ACCOUNT: i64 = 20_000;
     /// Most ciphertext one account may hold.
     pub const MAX_ACCOUNT_BYTES: i64 = 50 * 1024 * 1024;
+    /// How long a note stays deleted on a device before that device asks
+    /// the server to purge it.
+    ///
+    /// Until then the delete can still be undone, and a device that edited
+    /// the note without knowing of the delete brings it back by syncing.
+    pub const PURGE_AFTER_DAYS: i64 = 30;
+    /// Purged notes one account may have had. Each leaves a marker with no
+    /// blob, so that every device learns of the purge by pulling.
+    pub const MAX_PURGED_NOTES_PER_ACCOUNT: i64 = 100_000;
     /// A full account still accepts a push that grows a note by no more
     /// than this, so that a delete, which adds a small marker, goes through.
     pub const FULL_ACCOUNT_GROWTH_BYTES: i64 = 1024;
@@ -519,6 +529,56 @@ pub struct PushResponse {
     pub epoch: i32,
     /// One result per item, in the order the items were sent.
     pub results: Vec<PushResult>,
+}
+
+/// One note to purge, and the version of it the device judged by.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PurgeItem {
+    pub note_id: NoteId,
+    /// The change number of the version the device holds. The note is
+    /// purged only if the server still holds exactly that version, so that
+    /// an edit the device has not seen is never purged with it.
+    pub base_change: i64,
+}
+
+/// `POST /v1/notes/purge`: removes the blobs of notes that have been
+/// deleted for long enough. The server cannot tell a deleted note from a
+/// live one, so a device says which.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PurgeRequest {
+    pub items: Vec<PurgeItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum PurgeOutcome {
+    /// The blob is gone and the note no longer counts against the
+    /// account. `change` is the change number of the marker left in its
+    /// place.
+    Purged { change: i64 },
+    /// The note changed after the version named, or the server has no such
+    /// note. Nothing was purged.
+    Stale {
+        /// The change number of the version the server holds, or `None`
+        /// if it has no such note.
+        current_change: Option<i64>,
+    },
+    /// Refused for a reason that concerns this note alone.
+    Rejected { code: ErrorCode, message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PurgeResult {
+    pub note_id: NoteId,
+    #[serde(flatten)]
+    pub outcome: PurgeOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PurgeResponse {
+    pub epoch: i32,
+    /// One result per item, in the order the items were sent.
+    pub results: Vec<PurgeResult>,
 }
 
 /// `GET /v1/notes/pull?after=N`

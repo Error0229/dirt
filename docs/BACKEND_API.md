@@ -369,6 +369,53 @@ order:
 
 A refused item uses no change number. A push may name each note only once.
 
+A push onto a purged note is always `stale`, whatever `base_change` it
+names, and `current` is the purged note's marker: the note's row with
+`"ciphertext": null`. Nothing is ever stored in a purged note's place.
+
+### `POST /v1/notes/purge`
+
+Removes the blobs of notes that have been deleted for long enough. The
+server cannot tell a deleted note from a live one, so a device says which,
+and names the version of each that it holds:
+
+```json
+{ "items": [ { "note_id": "…", "base_change": 12 } ] }
+```
+
+Each item gets its own result, in order:
+
+```json
+{ "epoch": 1, "results": [
+    { "note_id": "…", "status": "purged", "change": 13 },
+    { "note_id": "…", "status": "stale", "current_change": 14 },
+    { "note_id": "…", "status": "rejected", "code": "quota_exceeded", "message": "…" } ] }
+```
+
+- **purged:** the server held exactly the version named, and its blob is
+  gone. The note's row stays, with no blob and the account's next change
+  number, so that every device learns of the purge by pulling. The note no
+  longer counts against the account's notes or its bytes. A note that was
+  already purged is answered the same, with the marker's change number.
+- **stale:** the note changed after the version named, or the server has no
+  such note (`current_change` is then `null`). Nothing is purged. A device
+  that edited the note without knowing of the delete may have brought it
+  back.
+- **rejected:** with `quota_exceeded`, the account has purged as many notes
+  as it may.
+
+A purge may name up to 500 notes, each once, and each with a `base_change`
+above zero. A device asks only for notes it has itself seen deleted for
+thirty days, with nothing unsent. That rule is the client's: the server
+would purge whatever an approved device named, as it would store whatever
+one pushed.
+
+**A device that is told of a purge** removes its copy of the note. If the
+copy holds a change the device has not sent and the note is not deleted on
+that device, the person wrote something there that no other device has
+seen. The device keeps the text as a new note, with a new ID, which syncs
+like any other.
+
 ### `GET /v1/notes/pull?after=N`
 
 Blobs changed after change number `N`, lowest first:
@@ -381,7 +428,8 @@ Blobs changed after change number `N`, lowest first:
 
 A page holds notes for as long as their blobs fit in the batch limit
 together, and always at least one. `more` says whether to pull again from
-`next_after`. A purged note has `"ciphertext": null`.
+`next_after`. A purged note has `"ciphertext": null`; see
+`POST /v1/notes/purge` for what a device does with one.
 
 Two fields say what needs the person's attention, so that a device learns of
 it at its next sync: `pending_devices` is how many devices are waiting to be
@@ -401,7 +449,9 @@ stored under an older one. `GET /v1/devices/me` reports `key_version` too.
 | One note's blob | 1 MiB |
 | Blobs in one push or one pull page | 3 MB |
 | Notes in one push | 500 |
-| Notes per account | 20,000 |
+| Notes per account | 20,000. A deleted note counts until it is purged |
+| Purged notes per account | 100,000 |
+| A deleted note is purged | 30 days after a device saw it deleted |
 | Blobs per account | 50 MiB |
 | Requests per account | 600 in ten minutes |
 | Devices waiting for approval | 3 per account |

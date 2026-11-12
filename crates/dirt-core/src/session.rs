@@ -578,7 +578,8 @@ impl Session {
         let first = keys.current().clone();
         let engine = Arc::new(
             SyncEngine::new(store.clone(), api, secrets.account_id, first)
-                .kept_by(keys, Arc::new(keeper)),
+                .kept_by(keys, Arc::new(keeper))
+                .purging_after(config.timing.purge_after),
         );
         self.inner.status.send_replace(SyncStatus::default());
         let worker = config.background_sync.then(|| {

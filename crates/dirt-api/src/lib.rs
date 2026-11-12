@@ -118,6 +118,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/account/keys", get(keys::mine))
         .route("/v1/account/key/notes", get(keys::old_notes))
         .route("/v1/notes/push", post(notes::push))
+        .route("/v1/notes/purge", post(notes::purge))
         .route("/v1/notes/pull", get(notes::pull))
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

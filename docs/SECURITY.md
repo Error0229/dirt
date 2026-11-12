@@ -48,7 +48,9 @@ How many notes an account has, how large each one's ciphertext is, when each
 changes, which devices an account has and when they were last seen, the
 person's email address as the sign-in service reports it, and network
 metadata such as addresses. It does not see note text, tags or titles: those
-are inside the ciphertext.
+are inside the ciphertext. It cannot tell a deleted note from a live one,
+until a device asks for the note to be purged thirty days after it was
+deleted: the server then knows that it was.
 
 **Backups.** The operator keeps dumps of the server's database for about
 thirty days. A dump holds what the server holds, so it holds no note that

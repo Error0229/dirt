@@ -27,9 +27,11 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use dirt_proto::api::{
-    limits, ErrorClass, ErrorCode, NoteBlob, PushItem, PushOutcome, PushRequest,
+    limits, ErrorClass, ErrorCode, NoteBlob, PurgeItem, PurgeOutcome, PurgeRequest, PushItem,
+    PushOutcome, PushRequest,
 };
 use dirt_proto::NoteId;
 use uuid::Uuid;
@@ -39,7 +41,7 @@ use crate::crypto::{
     decrypt_note, encrypt_note, AccountKey, BlobContext, CryptoError, DeviceKeyPair, FORMAT_VERSION,
 };
 use crate::key_change::{unwrap_account_key, KeyRing, WrapContext};
-use crate::store::{ProblemKind, UnsentNote};
+use crate::store::{ProblemKind, PurgeApplied, UnsentNote};
 use crate::{Error, Store};
 
 /// How many times a cycle pulls and pushes before giving up on notes that
@@ -81,6 +83,9 @@ pub struct SyncReport {
     /// Notes still stored under an older key when the cycle ended. While
     /// there are any, a change of the account's key is not complete.
     pub old_key_notes: u64,
+    /// Deleted notes the server purged in this cycle at this device's
+    /// request.
+    pub purged: usize,
 }
 
 /// Why a cycle ended early.
@@ -180,6 +185,9 @@ pub struct SyncEngine {
     /// Where the keys are kept. Without one the engine holds the key it
     /// was made with and cannot follow a change.
     keeper: Option<Arc<dyn KeyKeeper>>,
+    /// How long a note stays deleted on this device before the engine
+    /// asks the server to purge it.
+    purge_after: Duration,
 }
 
 /// What became of one pulled or returned blob.
@@ -203,7 +211,16 @@ impl SyncEngine {
             keys: Mutex::new(KeyRing::first(key)),
             merged: AtomicU64::new(0),
             keeper: None,
+            purge_after: crate::sync::worker::default_purge_after(),
         }
+    }
+
+    /// Sets how long a note stays deleted on this device before the engine
+    /// asks the server to purge it.
+    #[must_use]
+    pub const fn purging_after(mut self, wait: Duration) -> Self {
+        self.purge_after = wait;
+        self
     }
 
     /// Gives the engine the device's keys and the place they are kept.
@@ -391,11 +408,71 @@ impl SyncEngine {
         if report.old_key_notes == 0 {
             self.forget_older_keys()?;
         }
+        report.purged = self.purge_deleted().await?;
         report.unsent = self.store.unsent_count().await?;
         self.store
             .set_last_synced_ms(chrono::Utc::now().timestamp_millis())
             .await?;
         Ok(report)
+    }
+
+    /// Asks the server to purge the notes this device has seen deleted
+    /// for long enough, and lets go of its own copies of those the server
+    /// purged. Returns how many.
+    ///
+    /// This runs after the pull and the push, so every note it names is
+    /// held here exactly as the server holds it. The server purges a note
+    /// only if that is still so when the request arrives: a device that
+    /// edited the note in the meantime, not knowing of the delete, has its
+    /// edit merged and the note stays.
+    ///
+    /// One batch is asked for in a cycle. The rest wait for the next.
+    async fn purge_deleted(&self) -> Result<usize, SyncError> {
+        let wait = i64::try_from(self.purge_after.as_millis()).unwrap_or(i64::MAX);
+        let before = crate::util::now_ms().saturating_sub(wait);
+        let candidates = self
+            .store
+            .purge_candidates(before, limits::MAX_BATCH_ITEMS)
+            .await?;
+        if candidates.is_empty() {
+            return Ok(0);
+        }
+        let items = candidates
+            .iter()
+            .map(|note| PurgeItem {
+                note_id: note.id,
+                base_change: note.server_change,
+            })
+            .collect();
+        let response = self.api.purge(&PurgeRequest { items }).await?;
+        if self.follow_epoch(response.epoch).await? {
+            // The store has started over, and the next cycle looks again.
+            return Ok(0);
+        }
+        let mut purged = 0;
+        for result in &response.results {
+            // Matched by note, as push results are.
+            let Some(note) = candidates.iter().find(|note| note.id == result.note_id) else {
+                continue;
+            };
+            match &result.outcome {
+                PurgeOutcome::Purged { .. } => {
+                    if self.store.drop_purged_note(&note.id, note.revision).await? {
+                        purged += 1;
+                    }
+                }
+                // The note changed on the server. The next pull merges
+                // what changed, and the note may be live again.
+                PurgeOutcome::Stale { .. } => {}
+                PurgeOutcome::Rejected { code, message } => {
+                    tracing::warn!(
+                        "the server would not purge note {}: {code:?}: {message}",
+                        note.id
+                    );
+                }
+            }
+        }
+        Ok(purged)
     }
 
     /// Lets go of the keys before the current one, once no note under
@@ -484,9 +561,21 @@ impl SyncEngine {
             return Ok(Applied::AlreadyHere);
         }
         let Some(ciphertext) = &blob.ciphertext else {
-            // The server purged the note. Nothing purges yet, so there is
-            // nothing to merge and nothing to decide.
-            return Ok(Applied::Merged);
+            // The server purged the note: a device had seen it deleted for
+            // long enough. This device's copy goes too, unless it holds an
+            // edit nobody else has seen, which is kept as a new note.
+            return Ok(match self.store.apply_note_purge(&blob.note_id).await? {
+                PurgeApplied::NotHeld => Applied::AlreadyHere,
+                PurgeApplied::Dropped => Applied::Merged,
+                PurgeApplied::KeptAsNew(kept) => {
+                    tracing::info!(
+                        "note {} was purged while this device held an unsent edit to it; \
+                         the text is kept as note {kept}",
+                        blob.note_id
+                    );
+                    Applied::Merged
+                }
+            });
         };
         if blob.format_version > FORMAT_VERSION {
             return Ok(Applied::Problem(

@@ -537,6 +537,8 @@ pub const fn fast_timing() -> Timing {
         return_gap: Duration::from_secs(30),
         first_retry: Duration::from_millis(60),
         longest_retry: Duration::from_millis(240),
+        // As the apps have it. A test that wants a purge shortens it.
+        purge_after: dirt_core::sync::worker::default_purge_after(),
     }
 }
 
