@@ -800,3 +800,78 @@ async fn an_open_app_reports_the_key_change_it_made(pool: PgPool) {
     .await;
     assert_eq!(app.session.sync_status().old_key_notes, 0);
 }
+
+/// The server keeps only so many copies of later keys for a device. One
+/// that was away through more changes than that finds the copy that follows
+/// its own key gone, and cannot follow. The server puts it back among the
+/// devices waiting to be let in. The person signs in again on it, another
+/// device lets it in with the present key, and nothing written on it while
+/// it was away is lost.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_device_too_far_behind_to_follow_is_let_in_again_with_its_notes(pool: PgPool) {
+    let server = Server::with_sign_in(pool.clone()).await;
+    let laptop = laptop_with_a_note(&server).await;
+    let phone = approved_device(&server, &laptop, "Phone").await;
+    let phone_id = device_id(&phone);
+    phone.transport.set_offline(true);
+    write(&phone, "written on the phone while it was away").await;
+
+    laptop.session.change_account_key().await.unwrap();
+    laptop.session.change_account_key().await.unwrap();
+    write(&laptop, "written under the third key").await;
+    laptop.session.sync_now().await.unwrap();
+    // What the server does to a copy once more changes have been made than
+    // it keeps copies for.
+    sqlx::query("DELETE FROM device_keys WHERE device_id = $1 AND key_version = 2")
+        .bind(phone_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    phone.transport.set_offline(false);
+    let error = phone.session.sync_now().await.unwrap_err();
+    let SessionError::Sync(error) = error else {
+        panic!("expected a sync failure, got {error:?}");
+    };
+    assert_eq!(error.class(), ErrorClass::StopUntilSignedIn);
+    // It adopted nothing: the third key's copy was there, but it opens
+    // only with the second. Its notes are as they were.
+    assert_eq!(secrets_of(&phone).key_version, 1);
+    assert_eq!(
+        texts(&phone).await,
+        [
+            "written on the laptop",
+            "written on the phone while it was away"
+        ]
+    );
+    assert_eq!(server.device_status(phone_id).await, "pending");
+
+    // Signing in again does not make it the approved device it was, with a
+    // key that opens nothing. It is the same device, waiting.
+    let state = phone.sign_in("alice").await.unwrap();
+    assert!(
+        matches!(state, SessionState::WaitingForApproval { device_id, .. } if device_id == phone_id),
+        "expected the same device, waiting, got {state:?}"
+    );
+    // A waiting device shows the notes kept on the device alone. The
+    // account's notes are in its own store, untouched, until it is let in.
+    assert!(texts(&phone).await.is_empty());
+
+    let_in(&laptop, &phone).await;
+
+    let report = phone.session.sync_now().await.unwrap();
+    assert_eq!(report.key_version, 3);
+    assert_eq!(secrets_of(&phone).key_version, 3);
+    let all = [
+        "written on the laptop",
+        "written on the phone while it was away",
+        "written under the third key",
+    ];
+    assert_eq!(texts(&phone).await, all);
+    laptop.session.sync_now().await.unwrap();
+    assert_eq!(texts(&laptop).await, all);
+    assert!(blobs(&pool)
+        .await
+        .iter()
+        .all(|(_, version, _)| *version == 3));
+}

@@ -175,7 +175,8 @@ pub fn Editor() -> Element {
 }
 
 async fn refresh_notes_signal(store: &MobileNoteStore, state: &mut AppState) {
-    match store.list_notes().await {
+    let listed = *state.listed_notes.peek();
+    match store.list_notes(listed).await {
         Ok(refreshed) => state.notes.set(refreshed),
         Err(err) => tracing::warn!("Note refresh after mutation failed: {err}"),
     }

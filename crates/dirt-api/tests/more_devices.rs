@@ -848,3 +848,189 @@ async fn a_working_device_refuses_a_reset_somebody_asked_for(pool: PgPool) {
     assert!(page.reset_effective_at_ms.is_none());
     assert_eq!(page.items.len(), 1);
 }
+
+// ---- The limit on an account's devices ----
+
+/// An account with as many approved devices as it may have. Returns the
+/// first, and another that can be removed to make room.
+async fn a_full_account(app: &Router, pool: &PgPool) -> (RegisterDeviceResponse, Uuid) {
+    let laptop = register(app, "alice", "Laptop").await;
+    let mut another = laptop.device_id;
+    for index in 1..limits::MAX_DEVICES_PER_ACCOUNT {
+        let device = register(app, "alice", &format!("Device {index}")).await;
+        approve(pool, device.device_id).await;
+        another = device.device_id;
+    }
+    (laptop, another)
+}
+
+async fn approve(pool: &PgPool, device: Uuid) {
+    sqlx::query("UPDATE devices SET status = 'approved' WHERE id = $1")
+        .bind(device)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn remove(app: &Router, token: &str, device: Uuid) {
+    let answer = delete(app, &format!("/v1/devices/{device}"), token).await;
+    assert_eq!(answer.status, StatusCode::OK);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_full_account_lets_no_more_devices_in_until_one_is_removed(pool: PgPool) {
+    let app = app(pool.clone());
+    let (laptop, another) = a_full_account(&app, &pool).await;
+
+    // Signing in is not refused: the limit is on approved devices.
+    let phone = register(&app, "alice", "Phone").await;
+    assert_eq!(phone.status, DeviceStatus::Pending);
+
+    // The approving device is told when it leaves the key.
+    let full = put(
+        &app,
+        &key_path(phone.device_id),
+        &laptop.token,
+        wrapped(b"for the phone"),
+    )
+    .await;
+    assert_eq!(full.status, StatusCode::CONFLICT);
+    assert_eq!(full.code(), "too_many_devices");
+
+    // With one removed there is room, and the key is left.
+    remove(&app, &laptop.token, another).await;
+    let left = put(
+        &app,
+        &key_path(phone.device_id),
+        &laptop.token,
+        wrapped(b"for the phone"),
+    )
+    .await;
+    assert_eq!(left.status, StatusCode::OK);
+
+    // The place is taken by another device before the phone says it has
+    // the key. The phone is not let in, and the key stays for it.
+    let tablet = register(&app, "alice", "Tablet").await;
+    approve(&pool, tablet.device_id).await;
+    let full = post(
+        &app,
+        &complete_path(phone.device_id),
+        Some(&phone.token),
+        json!({}),
+    )
+    .await;
+    assert_eq!(full.code(), "too_many_devices");
+    assert_eq!(
+        me(&app, &phone.token).await.device.status,
+        DeviceStatus::Pending
+    );
+    let kept = get(&app, &key_path(phone.device_id), Some(&phone.token)).await;
+    assert_eq!(kept.status, StatusCode::OK);
+
+    remove(&app, &laptop.token, tablet.device_id).await;
+    let done = post(
+        &app,
+        &complete_path(phone.device_id),
+        Some(&phone.token),
+        json!({}),
+    )
+    .await;
+    assert_eq!(done.status, StatusCode::OK);
+    assert_eq!(
+        me(&app, &phone.token).await.device.status,
+        DeviceStatus::Approved
+    );
+
+    // Another account is not affected by this one being full.
+    let bob = register(&app, "bob", "Bob's laptop").await;
+    let bobs = register(&app, "bob", "Bob's phone").await;
+    let left = put(
+        &app,
+        &key_path(bobs.device_id),
+        &bob.token,
+        wrapped(b"for bob's phone"),
+    )
+    .await;
+    assert_eq!(left.status, StatusCode::OK);
+}
+
+/// Every place is taken by a device the person no longer has. They can
+/// still sign a new device in, and the recovery phrase lets it in, so that
+/// it can remove the lost ones. Without this the account could never be
+/// reached again.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn the_recovery_phrase_lets_a_device_into_a_full_account(pool: PgPool) {
+    let app = app(pool.clone());
+    let (laptop, lost) = a_full_account(&app, &pool).await;
+    put(
+        &app,
+        "/v1/recovery",
+        &laptop.token,
+        recovery_body(b"sealed", b"the code"),
+    )
+    .await;
+    let claim = json!({ "claim_code": base64(b"the code") });
+
+    let mut let_in = Vec::new();
+    for index in 0..limits::RECOVERY_DEVICES_PAST_LIMIT {
+        let device = register(&app, "alice", &format!("Recovered {index}")).await;
+        assert_eq!(device.status, DeviceStatus::Pending);
+        let answer = post(
+            &app,
+            "/v1/recovery/claim",
+            Some(&device.token),
+            claim.clone(),
+        )
+        .await;
+        assert_eq!(answer.status, StatusCode::OK);
+        let_in.push(device);
+    }
+    // The device the phrase let in is approved, and removes a lost one.
+    assert_eq!(
+        me(&app, &let_in[0].token).await.device.status,
+        DeviceStatus::Approved
+    );
+
+    // The phrase does not let devices in without end.
+    let one_more = register(&app, "alice", "One more").await;
+    let full = post(
+        &app,
+        "/v1/recovery/claim",
+        Some(&one_more.token),
+        claim.clone(),
+    )
+    .await;
+    assert_eq!(full.status, StatusCode::CONFLICT);
+    assert_eq!(full.code(), "too_many_devices");
+    assert_eq!(
+        me(&app, &one_more.token).await.device.status,
+        DeviceStatus::Pending
+    );
+
+    // A wrong code is still refused as a wrong code, full or not.
+    let wrong = post(
+        &app,
+        "/v1/recovery/claim",
+        Some(&one_more.token),
+        json!({ "claim_code": base64(b"a guess") }),
+    )
+    .await;
+    assert_eq!(wrong.code(), "recovery_rejected");
+
+    remove(&app, &let_in[0].token, lost).await;
+    let answer = post(&app, "/v1/recovery/claim", Some(&one_more.token), claim).await;
+    assert_eq!(answer.status, StatusCode::OK);
+}
+
+/// A device that asks for the account to be reset, because the person has
+/// nothing else left, is not turned away by a full account either.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_new_device_can_ask_for_a_reset_of_a_full_account(pool: PgPool) {
+    let app = app(pool.clone());
+    let (laptop, _) = a_full_account(&app, &pool).await;
+    push_one(&app, &laptop.token, note_id(), 0, b"secret").await;
+
+    let phone = register(&app, "alice", "Phone").await;
+    let asked = reset(&app, &phone.token).await;
+    assert!(asked.effective_at_ms.is_some());
+}

@@ -706,3 +706,173 @@ async fn one_account_cannot_change_or_read_anothers_keys(pool: PgPool) {
     assert_eq!(pull(&app, &stranger.token, 0).await.key_version, 1);
     assert_eq!(old_notes(&app, &stranger.token).await.total, 0);
 }
+
+async fn status_of(pool: &PgPool, device: Uuid) -> String {
+    let (status,): (String,) = sqlx::query_as("SELECT status FROM devices WHERE id = $1")
+        .bind(device)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    status
+}
+
+async fn copies_of(pool: &PgPool, device: Uuid) -> Vec<i32> {
+    let rows: Vec<(i32,)> =
+        sqlx::query_as("SELECT key_version FROM device_keys WHERE device_id = $1 ORDER BY 1")
+            .bind(device)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    rows.into_iter().map(|(version,)| version).collect()
+}
+
+/// Changes the key of Alice's account `times` times from the laptop, with
+/// a copy for the phone each time, starting from version `from`.
+async fn change_many(
+    app: &Router,
+    laptop: &RegisterDeviceResponse,
+    phone: &RegisterDeviceResponse,
+    from: i32,
+    times: i32,
+) {
+    for version in from..from + times {
+        let keys = vec![
+            wrapped_for(laptop.device_id, b"for the laptop"),
+            wrapped_for(phone.device_id, b"for the phone"),
+        ];
+        let answer = change_key(app, &laptop.token, version, keys).await;
+        assert_eq!(answer.status, StatusCode::OK);
+    }
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn copies_too_far_back_to_be_reached_are_dropped(pool: PgPool) {
+    let app = app(pool.clone());
+    let (laptop, phone) = two_devices(&app, &pool).await;
+    // The phone stays away while the key is changed again and again.
+    let changes = limits::MAX_KEPT_KEY_VERSIONS + 2;
+    change_many(&app, &laptop, &phone, 1, changes).await;
+    let latest = changes + 1;
+
+    // Each device has the newest copies and no more than may be kept.
+    let oldest_kept = latest - limits::MAX_KEPT_KEY_VERSIONS + 1;
+    let kept: Vec<i32> = (oldest_kept..=latest).collect();
+    assert_eq!(copies_of(&pool, phone.device_id).await, kept);
+    assert_eq!(copies_of(&pool, laptop.device_id).await, kept);
+
+    // Another account's copies are not touched by this one's changes.
+    let bob = register(&app, "bob", "Bob's laptop").await;
+    let answer = change_key(
+        &app,
+        &bob.token,
+        1,
+        vec![wrapped_for(bob.device_id, b"for bob")],
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK);
+    change_many(&app, &laptop, &phone, latest, 1).await;
+    assert_eq!(my_keys(&app, &bob.token, 1).await.len(), 1);
+}
+
+/// A device that was away through more changes of the key than the server
+/// keeps copies for cannot open any copy it is given: each opens with the
+/// key before it. The server does not leave it approved and stuck. It puts
+/// the device back among those waiting, and another device lets it in
+/// again with the present key.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_device_too_far_behind_waits_to_be_let_in_again(pool: PgPool) {
+    let app = app(pool.clone());
+    let (laptop, phone) = two_devices(&app, &pool).await;
+    let kept = limits::MAX_KEPT_KEY_VERSIONS;
+
+    // After as many changes as copies are kept, the phone can still follow
+    // from the first key: the copy that follows it is the oldest one kept.
+    change_many(&app, &laptop, &phone, 1, kept).await;
+    let copies = my_keys(&app, &phone.token, 1).await;
+    assert_eq!(copies.len(), usize::try_from(kept).unwrap());
+    assert_eq!(copies[0].0, 2);
+    assert_eq!(status_of(&pool, phone.device_id).await, "approved");
+
+    // One more change, and the copy that follows the first key is gone.
+    change_many(&app, &laptop, &phone, kept + 1, 1).await;
+    // The phone joined the account long ago. Its new wait starts now: it
+    // must not count as a request that lapsed before it began.
+    sqlx::query("UPDATE devices SET created_at = now() - interval '40 days' WHERE id = $1")
+        .bind(phone.device_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let latest = kept + 2;
+    // The laptop, which holds the present key, is not affected, whatever
+    // version it asks from that it can follow.
+    assert!(my_keys(&app, &laptop.token, latest).await.is_empty());
+    assert_eq!(my_keys(&app, &laptop.token, latest - 1).await.len(), 1);
+    assert_eq!(
+        my_keys(&app, &laptop.token, 2).await.len(),
+        usize::try_from(kept).unwrap()
+    );
+
+    let answer = get(&app, "/v1/account/keys?after=1", Some(&phone.token)).await;
+    assert_eq!(answer.status, StatusCode::FORBIDDEN);
+    assert_eq!(answer.code(), "device_pending");
+    assert_eq!(status_of(&pool, phone.device_id).await, "pending");
+    assert!(copies_of(&pool, phone.device_id).await.is_empty());
+    assert_eq!(status_of(&pool, laptop.device_id).await, "approved");
+    // It is refused what an approved device may do, and may still ask
+    // about itself, as any waiting device may.
+    let pulled = get(&app, "/v1/notes/pull?after=0", Some(&phone.token)).await;
+    assert_eq!(pulled.code(), "device_pending");
+    let me: MyDevice = get(&app, "/v1/devices/me", Some(&phone.token)).await.json();
+    assert_eq!(me.key_version, latest);
+
+    // A change of the key no longer has to name it.
+    let answer = change_key(
+        &app,
+        &laptop.token,
+        latest,
+        vec![wrapped_for(laptop.device_id, b"for the laptop")],
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK);
+    let latest = latest + 1;
+
+    // The laptop lets it in again, with the present key.
+    let left = call(
+        &app,
+        Method::PUT,
+        &format!("/v1/enrolments/{}/key", phone.device_id),
+        Some(&laptop.token),
+        Some(json!({ "key_version": latest, "wrapped": STANDARD.encode(b"the present key") })),
+    )
+    .await;
+    assert_eq!(left.status, StatusCode::OK);
+    let done = post(
+        &app,
+        &format!("/v1/enrolments/{}/complete", phone.device_id),
+        Some(&phone.token),
+        json!({}),
+    )
+    .await;
+    assert_eq!(done.status, StatusCode::OK);
+    assert_eq!(status_of(&pool, phone.device_id).await, "approved");
+    assert!(my_keys(&app, &phone.token, latest).await.is_empty());
+}
+
+/// A device let in after the last change of the key holds no copies. It
+/// has nothing to follow, and is left alone whatever version it names.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_device_let_in_after_the_last_key_change_is_left_alone(pool: PgPool) {
+    let app = app(pool.clone());
+    let (laptop, phone) = two_devices(&app, &pool).await;
+    change_many(&app, &laptop, &phone, 1, 2).await;
+    let tablet = register(&app, "alice", "Tablet").await;
+    approve(&pool, tablet.device_id).await;
+
+    for after in [0, 1, 2, 3, 7] {
+        assert!(my_keys(&app, &tablet.token, after).await.is_empty());
+    }
+    assert_eq!(status_of(&pool, tablet.device_id).await, "approved");
+    // Nor is a device that names a version before the first.
+    assert_eq!(my_keys(&app, &phone.token, 0).await.len(), 2);
+    assert_eq!(status_of(&pool, phone.device_id).await, "approved");
+}

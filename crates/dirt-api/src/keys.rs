@@ -24,7 +24,8 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Response;
 use dirt_proto::api::{
-    limits, ChangeKey, DeviceKeys, ErrorCode, KeyChanged, OldKeyNotes, WrappedKey,
+    first_key_version, limits, ChangeKey, DeviceKeys, ErrorCode, KeyChanged, OldKeyNotes,
+    WrappedKey,
 };
 use dirt_proto::NoteId;
 use serde::Deserialize;
@@ -141,6 +142,19 @@ pub async fn change(
         .execute(&mut *tx)
         .await?;
     }
+    // A device opens the copies it missed one after another, so a copy is
+    // of use only with every copy before it. Those too far back to be
+    // reached are dropped, which bounds what an account's key changes can
+    // leave behind. A device that far behind is let in again as a new one.
+    sqlx::query(
+        "DELETE FROM device_keys \
+          WHERE key_version <= $2 \
+            AND device_id IN (SELECT id FROM devices WHERE account_id = $1)",
+    )
+    .bind(device.account_id)
+    .bind(next - limits::MAX_KEPT_KEY_VERSIONS)
+    .execute(&mut *tx)
+    .await?;
     // Every note the server holds is now under an older key.
     let (old_key_notes,): (i64,) = sqlx::query_as(
         "UPDATE accounts \
@@ -197,22 +211,92 @@ pub async fn mine(
     params: Result<Query<KeysParams>, QueryRejection>,
 ) -> ApiResult<Response> {
     let Query(params) = params.map_err(|error| ApiError::invalid(error.body_text()))?;
-    let rows: Vec<(i32, Vec<u8>)> = sqlx::query_as(
-        "SELECT key_version, wrapped FROM device_keys \
-          WHERE device_id = $1 AND key_version > $2 ORDER BY key_version",
+    // One statement, so that the account's version and the copies are read
+    // as they stood at one moment.
+    let rows: Vec<(i32, Option<i32>, Option<Vec<u8>>)> = sqlx::query_as(
+        "SELECT a.key_version, k.key_version, k.wrapped \
+           FROM accounts a \
+           LEFT JOIN device_keys k ON k.device_id = $2 AND k.key_version > $3 \
+          WHERE a.id = $1 ORDER BY k.key_version",
     )
+    .bind(device.account_id)
     .bind(device.id)
     .bind(params.after)
     .fetch_all(&state.pool)
     .await?;
-    let keys = rows
+    let present = rows.first().map_or(first_key_version(), |row| row.0);
+    let keys: Vec<WrappedKey> = rows
         .into_iter()
-        .map(|(key_version, wrapped)| WrappedKey {
-            key_version,
-            wrapped,
+        .filter_map(|(_, key_version, wrapped)| {
+            Some(WrappedKey {
+                key_version: key_version?,
+                wrapped: wrapped?,
+            })
         })
         .collect();
+    if !can_follow(params.after, present, keys.first()) && wait_again(&state, &device).await? {
+        return Err(ApiError::new(
+            ErrorCode::DevicePending,
+            "this device missed too many changes of the account's key; \
+             sign in again and let it in from another device",
+        ));
+    }
     Ok(device.respond(DeviceKeys { keys }))
+}
+
+/// Whether a device holding the key of version `held` can reach the
+/// account's present key with the copies the server has for it.
+///
+/// Each copy opens with the key before it, so the device needs the copy
+/// that follows its own key. The first version has no copy: a device
+/// never asks for it.
+fn can_follow(held: i32, present: i32, next_copy: Option<&WrappedKey>) -> bool {
+    let held = held.max(first_key_version());
+    present <= held || next_copy.is_some_and(|copy| copy.key_version == held + 1)
+}
+
+/// Puts an approved device that cannot follow the account's key back among
+/// those waiting to be let in, and says whether it did.
+///
+/// The copy the device needs is gone: more changes of the key were made
+/// while it was away than the server keeps copies for. It is still the
+/// account's device, with notes of its own that may not have been sent, so
+/// it is not removed. It waits, as a new device does, for another device
+/// or the recovery phrase to give it the present key. Signing in again
+/// shows it that it is waiting.
+///
+/// The account is locked and the copies read again, so that a change of
+/// the key made at the same moment is not mistaken for a gap.
+async fn wait_again(state: &AppState, device: &crate::auth::Device) -> ApiResult<bool> {
+    let mut tx = state.pool.begin().await?;
+    let present = lock_account(&mut tx, device.account_id).await?;
+    let (newest,): (Option<i32>,) =
+        sqlx::query_as("SELECT max(key_version) FROM device_keys WHERE device_id = $1")
+            .bind(device.id)
+            .fetch_one(&mut *tx)
+            .await?;
+    // Every change of the key leaves a copy for each approved device, so
+    // a device that was away through the changes holds a copy of the
+    // present key. One that holds none was let in after the last change
+    // and has nothing to follow: whatever it asked for, it is left alone.
+    if newest != Some(present) {
+        return Ok(false);
+    }
+    let waiting = sqlx::query(
+        "UPDATE devices SET status = 'pending', created_at = now() \
+          WHERE id = $1 AND status = 'approved'",
+    )
+    .bind(device.id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    // Its copies are of no use to it now.
+    sqlx::query("DELETE FROM device_keys WHERE device_id = $1")
+        .bind(device.id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(waiting == 1)
 }
 
 #[derive(Debug, Deserialize)]

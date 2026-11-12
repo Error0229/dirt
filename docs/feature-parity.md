@@ -21,7 +21,7 @@ pull request.
 | Edit a note | Yes, saved as you type | Yes, with a Save button | `dirt edit <ID>`, in `$VISUAL` or `$EDITOR` |
 | Delete a note | Yes | Yes | `dirt delete <ID>` |
 | Bring a deleted note back | No | No | No |
-| List notes | The 100 most recently edited | The 100 most recently edited | `dirt list`, 10 unless `--limit` says otherwise |
+| List notes | The 100 most recently edited, and 100 more with each press of "Show older notes" | The same | `dirt list`, 10 unless `--limit` says otherwise |
 | Use it before signing in | Yes | Yes | Yes |
 
 A deleted note keeps its document, so it can be brought back and the store
@@ -31,19 +31,19 @@ has the operation for it. No client offers it. See "Not built" below.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Search | Within the 100 notes in the list, for the text as typed | Every note, by words | `dirt search`, every note, by words |
-| Narrow to a tag | Tag row above the list, within the 100 notes in the list | Tag row above the list, every note | `dirt list --tag` |
-| Tag counts | Of the 100 notes in the list | Of every note | No |
+| Search | Every note, by words | Every note, by words | `dirt search`, every note, by words |
+| Narrow to a tag | Tag row above the list, every note | Tag row above the list, every note | `dirt list --tag` |
+| Tag counts | Of every note | Of every note | No |
 
 "By words" is the store's full-text search: a note matches when it holds
 every word typed, in any order, and each word also matches as the start of a
-longer one. Android shows up to 100 notes found.
+longer one. The apps show up to 100 notes found, and 100 more with each
+press of "Show more notes".
 
-**The desktop app cannot reach a note older than its 100 most recent.** Its
-list and its search work on the notes it has loaded. The Android app and the
-CLI ask the store, which looks through all of them. Changing the desktop app
-means changing how it loads notes, and how many it can show at once without
-slowing down has to be measured first. That is in step 8's limits review.
+All three ask the store, which looks through every note. The apps hold only
+the notes their list shows, so the list starts at the 100 most recently
+edited and grows when asked. `docs/LIMITS.md` has what the store takes to
+answer with 20,000 notes in it.
 
 ## Capture from outside the app
 
@@ -111,7 +111,6 @@ which come from `dirt_core::sync::overview`.
 | What | Where it stands |
 |---|---|
 | Attachments | Specified in design section 10. Step 9 of the build order |
-| The desktop app reaching notes beyond its 100 most recent | Step 8's limits review |
 | Bringing a deleted note back | The store can; no design document asks for a way to do it from a client. Needs a decision |
 | `dirt tui` | A stub that prints "Opening TUI..." and does nothing. No design document mentions a terminal interface. Needs a decision: remove it or plan it |
 | Themes and fonts on Android | No design document asks for them |

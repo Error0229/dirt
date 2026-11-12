@@ -490,6 +490,13 @@ email inbox cannot destroy it.
   police.
 - Unauthenticated traffic is left to the hosting platform's firewall.
 
+`docs/LIMITS.md` has every number with its reason, as settled by the limits
+review in step 8. That review also tried the firewall. One rate-limit rule
+stops a flood from one address. Nothing on the free plans stops a request
+every few minutes from keeping the database awake until its monthly
+allowance is gone (section 7.4), which is the main reason for a paid
+database plan.
+
 ## 8. Client architecture
 
 ### 8.1 Crates
@@ -736,9 +743,12 @@ was written.
 
 ### Details not yet decided
 
-- The exact quota numbers.
-- Purging deleted notes: when a deleted note's blob is finally removed, and
-  what a device does if it still holds unseen edits for a purged note.
+- Purging deleted notes: when a deleted note's blob is finally removed.
+  Until it is built, the note quota counts every note an account ever
+  wrote. It is part 8e of step 8, with its defaults in
+  `docs/plans/2026-11-12-step-8-hardening-plan.md`. What a device does with
+  unseen edits to a purged note was settled in step 4: they become a new
+  note.
 - Whether to pad blobs so their sizes reveal less.
 - The flows a gap check found unspecified, such as what a pending device may
   do and how key rotation treats offline devices. The implementation plan

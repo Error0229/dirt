@@ -194,6 +194,9 @@ pub async fn put_key(
     // approving device that has not caught up with a change of the key
     // fetches the new one and leaves that.
     crate::keys::lock_present_key(&mut tx, device.account_id, key.key_version).await?;
+    // The approving device is told here that the account is full, while
+    // the person is looking at it and can remove a device.
+    crate::devices::room_for_a_device(&mut tx, device.account_id, 0).await?;
     sqlx::query(
         "INSERT INTO enrolment_keys (device_id, approver_id, key_version, wrapped) \
          VALUES ($1, $2, $3, $4) \
@@ -260,6 +263,9 @@ pub async fn complete(
     // which then begins its exchange again. A change made after sees this
     // device as approved and must hold a copy of the new key for it.
     let present = crate::keys::lock_account(&mut tx, device.account_id).await?;
+    // The last place may have been taken since the key was left. The key
+    // stays, so the device is let in once a place is free.
+    crate::devices::room_for_a_device(&mut tx, device.account_id, 0).await?;
     // An approved device must have left a key: that is the approval. The
     // waiting device cannot approve itself by calling this.
     let offered: Option<(i32,)> =

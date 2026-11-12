@@ -46,7 +46,8 @@ else is on the screen.
 | D15 | Settings → Devices → remove a device, then Change the account's key | Removing says the device still has the key and points to the change. The change asks for a second press, says the key was changed and that a new recovery phrase is needed; the Recovery phrase row says the account has none |
 | D9 | Settings → Devices → make a recovery phrase | 24 words, shown once |
 | D10 | Settings → Data → Export JSON, then Markdown | A file dialog each time, and a file holding every note |
-| D11 | Search for a word; press a tag | The list narrows; "All" widens it again |
+| D11 | Search for a word; press a tag | The list narrows; "All" widens it again. A note older than the 100 most recent is found |
+| D16 | With more than 100 notes, scroll to the end of the list and press "Show older notes" | 100 more notes appear below, and the button stays for as long as there are older ones. An open note stays open |
 | D12 | Settings → Theme: light, dark, system; font and size | The window follows at once |
 
 ## Android app
@@ -62,6 +63,7 @@ else is on the screen.
 | A7 | Add the "Quick capture" widget to the home screen and press it | A blank note to write in |
 | A8 | Type in the search box; press a tag | The list narrows. A note older than the 100 most recent is found. Pressing the tag again, or "All", widens the list |
 | A9 | Open a note found by searching, change it, save | The change is kept; the list is as before |
+| A19 | With more than 100 notes, scroll to the end of the list and press "Show older notes" | 100 more notes appear below. With exactly as many notes as are shown, one more press removes the button |
 | A10 | Settings → Export JSON, then Markdown | Android's screen for choosing a place. After "Save" the app says how many notes were saved, and the file holds them. Backing out says nothing was saved |
 | A11 | Change a note on another device. Leave Dirt and come back | The change appears |
 | A12 | Settings with a note that cannot be synced | The note by name, the reason, and what releases it. Pressing it opens the note if the device holds it |
@@ -116,5 +118,6 @@ account, A and B:
 
 | Date | Server | Desktop | Android | CLI | Not run |
 |---|---|---|---|---|---|
+| 2026-11-12, for step 8c | None: not signed in | D16 passed, driven through UI Automation, and the same under a tag. D11's tag row | Emulator. A19 passed, and the same under a tag | Used to write the 230 notes | D16's "an open note stays open", which a test covers. Search typed into either app |
 | 2026-11-12, for step 8b | `dirt-trial` | Not run: D15 | Emulator. A16, A17 and A18 passed | C11 passed. C12 on an account with no phrase: the key was changed | D15: the desktop window could not be driven in the earlier run and was not tried again. C12's phrase: the account in the run had none |
 | 2026-11-12 | `dirt-trial` | D5, D6, D7, D13 passed. D11: the tag row only. D8 passed in step 6, not run again | Emulator. A1 to A6 and A8 to A14 passed. A8 without a note beyond the first 100, which the tests cover. A16: the phone said it had to sign in again; its first line was reworded afterwards and the new words have not been seen on a device | C1 to C10 passed. C2 with `--no-browser`. C6's `dirt auth recover` not run; the phrase was typed on Android instead | D1 to D4, D9, D10, D11's search, D12, D14: they need a person at the keyboard, or the window could not be driven. A7 with a widget placed on a home screen; its intent was sent instead. A15: no physical device |
