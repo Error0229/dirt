@@ -159,6 +159,12 @@ impl Server {
         &self.issuer
     }
 
+    /// The server itself, to be served on a port: for trying a client by
+    /// hand (`examples/serve.rs`). The tests call it in the process.
+    pub fn router(&self) -> Router {
+        self.router.clone()
+    }
+
     /// A transport to this server for one client.
     #[must_use]
     pub fn transport(&self) -> Arc<InProcess> {
@@ -425,13 +431,10 @@ impl Transport for InProcess {
             if let Some(body) = request.body {
                 builder = builder.body(body);
             }
-            let response = builder.send().await.map_err(|error| error.to_string())?;
+            let failed = |error: reqwest::Error| error.without_url().to_string();
+            let response = builder.send().await.map_err(failed)?;
             let status = response.status().as_u16();
-            let body = response
-                .bytes()
-                .await
-                .map_err(|error| error.to_string())?
-                .to_vec();
+            let body = response.bytes().await.map_err(failed)?.to_vec();
             if take_one(&self.storage_answers_lost) {
                 return Err("the connection was lost".to_owned());
             }

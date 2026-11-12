@@ -6,6 +6,7 @@ pub mod delete;
 pub mod devices;
 pub mod edit;
 pub mod export;
+pub mod files;
 pub mod list;
 pub mod search;
 pub mod sync;

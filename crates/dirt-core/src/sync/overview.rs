@@ -10,7 +10,7 @@
 use dirt_proto::api::ErrorClass;
 
 use super::worker::{SyncFailure, SyncStatus};
-use crate::store::{FileProblem, NoteProblem, ProblemKind};
+use crate::store::{AttachedFile, FileProblem, FileStanding, NoteProblem, ProblemKind};
 use crate::util::as_sentence;
 
 /// How many characters of a note's first line name it.
@@ -151,6 +151,37 @@ impl SyncOverview {
             lines.push(format!("    {}", problem.release()));
         }
         lines
+    }
+}
+
+/// A size in bytes, in words: "812 B", "150 KiB", "2.3 MiB".
+#[must_use]
+pub fn size_words(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = 1024 * 1024;
+    // Tenths, without going through a float.
+    let tenths = |unit: u64| (bytes * 10 + unit / 2) / unit;
+    if bytes < KIB {
+        format!("{bytes} B")
+    } else if bytes < MIB {
+        format!("{} KiB", (bytes + KIB / 2) / KIB)
+    } else {
+        let tenths = tenths(MIB);
+        format!("{}.{} MiB", tenths / 10, tenths % 10)
+    }
+}
+
+impl AttachedFile {
+    /// What there is to say about where the file is, or nothing for a
+    /// file that is on this device and on the server.
+    #[must_use]
+    pub fn standing_words(&self) -> Option<String> {
+        match (&self.standing, self.on_device) {
+            (FileStanding::Refused(reason), _) => Some(format!("could not be sent: {reason}")),
+            (FileStanding::NotTaken, true) => Some("waiting to be sent".to_owned()),
+            (_, false) => Some("not on this device; fetched when it is wanted".to_owned()),
+            (FileStanding::Taken, true) => None,
+        }
     }
 }
 
@@ -370,6 +401,61 @@ mod tests {
             "2 files could not be sent:"
         );
         assert_eq!(SyncOverview::default().file_problem_count(), None);
+    }
+
+    #[test]
+    fn a_size_is_said_in_the_unit_that_fits() {
+        assert_eq!(size_words(0), "0 B");
+        assert_eq!(size_words(1_023), "1023 B");
+        assert_eq!(size_words(1_024), "1 KiB");
+        assert_eq!(size_words(150_000), "146 KiB");
+        assert_eq!(size_words(1_048_576), "1.0 MiB");
+        assert_eq!(size_words(2_400_000), "2.3 MiB");
+        assert_eq!(size_words(10 * 1_048_576), "10.0 MiB");
+    }
+
+    #[test]
+    fn where_a_file_is_is_said_only_when_there_is_something_to_say() {
+        let file = |standing, on_device| AttachedFile {
+            attachment: crate::files::Attachment {
+                file_id: uuid::Uuid::from_u128(1),
+                name: "photo.jpg".to_owned(),
+                media_type: "image/jpeg".to_owned(),
+                size: 10,
+                key: crate::files::FileKey::generate(),
+                added_at_ms: 0,
+                thumbnail: None,
+            },
+            on_device,
+            thumbnail_on_device: false,
+            standing,
+        };
+        assert_eq!(file(FileStanding::Taken, true).standing_words(), None);
+        assert_eq!(
+            file(FileStanding::NotTaken, true).standing_words().unwrap(),
+            "waiting to be sent"
+        );
+        assert_eq!(
+            file(FileStanding::Taken, false).standing_words().unwrap(),
+            "not on this device; fetched when it is wanted"
+        );
+        // A device that neither holds the file nor has been told it is
+        // there has nothing of its own to send.
+        assert_eq!(
+            file(FileStanding::NotTaken, false)
+                .standing_words()
+                .unwrap(),
+            "not on this device; fetched when it is wanted"
+        );
+        assert_eq!(
+            file(
+                FileStanding::Refused("the account's storage for files is full".to_owned()),
+                true
+            )
+            .standing_words()
+            .unwrap(),
+            "could not be sent: the account's storage for files is full"
+        );
     }
 
     #[test]

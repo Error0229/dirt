@@ -80,6 +80,18 @@ size the note says. Anything else is discarded and reported as damaged. The
 storage, or anyone who can write to it, can therefore withhold a file or
 destroy it, and cannot replace it with another.
 
+A link to the storage is the permission to send or fetch one file, for
+fifteen minutes or five. Neither a device nor the server writes one to a
+log or shows one on a screen: a request to the storage that fails is
+reported without the address it went to.
+
+A file's name is whatever the device that attached it gave it, and reaches
+other devices inside the note. No client uses it as a path. Where a copy is
+saved under that name, only the name's last part is used, without the
+characters a file system refuses and never as one of the names Windows
+keeps for devices, so a note cannot make a device write outside the folder
+its owner chose.
+
 A file that a device holds is kept beside the notes' database, as it was
 attached: not encrypted, as the notes there are not. What protects both is
 the device.

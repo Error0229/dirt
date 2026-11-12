@@ -24,7 +24,11 @@ async fn main() {
 }
 
 async fn run() -> Result<(), CliError> {
+    // Warnings go where errors go. What a command prints on standard
+    // output is its answer, which a script may be reading: the ID of a new
+    // note, a list as JSON.
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive("dirt=info".parse().expect("valid directive")),
@@ -62,6 +66,35 @@ async fn run() -> Result<(), CliError> {
         }
         Some(Commands::Edit { id }) => commands::edit::run_edit(&id, &context).await?,
         Some(Commands::Delete { id }) => commands::delete::run_delete(&id, &context).await?,
+        Some(Commands::Attach {
+            note,
+            file,
+            name,
+            media_type,
+        }) => {
+            commands::files::run_attach(
+                &note,
+                &file,
+                name.as_deref(),
+                media_type.as_deref(),
+                &context,
+            )
+            .await?;
+        }
+        Some(Commands::Files { note, json }) => {
+            commands::files::run_files(&note, json, store).await?;
+        }
+        Some(Commands::Save {
+            note,
+            file,
+            path,
+            force,
+        }) => {
+            commands::files::run_save(&note, &file, path.as_deref(), force, &context).await?;
+        }
+        Some(Commands::Detach { note, file }) => {
+            commands::files::run_detach(&note, &file, &context).await?;
+        }
         Some(Commands::Export { format, output }) => {
             commands::export::run_export(format, output.as_deref(), store).await?;
         }

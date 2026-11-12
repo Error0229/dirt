@@ -23,7 +23,7 @@ use std::thread::JoinHandle;
 use rusqlite::Connection;
 use tokio::sync::oneshot;
 
-pub use files::{FileLink, FileProblem};
+pub use files::{AttachedFile, FileLink, FileProblem, FileStanding};
 pub use location::{store_path, StoreName};
 pub use sync_state::{
     NoteProblem, ProblemKind, PurgeApplied, PurgeCandidate, SyncProgress, UnsentNote,
@@ -312,6 +312,14 @@ impl Store {
     pub async fn note_attachments(&self, note: &NoteId) -> Result<Vec<Attachment>> {
         let note = *note;
         self.read(move |c| notes::attachments(c, &note)).await
+    }
+
+    /// The files attached to a note, each with whether this device holds
+    /// it and what the server has said of it: what a list of a note's
+    /// files shows.
+    pub async fn attached_files(&self, note: &NoteId) -> Result<Vec<AttachedFile>> {
+        let (note, shelf) = (*note, self.shelf());
+        self.read(move |c| files::attached(c, &note, &shelf)).await
     }
 
     // ---- Files and the server ----

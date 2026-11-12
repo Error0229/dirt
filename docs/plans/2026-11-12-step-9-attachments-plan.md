@@ -471,10 +471,81 @@ Not checked on a real device: no client attaches a file yet.
 
 ### 9c: the CLI
 
-- [ ] `dirt attach <note> <file>`, `dirt files <note>`, `dirt save <note>
+- [x] `dirt attach <note> <file>`, `dirt files <note>`, `dirt save <note>
       <file> [path]`, `dirt detach <note> <file>`.
-- [ ] `dirt sync --verbose` and `dirt sync status` say what is waiting to
-      be uploaded.
+- [x] `dirt sync --verbose` and `dirt auth status` say what is waiting to
+      be uploaded. (There is no `dirt sync status`; the status is under
+      `dirt auth`.)
+
+**Result (2026-11-12).**
+
+- **A file is named by the start of its ID or by its name**, if no other
+  file of the note has that name. `dirt files` prints the first thirteen
+  characters of each ID, as `dirt list` does for notes.
+- **`dirt files` says where a file is only when there is something to
+  say:** waiting to be sent, not on this device, or refused with the
+  reason. The words are in `dirt_core::sync::overview`, for the apps to
+  use too.
+- **`dirt save` does not replace a file that is there** unless `--force`.
+- **A file's name is never used as a path.** It comes out of a note, where
+  another device put it. `dirt_core::files::safe_file_name` keeps the last
+  part of it, without the characters a file system refuses and never as
+  one of the names Windows keeps for devices. `dirt attach` cleans the
+  name it writes into a note the same way. The apps will save through the
+  same function.
+- **A command that changes a note says when a file did not go.** `dirt
+  attach` printed the file's ID and nothing else when the upload failed.
+- **What kind of file it is** is taken from the name when `--type` does
+  not say. It is a hint for whatever opens the file later.
+
+Tried for real, which no test here does: the `dirt` program itself, twice
+on one computer as two devices, against the real server on this machine
+with the file storage from `compose.yaml`. This is the first time the
+core's own HTTP path to the storage ran; the tests reach the storage
+through the harness. A picture and a text file were attached on one
+device, listed and saved on the other and compared byte for byte, a file
+was removed, and a file was attached with the storage stopped and sent
+once it was back. `docs/MANUAL_CHECKLIST.md` has the run.
+
+What that showed:
+
+- **A failed upload wrote its signed link into the log.** The link is the
+  permission to send the file, for fifteen minutes. A request to the
+  storage that fails is now reported without its address, by the devices
+  and by the server, which signs addresses for its own requests.
+- **The CLI's warnings went to standard output**, where a script reading
+  the ID of a new note or file would have read them too. They go to
+  standard error.
+- **Two devices on one computer cannot be told apart by `localhost` and
+  `127.0.0.1`:** the clients read the one as the other, on purpose. They
+  need two ports.
+
+What review showed:
+
+- **`dirt save` looked whether a file was there, fetched, and then wrote.**
+  A file that came to be there while it fetched was replaced without
+  `--force`. The copy is now refused by the file system at the moment it
+  is written, and a copy that fails half-way leaves nothing behind.
+- **`dirt save --force` onto the device's own copy of a file emptied it.**
+  Replacing a file opened it and emptied it before anything was read, so
+  with the destination being the file itself, or a link to it, there was
+  nothing left to copy and the device's copy was gone. A forced save now
+  writes beside the destination and then takes its name. Nothing that was
+  there is opened, and it stays whole until the new file is. What is
+  written beside it has a short name of its own: one made from the
+  destination's name would be too long where the destination's already is
+  as long as a name may be.
+- **A name was cut to 200 characters, and file systems count bytes.** A
+  hundred Chinese characters are 300 bytes, more than one name may be on
+  Linux, so the file could be attached and not saved. A name is now cut
+  to 200 bytes, between characters, keeping the ending that says what
+  kind of file it is.
+
+**For trying a client by hand** there is now `cargo run -p dirt-sim
+--example serve`: the real server on two ports of this machine, with the
+file storage and a sign-in that needs no account and no browser. It is what
+the desktop and Android steps will be tried against, until there is a
+storage account for `dirt-trial`.
 
 ### 9d: the desktop app
 

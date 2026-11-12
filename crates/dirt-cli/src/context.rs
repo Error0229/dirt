@@ -119,7 +119,14 @@ impl Context {
             return;
         }
         match tokio::time::timeout(SYNC_AFTER_WRITE, session.sync_now()).await {
-            Ok(Ok(_)) => {}
+            // The note went. A file may not have: the storage is another
+            // place, and the server may have refused it.
+            Ok(Ok(report)) => {
+                let refused = session.store().file_problems().await.unwrap_or_default();
+                for line in crate::commands::sync::files_not_sent(&report, &refused) {
+                    eprintln!("{line}");
+                }
+            }
             Ok(Err(error)) => eprintln!("Saved, but not synced: {}", describe(&error)),
             Err(_) => eprintln!("Saved, but sync is taking too long. Run `dirt sync` later."),
         }

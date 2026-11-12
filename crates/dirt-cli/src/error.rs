@@ -26,6 +26,10 @@ pub enum CliError {
     EditorFailed(String),
     #[error("Configuration error: {0}")]
     Config(String),
+    /// Something about a note's files. The text already says what the
+    /// person can do about it.
+    #[error("{0}")]
+    Files(String),
     /// Signing in, signing out or syncing failed. The text already says
     /// what the person can do about it.
     #[error("{0}")]

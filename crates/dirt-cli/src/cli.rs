@@ -60,6 +60,50 @@ pub enum Commands {
         /// Note ID or unique ID prefix
         id: String,
     },
+    /// Attach a file to a note. Prints the file's ID
+    Attach {
+        /// Note ID or unique ID prefix
+        note: String,
+        /// The file to attach. It is copied; the original is left alone
+        file: PathBuf,
+        /// What to call the file in the note, if not what it is called
+        /// on disk
+        #[arg(long)]
+        name: Option<String>,
+        /// The file's media type, such as image/png, if the name does not
+        /// say
+        #[arg(long = "type", value_name = "MEDIA_TYPE")]
+        media_type: Option<String>,
+    },
+    /// List the files attached to a note
+    Files {
+        /// Note ID or unique ID prefix
+        note: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Save a copy of a file attached to a note, fetching it first if
+    /// this device does not hold it
+    Save {
+        /// Note ID or unique ID prefix
+        note: String,
+        /// The start of the file's ID, or its name
+        file: String,
+        /// Where to save it: a file, or a folder to save it in under its
+        /// own name. The current folder when omitted
+        path: Option<PathBuf>,
+        /// Replace a file that is already there
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Remove a file from a note. Prints the file's ID
+    Detach {
+        /// Note ID or unique ID prefix
+        note: String,
+        /// The start of the file's ID, or its name
+        file: String,
+    },
     /// Export notes
     Export {
         /// Export format

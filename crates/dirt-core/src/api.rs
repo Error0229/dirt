@@ -136,13 +136,13 @@ impl Transport for HttpTransport {
             if let Some(body) = request.body {
                 builder = builder.body(body);
             }
-            let response = builder.send().await.map_err(|error| error.to_string())?;
+            // The address is itself the permission to send or fetch the
+            // file, for some minutes. A failure is reported without it,
+            // so that it reaches no log and no screen.
+            let failed = |error: reqwest::Error| error.without_url().to_string();
+            let response = builder.send().await.map_err(failed)?;
             let status = response.status().as_u16();
-            let body = response
-                .bytes()
-                .await
-                .map_err(|error| error.to_string())?
-                .to_vec();
+            let body = response.bytes().await.map_err(failed)?.to_vec();
             Ok(HttpResponse { status, body })
         })
     }
@@ -688,6 +688,27 @@ mod tests {
                 .await
                 .unwrap_err();
             assert_eq!(error.class(), ErrorClass::TryAgainLater, "{status}");
+        }
+    }
+
+    /// A link to the storage is the permission to use it. When a request
+    /// to the storage fails, what is reported does not hold the link.
+    #[tokio::test]
+    async fn a_failure_at_the_storage_does_not_repeat_the_link() {
+        let transport = HttpTransport::new("http://127.0.0.1:9").unwrap();
+        // Nothing listens there.
+        let link = "http://127.0.0.1:9/bucket/account/file?X-Amz-Signature=the-permission";
+        let error = transport
+            .send_to_storage(StorageRequest {
+                method: "PUT",
+                url: link.to_owned(),
+                body: Some(b"sealed".to_vec()),
+            })
+            .await
+            .unwrap_err();
+        assert!(!error.is_empty());
+        for part in ["the-permission", "X-Amz", "bucket", "127.0.0.1"] {
+            assert!(!error.contains(part), "{part} is in: {error}");
         }
     }
 
