@@ -41,6 +41,8 @@ pub async fn create_nonce(State(state): State<AppState>) -> ApiResult<Json<Nonce
     Ok(Json(NonceResponse {
         nonce,
         expires_in_secs: limits::NONCE_LIFETIME_SECS,
+        issuer: state.config.clerk_issuer.clone(),
+        client_id: state.config.clerk_client_id.clone(),
     }))
 }
 
@@ -271,12 +273,23 @@ pub async fn list(
 
 /// `DELETE /v1/devices/{id}`: removes a device from the account. Its token
 /// stops working with the next request it makes.
+///
+/// An approved device may remove any device of its account. A device that
+/// is still waiting may remove only itself, which is what signing out of
+/// it does: otherwise it would wait for ever and count against the limit
+/// on waiting devices.
 pub async fn revoke(
     State(state): State<AppState>,
-    Approved(device): Approved,
+    AnyDevice(device): AnyDevice,
     target: Result<Path<Uuid>, PathRejection>,
 ) -> ApiResult<Response> {
     let Path(target) = target.map_err(|_| ApiError::new(ErrorCode::NotFound, "no such device"))?;
+    if device.status != DeviceStatus::Approved && target != device.id {
+        return Err(ApiError::new(
+            ErrorCode::DevicePending,
+            "this device is waiting to be approved by another device",
+        ));
+    }
     // The account is part of the condition, so one account can never revoke
     // another's device, whatever ID it sends.
     let revoked =
