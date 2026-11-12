@@ -916,6 +916,13 @@ Carried forward:
   marker.
 - **Deliverables:** as in design section 10.
 
+**Planned (2026-11-12):** `docs/plans/2026-11-12-step-9-attachments-plan.md`
+holds the design review and the build order, in six parts. The file expiry
+question is settled there as the default above, made exact: a file goes
+thirty days after the last note that refers to it is purged. Nothing is
+built yet. Trying it on real devices needs object storage in an account
+that only the owner can open (`docs/OWNER_DECISIONS.md`, decision 6).
+
 ## Acceptance criteria for this plan
 
 - [x] Steps 1 and 2 meet their exit lists above. Step 1's last item, the

@@ -678,7 +678,17 @@ integration uses a Postgres service container.
 - **Clean-up:** the server cannot tell which files are referenced, so clients
   tell it. A file is confirmed once its note has synced, and deleted 30 days
   after its removal has settled. Uploads never confirmed are discarded after a
-  week.
+  week. The design review at the start of step 9 settled what "settled"
+  means: the server keeps a list of which notes refer to a file, and a
+  file's last thirty days start when the last reference goes, by its note
+  being purged or a device reporting the file removed. A device that keeps
+  a purged note's text as a new note keeps its files by confirming them for
+  the new note. Two devices may each do that, which is why a file can have
+  more than one note.
+- **Review before building:** `docs/plans/2026-11-12-step-9-attachments-plan.md`
+  goes through this section against what steps 8c to 8e changed: purging,
+  changing the account's key, and restoring a backup. Recording voice memos
+  inside an app is not part of it and needs a decision.
 - **Limits:** a maximum size per file and a total per account.
 - **Key rotation stays cheap:** rotating the account key re-encrypts notes
   only, not files.

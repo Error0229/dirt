@@ -1,7 +1,8 @@
 # Decisions for the owner
 
-Five things have to be decided before Dirt runs for people other than its
-owner. Each costs money, opens an account in the owner's name, or changes a
+Six things are the owner's to decide. Five have to be decided before Dirt
+runs for people other than its owner; the sixth before attachments can be
+tried on real devices. Each costs money, opens an account in the owner's name, or changes a
 setting only the owner can change, so none was taken while the redesign was
 being built. Each is written up here with what is known, what it costs and
 a recommendation.
@@ -16,6 +17,7 @@ change: check them again before paying.
 | [The hosting plan](#3-the-hosting-plan) | Stay on Vercel's Hobby plan | Nothing | Charging money |
 | [The sign-in service](#4-the-sign-in-service-for-production) | A Clerk production instance on a domain | A domain's yearly fee | More than 100 users |
 | [How security reports are taken](#5-how-security-reports-are-taken) | Switch on GitHub's private reporting | Nothing | Nothing; do it now |
+| [The storage for attachments](#6-the-storage-for-attachments) | Cloudflare R2 | Nothing at first; needs a billing profile | Trying attachments on real devices |
 
 ## 1. Where the database dumps are kept
 
@@ -170,6 +172,46 @@ proof of concept and the impact; only the maintainers see it.
 under Advanced Security, to the right of "Private vulnerability reporting".
 When it is on, `docs/SECURITY.md`'s last section should say to use that
 button, and that is a two-line change.
+
+## 6. The storage for attachments
+
+**What it is for.** Step 9 of the redesign adds files attached to notes.
+A device encrypts a file and sends it straight to object storage, through a
+link the server signs; other devices fetch it the same way. The server
+never handles the bytes, and the storage holds only ciphertext.
+
+**Why it is separate from the dumps' storage.** Devices download from it
+directly, so what matters is the price of taking data out, and that a
+phone can reach it. For the dumps what matters is a key that cannot delete.
+
+| | Cloudflare R2 | Backblaze B2 |
+|---|---|---|
+| Free allowance | 10 GB a month | The first 10 GB |
+| Beyond it | $0.015 a gigabyte a month | From $6.95 a terabyte a month |
+| Taking data out | Free | Free up to three times what is stored, then $0.01 a gigabyte |
+| To start | "You must purchase R2 before you can generate an API token" | An account |
+
+**Recommendation: Cloudflare R2,** as the design says. Downloads cost
+nothing however often devices fetch.
+
+If one account is preferred to two, R2 can hold the dumps as well. The
+cost is the point made under decision 1: R2's tokens are "Object Read &
+Write" or "Object Read only", so the backup workflow's key could delete
+dumps as well as add them.
+
+**How much.** The plan for step 9 proposes 200 MiB of files for an account
+and 10 MiB for one file. Fifty accounts filled to the top are the free
+10 GB; past that, a full account costs about a third of a cent a month.
+Anyone can sign up, so the bill has no ceiling of its own. It grows by that
+much for each account that fills itself.
+
+**The owner does:** opens the R2 account, makes a bucket and a token
+limited to it, and gives the trial server the bucket's address and the
+token. `docs/DEPLOY.md` will list the settings when part 9a is built.
+
+**Until then:** attachments are built and tested against a store on the
+developer's machine that speaks the same protocol. They cannot be tried on
+a phone.
 
 ## Sources
 
