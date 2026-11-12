@@ -32,6 +32,7 @@ use dirt_proto::api::limits;
 use crate::files::shelf::Shelf;
 use crate::files::{seal, Attachment, FileKey};
 use crate::models::{Note, NoteId, Settings};
+use crate::notes::NoteDoc;
 use crate::{Error, Result};
 
 /// How many threads serve reads.
@@ -405,6 +406,11 @@ impl Store {
     ///
     /// This is how notes written before sign-in reach the account's store.
     ///
+    /// A note's files go with it: each one this store holds is copied onto
+    /// the target's shelf before the note is. The store the notes leave may
+    /// be removed afterwards, folder and all, and a note that named a file
+    /// would otherwise arrive without it.
+    ///
     /// Nothing is lost if the move is interrupted or if this store is
     /// written to while it runs. Each note is merged into the target first,
     /// and is then removed from here only if it has not changed since it was
@@ -432,12 +438,39 @@ impl Store {
         let snapshots = self.read(|c| notes::snapshots(c)).await?;
         let mut copied = Vec::with_capacity(snapshots.len());
         for snapshot in snapshots {
+            // The files first. If the move stops here the note is still in
+            // this store with its files, and a file on the target's shelf
+            // that nothing names yet does no harm.
+            self.copy_files_into(target, &snapshot.document).await?;
             target
                 .merge_note_document(&snapshot.id, snapshot.document.clone())
                 .await?;
             copied.push((snapshot.id, snapshot.document));
         }
         Ok(copied)
+    }
+
+    /// Copies the files that `document` names from this store's shelf onto
+    /// `target`'s. A file this store does not hold is passed over: the
+    /// note names it all the same, and it is fetched when it is wanted.
+    async fn copy_files_into(&self, target: &Self, document: &[u8]) -> Result<()> {
+        // Reading needs no client ID of its own: nothing is written.
+        let files = NoteDoc::from_bytes(0, document)?.attachments();
+        if files.is_empty() {
+            return Ok(());
+        }
+        let (from, to) = (self.shelf(), target.shelf());
+        // On the store's own thread, as attaching a file is: copying a
+        // file is not for the thread that draws the screen.
+        self.read(move |_| {
+            for file in files {
+                if from.holds(file.file_id) && !to.holds(file.file_id) {
+                    to.add(file.file_id, &from.path(file.file_id))?;
+                }
+            }
+            Ok(())
+        })
+        .await
     }
 
     // ---- Sync state ----

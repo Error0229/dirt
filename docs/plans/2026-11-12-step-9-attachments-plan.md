@@ -327,8 +327,18 @@ their own.** Nothing is sent yet: this half needs no server.
 - **Local schema version 4** adds the table of which note names which
   file.
 
-Twenty-nine tests. Each rule was undone in turn, 16 in all, to see a test
+Thirty tests. Each rule was undone in turn, 16 in all, to see a test
 fail, and each did.
+
+What review showed:
+
+- **Notes that moved between stores left their files behind.** Notes
+  written before signing in are moved into the account's store, and moved
+  back out when the account is deleted, after which the account's folder
+  is removed. Only the documents moved. A note arrived naming a file that
+  was not there, and after an account was deleted the file was gone for
+  good. The move now copies each file the store holds before it copies the
+  note. Found in review.
 
 Not in this half, and still to do in 9b: sending and fetching files,
 removing a file from the device once nothing names it, and thumbnails.

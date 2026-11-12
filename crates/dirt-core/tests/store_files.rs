@@ -324,6 +324,81 @@ async fn the_store_knows_which_files_its_notes_name() {
     assert!(store.files_in_use().await.unwrap().contains(&in_first));
 }
 
+/// Notes move between stores: into the account's store when the person
+/// signs in, and back out of it when the account is deleted, after which
+/// the account's folder is removed. A note's files have to make the same
+/// journey, or the note arrives naming files that are gone.
+#[tokio::test]
+async fn notes_that_move_to_another_store_take_their_files_with_them() {
+    let desk = desk();
+    let local = &desk.store;
+    let account = Store::open(desk.folder.path().join("account").join("notes.db")).unwrap();
+    let source = desk.a_file("photo.jpg", b"the photograph");
+    let note = local
+        .create_note("written before signing in")
+        .await
+        .unwrap();
+    let attached = local
+        .attach_file(&note.id, &source, "photo.jpg", "image/jpeg")
+        .await
+        .unwrap();
+    // A note that names a file this device has not fetched. It moves too.
+    let elsewhere = dirt_core::notes::NoteDoc::new(7_100_000_000_000_009);
+    elsewhere.set_text("written elsewhere", 1_000);
+    let not_held = dirt_core::files::Attachment {
+        file_id: Uuid::now_v7(),
+        name: "not fetched yet.pdf".to_owned(),
+        media_type: "application/pdf".to_owned(),
+        size: 10,
+        key: dirt_core::files::FileKey::generate(),
+        added_at_ms: 2_000,
+        thumbnail: None,
+    };
+    elsewhere.attach(&not_held, 2_000);
+    let other = NoteId::new();
+    local
+        .apply_remote_note(&other, elsewhere.encode(), 3)
+        .await
+        .unwrap();
+
+    assert_eq!(local.move_notes_into(&account).await.unwrap(), 2);
+
+    assert_eq!(
+        account.note_attachments(&note.id).await.unwrap(),
+        std::slice::from_ref(&attached)
+    );
+    assert_eq!(
+        on_the_shelf(&account, attached.file_id).as_deref(),
+        Some(&b"the photograph"[..])
+    );
+    assert_eq!(
+        account.note_attachments(&other).await.unwrap(),
+        std::slice::from_ref(&not_held)
+    );
+    assert!(!account.shelf().holds(not_held.file_id));
+
+    // The store the notes left can now go, folder and all, as an account's
+    // does when the account is deleted.
+    drop(desk.store);
+    std::fs::remove_dir_all(desk.folder.path().join("store")).unwrap();
+    assert_eq!(
+        on_the_shelf(&account, attached.file_id).as_deref(),
+        Some(&b"the photograph"[..])
+    );
+
+    // And back: the same move in the other direction.
+    let again = Store::open(desk.folder.path().join("store").join("notes.db")).unwrap();
+    assert_eq!(account.move_notes_into(&again).await.unwrap(), 2);
+    assert_eq!(
+        on_the_shelf(&again, attached.file_id).as_deref(),
+        Some(&b"the photograph"[..])
+    );
+    assert_eq!(
+        again.note_attachments(&note.id).await.unwrap(),
+        std::slice::from_ref(&attached)
+    );
+}
+
 /// Where the files are: beside the store's database.
 #[tokio::test]
 async fn each_store_has_a_shelf_of_its_own() {
