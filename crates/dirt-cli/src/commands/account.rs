@@ -408,14 +408,15 @@ async fn logout(session: &Session, discard_unsynced: bool) -> Result<(), CliErro
             println!("Signed out. This account's notes and keys were removed from this device.");
             Ok(())
         }
-        Err(SignOutError::Unsynced { notes, cause }) => {
-            let why = cause.map_or_else(String::new, |cause| format!(" ({cause})"));
-            Err(CliError::Account(format!(
-                "{notes} note(s) have not reached the server{why} and signing out would delete \
-                 them. Save them with `dirt export`, then run \
-                 `dirt auth logout --discard-unsynced`"
-            )))
-        }
+        Err(SignOutError::Unsynced {
+            notes,
+            files,
+            cause,
+        }) => Err(CliError::Account(format!(
+            "{} To keep a copy of the notes, run `dirt export`. To sign out all the same, \
+             run `dirt auth logout --discard-unsynced`",
+            dirt_core::sync::overview::sign_out_would_lose(notes, files, cause.as_deref(),)
+        ))),
         Err(error) => Err(account_error(error)),
     }
 }

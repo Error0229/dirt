@@ -32,7 +32,7 @@ pub(super) const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const OPEN_PATIENCE: Duration = Duration::from_secs(20);
 
 /// The version of the tables below, kept in SQLite's `user_version`.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE meta (
@@ -169,6 +169,39 @@ CREATE TABLE note_files (
 CREATE INDEX note_files_by_file ON note_files (file_id);
 ";
 
+/// Version 5: what this device has told the server about each file a note
+/// names, and what it still has to. The server cannot read a note, so it
+/// learns which notes refer to which files from the devices.
+///
+/// A row of `file_links` is a file and a note that named it. `confirmed`
+/// is set once the server has taken the reference. `unnamed_at` is when
+/// this device first saw the note without the file; after a wait it tells
+/// the server so, as it asks for a deleted note to be purged, and the row
+/// goes. `problem` is why the file could not be sent, if it could not. A
+/// note's rows go with the note.
+///
+/// A row of `shelf_spare` is a file on the shelf that nothing needed when
+/// the device last looked, and since when. Such a file is removed only
+/// after it has stayed unneeded for a while: a file is put on the shelf a
+/// moment before the note that names it is written, and another program on
+/// this device may be doing just that.
+const SCHEMA_V5: &str = "
+CREATE TABLE file_links (
+    file_id    TEXT NOT NULL,
+    note_id    TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    confirmed  INTEGER NOT NULL DEFAULT 0,
+    unnamed_at INTEGER,
+    problem    TEXT,
+    PRIMARY KEY (file_id, note_id)
+);
+CREATE INDEX file_links_by_note ON file_links (note_id);
+INSERT INTO file_links (file_id, note_id) SELECT file_id, note_id FROM note_files;
+CREATE TABLE shelf_spare (
+    file_id TEXT PRIMARY KEY,
+    since   INTEGER NOT NULL
+) WITHOUT ROWID;
+";
+
 /// The version is read inside the write transaction, so two processes that
 /// start together cannot both run the set-up.
 pub(super) fn set_up(connection: &mut Connection) -> Result<String> {
@@ -191,6 +224,9 @@ pub(super) fn set_up(connection: &mut Connection) -> Result<String> {
     }
     if version < 4 {
         tx.execute_batch(SCHEMA_V4)?;
+    }
+    if version < 5 {
+        tx.execute_batch(SCHEMA_V5)?;
     }
     if version < SCHEMA_VERSION {
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -335,6 +371,65 @@ mod tests {
         let id_a = client_id(&write_transaction(&mut a).unwrap()).unwrap();
         let id_b = client_id(&write_transaction(&mut b).unwrap()).unwrap();
         assert_ne!(id_a, id_b);
+    }
+
+    /// A database written before files were sent anywhere. Each file a
+    /// note names in it has a reference the server has yet to be told of.
+    #[test]
+    fn a_database_from_before_files_were_sent_has_every_reference_to_confirm() {
+        let (_folder, path) = fresh();
+        {
+            let connection = open_connection(&path).unwrap();
+            for schema in [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4] {
+                connection.execute_batch(schema).unwrap();
+            }
+            connection.pragma_update(None, "user_version", 4).unwrap();
+            connection
+                .execute_batch(
+                    "INSERT INTO notes (id, doc, text, edited_at, deleted, revision) \
+                     VALUES ('with', x'00', 'with', 1, 0, 1), ('without', x'00', 'without', 1, 0, 1);
+                     INSERT INTO note_files (note_id, file_id) VALUES ('with', 'f1'), ('with', 'f2');",
+                )
+                .unwrap();
+        }
+
+        let mut connection = open_connection(&path).unwrap();
+        set_up(&mut connection).unwrap();
+
+        let mut statement = connection
+            .prepare(
+                "SELECT file_id, note_id, confirmed, unnamed_at IS NULL, problem IS NULL \
+                   FROM file_links ORDER BY file_id",
+            )
+            .unwrap();
+        let links: Vec<(String, String, bool, bool, bool)> = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            links,
+            [
+                ("f1".to_owned(), "with".to_owned(), false, true, true),
+                ("f2".to_owned(), "with".to_owned(), false, true, true),
+            ]
+        );
+        // A note's references go with the note.
+        connection
+            .execute("DELETE FROM notes WHERE id = 'with'", [])
+            .unwrap();
+        let left: i64 = connection
+            .query_row("SELECT count(*) FROM file_links", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
     }
 
     /// A database written before notes recorded when they were deleted.

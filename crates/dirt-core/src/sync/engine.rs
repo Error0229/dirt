@@ -1,4 +1,5 @@
-//! One sync cycle: pull, decrypt and merge, then encrypt and push.
+//! One sync cycle: pull, decrypt and merge, then encrypt and push. Files
+//! follow the notes ([`files`]).
 //!
 //! A cycle is safe to cut off at any point and to run again. Merging the
 //! same document twice changes nothing, the pull cursor is saved after each
@@ -24,6 +25,10 @@
 //!   change does not depend on the device that began it.
 //! - A wrapped copy that does not open was not made by a device of the
 //!   account. The engine stops and adopts nothing.
+
+mod files;
+
+pub use files::FileError;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -86,6 +91,15 @@ pub struct SyncReport {
     /// Deleted notes the server purged in this cycle at this device's
     /// request.
     pub purged: usize,
+    /// Files sent to the storage in this cycle.
+    pub files_sent: usize,
+    /// Files this device holds that the server had not taken when the
+    /// cycle ended, leaving out those it refused.
+    pub files_unsent: usize,
+    /// Sending files was cut short by a failure that trying again may
+    /// cure: the storage could not be reached, say. The notes synced all
+    /// the same.
+    pub files_failed: bool,
 }
 
 /// Why a cycle ended early.
@@ -186,8 +200,11 @@ pub struct SyncEngine {
     /// was made with and cannot follow a change.
     keeper: Option<Arc<dyn KeyKeeper>>,
     /// How long a note stays deleted on this device before the engine
-    /// asks the server to purge it.
+    /// asks the server to purge it. A file a note has stopped naming waits
+    /// as long before the server is told.
     purge_after: Duration,
+    /// How long a file that nothing needs stays on this device.
+    spare_file_wait: Duration,
 }
 
 /// What became of one pulled or returned blob.
@@ -212,7 +229,15 @@ impl SyncEngine {
             merged: AtomicU64::new(0),
             keeper: None,
             purge_after: crate::sync::worker::default_purge_after(),
+            spare_file_wait: crate::sync::worker::DEFAULT_SPARE_FILE_WAIT,
         }
+    }
+
+    /// Sets how long a file that nothing needs stays on this device.
+    #[must_use]
+    pub const fn clearing_spare_files_after(mut self, wait: Duration) -> Self {
+        self.spare_file_wait = wait;
+        self
     }
 
     /// Sets how long a note stays deleted on this device before the engine
@@ -409,6 +434,7 @@ impl SyncEngine {
             self.forget_older_keys()?;
         }
         report.purged = self.purge_deleted().await?;
+        self.sync_files(&mut report).await?;
         report.unsent = self.store.unsent_count().await?;
         self.store
             .set_last_synced_ms(chrono::Utc::now().timestamp_millis())

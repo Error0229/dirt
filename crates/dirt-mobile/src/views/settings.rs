@@ -207,13 +207,18 @@ pub fn Settings() -> Element {
                         unsynced.set(None);
                         message.set(Some((MessageKind::Info, "Signed out.".to_owned())));
                     }
-                    Err(SignOutError::Unsynced { notes, cause }) => {
-                        unsynced.set(Some(notes));
-                        let why = cause.map_or_else(String::new, |cause| format!(" ({cause})"));
+                    Err(SignOutError::Unsynced {
+                        notes,
+                        files,
+                        cause,
+                    }) => {
+                        unsynced.set(Some(notes + files));
                         message.set(Some((
                             MessageKind::Error,
-                            format!(
-                                "{notes} note(s) have not been synced{why}. Signing out would delete them."
+                            dirt_core::sync::overview::sign_out_would_lose(
+                                notes,
+                                files,
+                                cause.as_deref(),
                             ),
                         )));
                     }

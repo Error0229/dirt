@@ -54,6 +54,50 @@ impl Shelf {
         fs::rename(self.unfinished(file)?, self.path(file))
     }
 
+    /// A place of its own to write a file that is being fetched. Two
+    /// programs on one device may fetch the same file at once, and each
+    /// writes to its own place. Give it to [`Self::keep_from`].
+    pub fn unfinished_of_my_own(&self, file: Uuid) -> io::Result<PathBuf> {
+        fs::create_dir_all(&self.folder)?;
+        Ok(self
+            .folder
+            .join(format!("{file}.{}.part", Uuid::now_v7().simple())))
+    }
+
+    /// Makes the unfinished file at `unfinished` the file. If the shelf
+    /// came to hold the file in the meantime, that copy stays and this one
+    /// is dropped: they are the same file.
+    pub fn keep_from(&self, file: Uuid, unfinished: &Path) -> io::Result<()> {
+        if self.holds(file) {
+            return fs::remove_file(unfinished);
+        }
+        fs::rename(unfinished, self.path(file))
+    }
+
+    /// Removes unfinished files that were last written before `before`:
+    /// what a program left that stopped while it was fetching or copying.
+    /// Returns how many.
+    pub fn clear_unfinished(&self, before: std::time::SystemTime) -> io::Result<usize> {
+        let entries = match fs::read_dir(&self.folder) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error),
+        };
+        let mut removed = 0;
+        for entry in entries {
+            let entry = entry?;
+            let unfinished = entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "part");
+            if unfinished && entry.metadata()?.modified()? < before {
+                fs::remove_file(entry.path())?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
     /// Copies a file from elsewhere on the device onto the shelf. Returns
     /// its size.
     pub fn add(&self, file: Uuid, source: &Path) -> io::Result<u64> {
@@ -69,6 +113,29 @@ impl Shelf {
                 Err(error)
             }
         }
+    }
+
+    /// Every file the shelf holds whole.
+    pub fn list(&self) -> io::Result<Vec<Uuid>> {
+        let entries = match fs::read_dir(&self.folder) {
+            Ok(entries) => entries,
+            // No file was ever put on it.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        let mut files = Vec::new();
+        for entry in entries {
+            // An unfinished file, or anything else that is there, has a
+            // name that is not an ID.
+            if let Some(file) = entry?
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse().ok())
+            {
+                files.push(file);
+            }
+        }
+        Ok(files)
     }
 
     /// Removes the file, and anything unfinished under its name. A file

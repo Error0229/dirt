@@ -9,6 +9,7 @@
 //! The file may be open in two processes at once: the desktop app and the
 //! CLI. `schema` holds the rules that make that safe.
 
+mod files;
 mod location;
 mod notes;
 mod schema;
@@ -22,6 +23,7 @@ use std::thread::JoinHandle;
 use rusqlite::Connection;
 use tokio::sync::oneshot;
 
+pub use files::{FileLink, FileProblem};
 pub use location::{store_path, StoreName};
 pub use sync_state::{
     NoteProblem, ProblemKind, PurgeApplied, PurgeCandidate, SyncProgress, UnsentNote,
@@ -30,7 +32,7 @@ pub use sync_state::{
 use dirt_proto::api::limits;
 
 use crate::files::shelf::Shelf;
-use crate::files::{seal, Attachment, FileKey};
+use crate::files::{seal, Attachment, FileKey, FilePart};
 use crate::models::{Note, NoteId, Settings};
 use crate::notes::NoteDoc;
 use crate::{Error, Result};
@@ -280,6 +282,184 @@ impl Store {
     pub async fn note_attachments(&self, note: &NoteId) -> Result<Vec<Attachment>> {
         let note = *note;
         self.read(move |c| notes::attachments(c, &note)).await
+    }
+
+    // ---- Files and the server ----
+
+    /// One file that a note names: an attachment or a thumbnail, with the
+    /// key that opens it. `None` if the note does not name it.
+    pub async fn file_part(&self, note: &NoteId, file_id: uuid::Uuid) -> Result<Option<FilePart>> {
+        let note = *note;
+        self.read(move |c| files::part(c, &note, file_id)).await
+    }
+
+    /// References the server has not taken yet, positioned after `after`
+    /// (zero for the start), up to `max`: a file, and a note on the server
+    /// that names it.
+    pub async fn files_to_confirm(&self, after: i64, max: usize) -> Result<Vec<FileLink>> {
+        self.read(move |c| files::to_confirm(c, after, max)).await
+    }
+
+    /// Records that the server has taken a reference.
+    pub async fn mark_file_confirmed(&self, link: &FileLink) -> Result<()> {
+        let link = *link;
+        self.write(move |c| files::mark_confirmed(c, &link)).await
+    }
+
+    /// Records why a file could not be sent for a note.
+    pub async fn flag_file_problem(&self, link: &FileLink, reason: String) -> Result<()> {
+        let link = *link;
+        self.write(move |c| files::set_problem(c, &link, &reason))
+            .await
+    }
+
+    /// The files that could not be sent, and why.
+    pub async fn file_problems(&self) -> Result<Vec<FileProblem>> {
+        self.read(|c| files::problems(c)).await
+    }
+
+    /// References to tell the server to drop: a note has been without the
+    /// file on this device since before `unnamed_before_ms`, and the server
+    /// holds the note as this device does. Up to `max`.
+    pub async fn files_to_release(
+        &self,
+        unnamed_before_ms: i64,
+        max: usize,
+    ) -> Result<Vec<FileLink>> {
+        self.read(move |c| files::to_release(c, unnamed_before_ms, max))
+            .await
+    }
+
+    /// Forgets a reference that the server has dropped.
+    pub async fn forget_file_link(&self, link: &FileLink) -> Result<()> {
+        let link = *link;
+        self.write(move |c| files::forget(c, &link)).await
+    }
+
+    /// How many files this device holds that the server has not taken,
+    /// leaving out those it refused.
+    pub async fn unsent_file_count(&self) -> Result<usize> {
+        let shelf = self.shelf();
+        self.read(move |c| {
+            let waiting = files::unconfirmed(c)?;
+            Ok(waiting
+                .into_iter()
+                .filter(|file| shelf.holds(*file))
+                .count())
+        })
+        .await
+    }
+
+    /// How many files this device holds that the server has not been
+    /// seen to take, counting those it refused: what deleting this store
+    /// now would lose of files, as [`Self::unsynced_count`] is of notes.
+    pub async fn unsynced_file_count(&self) -> Result<usize> {
+        let shelf = self.shelf();
+        self.read(move |c| {
+            let waiting = files::not_taken(c)?;
+            Ok(waiting
+                .into_iter()
+                .filter(|file| shelf.holds(*file))
+                .count())
+        })
+        .await
+    }
+
+    /// A file from the shelf as it is sent: sealed, bound to the account.
+    ///
+    /// Fails if the shelf does not hold the file at the size the note
+    /// says, which is the size the server is told.
+    pub async fn sealed_file(&self, account_id: uuid::Uuid, part: FilePart) -> Result<Vec<u8>> {
+        let shelf = self.shelf();
+        self.read(move |_| {
+            let path = shelf.path(part.file_id);
+            let size = std::fs::metadata(&path)?.len();
+            if size != part.size {
+                return Err(Error::InvalidInput(format!(
+                    "the file is {size} bytes on this device and {} in the note",
+                    part.size
+                )));
+            }
+            let context = seal::FileContext {
+                account_id,
+                file_id: part.file_id,
+            };
+            let room = usize::try_from(part.stored_size()).unwrap_or_default();
+            let mut sealed = Vec::with_capacity(room);
+            seal::seal(
+                &part.key,
+                &context,
+                std::fs::File::open(&path)?,
+                &mut sealed,
+            )
+            .map_err(|error| Error::Storage(error.to_string()))?;
+            Ok(sealed)
+        })
+        .await
+    }
+
+    /// Opens a sealed file that came from the storage and puts it on the
+    /// shelf. Returns where it is, or `None` if it did not open, or opened
+    /// to another size than the note says: it is not the file the note
+    /// names, and nothing is kept.
+    pub async fn keep_fetched_file(
+        &self,
+        account_id: uuid::Uuid,
+        part: FilePart,
+        sealed: Vec<u8>,
+    ) -> Result<Option<PathBuf>> {
+        let shelf = self.shelf();
+        self.read(move |_| {
+            let context = seal::FileContext {
+                account_id,
+                file_id: part.file_id,
+            };
+            let unfinished = shelf.unfinished_of_my_own(part.file_id)?;
+            let opened = std::fs::File::create(&unfinished)
+                .map_err(seal::SealError::from)
+                .and_then(|sink| seal::open(&part.key, &context, sealed.as_slice(), sink));
+            match opened {
+                Ok(size) if size == part.size => {
+                    shelf.keep_from(part.file_id, &unfinished)?;
+                    Ok(Some(shelf.path(part.file_id)))
+                }
+                Ok(_) | Err(seal::SealError::UnknownLayout | seal::SealError::Rejected) => {
+                    let _ = std::fs::remove_file(&unfinished);
+                    Ok(None)
+                }
+                Err(seal::SealError::Io(error)) => {
+                    let _ = std::fs::remove_file(&unfinished);
+                    Err(error.into())
+                }
+            }
+        })
+        .await
+    }
+
+    /// Removes from the shelf the files that nothing on this device has
+    /// needed for `wait`: no note names them and nothing about them is
+    /// left to tell the server. Returns how many went.
+    ///
+    /// A file is put on the shelf a moment before the note that names it
+    /// is written, and this store may be open in two programs. So a file
+    /// is only noted the first time it is seen unneeded, and removed when
+    /// it has stayed so.
+    pub async fn clear_spare_files(&self, wait: std::time::Duration) -> Result<usize> {
+        let shelf = self.shelf();
+        self.write(move |c| {
+            let now = now_ms();
+            let wait_ms = i64::try_from(wait.as_millis()).unwrap_or(i64::MAX);
+            let removed = files::clear_spare(c, &shelf, now, now.saturating_sub(wait_ms))?;
+            // What a program left that stopped half-way through a file.
+            // A day is longer than any file takes.
+            let stale = std::time::SystemTime::now()
+                .checked_sub(std::time::Duration::from_hours(24).max(wait));
+            if let Some(stale) = stale {
+                shelf.clear_unfinished(stale)?;
+            }
+            Ok(removed)
+        })
+        .await
     }
 
     /// Replaces a note's text. Only the parts that changed are recorded, so

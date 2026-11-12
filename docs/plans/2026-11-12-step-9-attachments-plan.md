@@ -291,15 +291,17 @@ Not tried: Cloudflare R2 itself. Everything above ran against the gateway.
       name, type, size and key, and its thumbnail's. Two devices adding
       files to one note merge.
 - [x] Encrypting and decrypting a file in pieces (review item 4).
-- [ ] A queue in the local store: files to upload, to confirm and to
+- [x] A queue in the local store: files to upload, to confirm and to
       release. It runs in the sync cycle, after notes.
-- [ ] Fetching a file on demand and keeping it. A file the server does not
+- [x] Fetching a file on demand and keeping it. A file the server does not
       know is uploaded again by a device that holds it (review item 6).
-- [ ] A purged note's files go from the device. A note kept as new after a
+- [x] A purged note's files go from the device. A note kept as new after a
       purge keeps its files and confirms them (review item 1).
 - [ ] Making a thumbnail of an image when it is attached. The document
-      has the place for one.
-- [ ] `dirt-sim`: two devices, a file added on one and read on the other;
+      has the place for one, and sync already sends and fetches one as a
+      file of its own. A thumbnail counts as one of a note's twenty files
+      on the server, so attaching has to count it too.
+- [x] `dirt-sim`: two devices, a file added on one and read on the other;
       offline; the purge cases of step 8e with files; a restore. And three
       devices: two were away with edits when the third purged the note,
       each keeps its own new note, both show the file, and purging one of
@@ -340,8 +342,66 @@ What review showed:
   good. The move now copies each file the store holds before it copies the
   note. Found in review.
 
-Not in this half, and still to do in 9b: sending and fetching files,
-removing a file from the device once nothing names it, and thumbnails.
+**Result of the second half (2026-11-12): files sync.** Still to do in 9b:
+thumbnails.
+
+How a device deals with files, after the notes have synced in a cycle:
+
+1. **It confirms** each reference the server has not taken: a file, and a
+   note the server holds that names it. Every device does this for every
+   note it holds, whether or not it holds the file. One of them may be the
+   device that keeps the note as new after a purge.
+2. **If the server answers that it does not have the file and this device
+   does, the device sends it** and confirms again. That one rule covers a
+   file attached here, an upload that was cut short, and a server restored
+   from a backup made before the file was sent. No device keeps a list of
+   what it has uploaded: the server is asked.
+3. **It releases** each reference that a note has been without, on this
+   device, for thirty days, once the server holds the note as this device
+   does. Whether the server ever took the reference does not matter: the
+   answer to a confirm may have been lost.
+4. **It removes from itself the files nothing needs:** no note names them,
+   deleted notes included, and nothing about them is left to tell the
+   server. A file is removed only when it has stayed unneeded for an hour.
+   A file is put on a device a moment before the note that names it is
+   written, and the desktop app and the CLI share one store.
+
+A file is fetched when it is wanted and then kept. What the storage returns
+is kept only if it opens with the file's key to the size the note says.
+
+What was decided while building:
+
+- **A failure with files does not fail the cycle.** The notes have synced
+  by then. An open app tries again with growing pauses, as it does for
+  notes, only if the failure was one that trying again may cure and a file
+  this device holds is still waiting.
+- **A server with no storage is not asked again and again.** It answers
+  `files_unavailable`, files wait, and the next thing that happens asks
+  once more. This is `dirt-api` until its owner opens a storage account.
+- **A file the server refuses is listed with the reason** and not counted
+  as waiting: the account's files are full, or the note has twenty. It is
+  asked about again each cycle, which costs one request. Once the account
+  is known to be full no more uploads are asked for in that cycle.
+- **A device that does not hold a missing file keeps asking, once a cycle.**
+  After a restore another device has the file to send, and this one's
+  reference has to be recorded once it has. If no device holds the file any
+  more, the asking never ends. It is one small request in a cycle that is
+  made anyway.
+- **An entry this version cannot read still counts as a file the note
+  names.** A later version wrote it. Left out, this device would release
+  the reference after thirty days and the file would be deleted under the
+  device that wants it.
+- **A new epoch offers every reference again** (a reset, or a restore).
+- **Local schema version 5:** what this device has told the server about
+  each file a note names, and which files on it are waiting to be removed.
+
+Thirteen tests with whole devices, the real server and a real file
+storage: the cases the plan lists, and the storage failing while the server
+answers, an upload whose answer was lost, an open app trying again, a
+server with no storage, a full account, a note written before signing in,
+and a stored object with one byte changed. Sixteen more tests of the core.
+
+Not checked on a real device: no client attaches a file yet.
 
 ### 9c: the CLI
 

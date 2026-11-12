@@ -138,13 +138,31 @@ pub(super) fn save(
 
     // The files the note names, deleted or not: a deleted note can come
     // back, and its files with it.
+    // A thumbnail is a file of its own, kept and sent like any other.
     tx.execute("DELETE FROM note_files WHERE note_id = ?1", [&key])?;
-    for attachment in doc.attachments() {
+    for file in doc.named_files() {
         tx.execute(
             "INSERT OR IGNORE INTO note_files (note_id, file_id) VALUES (?1, ?2)",
-            params![key, attachment.file_id.to_string()],
+            params![key, file.to_string()],
         )?;
     }
+    // What the server has to be told follows what the note names. A file
+    // named for the first time has a reference to confirm. A file no
+    // longer named is dated, so that the server can be told after a wait;
+    // one that is named again loses the date.
+    tx.execute(
+        "INSERT OR IGNORE INTO file_links (file_id, note_id) \
+         SELECT file_id, note_id FROM note_files WHERE note_id = ?1",
+        [&key],
+    )?;
+    tx.execute(
+        "UPDATE file_links \
+            SET unnamed_at = CASE \
+                  WHEN file_id IN (SELECT file_id FROM note_files WHERE note_id = ?1) THEN NULL \
+                  ELSE COALESCE(unnamed_at, ?2) END \
+          WHERE note_id = ?1",
+        params![key, now],
+    )?;
 
     // The search index and the tags hold live notes only.
     tx.execute("DELETE FROM notes_fts WHERE rowid = ?1", [row])?;

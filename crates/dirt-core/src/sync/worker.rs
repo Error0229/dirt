@@ -7,8 +7,8 @@
 //! - when the person returns to the app, unless it synced a moment ago;
 //! - shortly after a local change, once changes stop arriving;
 //! - when the person presses the sync button;
-//! - again, with growing pauses, only while a cycle has failed and notes are
-//!   still waiting to be sent.
+//! - again, with growing pauses, only while a cycle has failed and notes or
+//!   files are still waiting to be sent.
 //!
 //! An app that is open and untouched does not talk to the server.
 
@@ -75,6 +75,8 @@ pub struct SyncStatus {
     /// Notes still stored under an older key, as of the last sync. While
     /// there are any, a change of the account's key is not complete.
     pub old_key_notes: u64,
+    /// Files this device holds that the server has not taken.
+    pub files_unsent: usize,
 }
 
 /// How long the worker waits in each situation.
@@ -93,7 +95,16 @@ pub struct Timing {
     /// How long a note stays deleted on this device before the device asks
     /// the server to purge it.
     pub purge_after: Duration,
+    /// How long a file that nothing needs stays on this device.
+    pub spare_file_wait: Duration,
 }
+
+/// How long a file that nothing needs stays on a device.
+///
+/// A file is put on a device a moment before the note that names it is
+/// written. An hour is far longer than that moment, and short beside the
+/// thirty days a file has already waited by the time nothing needs it.
+pub const DEFAULT_SPARE_FILE_WAIT: Duration = Duration::from_hours(1);
 
 /// [`limits::PURGE_AFTER_DAYS`], as a length of time.
 #[must_use]
@@ -110,6 +121,7 @@ impl Default for Timing {
             first_retry: Duration::from_secs(5),
             longest_retry: Duration::from_secs(300),
             purge_after: default_purge_after(),
+            spare_file_wait: DEFAULT_SPARE_FILE_WAIT,
         }
     }
 }
@@ -266,9 +278,12 @@ async fn run(
                     report.unsent
                 );
                 stopped = false;
-                if report.unsent > 0 {
-                    // Other devices kept changing the same notes. Try again
-                    // soon, without calling it a failure.
+                if report.unsent > 0 || (report.files_failed && report.files_unsent > 0) {
+                    // Other devices kept changing the same notes, or a file
+                    // did not get through. Try again soon, without calling
+                    // it a failure. A file the server refused, or has no
+                    // storage for, is not tried again until something
+                    // happens: trying would change nothing.
                     timers.schedule_retry(&timing, None);
                 } else {
                     timers.retry = None;
@@ -298,6 +313,7 @@ async fn run(
         };
 
         let unsent = store.unsent_count().await.unwrap_or(0);
+        let files_unsent = store.unsent_file_count().await.unwrap_or(0);
         let problems = store.note_problems().await.map_or(0, |list| list.len());
         let last_synced_ms = store.last_synced_ms().await.unwrap_or(None);
         // Read from the engine and not from the cycle's report: a cycle that
@@ -324,6 +340,7 @@ async fn run(
             status.syncing = false;
             status.last_synced_ms = last_synced_ms;
             status.unsent = unsent;
+            status.files_unsent = files_unsent;
             status.problems = problems;
             status.failure = failure;
             status.pulled = pulled;
@@ -334,13 +351,16 @@ async fn run(
 /// Publishes how many notes are waiting, without syncing.
 async fn refresh_counts(store: &Store, status: &watch::Sender<SyncStatus>) {
     let unsent = store.unsent_count().await.unwrap_or(0);
+    let files_unsent = store.unsent_file_count().await.unwrap_or(0);
     let problems = store.note_problems().await.map_or(0, |list| list.len());
     let last_synced_ms = store.last_synced_ms().await.unwrap_or(None);
     status.send_if_modified(|status| {
         let changed = status.unsent != unsent
+            || status.files_unsent != files_unsent
             || status.problems != problems
             || status.last_synced_ms != last_synced_ms;
         status.unsent = unsent;
+        status.files_unsent = files_unsent;
         status.problems = problems;
         status.last_synced_ms = last_synced_ms;
         changed
