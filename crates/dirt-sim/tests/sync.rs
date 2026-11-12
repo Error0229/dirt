@@ -486,6 +486,60 @@ async fn a_new_epoch_makes_devices_merge_everything_again_and_lose_nothing(pool:
     );
 }
 
+/// The same backup is restored twice, with the devices syncing in between.
+/// Each restore gives the account an epoch the devices have not seen, as
+/// `scripts/raise-epochs.sh` does, so each one is noticed and nothing is
+/// lost. Given the same epoch both times, the devices would take the second
+/// restore for no change at all, and go on from change numbers the server
+/// no longer has.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_backup_restored_twice_is_noticed_both_times(pool: PgPool) {
+    let server = Server::new(pool.clone());
+    let (laptop, phone) = two_devices(&server).await;
+    laptop
+        .store
+        .create_note("written on the laptop")
+        .await
+        .unwrap();
+    settle(&[&laptop, &phone]).await;
+
+    let mut expected = 1;
+    for (restore, epoch) in [(1, 1_000), (2, 2_000)] {
+        // Back to a backup taken before any note existed.
+        sqlx::query("DELETE FROM notes")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE accounts SET epoch = $1, change_counter = 0, note_count = 0, bytes_used = 0",
+        )
+        .bind(epoch)
+        .execute(&pool)
+        .await
+        .unwrap();
+        phone
+            .store
+            .create_note(&format!("written after restore {restore}"))
+            .await
+            .unwrap();
+        expected += 1;
+
+        settle(&[&laptop, &phone]).await;
+
+        assert_eq!(laptop.notes().await.len(), expected, "restore {restore}");
+        assert_eq!(phone.notes().await, laptop.notes().await);
+        assert_eq!(
+            stored_blobs(&pool).await.len(),
+            expected,
+            "the server has every note again after restore {restore}"
+        );
+        for device in [&laptop, &phone] {
+            assert_eq!(device.store.sync_progress().await.unwrap().epoch, epoch);
+            assert!(device.store.note_problems().await.unwrap().is_empty());
+        }
+    }
+}
+
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
 async fn a_device_restored_from_a_backup_loses_no_edit(pool: PgPool) {
     let server = Server::new(pool);

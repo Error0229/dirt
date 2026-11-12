@@ -145,7 +145,12 @@ There are two, and the first is the one to reach for.
 
 1. **Neon's own history.** It restores the database to any moment in its
    window: six hours on the free plan, up to seven days on Launch. Use it
-   for a mistake that was just made.
+   for a mistake that was just made. **Then raise the epochs,** before the
+   server is used again:
+
+   ```bash
+   RESTORE_DATABASE_URL='<direct connection string>' scripts/raise-epochs.sh
+   ```
 2. **A dump stored outside Neon,** taken once a day. It is for when Neon
    itself is what was lost, or the mistake is older than the window.
 
@@ -201,8 +206,8 @@ BACKUP_AGE_IDENTITY=dirt-backup-key.txt \
 
 The script refuses a database that already has tables, restores in one
 transaction so that a failure leaves nothing behind, and then raises every
-account's epoch. Point the server's `DATABASE_URL` at the restored database
-and deploy.
+account's epoch by running `scripts/raise-epochs.sh`. Point the server's
+`DATABASE_URL` at the restored database and deploy.
 
 CI runs `scripts/check-backup.sh` on every change: it dumps a database with
 the server's schema, restores it and compares the two. A change to the
@@ -211,9 +216,17 @@ restore.
 
 ### After a restore
 
-**Nothing a device holds is lost.** A device that sees the new epoch
-forgets the change numbers it has seen and merges everything again, so
-every note written since the dump is sent again by a device that has it.
+This holds for a restore by either means.
+
+**Nothing a device holds is lost, provided the epochs were raised.** A
+device that sees a new epoch forgets the change numbers it has seen and
+merges everything again, so every note written since the moment restored to
+is sent again by a device that has it. A device that is told the epoch it
+already holds notices nothing, and what the restore lost stays lost. That
+is why `scripts/raise-epochs.sh` gives every restore an epoch of its own,
+taken from the clock: one higher would be missed by an account that was
+reset in between, and by devices that synced between two restores of the
+same dump.
 
 What a restore does undo is what only the server knew. Tell the people who
 use the server that it happened, and what to check:

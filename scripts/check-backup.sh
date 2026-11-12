@@ -13,7 +13,7 @@
 # psql at least as new as the server, age, and cargo.
 set -euo pipefail
 
-: "${DATABASE_URL:?set DATABASE_URL as for the server's tests}"
+: "${DATABASE_URL:?set DATABASE_URL as for the tests of the server}"
 here="$(cd "$(dirname "$0")" && pwd)"
 server="${DATABASE_URL%/*}"
 source_db="dirt_backup_check_source"
@@ -112,9 +112,11 @@ if [ -z "$before" ] || [ "$before" != "$after" ]; then
   exit 1
 fi
 
-epochs="$(in_db "$source_db" "SELECT epoch FROM accounts") -> $(in_db "$target_db" "SELECT epoch FROM accounts")"
-if [ "$epochs" != "2 -> 1002" ]; then
-  echo "FAILED: the restore should raise the epoch by a thousand, and it went $epochs" >&2
+# The restored epoch has to be one no device has seen: well past the one
+# that was dumped, and different each time the same dump is restored.
+first="$(in_db "$target_db" "SELECT epoch FROM accounts")"
+if [ "$first" -lt 1002 ]; then
+  echo "FAILED: the restore should raise the epoch from 2 by at least a thousand, and it is $first" >&2
   exit 1
 fi
 carried="$(in_db "$target_db" "SELECT (SELECT count(*) FROM nonces) + (SELECT count(*) FROM request_counts)")"
@@ -126,4 +128,25 @@ fi
 # The server's own view of the schema: nothing left to migrate.
 MIGRATE_DATABASE_URL="$server/$target_db" cargo run --quiet -p dirt-api -- migrate > /dev/null
 
-echo "the dump restores to the same contents, with the epoch raised"
+# The same dump restored a second time. Devices that synced after the first
+# restore hold its epoch, and must be able to tell the second from it.
+admin --command "DROP DATABASE $target_db" --command "CREATE DATABASE $target_db"
+sleep 2
+RESTORE_DATABASE_URL="$server/$target_db" BACKUP_AGE_IDENTITY="$work/key.txt" \
+  "$here/restore-database.sh" "$work/check.dump.age" > /dev/null
+second="$(in_db "$target_db" "SELECT epoch FROM accounts")"
+if [ "$second" -le "$first" ]; then
+  echo "FAILED: two restores of one dump gave epochs $first and $second; the second must be higher" >&2
+  exit 1
+fi
+
+# After a restore by other means, such as the host's own history, the
+# epochs are raised by hand with the same script.
+RESTORE_DATABASE_URL="$server/$target_db" "$here/raise-epochs.sh" > /dev/null
+third="$(in_db "$target_db" "SELECT epoch FROM accounts")"
+if [ "$third" -le "$second" ]; then
+  echo "FAILED: raising the epochs again left them at $third, no higher than $second" >&2
+  exit 1
+fi
+
+echo "the dump restores to the same contents; epochs 2 -> $first, then $second, then $third"

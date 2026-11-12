@@ -7,15 +7,11 @@
 #
 #   scripts/restore-database.sh FILE
 #
-# After the tables are back, every account's epoch is raised. A device that
-# sees a new epoch forgets the change numbers it has seen and merges
-# everything again, so whatever the devices hold that the dump does not is
-# sent again. Nothing a device holds is lost by a restore.
-#
-# The epoch is raised by a thousand, not by one. An account that was reset
-# after the dump was taken raised its own epoch then, and its devices have
-# seen that number. Raised by one, the restored epoch could be the very
-# number they hold, and they would notice nothing.
+# After the tables are back, every account's epoch is raised, by
+# raise-epochs.sh, to a number no device has seen. A device that sees a new
+# epoch forgets the change numbers it has seen and merges everything again,
+# so whatever the devices hold that the dump does not is sent again. Nothing
+# a device holds is lost by a restore.
 #
 # What a restore does undo is on the server alone: see "After a restore" in
 # docs/DEPLOY.md before pointing the server at the restored database.
@@ -30,6 +26,7 @@ set -euo pipefail
 file="${1:?name the dump to restore}"
 [ -s "$file" ] || { echo "$file is missing or empty" >&2; exit 1; }
 
+here="$(cd "$(dirname "$0")" && pwd)"
 read -r -a pg_restore <<< "${PG_RESTORE:-pg_restore}"
 read -r -a psql <<< "${PSQL:-psql}"
 read -r -a age <<< "${AGE:-age}"
@@ -50,11 +47,11 @@ fi
   | "${pg_restore[@]}" --no-owner --no-privileges --exit-on-error \
       --single-transaction --dbname="$RESTORE_DATABASE_URL"
 
-sql "UPDATE accounts SET epoch = epoch + 1000" > /dev/null
+raised="$("$here/raise-epochs.sh")"
 
 echo "restored $file:"
 sql "SELECT '  ' || (SELECT count(*) FROM accounts) || ' accounts, '
          || (SELECT count(*) FROM devices) || ' devices, '
          || (SELECT count(*) FROM notes) || ' notes; schema version '
          || (SELECT max(version) FROM _sqlx_migrations)"
-echo "every account's epoch was raised"
+echo "  $raised"

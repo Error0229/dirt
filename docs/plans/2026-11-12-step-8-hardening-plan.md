@@ -405,8 +405,8 @@ Tried for real against `dirt-trial`:
 5. The CLI synced: "3 received, 4 sent". The server held four notes again.
    The note written after the dump was not lost.
 
-That run raised the epoch by one. The script raises it by a thousand now,
-for the reason below; CI checks the number.
+That run raised the epoch by one. The scripts choose it differently now,
+for the reasons below; CI checks it.
 
 What trying it showed:
 
@@ -425,8 +425,32 @@ What trying it showed:
   so, and say that a restore is something to tell people about.
 - **Raising the epoch by one could go unnoticed.** An account reset after
   the dump raised its own epoch by one then, so the restored epoch plus one
-  is the number its devices already hold. The restore raises it by a
-  thousand.
+  is the number its devices already hold.
+
+What review showed:
+
+- **The same dump restored twice got the same epoch twice.** Devices that
+  synced after the first restore would not have noticed the second, and
+  what it lost would have stayed lost. `scripts/raise-epochs.sh` now sets
+  the epoch from the clock, at least a thousand past what it was, so each
+  restore has its own. CI restores one dump twice and checks that the
+  second epoch is higher. A test in `dirt-sim` restores twice with devices
+  syncing in between and loses nothing. Found in review.
+- **The first way to restore had no instruction to raise the epochs.**
+  Restoring through Neon's history runs none of these scripts.
+  `docs/DEPLOY.md` now says to run `scripts/raise-epochs.sh` after it. Found
+  in review.
+
+What CI showed:
+
+- **An older test failed by chance.** A test of the recovery phrase swapped
+  two words of a phrase made at random and expected the checksum to catch
+  it. The checksum is eight bits, so it passed about once in 256 runs, and
+  it did on Windows for this change. It uses a fixed phrase now.
+- **The check script did not parse.** An apostrophe in one of its messages.
+  It had not been run before it was pushed, because this machine has
+  `age` and the Postgres programs only in containers. It has since been run
+  here with those programs wrapped, and passes.
 
 Not tried, and why:
 
