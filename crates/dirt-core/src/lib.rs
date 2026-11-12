@@ -23,6 +23,7 @@ pub mod crypto;
 pub mod enrolment;
 pub mod error;
 pub mod export;
+pub mod files;
 pub mod identity;
 pub mod key_change;
 pub mod models;

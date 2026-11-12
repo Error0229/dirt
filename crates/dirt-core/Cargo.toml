@@ -36,7 +36,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 zeroize = { version = "1.8", features = ["derive"] }
 # Note encryption and device keys. Audited implementations; nothing in this
 # crate implements a cipher itself.
-chacha20poly1305 = "0.10"
+# `stream` is the STREAM construction that chains a file's pieces.
+chacha20poly1305 = { version = "0.10", features = ["stream"] }
 base64 = "0.22"
 # The PKCE challenge of the sign-in is a SHA-256 hash.
 sha2 = "0.10"

@@ -309,10 +309,20 @@ mod tests {
         }
     }
 
+    /// A fixed phrase is used, the standard's own example. What is printed
+    /// in a phrase's place is the name of the type, which holds the words
+    /// "cover", "over" and "very". All three are on the word list, so a
+    /// phrase made at random began with one of them once in about seven
+    /// hundred runs, and the test failed.
     #[test]
     fn a_phrase_is_not_printed() {
-        let phrase = RecoveryPhrase::generate();
-        let first_word = phrase.words().split(' ').next().unwrap().to_owned();
-        assert!(!format!("{phrase:?}").contains(&first_word));
+        let words = "legal winner thank year wave sausage worth useful \
+                     legal winner thank year wave sausage worth useful \
+                     legal winner thank year wave sausage worth title";
+        let phrase = RecoveryPhrase::parse(words).unwrap();
+        let printed = format!("{phrase:?}");
+        for word in words.split(' ') {
+            assert!(!printed.contains(word), "{word} is in {printed}");
+        }
     }
 }

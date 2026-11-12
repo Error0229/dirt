@@ -53,9 +53,12 @@ until a device asks for the note to be purged thirty days after it was
 deleted: the server then knows that it was.
 
 **Files.** A file attached to a note is encrypted on the device with a key
-of its own, which is kept inside the note's document. The server and the
-storage see neither the key, nor the file's name or type, nor its
-contents. The server does see that a file exists, how large it is, and
+of its own, which is kept inside the note's document. It is encrypted in
+pieces of 64 KiB with XChaCha20-Poly1305, the cipher the notes use, and the
+pieces are chained so that one that is moved, repeated or left out does not
+open, nor a file that was cut short. The account and the file are bound
+into every piece. The server and the storage see neither the key, nor the
+file's name or type, nor its contents. The server does see that a file exists, how large it is, and
 which notes refer to it, because devices have to tell it that for files to
 be cleaned up. So it knows how many files each note has. (No client
 attaches files yet: step 9 of the redesign.)
