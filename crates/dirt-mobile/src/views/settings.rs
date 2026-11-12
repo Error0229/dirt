@@ -178,7 +178,8 @@ pub fn Settings() -> Element {
                         local_waiting.set(0);
                         let open = state.store.peek().clone();
                         if let Some(open) = open {
-                            if let Ok(latest) = open.list_notes().await {
+                            let listed = *state.listed_notes.peek();
+                            if let Ok(latest) = open.list_notes(listed).await {
                                 state.notes.set(latest);
                             }
                         }
