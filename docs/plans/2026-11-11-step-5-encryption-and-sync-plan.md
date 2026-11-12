@@ -148,8 +148,10 @@ development instance's test user):
   the device as signed in and synced. The note was moved into the account
   and sent. After the app was stopped and started again it was still signed
   in, from the encrypted preferences, and synced at start. Sign out showed
-  the refusal. Stopping the app while the browser was open was not repeated
-  here; trial 3 did it, and the simulation covers the saved attempt.
+  the refusal. Left in the background for 40 seconds and brought back, it
+  synced at once; brought back again within 30 seconds, it did not. Stopping
+  the app while the browser was open was not repeated here; trial 3 did it,
+  and the simulation covers the saved attempt.
 
 The test account was deleted from the trial database afterwards, and the
 keychain entry and the app's data removed.
@@ -163,6 +165,13 @@ What building it showed:
   them through the Activity's class loader, and clears a Java exception
   after a failed call so that the failure is an error and not a crash. The
   old sign-in code had the same fault.
+- **A cycle that failed had still changed the store.** The worker reported
+  what a cycle pulled only when the cycle succeeded. One that merged notes
+  and then failed on its push left the list on screen stale, and the retry
+  did not pull those notes again. The count now comes from the engine and
+  includes cycles that failed. Found in review.
+- **Android knows when the app comes back through the web view.** The page
+  becomes visible again, which needs no Java. Found missing in review.
 - **Two apps can claim the redirect.** The emulator still held the trial's
   app, registered for the same address, so Android asked which to open.
   PKCE is why choosing the wrong one gives that app nothing.

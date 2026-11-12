@@ -60,8 +60,8 @@ pub struct SyncStatus {
     /// Why the last cycle failed, if it did.
     pub failure: Option<SyncFailure>,
     /// How many documents have been pulled and merged since the worker
-    /// started. A change in this number means the notes on screen may be
-    /// out of date.
+    /// started, counting those merged by a cycle that then failed. A change
+    /// in this number means the notes on screen may be out of date.
     pub pulled: u64,
 }
 
@@ -275,17 +275,19 @@ async fn run(
             }
         };
 
-        let pulled = outcome.as_ref().map_or(0, |report| report.pulled);
         let unsent = store.unsent_count().await.unwrap_or(0);
         let problems = store.note_problems().await.map_or(0, |list| list.len());
         let last_synced_ms = store.last_synced_ms().await.unwrap_or(None);
+        // Read from the engine and not from the cycle's report: a cycle that
+        // failed has no report, but may have merged documents first.
+        let pulled = engine.merged_total();
         status.send_modify(|status| {
             status.syncing = false;
             status.last_synced_ms = last_synced_ms;
             status.unsent = unsent;
             status.problems = problems;
             status.failure = failure;
-            status.pulled += u64::try_from(pulled).unwrap_or(0);
+            status.pulled = pulled;
         });
     }
 }

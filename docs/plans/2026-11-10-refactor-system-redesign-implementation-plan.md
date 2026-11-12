@@ -745,9 +745,10 @@ Carried forward:
 - To step 6: the account reset must work for an account whose first device
   never saved its key. Sign-out is refused on every account until the
   recovery phrase exists.
-- To step 7: sync on return to the app on Android; the list of notes that
-  could not be synced, in every client; the desktop app's Sign in button
-  tried against Clerk by a person.
+- To step 7: the list of notes that could not be synced, in every client;
+  the desktop app's Sign in button tried against Clerk by a person. Sync on
+  return to the app, which the plan put in step 7, was built here for both
+  the desktop app and Android.
 
 ### Step 6: More devices
 

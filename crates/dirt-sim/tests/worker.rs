@@ -253,3 +253,42 @@ async fn the_status_says_when_notes_arrived_from_another_device(pool: PgPool) {
     .await;
     assert_eq!(app.notes().await[0].1, "from the phone");
 }
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn notes_merged_by_a_cycle_that_then_fails_are_still_reported(pool: PgPool) {
+    let server = Server::with_sign_in(pool).await;
+    let app = running_app(&server).await;
+    let other = Client::new(&server, "Phone", false);
+    other.sign_in("alice").await.unwrap();
+    other.approve_with_key(&server, &app.account_key()).await;
+    other
+        .session
+        .store()
+        .create_note("from the phone")
+        .await
+        .unwrap();
+    other.session.sync_now().await.unwrap();
+    let before = app.session.sync_status().pulled;
+
+    // The app has a note of its own to send. Its next cycle pulls the
+    // phone's note and merges it, and then the push gets no answer.
+    app.session.store().create_note("from here").await.unwrap();
+    app.transport.lose_next_answer("/v1/notes/push");
+    app.session.notify(Trigger::Manual);
+
+    eventually("the failed cycle reports what it merged", || async {
+        let status = app.session.sync_status();
+        status.failure.is_some() && status.pulled > before
+    })
+    .await;
+    assert!(app
+        .notes()
+        .await
+        .iter()
+        .any(|(_, text)| text == "from the phone"));
+
+    // The retry that follows succeeds without pulling that note again, so
+    // nothing else would ever have told the interface about it.
+    synced(&app).await;
+    assert!(app.session.sync_status().failure.is_none());
+}

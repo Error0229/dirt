@@ -21,7 +21,7 @@ use dirt_core::api::HttpTransport;
 use dirt_core::secrets::slot_name;
 use dirt_core::session::{Session, SessionConfig, SessionError, SessionState};
 use dirt_core::store::{store_path, StoreName};
-use dirt_core::sync::worker::{SyncStatus, Timing};
+use dirt_core::sync::worker::{SyncStatus, Timing, Trigger};
 use dirt_core::Store;
 
 use crate::bootstrap_config::load_bootstrap_config;
@@ -238,6 +238,29 @@ pub fn AppShell() -> Element {
                     return;
                 }
                 tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+        }
+    });
+
+    // Coming back to the app is a reason to sync: notes may have been
+    // written elsewhere while it was in the background. The web view says
+    // when that happens, because its page becomes visible again. The worker
+    // skips the sync if one ran a moment ago.
+    use_future(move || async move {
+        let mut became_visible = document::eval(
+            r#"
+            document.addEventListener("visibilitychange", () => {
+                if (document.visibilityState === "visible") {
+                    dioxus.send(true);
+                }
+            });
+            // Stay alive, so that the messages above keep arriving.
+            await new Promise(() => {});
+            "#,
+        );
+        while became_visible.recv::<bool>().await.is_ok() {
+            if let Some(current) = session.peek().clone() {
+                current.notify(Trigger::Returned);
             }
         }
     });

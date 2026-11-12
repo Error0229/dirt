@@ -140,8 +140,6 @@ cargo run -p dirt-api                # listens on 0.0.0.0:8080
 - **The desktop app does not watch the file.** It reloads its list when its
   window regains focus. If the CLI changes a note that is open in the desktop
   editor, the desktop app's next save replaces that change.
-- **On Android, coming back to the app does not sync.** The app syncs when it
-  starts, after a change and from the sync button. Sync on return is step 7.
 
 ## Testing
 
