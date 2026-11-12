@@ -37,6 +37,7 @@ use crate::identity::{Attempt, IdentityClient, IdentityError, Loopback};
 use crate::secrets::{DeviceSecrets, SecretError, SecretStore};
 use crate::store::{store_path, StoreName};
 use crate::sync::engine::{SyncEngine, SyncError, SyncReport};
+use crate::sync::overview::SyncOverview;
 use crate::sync::worker::{SyncStatus, SyncWorker, Timing, Trigger};
 use crate::{Error, Store};
 
@@ -675,6 +676,24 @@ impl Session {
     pub async fn sync_now(&self) -> Result<SyncReport, SessionError> {
         let engine = self.engine().ok_or(SessionError::NotReady)?;
         Ok(engine.run_once().await?)
+    }
+
+    /// How sync stands for the account, with each note that could not be
+    /// synced. The counts are read from the store, so they are as true for
+    /// a program with no background worker, as the CLI is, as for one with.
+    pub async fn sync_overview(&self) -> Result<SyncOverview, SessionError> {
+        if !self.state().is_ready() {
+            return Err(SessionError::NotReady);
+        }
+        let status = self.sync_status();
+        let store = self.store();
+        Ok(SyncOverview {
+            syncing: status.syncing,
+            last_synced_ms: store.last_synced_ms().await?,
+            unsent: store.unsent_count().await?,
+            failure: status.failure,
+            problems: store.note_problems().await?,
+        })
     }
 
     // ---- Notes written before signing in ----

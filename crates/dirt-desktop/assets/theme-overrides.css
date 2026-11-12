@@ -293,6 +293,31 @@
   color: var(--secondary-error-color);
 }
 
+/* A note that could not be synced, in Settings → Sync */
+.sync-problem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--secondary-error-color);
+}
+
+.sync-problem-title {
+  font-size: 13px;
+  color: var(--secondary-color-4);
+  text-align: left;
+  word-break: break-word;
+}
+
+.sync-problem-open {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 /* Note card hover — high specificity avoids !important and won't override inline selected bg */
 .note-cards .note-card:hover {
   background: var(--primary-color-4);

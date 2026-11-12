@@ -180,7 +180,9 @@ async fn run_sync_fails_when_there_is_no_server_to_sync_with() {
     let (_folder, db_path) = temp_db();
     let store = Store::open(&db_path).unwrap();
 
-    let error = run_sync(&without_a_server(&store)).await.unwrap_err();
+    let error = run_sync(&without_a_server(&store), false)
+        .await
+        .unwrap_err();
 
     assert!(matches!(error, CliError::Account(_)));
     assert!(error.to_string().contains("no server is configured"));
@@ -197,7 +199,10 @@ async fn the_account_status_says_when_notes_stay_on_this_device() {
 
     assert_eq!(
         lines,
-        ["No server is configured. Notes are kept on this device only."]
+        [
+            "No server is configured. Notes are kept on this device only.",
+            "Set DIRT_API_BASE_URL to a server's address to sync."
+        ]
     );
 }
 
@@ -274,6 +279,7 @@ fn without_a_server(store: &Store) -> Context {
     Context {
         store: store.clone(),
         session: None,
+        server: None,
     }
 }
 

@@ -54,11 +54,16 @@ an earlier version is not read and not changed.
 Point the CLI at a server, then sign in through the browser:
 
 ```bash
-dirt config init --api-base-url https://your-server.example
+export DIRT_API_BASE_URL=https://your-server.example
 dirt auth login      # opens the browser; --no-browser prints the address
-dirt auth status     # who is signed in, last sync, notes waiting
+dirt auth status     # the server, who is signed in, last sync, notes waiting
 dirt sync            # one sync, now
+dirt sync --verbose  # and each note that could not be synced, with what releases it
 ```
+
+The CLI built in this repository also takes the address from `.env.client`,
+as the desktop app does, so the two name the same server without the
+variable. The variable, when set, comes first for both.
 
 Signing in opens a store for the account, `stores/account-<id>/`, and asks
 whether to move the notes written before into it. After that, every `dirt`
@@ -102,11 +107,13 @@ cd crates/dirt-desktop && dx serve
 `cargo run -p dirt-desktop` starts it too, but without its style sheets:
 `dx` is what bundles them.
 
-The server to sync with is fixed when the app is built: set
-`DIRT_API_BASE_URL` in `.env.client` (see `.env.client.example`). Without
-it the app keeps its notes on the device and Settings says so. With it,
+The server to sync with is given when the app is built: set
+`DIRT_API_BASE_URL` in `.env.client` (see `.env.client.example`). The same
+variable in the environment when the app starts comes before it. Without
+either the app keeps its notes on the device and Settings says so. With one,
 Settings → Account signs in through the browser, and Settings → Sync shows
-when the app last synced and has the sync button.
+when the app last synced, each note that could not be synced with what
+releases it, and the sync button.
 
 ### Run the API server
 

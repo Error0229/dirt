@@ -2021,6 +2021,7 @@ dependencies = [
  "clap_complete",
  "dirs",
  "dirt-core",
+ "dotenvy",
  "serde",
  "serde_json",
  "tempfile",

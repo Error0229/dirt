@@ -7,8 +7,19 @@
 //! Lengths are UTF-8 byte counts, because that is how yrs addresses text by
 //! default. The diff itself runs over characters, so a multi-byte character is
 //! never split.
+//!
+//! The search for the smallest script is given a time limit. Two large texts
+//! with little in common would otherwise take minutes, and saving a note
+//! must never wait. Past the limit the rest of the text is replaced whole:
+//! a longer script that still gives the right text.
+
+use std::time::Duration;
 
 use similar::{ChangeTag, TextDiff};
+
+/// How long the search for the smallest script may take. A note of ordinary
+/// size is done in far less.
+const SEARCH_LIMIT: Duration = Duration::from_millis(100);
 
 /// One step of an edit script, applied left to right.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,7 +39,10 @@ pub enum Op {
 #[must_use]
 pub fn diff(old: &str, new: &str) -> Vec<Op> {
     let mut ops: Vec<Op> = Vec::new();
-    for change in TextDiff::from_chars(old, new).iter_all_changes() {
+    let found = TextDiff::configure()
+        .timeout(SEARCH_LIMIT)
+        .diff_chars(old, new);
+    for change in found.iter_all_changes() {
         let text = change.value();
         let len = u32::try_from(text.len()).expect("note text fits in u32");
         match (change.tag(), ops.last_mut()) {
@@ -68,6 +82,29 @@ mod tests {
         }
         out.push_str(&old[pos..]);
         out
+    }
+
+    /// Replacing the whole of a very large note must not stall the app.
+    /// Left to run, a character diff of two large texts with little in
+    /// common takes minutes.
+    #[test]
+    fn replacing_a_very_large_text_is_quick_and_still_right() {
+        let large = "x".repeat(1_100_000);
+        let other = format!("y{}", "z".repeat(900_000));
+        for (old, new) in [
+            (large.as_str(), "a note of ordinary size"),
+            ("a note of ordinary size", large.as_str()),
+            (large.as_str(), other.as_str()),
+        ] {
+            let began = std::time::Instant::now();
+            let ops = diff(old, new);
+            assert!(
+                began.elapsed() < std::time::Duration::from_secs(10),
+                "took {:?}",
+                began.elapsed()
+            );
+            assert!(apply(old, &ops) == new, "the script gives another text");
+        }
     }
 
     #[test]

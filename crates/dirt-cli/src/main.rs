@@ -4,13 +4,10 @@
 
 mod cli;
 mod commands;
-mod config_profiles;
 mod context;
 mod error;
 #[cfg(test)]
 mod tests;
-
-use std::env;
 
 use clap::{CommandFactory, Parser};
 
@@ -35,18 +32,11 @@ async fn run() -> Result<(), CliError> {
         .init();
 
     let cli = Cli::parse();
-    let global_profile = config_profiles::normalize_profile_name(cli.profile.as_deref());
-    if let Some(profile) = &global_profile {
-        env::set_var("DIRT_PROFILE", profile);
-    }
 
     // These need no note store, so they work even when it cannot be opened.
     let command = match cli.command {
         Some(Commands::Completions { shell, output }) => {
             return commands::completions::run_completions(shell, output.as_deref());
-        }
-        Some(Commands::Config { command }) => {
-            return commands::config::run_config(command, global_profile.as_deref());
         }
         Some(Commands::Tui) => {
             println!("Opening TUI...");
@@ -75,14 +65,14 @@ async fn run() -> Result<(), CliError> {
         Some(Commands::Export { format, output }) => {
             commands::export::run_export(format, output.as_deref(), store).await?;
         }
-        Some(Commands::Sync) => commands::sync::run_sync(&context).await?,
+        Some(Commands::Sync { verbose }) => commands::sync::run_sync(&context, verbose).await?,
         Some(Commands::Auth { command }) => {
             commands::account::run_auth(command, context).await?;
         }
         Some(Commands::Devices { command }) => {
             commands::devices::run_devices(command, &context).await?;
         }
-        Some(Commands::Completions { .. } | Commands::Config { .. } | Commands::Tui) => {
+        Some(Commands::Completions { .. } | Commands::Tui) => {
             unreachable!("handled before the store was opened")
         }
         None => commands::add::run_add(&cli.note, &context).await?,

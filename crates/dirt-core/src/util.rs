@@ -13,6 +13,12 @@ pub fn normalize_text_option(value: Option<String>) -> Option<String> {
     }
 }
 
+/// The time now, as Unix milliseconds.
+#[must_use]
+pub fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
 /// Check if a string starts with `http://` or `https://`.
 pub fn is_http_url(value: &str) -> bool {
     value.starts_with("http://") || value.starts_with("https://")

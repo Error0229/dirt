@@ -15,7 +15,9 @@ The project is also a system design case study. Multi-user accounts, three clien
 
 Rules while the redesign is under way:
 
-- Do not extend code the design lists for deletion (section 14): `config_profiles.rs` in the CLI, which step 7 removes.
+- Nothing the design lists for deletion (section 14) is left. Do not bring any of it back.
+- The CLI and the desktop app on one computer are one device and must name one server. Both get it from `dirt_core::config::ServerAddress`: `DIRT_API_BASE_URL` in the environment, or else the address built in from `.env.client`.
+- What the three clients show about sync comes from `dirt_core::sync::overview`. Change the words there, not in a client.
 - No SQL, HTTP or cryptography in a client crate. They belong in `dirt-core`.
 - `dirt-api` must not depend on `dirt-core`. The two share only `dirt-proto`. `dirt-sim`, the test harness, is the one crate that depends on both.
 - `rusqlite` is held at 0.39 by `sqlx` 0.9: see the comment in the root `Cargo.toml` before raising either.

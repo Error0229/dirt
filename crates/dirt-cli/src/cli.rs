@@ -14,10 +14,6 @@ pub struct Cli {
     #[arg(long, value_name = "PATH")]
     pub db_path: Option<PathBuf>,
 
-    /// CLI profile name, which selects the server to sync with
-    #[arg(long, global = true, value_name = "NAME")]
-    pub profile: Option<String>,
-
     /// Quick capture: dirt "my thought here"
     #[arg(trailing_var_arg = true)]
     pub note: Vec<String>,
@@ -83,11 +79,11 @@ pub enum Commands {
         output: Option<PathBuf>,
     },
     /// Sync notes with the account's other devices now
-    Sync,
-    /// Configure CLI managed profiles
-    Config {
-        #[command(subcommand)]
-        command: ConfigCommands,
+    Sync {
+        /// Also print the sync status: the last sync, what is waiting, and
+        /// each note that could not be synced with what releases it
+        #[arg(short, long)]
+        verbose: bool,
     },
     /// Sign in, sign out, or show the account's state
     Auth {
@@ -191,21 +187,5 @@ pub enum DeviceCommands {
     Remove {
         /// The start of the device's ID
         device: String,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum ConfigCommands {
-    /// Initialize or update profile config
-    Init {
-        /// Profile name to initialize
-        #[arg(long, value_name = "NAME")]
-        profile: Option<String>,
-        /// Backend API base URL (e.g. <https://dirt-api.vercel.app>)
-        #[arg(long, value_name = "URL")]
-        api_base_url: Option<String>,
-        /// Keep current active profile instead of activating this one
-        #[arg(long)]
-        no_activate: bool,
     },
 }

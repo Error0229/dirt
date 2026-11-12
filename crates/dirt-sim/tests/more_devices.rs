@@ -793,6 +793,141 @@ async fn a_program_stops_syncing_when_the_other_one_replaces_the_account_key(poo
     assert_eq!(phone.notes().await[0].1, "written on the laptop");
 }
 
+/// What every interface shows about sync: each note that could not be
+/// synced is named, with its reason and what releases it, and doing that
+/// releases it.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn the_sync_overview_names_each_note_that_could_not_be_synced(pool: PgPool) {
+    use dirt_core::store::ProblemKind;
+
+    async fn damage(pool: &PgPool, note: &dirt_core::NoteId) {
+        sqlx::query(
+            "UPDATE notes SET ciphertext = set_byte(ciphertext, 40, get_byte(ciphertext, 40) # 1)               WHERE note_id = $1",
+        )
+        .bind(note.as_uuid())
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    let server = Server::with_sign_in(pool.clone()).await;
+    let laptop = laptop_with_a_note(&server).await;
+    let phone = approved_device(&server, &laptop, "Phone").await;
+    let on_laptop = laptop.session.store();
+    let on_phone = phone.session.store();
+
+    // A device that is not let in yet has no sync to describe.
+    let tablet = waiting_device(&server, "Tablet").await;
+    assert!(matches!(
+        tablet.session.sync_overview().await,
+        Err(SessionError::NotReady)
+    ));
+
+    let known = on_laptop
+        .create_note(
+            "shopping list
+milk",
+        )
+        .await
+        .unwrap();
+    laptop.session.sync_now().await.unwrap();
+    phone.session.sync_now().await.unwrap();
+    let quiet = phone.session.sync_overview().await.unwrap();
+    assert!(quiet.problems.is_empty());
+    assert_eq!(quiet.unsent, 0);
+    assert!(quiet.last_synced_ms.is_some());
+
+    // The laptop changes a note the phone holds and writes one it does not.
+    // Both copies are damaged on the server before the phone sees them. The
+    // phone also writes a note too large for the server to take.
+    on_laptop
+        .update_note(
+            &known.id,
+            "shopping list
+milk, eggs",
+        )
+        .await
+        .unwrap();
+    let unknown = on_laptop
+        .create_note("never seen by the phone")
+        .await
+        .unwrap();
+    laptop.session.sync_now().await.unwrap();
+    damage(&pool, &known.id).await;
+    damage(&pool, &unknown.id).await;
+    let large_text = format!(
+        "an enormous note
+{}",
+        "x".repeat(dirt_proto::api::limits::MAX_NOTE_BYTES + 1)
+    );
+    let large = on_phone.create_note(&large_text).await.unwrap();
+    phone.session.sync_now().await.unwrap();
+
+    let overview = phone.session.sync_overview().await.unwrap();
+    assert_eq!(overview.problems.len(), 3);
+    // A note with a problem is listed, not counted as waiting to be sent.
+    assert_eq!(overview.unsent, 0);
+    let problem = |id: &dirt_core::NoteId| {
+        overview
+            .problems
+            .iter()
+            .find(|problem| &problem.note_id == id)
+            .expect("the note is listed")
+            .clone()
+    };
+    assert_eq!(problem(&known.id).kind, ProblemKind::Held);
+    assert_eq!(problem(&known.id).title(), "shopping list");
+    assert_eq!(problem(&unknown.id).kind, ProblemKind::Held);
+    assert_eq!(
+        problem(&unknown.id).title(),
+        "A note this device has never been able to read"
+    );
+    assert_eq!(problem(&large.id).kind, ProblemKind::RetryAfterEdit);
+    assert_eq!(problem(&large.id).title(), "an enormous note");
+    let lines = overview.lines(dirt_core::util::now_ms());
+    assert!(lines.contains(&"3 notes could not be synced:".to_owned()));
+    assert!(lines.contains(&format!("  shopping list ({})", known.id)));
+    assert!(lines.contains(&"    Too large to sync.".to_owned()));
+
+    // What the view says releases each note does release it: an edit on
+    // the device that can still read the held ones, and an edit here of
+    // the one that was refused.
+    on_laptop
+        .update_note(
+            &known.id,
+            "shopping list
+milk, eggs, tea",
+        )
+        .await
+        .unwrap();
+    on_laptop
+        .update_note(&unknown.id, "now seen by the phone")
+        .await
+        .unwrap();
+    laptop.session.sync_now().await.unwrap();
+    on_phone
+        .update_note(&large.id, "a note of ordinary size")
+        .await
+        .unwrap();
+    phone.session.sync_now().await.unwrap();
+
+    let after = phone.session.sync_overview().await.unwrap();
+    assert!(after.problems.is_empty(), "{:?}", after.problems);
+    assert_eq!(after.unsent, 0);
+    let texts: Vec<String> = phone
+        .notes()
+        .await
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    assert!(texts.contains(
+        &"shopping list
+milk, eggs, tea"
+            .to_owned()
+    ));
+    assert!(texts.contains(&"now seen by the phone".to_owned()));
+}
+
 /// The laptop removes the phone while the phone is in the middle of a look:
 /// it has read the laptop's answer and is about to send its own. Whichever
 /// request brings the news, the phone stops and signs out.
