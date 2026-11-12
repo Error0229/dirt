@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.system.Os
 import android.widget.RemoteViews
+import java.io.File
 
 private const val ACTION_QUICK_CAPTURE = "dev.dioxus.main.action.QUICK_CAPTURE"
 private const val EXTRA_QUICK_CAPTURE_CONTENT = "dev.dioxus.main.extra.QUICK_CAPTURE_CONTENT"
@@ -15,6 +16,9 @@ private const val EXTRA_QUICK_CAPTURE_CONTENT = "dev.dioxus.main.extra.QUICK_CAP
 private const val ENV_QUICK_CAPTURE = "DIRT_QUICK_CAPTURE"
 private const val ENV_QUICK_CAPTURE_CONTENT = "DIRT_QUICK_CAPTURE_CONTENT"
 private const val ENV_SHARE_TEXT = "DIRT_SHARE_TEXT"
+
+// The address scheme the sign-in service sends the browser back to.
+private const val SIGN_IN_REDIRECT_SCHEME = "dev.dirt.app"
 
 object BuildConfig {
     val DEBUG: Boolean by lazy {
@@ -32,15 +36,32 @@ object BuildConfig {
 }
 
 class MainActivity : WryActivity() {
+    // A cold start. If it is the sign-in redirect, the app was stopped while
+    // the browser was in front.
     override fun onCreate(savedInstanceState: Bundle?) {
+        saveSignInRedirect(intent)
         applyLaunchIntentToEnvironment(intent)
         super.onCreate(savedInstanceState)
     }
 
+    // A warm return: the app was still running behind the browser.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        saveSignInRedirect(intent)
         applyLaunchIntentToEnvironment(intent)
+    }
+
+    // Hands the sign-in redirect to the Rust side by writing its address to a
+    // file that side looks for. The rename makes the file appear all at once.
+    private fun saveSignInRedirect(intent: Intent?) {
+        val address = intent?.data ?: return
+        if (intent.action != Intent.ACTION_VIEW || address.scheme != SIGN_IN_REDIRECT_SCHEME) return
+        runCatching {
+            val partial = File(filesDir, "redirect.partial")
+            partial.writeText(address.toString())
+            partial.renameTo(File(filesDir, "redirect.txt"))
+        }
     }
 
     private fun applyLaunchIntentToEnvironment(intent: Intent?) {

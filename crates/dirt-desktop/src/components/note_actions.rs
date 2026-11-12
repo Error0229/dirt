@@ -21,6 +21,7 @@ pub fn create_note(state: &AppState) {
                     let note_id = note.id;
                     state.notes.write().insert(0, note);
                     state.current_note_id.set(Some(note_id));
+                    state.note_changed();
                     invalidate_notes_query().await;
                 }
                 Err(e) => {
@@ -41,11 +42,13 @@ pub fn delete_note_optimistic(state: &mut AppState, note_id: NoteId) {
     tracing::info!("Deleted note (optimistic): {}", note_id);
 
     let db = state.db_service.read().clone();
+    let state = *state;
     spawn(async move {
         if let Some(db) = db {
             if let Err(e) = db.delete_note(&note_id).await {
                 tracing::error!("Failed to persist delete: {}", e);
             }
+            state.note_changed();
             // Always re-sync the query: on success to confirm, on failure to rollback the optimistic removal.
             invalidate_notes_query().await;
         }

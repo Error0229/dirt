@@ -10,12 +10,13 @@ use tokio::time::sleep;
 use crate::cli::{CompletionShell, ExportFormat};
 use crate::commands::common::{
     default_editor, format_relative_time, list_notes, normalize_content, normalize_note_identifier,
-    normalize_search_query, note_preview, open_database, resolve_note_for_edit, search_notes,
+    normalize_search_query, note_preview, resolve_note_for_edit, search_notes,
 };
 use crate::commands::completions::run_completions;
 use crate::commands::delete::run_delete;
 use crate::commands::export::run_export;
 use crate::commands::sync::run_sync;
+use crate::context::Context;
 use crate::error::CliError;
 
 #[test]
@@ -55,22 +56,19 @@ fn note_preview_truncates_with_ellipsis() {
 #[tokio::test(flavor = "current_thread")]
 async fn list_notes_respects_limit_and_tag_filter() {
     let (_folder, db_path) = temp_db();
-    {
-        let store = Store::open(&db_path).unwrap();
+    let store = Store::open(&db_path).unwrap();
+    store.create_note("First #work").await.unwrap();
+    sleep(Duration::from_millis(2)).await;
+    store.create_note("Second #personal").await.unwrap();
+    sleep(Duration::from_millis(2)).await;
+    store.create_note("Third #work").await.unwrap();
 
-        store.create_note("First #work").await.unwrap();
-        sleep(Duration::from_millis(2)).await;
-        store.create_note("Second #personal").await.unwrap();
-        sleep(Duration::from_millis(2)).await;
-        store.create_note("Third #work").await.unwrap();
-    }
-
-    let recent = list_notes(2, None, &db_path).await.unwrap();
+    let recent = list_notes(2, None, &store).await.unwrap();
     assert_eq!(recent.len(), 2);
     assert_eq!(recent[0].content, "Third #work");
     assert_eq!(recent[1].content, "Second #personal");
 
-    let work_only = list_notes(10, Some("work"), &db_path).await.unwrap();
+    let work_only = list_notes(10, Some("work"), &store).await.unwrap();
     assert_eq!(work_only.len(), 2);
     assert!(work_only.iter().all(|note| note.content.contains("#work")));
 }
@@ -78,17 +76,14 @@ async fn list_notes_respects_limit_and_tag_filter() {
 #[tokio::test(flavor = "current_thread")]
 async fn search_notes_finds_matches_with_limit() {
     let (_folder, db_path) = temp_db();
-    {
-        let store = Store::open(&db_path).unwrap();
+    let store = Store::open(&db_path).unwrap();
+    store.create_note("Milk and eggs").await.unwrap();
+    sleep(Duration::from_millis(2)).await;
+    store.create_note("Milkshake recipe").await.unwrap();
+    sleep(Duration::from_millis(2)).await;
+    store.create_note("Unrelated note").await.unwrap();
 
-        store.create_note("Milk and eggs").await.unwrap();
-        sleep(Duration::from_millis(2)).await;
-        store.create_note("Milkshake recipe").await.unwrap();
-        sleep(Duration::from_millis(2)).await;
-        store.create_note("Unrelated note").await.unwrap();
-    }
-
-    let matches = search_notes("milk", 1, &db_path).await.unwrap();
+    let matches = search_notes("milk", 1, &store).await.unwrap();
     assert_eq!(matches.len(), 1);
     assert!(matches[0].content.to_lowercase().contains("milk"));
 }
@@ -117,7 +112,7 @@ fn normalize_note_identifier_rejects_empty() {
 #[tokio::test(flavor = "current_thread")]
 async fn resolve_note_for_edit_supports_exact_and_prefix_id() {
     let (_folder, db_path) = temp_db();
-    let store = open_database(&db_path).unwrap();
+    let store = Store::open(&db_path).unwrap();
     insert_note(&store, "11111111-1111-7111-8111-111111111111", "Note A").await;
     insert_note(&store, "11111111-1111-7111-8111-222222222222", "Note B").await;
 
@@ -135,7 +130,7 @@ async fn resolve_note_for_edit_supports_exact_and_prefix_id() {
 #[tokio::test(flavor = "current_thread")]
 async fn resolve_note_for_edit_rejects_ambiguous_prefix() {
     let (_folder, db_path) = temp_db();
-    let store = open_database(&db_path).unwrap();
+    let store = Store::open(&db_path).unwrap();
     insert_note(&store, "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa", "Left").await;
     insert_note(&store, "aaaaaaaa-aaaa-7aaa-8aaa-bbbbbbbbbbbb", "Right").await;
 
@@ -148,7 +143,7 @@ async fn resolve_note_for_edit_rejects_ambiguous_prefix() {
 #[tokio::test(flavor = "current_thread")]
 async fn resolve_note_for_edit_rejects_missing_note() {
     let (_folder, db_path) = temp_db();
-    let store = open_database(&db_path).unwrap();
+    let store = Store::open(&db_path).unwrap();
 
     let error = resolve_note_for_edit("does-not-exist", &store)
         .await
@@ -163,27 +158,46 @@ async fn run_delete_soft_deletes_note_by_exact_and_prefix_id() {
     let note_a = insert_note(&store, "bbbbbbbb-bbbb-7bbb-8bbb-111111111111", "Keep me").await;
     let note_b = insert_note(&store, "bbbbbbbb-bbbb-7bbb-8bbb-222222222222", "Delete me").await;
 
-    run_delete("bbbbbbbb-bbbb-7bbb-8bbb-2", &db_path)
+    let context = without_a_server(&store);
+    run_delete("bbbbbbbb-bbbb-7bbb-8bbb-2", &context)
         .await
         .unwrap();
 
     assert!(store.get_note(&note_b).await.unwrap().is_none());
     assert!(store.get_note(&note_a).await.unwrap().is_some());
 
-    run_delete("bbbbbbbb-bbbb-7bbb-8bbb-111111111111", &db_path)
+    run_delete("bbbbbbbb-bbbb-7bbb-8bbb-111111111111", &context)
         .await
         .unwrap();
 
     assert!(store.get_note(&note_a).await.unwrap().is_none());
 }
 
-#[test]
-fn run_sync_fails_because_sync_is_unavailable() {
-    let error = run_sync().unwrap_err();
+/// A sync that cannot happen must fail, so that nobody takes a silent
+/// success to mean that their notes reached another device.
+#[tokio::test(flavor = "current_thread")]
+async fn run_sync_fails_when_there_is_no_server_to_sync_with() {
+    let (_folder, db_path) = temp_db();
+    let store = Store::open(&db_path).unwrap();
+
+    let error = run_sync(&without_a_server(&store)).await.unwrap_err();
+
+    assert!(matches!(error, CliError::Account(_)));
+    assert!(error.to_string().contains("no server is configured"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_account_status_says_when_notes_stay_on_this_device() {
+    let (_folder, db_path) = temp_db();
+    let store = Store::open(&db_path).unwrap();
+
+    let lines = crate::commands::account::status_lines(&without_a_server(&store))
+        .await
+        .unwrap();
+
     assert_eq!(
-        error.to_string(),
-        "Sync is unavailable while Dirt's sync is being rebuilt. \
-         Your notes are stored on this device only."
+        lines,
+        ["No server is configured. Notes are kept on this device only."]
     );
 }
 
@@ -215,10 +229,8 @@ fn render_markdown_export_includes_frontmatter_and_content() {
 #[tokio::test(flavor = "current_thread")]
 async fn run_export_writes_json_file() {
     let (_folder, db_path) = temp_db();
-    {
-        let store = Store::open(&db_path).unwrap();
-        store.create_note("Export me #one").await.unwrap();
-    }
+    let store = Store::open(&db_path).unwrap();
+    store.create_note("Export me #one").await.unwrap();
 
     let output_path = std::env::temp_dir().join(format!(
         "dirt-export-test-{}.json",
@@ -227,7 +239,7 @@ async fn run_export_writes_json_file() {
             .map_or(0, |duration| duration.as_nanos())
     ));
 
-    run_export(ExportFormat::Json, Some(&output_path), &db_path)
+    run_export(ExportFormat::Json, Some(&output_path), &store)
         .await
         .unwrap();
 
@@ -255,6 +267,14 @@ fn run_completions_writes_bash_script_file() {
     assert!(script.contains(" default dirt"));
 
     let _ = std::fs::remove_file(output_path);
+}
+
+/// What a command gets when no server is configured: a store and no session.
+fn without_a_server(store: &Store) -> Context {
+    Context {
+        store: store.clone(),
+        session: None,
+    }
 }
 
 /// A database path inside a new temporary folder. The folder is removed

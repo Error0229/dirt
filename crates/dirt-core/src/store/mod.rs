@@ -254,6 +254,11 @@ impl Store {
             .await
     }
 
+    /// How many notes the store holds, not counting deleted ones.
+    pub async fn note_count(&self) -> Result<usize> {
+        self.read(|c| notes::count(c)).await
+    }
+
     // ---- Documents ----
 
     /// Every note's CRDT document, deleted notes included.
@@ -354,6 +359,25 @@ impl Store {
     /// How many notes are waiting to be pushed.
     pub async fn unsent_count(&self) -> Result<usize> {
         self.read(|c| sync_state::unsent_count(c)).await
+    }
+
+    /// How many notes hold changes the server has not accepted, counting
+    /// the notes held back by a sync problem too: what deleting this store
+    /// now would lose.
+    pub async fn unsynced_count(&self) -> Result<usize> {
+        self.read(|c| sync_state::unsynced_count(c)).await
+    }
+
+    /// When a sync cycle last completed, as Unix milliseconds, or `None` if
+    /// none ever has.
+    pub async fn last_synced_ms(&self) -> Result<Option<i64>> {
+        self.read(|c| sync_state::last_synced(c)).await
+    }
+
+    /// Records that a sync cycle completed at `at_ms`.
+    pub async fn set_last_synced_ms(&self, at_ms: i64) -> Result<()> {
+        self.write(move |c| sync_state::set_last_synced(c, at_ms))
+            .await
     }
 
     /// Records that the server accepted `revision` of a note as change

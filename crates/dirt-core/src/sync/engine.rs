@@ -108,6 +108,9 @@ impl SyncEngine {
             }
         }
         report.unsent = self.store.unsent_count().await?;
+        self.store
+            .set_last_synced_ms(chrono::Utc::now().timestamp_millis())
+            .await?;
         Ok(report)
     }
 

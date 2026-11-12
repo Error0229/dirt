@@ -1,15 +1,13 @@
-use std::path::Path;
-
 use crate::commands::common::{
-    capture_editor_input_with_initial, normalize_note_identifier, open_database,
-    resolve_note_for_edit,
+    capture_editor_input_with_initial, normalize_note_identifier, resolve_note_for_edit,
 };
+use crate::context::Context;
 use crate::error::CliError;
 
-pub async fn run_edit(id: &str, db_path: &Path) -> Result<(), CliError> {
+pub async fn run_edit(id: &str, context: &Context) -> Result<(), CliError> {
     let normalized_id = normalize_note_identifier(id)?;
-    let db = open_database(db_path)?;
-    let note = resolve_note_for_edit(&normalized_id, &db).await?;
+    let db = &context.store;
+    let note = resolve_note_for_edit(&normalized_id, db).await?;
 
     let Some(edited_content) = capture_editor_input_with_initial(&note.content)? else {
         return Err(CliError::EmptyEditedContent);
@@ -22,5 +20,6 @@ pub async fn run_edit(id: &str, db_path: &Path) -> Result<(), CliError> {
 
     let updated = db.update_note(&note.id, &edited_content).await?;
     println!("{}", updated.id);
+    context.sync_after_write().await;
     Ok(())
 }

@@ -155,6 +155,18 @@ pub fn decrypt_note(
         .map_err(|_| CryptoError::Rejected)
 }
 
+/// 256 random bits as URL-safe text, 43 characters long: a PKCE verifier or
+/// an OAuth `state` value.
+#[must_use]
+pub fn random_token() -> String {
+    use base64::Engine as _;
+    use chacha20poly1305::aead::rand_core::RngCore as _;
+
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
 /// A device's X25519 key pair. The public half is registered with the
 /// server; step 6 uses the pair to receive the account key from another
 /// device.

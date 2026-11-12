@@ -60,6 +60,7 @@ pub fn NoteEditor() -> Element {
                         Ok(_) => {
                             tracing::debug!("Saved note: {}", id);
                             last_saved_version.set(version);
+                            state.note_changed();
                             invalidate_notes_query().await;
                         }
                         Err(error) => {

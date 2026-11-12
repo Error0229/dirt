@@ -26,19 +26,8 @@ pub enum CliError {
     EditorFailed(String),
     #[error("Configuration error: {0}")]
     Config(String),
-    /// Pre-formatted auth-subsystem error string assembled by
-    /// `auth_cmd::auth_error_to_cli` / `token_store_error_to_cli`.
-    /// We collapse `AuthError` and `TokenStoreError` into a single
-    /// `String` (rather than carrying the source via `#[from]`) so
-    /// the CLI can present a `(cause); (fix)` line tuned per
-    /// variant. The tradeoff is that `Error::source()` returns
-    /// `None` here — a future `--verbose` mode that wants the full
-    /// chain would need to plumb the structured source through.
-    #[error("auth error: {0}")]
-    Auth(String),
-    #[error(
-        "Sync is unavailable while Dirt's sync is being rebuilt. \
-         Your notes are stored on this device only."
-    )]
-    SyncUnavailable,
+    /// Signing in, signing out or syncing failed. The text already says
+    /// what the person can do about it.
+    #[error("{0}")]
+    Account(String),
 }

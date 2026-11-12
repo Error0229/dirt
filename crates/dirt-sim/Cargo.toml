@@ -21,6 +21,10 @@ http-body-util = "0.1"
 jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 rsa = "0.9"
+# The test's stand-in for a browser.
+reqwest = { version = "0.12", default-features = false }
+serde = { workspace = true }
+sha2 = "0.10"
 serde_json.workspace = true
 sqlx = { version = "0.9", default-features = false, features = [
     "runtime-tokio",

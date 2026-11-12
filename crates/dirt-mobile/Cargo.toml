@@ -38,13 +38,16 @@ thiserror.workspace = true
 [target.'cfg(target_os = "android")'.dependencies]
 dioxus = { workspace = true, features = ["mobile"] }
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
-# JNI bridge for the Android-side `TokenStore`. `ndk-context` exposes the
-# JavaVM + Activity handles the Dioxus mobile runtime publishes; `jni`
-# is the Rust binding to Android's Java APIs (KeyStore + AndroidX
-# EncryptedSharedPreferences). Android-only — host builds use the
-# file-backed fallback under `cfg(not(target_os = "android"))`.
+# JNI bridge for the device's secure storage. `ndk-context` exposes the
+# JavaVM and Activity handles the Dioxus mobile runtime publishes; `jni`
+# is the Rust binding to Android's Java APIs (KeyStore and AndroidX
+# EncryptedSharedPreferences).
 jni = "0.21"
 ndk-context = "0.1"
+# Opens the system browser on the sign-in page.
+webbrowser = "1"
+# The pause between looks for the sign-in redirect.
+tokio = { workspace = true }
 
 [build-dependencies]
 dotenvy = "0.15"
@@ -56,11 +59,6 @@ serde_json = { workspace = true }
 # temporary folder.
 tokio.workspace = true
 tempfile = "3"
-# `services::auth_flow` tests run the request / verify / logout steps
-# against a mock HTTP server, so a developer running
-# `cargo test -p dirt-mobile` on Windows / Linux exercises the sign-in
-# flow without an Android emulator.
-wiremock = { workspace = true }
 
 [lints]
 workspace = true

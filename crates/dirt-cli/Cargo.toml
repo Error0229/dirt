@@ -11,13 +11,11 @@ name = "dirt"
 path = "src/main.rs"
 
 [dependencies]
-# Explicit `features = ["keyring-store"]` instead of relying on
-# dirt-core's defaults: `dirt auth login`/`logout` cannot work without
-# the keyring backend, so disabling it from the consumer side (via
-# `default-features = false`) would silently break the auth subsystem
-# at runtime. Stating the requirement at the dep declaration makes
-# that contract visible at the Cargo level.
+# The keychain is where the CLI and the desktop app keep the account's keys,
+# so the feature is named here and not left to dirt-core's defaults.
 dirt-core = { path = "../dirt-core", features = ["keyring-store"] }
+# Opens the system browser on the sign-in page.
+webbrowser = "1"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 tokio = { version = "1", features = ["full"] }

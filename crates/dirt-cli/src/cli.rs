@@ -14,7 +14,7 @@ pub struct Cli {
     #[arg(long, value_name = "PATH")]
     pub db_path: Option<PathBuf>,
 
-    /// CLI profile name for managed auth/sync configuration
+    /// CLI profile name, which selects the server to sync with
     #[arg(long, global = true, value_name = "NAME")]
     pub profile: Option<String>,
 
@@ -82,14 +82,14 @@ pub enum Commands {
         #[arg(short, long, value_name = "PATH")]
         output: Option<PathBuf>,
     },
-    /// Sync notes with other devices (unavailable while sync is being rebuilt)
+    /// Sync notes with the account's other devices now
     Sync,
     /// Configure CLI managed profiles
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
     },
-    /// Inspect or manage authentication state
+    /// Sign in, sign out, or show the account's state
     Auth {
         #[command(subcommand)]
         command: AuthCommands,
@@ -113,17 +113,23 @@ pub enum CompletionShell {
 
 #[derive(Subcommand)]
 pub enum AuthCommands {
-    /// Print connectivity status against the configured `dirt-api`.
-    ///
-    /// Solo phase: the auth surface only exists so the CLI's command
-    /// shape is stable across phases. There's no login state to report;
-    /// `status` instead reports whether the CLI's env is configured and
-    /// whether the configured token reaches the server.
+    /// Show who is signed in and how sync is going
     Status,
-    /// Placeholder. Phase 2 (magic-link auth) will implement login.
-    Login,
-    /// Placeholder. Phase 2 (magic-link auth) will implement logout.
-    Logout,
+    /// Sign in through the browser. The desktop app on this computer is
+    /// signed in by this too
+    Login {
+        /// Move notes written before signing in into the account without
+        /// asking
+        #[arg(long)]
+        move_local_notes: bool,
+    },
+    /// Sign out and remove the account's notes and keys from this computer
+    Logout {
+        /// Sign out even if some notes have not reached the server; they
+        /// are deleted
+        #[arg(long)]
+        discard_unsynced: bool,
+    },
 }
 
 #[derive(Subcommand)]

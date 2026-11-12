@@ -1,14 +1,15 @@
-use std::path::Path;
-
-use crate::commands::common::{open_database, resolve_note_content};
+use crate::commands::common::resolve_note_content;
+use crate::context::Context;
 use crate::error::CliError;
 
-pub async fn run_add(content_parts: &[String], db_path: &Path) -> Result<(), CliError> {
+pub async fn run_add(content_parts: &[String], context: &Context) -> Result<(), CliError> {
     let content = resolve_note_content(content_parts)?;
 
-    let db = open_database(db_path)?;
-    let note = db.create_note(&content).await?;
+    let note = context.store.create_note(&content).await?;
 
+    // The note is saved and its ID printed before anything touches the
+    // network: capture never waits for sync.
     println!("{}", note.id);
+    context.sync_after_write().await;
     Ok(())
 }

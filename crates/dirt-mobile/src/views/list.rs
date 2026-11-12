@@ -1,8 +1,8 @@
 //! Note list view.
 //!
-//! List of locally stored notes, most recently edited first, with a
-//! banner at the top saying that sync is unavailable, a "New note"
-//! button, and tap-to-edit on each card.
+//! List of the notes in the store in use, most recently edited first,
+//! with a line at the top saying how sync is going, a "New note" button,
+//! and tap-to-edit on each card.
 //! Search and tag filtering land in the M4 follow-up; this view stays
 //! deliberately minimal so the shell rewrite can ship without dragging
 //! every old feature back at once.
@@ -10,7 +10,9 @@
 use dioxus::prelude::*;
 use dirt_core::models::Note;
 
-use crate::state::{AppState, View, SYNC_UNAVAILABLE_MESSAGE};
+use dirt_core::session::SessionState;
+
+use crate::state::{AppState, View};
 use crate::ui::{ButtonVariant, UiButton};
 
 const PREVIEW_MAX_CHARS: usize = 140;
@@ -77,9 +79,22 @@ pub fn List() -> Element {
     }
 }
 
-/// Says that sync is unavailable.
+/// Says where the notes on screen are kept and how sync is going.
 #[component]
 fn SyncBanner() -> Element {
+    let state = use_context::<AppState>();
+    let status = (state.sync_status)();
+    let text = match (state.session_state)() {
+        SessionState::Ready { .. } => crate::views::settings::sync_failure(&status)
+            .unwrap_or_else(|| crate::views::settings::sync_summary(&status)),
+        SessionState::WaitingForApproval { .. } => {
+            "This device is waiting for approval. Notes written here stay on this device."
+                .to_owned()
+        }
+        SessionState::SignedOut | SessionState::SigningIn => {
+            "Not signed in. Notes are kept on this device only.".to_owned()
+        }
+    };
     rsx! {
         div {
             style: "
@@ -90,7 +105,7 @@ fn SyncBanner() -> Element {
                 font-size: 13px;
                 line-height: 1.4;
             ",
-            "{SYNC_UNAVAILABLE_MESSAGE}"
+            "{text}"
         }
     }
 }

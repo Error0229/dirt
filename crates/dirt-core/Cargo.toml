@@ -28,7 +28,8 @@ uuid.workspace = true
 chrono.workspace = true
 regex.workspace = true
 rusqlite.workspace = true
-tokio.workspace = true
+# `net` and `io-util` are for the listener the browser returns to at sign-in.
+tokio = { workspace = true, features = ["net", "io-util"] }
 tracing.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # Best-effort scrub of `StoredToken`'s session_token / session_id heap
@@ -38,6 +39,9 @@ zeroize = { version = "1.8", features = ["derive"] }
 # Note encryption and device keys. Audited implementations; nothing in this
 # crate implements a cipher itself.
 chacha20poly1305 = "0.10"
+base64 = "0.22"
+# The PKCE challenge of the sign-in is a SHA-256 hash.
+sha2 = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 
 # Platform-native secret store for `auth::KeyringTokenStore`.

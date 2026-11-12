@@ -18,9 +18,9 @@ mod export;
 mod filters;
 #[cfg(any(target_os = "android", test))]
 mod launch;
-#[cfg(any(target_os = "android", test))]
+#[cfg(target_os = "android")]
 mod services;
-#[cfg(any(target_os = "android", test))]
+#[cfg(target_os = "android")]
 mod state;
 #[cfg(target_os = "android")]
 mod ui;
