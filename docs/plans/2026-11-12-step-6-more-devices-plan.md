@@ -92,57 +92,83 @@ the number of waiting devices and the time a pending reset takes effect.
 
 ### 6a: the server and the core, with no interface
 
-- [ ] Server: the enrolment mailbox, the encrypted key, completion.
-- [ ] Server: requests to join expire after seven days.
-- [ ] Server: the recovery copy and the claim.
-- [ ] Server: account deletion, reset, the delayed reset and its
+- [x] Server: the enrolment mailbox, the encrypted key, completion.
+- [x] Server: requests to join expire after seven days.
+- [x] Server: the recovery copy and the claim.
+- [x] Server: account deletion, reset, the delayed reset and its
       cancellation.
-- [ ] Server: what a waiting device learns, and what a pull says needs
+- [x] Server: what a waiting device learns, and what a pull says needs
       attention.
-- [ ] `dirt-core::crypto`: the exchange (commitment, code, key wrap) and the
-      recovery phrase.
-- [ ] `dirt-core::session`: approving a device, being approved, the device
+- [x] `dirt-core::enrolment` and `dirt-core::recovery`: the exchange
+      (commitment, code, key wrap) and the recovery phrase.
+- [x] `dirt-core::session`: approving a device, being approved, the device
       list and removal, the recovery phrase, signing out when it is safe,
       reset and deletion.
-- [ ] `dirt-sim`: the tests below.
+- [x] `dirt-sim`: the tests below.
+- [x] `docs/SECURITY.md`, written fresh: what is protected, from whom, and
+      what is not.
+
+**Result (2026-11-12): done.** What building it showed:
+
+- **A device that leaves must leave the reason readable.** When the person
+  says the codes differ on the new device, that device signs out and says
+  why, and the approving device removes it on reading that. Had the new
+  device removed itself, its message would have gone with it and the
+  approving device would have learned nothing. In the other direction the
+  reason is lost: a device that finds itself removed is told only that.
+- **Two approving devices can answer at once.** The new device goes on with
+  whichever answered first. The other sees that answer and steps aside
+  without removing anything.
+- **A wrong key from a server in the middle is refused even if nobody looks
+  at the codes.** The new device cannot open a key sealed for the real
+  exchange, and accepts nothing. Comparing the codes is still what protects
+  the account key itself, which the approving device would otherwise seal
+  for the server.
+- **The wait for a reset and the lapse of a request are the same seven
+  days,** so a device that asked for a reset would have been shut out at the
+  moment it could act. A device with a reset pending is exempt from the
+  lapse.
+- **Deleting an account keeps the notes on the device that did it.** They
+  exist nowhere else by then, so they are moved back into its local store.
+- The commitment check, the rule that a device cannot complete without a
+  key, and the rule that a waiting device cannot reset an account with notes
+  were each broken by hand to confirm a test fails.
 
 ### 6b: the interfaces
 
 - [ ] Desktop, CLI and Android: the approval screens, the device list, the
       recovery phrase, reset and deletion. The approval screen is the one
       place that polls, every few seconds and only while it is open.
-- [ ] `docs/SECURITY.md`, written fresh: what is protected, from whom, and
-      what is not.
 
 ## Tests
 
 Each of these is an exit condition.
 
-- [ ] A second device is approved with matching codes, receives the key,
+- [x] A second device is approved with matching codes, receives the key,
       and reads the account's notes.
-- [ ] A server that swaps the approving device's key, the new device's key,
+- [x] A server that swaps the approving device's key, the new device's key,
       or a registered public key makes the two codes differ.
-- [ ] A server that changes the new device's key after its commitment is
+- [x] A server that changes the new device's key after its commitment is
       caught by the approving device before any code is shown.
-- [ ] The encrypted key cannot be opened by the server, nor by a third
+- [x] The encrypted key cannot be opened by the server, nor by a third
       device that watched every message.
-- [ ] A device is not approved until it says it has the key. One that stops
+- [x] A device is not approved until it says it has the key. One that stops
       before that can run the exchange again.
-- [ ] A rejection or a mismatch removes the waiting device.
-- [ ] A request to join expires after seven days and stops counting against
+- [x] A rejection or a mismatch removes the waiting device.
+- [x] A request to join expires after seven days and stops counting against
       the limit.
-- [ ] A waiting device with the recovery phrase becomes approved and reads
+- [x] A waiting device with the recovery phrase becomes approved and reads
       the notes. A wrong phrase, or the right key with a wrong claim code,
       gets nothing.
-- [ ] A waiting device cannot create, replace or delete the recovery copy.
-- [ ] Signing out is refused on the only approved device with no recovery
+- [x] A waiting device cannot create, replace or delete the recovery copy.
+- [x] Signing out is refused on the only approved device with no recovery
       copy, and allowed once there is another approved device or a copy.
-- [ ] A reset by an approved device leaves one device, a new key and the
+- [x] A reset by an approved device leaves one device, a new key and the
       device's own notes on the server, re-encrypted.
-- [ ] A reset asked for by a waiting device takes effect at once on an
+- [x] A reset asked for by a waiting device takes effect at once on an
       account with no notes, and otherwise only after seven days, unless an
       approved device cancels it.
-- [ ] Deleting an account removes everything the server holds for it and
+- [x] Deleting an account removes everything the server holds for it and
       signs every device out.
 
 ## Exit

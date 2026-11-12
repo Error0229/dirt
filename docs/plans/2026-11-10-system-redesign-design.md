@@ -234,9 +234,16 @@ and when they change.
    closes, and after a few minutes in any case.
 3. Both devices display the same short code. It comes from a commit-then-reveal
    exchange, so the server cannot choose keys that produce a matching code.
-4. On approval, the existing device encrypts the account key to the new
-   device's public key and uploads it. The new device downloads and unwraps it,
-   and the server deletes its copy.
+4. On approval, the existing device encrypts the account key under a key
+   that only the two devices can derive from the exchange, and uploads it.
+   The new device downloads and unwraps it and tells the server so. Only then
+   does the server mark it approved and delete its copy, so a device is never
+   approved without the key.
+
+The code covers each device's registered public key as well as the temporary
+keys of the exchange, so the exchange also confirms the registered keys to
+each device. Step 8 relies on that when it wraps a new account key for the
+remaining devices.
 
 The first device of an account needs none of this. A CLI on a computer that
 already runs the desktop app needs none of it either.
@@ -247,8 +254,18 @@ already runs the desktop app needs none of it either.
   server then stores the account key wrapped under a key derived from the
   phrase. A new device with no other device available signs in and enters the
   phrase. Deleting the wrapped copy cancels the phrase.
+- **Proving the phrase:** a second value derived from the phrase is a claim
+  code. The server keeps its hash and approves a waiting device that presents
+  the code. What the server keeps does not help it open the key.
 - **Lost everything, no phrase:** the notes cannot be recovered. The user can
   reset the account, which deletes the ciphertext and starts fresh.
+- **Who may reset:** an approved device, at once. A waiting device at once if
+  the server holds no notes for the account; otherwise it asks, and the reset
+  happens seven days later unless an approved device cancels it. A waiting
+  device is all that someone who took over the person's email can get, and
+  the wait is what stops them wiping an account whose devices are working.
+- **Signing out** is allowed once another approved device or a recovery copy
+  holds the key.
 - **Removing a device:** revokes its token at once.
 - **Key rotation:** issue a new account key, re-encrypt all notes, and wrap the
   new key for the remaining devices. Specified here, built in step 8.
@@ -384,10 +401,10 @@ It sends no email, merges nothing, and never inspects note content.
 |---|---|
 | Health | `GET /healthz` |
 | Devices | `POST /v1/devices`, `GET /v1/devices`, `DELETE /v1/devices/{id}` |
-| Enrolment | `POST` and `GET /v1/enrolments/{device_id}/messages`, `PUT` and `GET /v1/enrolments/{device_id}/key` |
-| Recovery | `PUT`, `GET` and `DELETE /v1/recovery` |
+| Enrolment | `POST` and `GET /v1/enrolments/{device_id}/messages`, `PUT` and `GET /v1/enrolments/{device_id}/key`, `POST /v1/enrolments/{device_id}/complete` |
+| Recovery | `PUT`, `GET` and `DELETE /v1/recovery`, `POST /v1/recovery/claim` |
 | Notes | `POST /v1/notes/push`, `GET /v1/notes/pull` |
-| Account | `DELETE /v1/account` |
+| Account | `DELETE /v1/account`, `POST` and `DELETE /v1/account/reset` |
 
 A pending device may call only the enrolment endpoints and
 `GET /v1/recovery`. It may not create or delete the recovery copy, so a stolen
@@ -402,7 +419,10 @@ email inbox cannot destroy it.
   ciphertext. Primary key on account and note ID; index on account and change
   number.
 - **enrolment_messages:** short-lived rows for the approval exchange.
-- **recovery_keys:** one optional row per account.
+- **enrolment_keys:** the account key encrypted for one waiting device, from
+  the moment an approved device leaves it until the waiting device has it.
+- **recovery_keys:** one optional row per account: the account key encrypted
+  under the phrase, and the hash of the claim code.
 
 ### 7.4 Database
 

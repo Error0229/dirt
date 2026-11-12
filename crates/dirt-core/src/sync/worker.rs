@@ -63,6 +63,12 @@ pub struct SyncStatus {
     /// started, counting those merged by a cycle that then failed. A change
     /// in this number means the notes on screen may be out of date.
     pub pulled: u64,
+    /// Devices waiting for this one to approve them, as of the last sync.
+    pub pending_devices: u32,
+    /// When a reset that a waiting device asked for takes effect, if one is
+    /// pending. An approved device should refuse it unless the person
+    /// expected it.
+    pub reset_effective_at_ms: Option<i64>,
 }
 
 /// How long the worker waits in each situation.
@@ -281,7 +287,16 @@ async fn run(
         // Read from the engine and not from the cycle's report: a cycle that
         // failed has no report, but may have merged documents first.
         let pulled = engine.merged_total();
+        let attention = outcome
+            .as_ref()
+            .ok()
+            .map(|report| (report.pending_devices, report.reset_effective_at_ms));
         status.send_modify(|status| {
+            // A cycle that failed says nothing new about these.
+            if let Some((pending_devices, reset_effective_at_ms)) = attention {
+                status.pending_devices = pending_devices;
+                status.reset_effective_at_ms = reset_effective_at_ms;
+            }
             status.syncing = false;
             status.last_synced_ms = last_synced_ms;
             status.unsent = unsent;

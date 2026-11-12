@@ -41,6 +41,14 @@ base64 = "0.22"
 # The PKCE challenge of the sign-in is a SHA-256 hash.
 sha2 = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
+# The key agreement and short code of the device approval exchange. This is
+# Matrix's implementation of its own short-code verification; only its `sas`
+# module is used.
+vodozemac = { version = "0.11", default-features = false }
+# The recovery phrase: the standard word list and its checksum.
+bip39 = { version = "2", default-features = false, features = ["std"] }
+# Derives the two keys a recovery phrase stands for.
+hkdf = "0.12"
 
 # The operating system's keychain, for `secrets::KeyringSecrets`: Keychain
 # on macOS, Credential Manager on Windows, the Secret Service over DBus on

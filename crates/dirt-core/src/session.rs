@@ -14,6 +14,13 @@
 //! Signing in registers the device with the server. The first device of an
 //! account creates the account key. A device whose token expired signs in
 //! again and stays the same device.
+//!
+//! A later device gets the key from an approved one, or from the recovery
+//! phrase: see [`devices`].
+
+mod devices;
+
+pub use devices::{Approval, ExchangeStep, Join, MyDevice, ResetOutcome};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -105,15 +112,25 @@ pub enum SessionError {
     /// The action needs a device that is signed in and approved.
     #[error("this device is not signed in and approved")]
     NotReady,
+    /// The approval exchange with another device failed.
+    #[error(transparent)]
+    Enrolment(crate::enrolment::EnrolmentError),
+    /// The recovery phrase could not be used.
+    #[error(transparent)]
+    Recovery(crate::recovery::RecoveryError),
+    /// The account has no recovery copy for a phrase to open.
+    #[error("this account has no recovery phrase")]
+    NoRecoveryCopy,
 }
 
 /// Why the device was not signed out.
 #[derive(Debug, thiserror::Error)]
 pub enum SignOutError {
-    /// This is the account's only approved device. Signing it out would
-    /// delete the only copy of the key that reads the account's notes.
+    /// This is the account's only approved device and the account has no
+    /// recovery phrase. Signing it out would delete the only copy of the
+    /// key that reads the account's notes.
     #[error(
-        "this is the only device that can read this account's notes; signing out would make them unreadable for good"
+        "this is the only device that can read this account's notes, and the account has no recovery phrase; signing out would make the notes unreadable for good"
     )]
     OnlyApprovedDevice,
     /// Some notes have not reached the server. Signing out would delete
@@ -583,7 +600,7 @@ impl Session {
             return Ok(self.state());
         }
         let me = self.api().with_token(secrets.token.clone()).me().await?;
-        if me.status == DeviceStatus::Approved {
+        if me.device.status == DeviceStatus::Approved {
             secrets.approved = true;
             secrets.write(&*self.inner.secrets)?;
             self.activate(secrets)?;
@@ -688,9 +705,10 @@ impl Session {
     /// Signs the device out: syncs, removes the device from the account,
     /// and deletes the account's notes and keys from this device.
     ///
-    /// Refused on the account's only approved device, whose key is the only
-    /// thing that can read the account's notes. Refused, unless `unsynced`
-    /// says to discard them, while notes have not reached the server.
+    /// Refused on the account's only approved device unless the account has
+    /// a recovery phrase: that device's key is otherwise the only thing that
+    /// can read the account's notes. Refused, unless `unsynced` says to
+    /// discard them, while notes have not reached the server.
     pub async fn sign_out(&self, unsynced: Unsynced) -> Result<(), SignOutError> {
         let Some(secrets) = self.saved_secrets() else {
             return Ok(());
@@ -698,8 +716,14 @@ impl Session {
         let api = self.api().with_token(secrets.token.clone());
 
         if let Some(engine) = self.engine() {
-            let devices = match api.devices().await {
-                Ok(list) => list.devices,
+            match api.me().await {
+                // The key survives this device leaving if another approved
+                // device holds it, or a recovery phrase can open it.
+                Ok(me) => {
+                    if me.approvers == 0 && !me.recovery_available {
+                        return Err(SignOutError::OnlyApprovedDevice);
+                    }
+                }
                 // A device the server no longer accepts has nothing left to
                 // protect there: its key reads nothing new, and another
                 // device removed it or it must sign in again anyway.
@@ -707,19 +731,8 @@ impl Session {
                     if matches!(
                         error.code(),
                         Some(ErrorCode::DeviceRevoked | ErrorCode::Unauthenticated)
-                    ) =>
-                {
-                    Vec::new()
-                }
+                    ) => {}
                 Err(error) => return Err(SignOutError::CannotCheck(error)),
-            };
-            let others = devices
-                .iter()
-                .filter(|device| device.status == DeviceStatus::Approved && !device.current)
-                .count();
-            let this_one_counts = devices.iter().any(|device| device.current);
-            if this_one_counts && others == 0 {
-                return Err(SignOutError::OnlyApprovedDevice);
             }
 
             let cause = engine.run_once().await.err().map(|error| error.to_string());
@@ -742,6 +755,16 @@ impl Session {
             tracing::warn!("the server was not told about the sign-out: {error}");
         }
 
+        self.forget_account(&secrets).map_err(|error| match error {
+            SessionError::Secrets(error) => SignOutError::Secrets(error),
+            SessionError::Store(error) => SignOutError::Store(error),
+            other => SignOutError::Store(Error::Database(other.to_string())),
+        })
+    }
+
+    /// Removes the account from this device: its keys, and its store with
+    /// whatever notes are in it. The device is signed out afterwards.
+    fn forget_account(&self, secrets: &DeviceSecrets) -> Result<(), SessionError> {
         // The worker and this session's store handles go before the files.
         let had_account = lock(&self.inner.signed_in)
             .take()

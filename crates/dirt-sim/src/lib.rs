@@ -241,6 +241,15 @@ impl InProcess {
     pub fn lose_next_answer(&self, path_prefix: &str) {
         self.add_fault(path_prefix, Fault::LoseAnswer);
     }
+
+    /// Rewrites the server's answer to the next request whose path starts
+    /// with `path_prefix`, as a dishonest server could.
+    pub fn rewrite_next_answer<F>(&self, path_prefix: &str, rewrite: F)
+    where
+        F: FnOnce(&mut serde_json::Value) + Send + 'static,
+    {
+        self.add_fault(path_prefix, Fault::Rewrite(Box::new(rewrite)));
+    }
 }
 
 impl Transport for InProcess {
@@ -651,6 +660,13 @@ impl Client {
             .expect("signed in")
             .account_key
             .expect("holds the key")
+    }
+
+    /// Whether this device's secure storage holds nothing: no token, no
+    /// keys.
+    #[must_use]
+    pub fn secrets_are_empty(&self) -> bool {
+        self.secrets.load().expect("read secrets").is_none()
     }
 
     /// The live notes of the store in use, as `(id, text)` sorted by ID.

@@ -47,6 +47,11 @@ pub struct SyncReport {
     pub problems: usize,
     /// Notes still unsent when the cycle ended.
     pub unsent: usize,
+    /// Devices waiting to be approved, as the server last said.
+    pub pending_devices: u32,
+    /// When a reset that a waiting device asked for takes effect, if one is
+    /// pending.
+    pub reset_effective_at_ms: Option<i64>,
 }
 
 /// Why a cycle ended early.
@@ -148,6 +153,8 @@ impl SyncEngine {
                 // The page was fetched with a cursor from the old epoch.
                 continue;
             }
+            report.pending_devices = page.pending_devices;
+            report.reset_effective_at_ms = page.reset_effective_at_ms;
             for blob in &page.items {
                 self.apply(blob, report).await?;
             }
