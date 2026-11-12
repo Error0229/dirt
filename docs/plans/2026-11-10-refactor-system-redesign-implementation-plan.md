@@ -815,6 +815,10 @@ Carried forward:
   - Key rotation.
   - A limits review.
   - The Neon and Vercel plan decisions (amendments A1 and A2).
+  - How security reports are taken: whether to switch on GitHub's private
+    vulnerability reporting. From step 6.
+  - The production Clerk decisions, with the consent page and the
+    device-code grant for a CLI with no browser. From step 6.
 - **Settle first:** rotation with offline devices. Default: the server keeps a
   wrapped key per device per version; pushes under an old key are refused with
   "re-encrypt"; any device can resume an interrupted rotation; rotation

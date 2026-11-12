@@ -6,8 +6,8 @@ use axum::extract::{Path, State};
 use axum::response::Response;
 use axum::Json;
 use dirt_proto::api::{
-    limits, DeviceInfo, DeviceList, DeviceStatus, ErrorCode, NonceResponse, RegisterDeviceRequest,
-    RegisterDeviceResponse,
+    limits, DeviceInfo, DeviceList, DeviceStatus, ErrorCode, MyDevice, NonceResponse,
+    RegisterDeviceRequest, RegisterDeviceResponse,
 };
 use uuid::Uuid;
 
@@ -121,11 +121,13 @@ pub async fn register(
     // A device whose token expired signs in again and stays the device it
     // was. It proves that with the old token, which only it ever held, and
     // its public key. A revoked device never matches, so it starts over as
-    // a new device that has to be approved.
+    // a new device that has to be approved. A device that was still waiting
+    // has its request renewed: the time it has to be approved starts again.
     if let Some(previous) = request.previous_token.as_deref() {
         let token = new_token();
         let known: Option<(Uuid, String)> = sqlx::query_as(
-            "UPDATE devices SET token_hash = $1, name = $2, last_seen = now() \
+            "UPDATE devices SET token_hash = $1, name = $2, last_seen = now(), \
+                    created_at = CASE WHEN status = 'pending' THEN now() ELSE created_at END \
               WHERE account_id = $3 AND token_hash = $4 AND public_key = $5 \
                 AND status <> 'revoked' \
              RETURNING id, status",
@@ -167,10 +169,14 @@ pub async fn register(
     let status = if first_device {
         DeviceStatus::Approved
     } else {
+        // Requests that have lapsed no longer hold a place.
         let (pending,): (i64,) = sqlx::query_as(
-            "SELECT count(*) FROM devices WHERE account_id = $1 AND status = 'pending'",
+            "SELECT count(*) FROM devices \
+              WHERE account_id = $1 AND status = 'pending' \
+                AND created_at >= now() - make_interval(days => $2)",
         )
         .bind(account_id)
+        .bind(i32::try_from(limits::PENDING_DEVICE_DAYS).unwrap_or(i32::MAX))
         .fetch_one(&mut *tx)
         .await?;
         if pending >= limits::MAX_PENDING_DEVICES {
@@ -234,8 +240,10 @@ fn device_info(row: DeviceRow, current: Uuid) -> ApiResult<DeviceInfo> {
     })
 }
 
-/// `GET /v1/devices/me`: the one call a pending device may make, to learn
-/// whether it has been approved.
+/// `GET /v1/devices/me`: the calling device and the state of its account.
+///
+/// A waiting device learns here whether it has been approved, how many
+/// devices could approve it, and whether a recovery phrase would let it in.
 pub async fn me(
     State(state): State<AppState>,
     AnyDevice(device): AnyDevice,
@@ -248,7 +256,25 @@ pub async fn me(
     .bind(device.id)
     .fetch_one(&state.pool)
     .await?;
-    Ok(device.respond(device_info(row, device.id)?))
+    let (approvers, recovery_available, reset_effective_at_ms): (i64, bool, Option<i64>) =
+        sqlx::query_as(
+            "SELECT (SELECT count(*) FROM devices \
+                      WHERE account_id = a.id AND status = 'approved' AND id <> $2), \
+                    EXISTS (SELECT 1 FROM recovery_keys WHERE account_id = a.id), \
+                    (extract(epoch FROM a.reset_requested_at + make_interval(days => $3)) * 1000)::bigint \
+               FROM accounts a WHERE a.id = $1",
+        )
+        .bind(device.account_id)
+        .bind(device.id)
+        .bind(i32::try_from(limits::RESET_DELAY_DAYS).unwrap_or(i32::MAX))
+        .fetch_one(&state.pool)
+        .await?;
+    Ok(device.respond(MyDevice {
+        device: device_info(row, device.id)?,
+        approvers: u32::try_from(approvers).unwrap_or(u32::MAX),
+        recovery_available,
+        reset_effective_at_ms,
+    }))
 }
 
 /// `GET /v1/devices`
@@ -292,15 +318,35 @@ pub async fn revoke(
     }
     // The account is part of the condition, so one account can never revoke
     // another's device, whatever ID it sends.
+    let mut tx = state.pool.begin().await?;
     let revoked =
         sqlx::query("UPDATE devices SET status = 'revoked' WHERE id = $1 AND account_id = $2")
             .bind(target)
             .bind(device.account_id)
-            .execute(&state.pool)
+            .execute(&mut *tx)
             .await?
             .rows_affected();
     if revoked == 0 {
         return Err(ApiError::new(ErrorCode::NotFound, "no such device"));
     }
+    // Whatever exchange the device had begun ends with it, and so does a
+    // reset it asked for.
+    sqlx::query("DELETE FROM enrolment_messages WHERE device_id = $1")
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM enrolment_keys WHERE device_id = $1")
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "UPDATE accounts SET reset_requested_at = NULL, reset_requested_by = NULL \
+          WHERE id = $1 AND reset_requested_by = $2",
+    )
+    .bind(device.account_id)
+    .bind(target)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(device.respond(serde_json::json!({ "revoked": target })))
 }

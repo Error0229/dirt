@@ -87,24 +87,31 @@ fn bearer_token(parts: &Parts) -> Option<&str> {
 }
 
 /// Checks the token and counts the request. Accepts pending and approved
-/// devices; refuses unknown tokens, revoked devices and tokens left unused
-/// for too long.
+/// devices; refuses unknown tokens, revoked devices, tokens left unused for
+/// too long, and devices whose request to join the account has lapsed.
 async fn authenticate(pool: &PgPool, parts: &Parts) -> ApiResult<Device> {
     let token = bearer_token(parts)
         .ok_or_else(|| ApiError::new(ErrorCode::Unauthenticated, "a device token is required"))?;
 
-    let row: Option<(Uuid, Uuid, String, i32, bool, bool)> = sqlx::query_as(
+    // A request to join lapses after a while, unless the device has asked
+    // for the account to be reset: it then has to be able to come back when
+    // the wait for that is over.
+    let row: Option<(Uuid, Uuid, String, i32, bool, bool, bool)> = sqlx::query_as(
         "SELECT d.id, d.account_id, d.status, a.epoch, \
                 d.last_seen < now() - make_interval(days => $2), \
-                d.last_seen < now() - interval '1 hour' \
+                d.last_seen < now() - interval '1 hour', \
+                d.status = 'pending' \
+                    AND d.created_at < now() - make_interval(days => $3) \
+                    AND a.reset_requested_by IS DISTINCT FROM d.id \
            FROM devices d JOIN accounts a ON a.id = d.account_id \
           WHERE d.token_hash = $1",
     )
     .bind(hash_secret(token))
     .bind(i32::try_from(limits::DEVICE_TOKEN_IDLE_DAYS).unwrap_or(i32::MAX))
+    .bind(i32::try_from(limits::PENDING_DEVICE_DAYS).unwrap_or(i32::MAX))
     .fetch_optional(pool)
     .await?;
-    let (id, account_id, status, epoch, expired, last_seen_is_old) =
+    let (id, account_id, status, epoch, expired, last_seen_is_old, request_lapsed) =
         row.ok_or_else(|| ApiError::new(ErrorCode::Unauthenticated, "unknown device token"))?;
 
     let status = status_from_text(&status)?;
@@ -118,6 +125,12 @@ async fn authenticate(pool: &PgPool, parts: &Parts) -> ApiResult<Device> {
         return Err(ApiError::new(
             ErrorCode::DeviceExpired,
             "this device's token went unused for too long; sign in again",
+        ));
+    }
+    if request_lapsed {
+        return Err(ApiError::new(
+            ErrorCode::DeviceExpired,
+            "this device's request to join the account was not answered in time; sign in again",
         ));
     }
 

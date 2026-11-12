@@ -4,6 +4,8 @@
 //! - [`store`]: the local SQLite database of notes, tags, search, settings
 //!   and sync state.
 //! - [`crypto`]: the account key, note encryption and the device key pair.
+//! - [`enrolment`]: the exchange that hands the account key to a new device.
+//! - [`recovery`]: the recovery phrase.
 //! - [`identity`]: signing in through the browser.
 //! - [`secrets`]: the device's secure storage.
 //! - [`api`]: the client for the Dirt server.
@@ -18,11 +20,13 @@
 pub mod api;
 pub mod config;
 pub mod crypto;
+pub mod enrolment;
 pub mod error;
 pub mod export;
 pub mod identity;
 pub mod models;
 pub mod notes;
+pub mod recovery;
 pub mod secrets;
 pub mod session;
 pub mod store;

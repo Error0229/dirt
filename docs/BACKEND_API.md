@@ -35,7 +35,7 @@ A client acts on the code's class and nothing else.
 | Class | Codes | What the client does |
 |---|---|---|
 | Try again later | `server_error`, `rate_limited` | Back off and retry; show as offline |
-| Stop until signed in | `unauthenticated`, `device_revoked`, `device_expired`, `device_pending`, `sign_in_rejected`, `too_many_pending_devices` | Stop syncing. Local notes are untouched |
+| Stop until signed in | `unauthenticated`, `device_revoked`, `device_expired`, `device_pending`, `sign_in_rejected`, `too_many_pending_devices`, `recovery_rejected` | Stop syncing. Local notes are untouched |
 | Update the app | `unsupported_protocol`, `invalid_request`, `payload_too_large` | Stop. Never overwrite what this version cannot read |
 | Problem with one note | `not_found`, `note_too_large`, `quota_exceeded` | Flag that note and keep syncing the rest |
 
@@ -94,8 +94,26 @@ every approved device of the account can read it.
 
 ### `GET /v1/devices/me`
 
-The calling device's own entry. This is the only call a pending device may
-make; it uses it to learn that it has been approved.
+The calling device's own entry, with what it needs to know about its account:
+
+```json
+{ "id": "…", "name": "Phone", "public_key": "…", "status": "pending",
+  "created_at_ms": 0, "last_seen_ms": 0, "current": true,
+  "approvers": 1, "recovery_available": false }
+```
+
+- `approvers` is how many other devices of the account are approved: the
+  devices that could approve this one, or that keep the account's key if this
+  one signs out.
+- `recovery_available` says whether the account has a recovery copy.
+- `reset_effective_at_ms` is present while a reset has been asked for.
+
+A pending device uses this to learn that it has been approved and what the
+person's options are.
+
+A request to join lapses seven days after the device registered. The device
+is then answered `device_expired`, no longer counts against the limit of
+three, and signing in again renews it.
 
 ### `GET /v1/devices`
 
@@ -113,6 +131,116 @@ request. A device in another account is reported as not found.
 
 An approved device may remove any device of its account. A pending device may
 remove only itself, which is what signing out of it does.
+
+Removing a device ends its approval exchange and any reset it asked for.
+
+### The approval exchange
+
+A pending device gets the account key from an approved one. The two devices
+agree on a secret and on a short code that the person compares; the server
+relays their messages and reads none of them. `docs/SECURITY.md` describes
+the exchange itself.
+
+Every call names the pending device. It may be made by that device or by an
+approved device of the same account. To anyone else there is no such request:
+another pending device is answered `device_pending`, another account
+`not_found`.
+
+**`POST /v1/enrolments/{device_id}/messages`** adds a message of up to 1 KiB:
+
+```json
+{ "body": "<base64>", "restart": false }
+```
+
+The answer is the message as relayed, `{ "seq": 3, "sender": "…", "body": "…" }`.
+The server numbers messages and records who sent each. With `"restart": true`,
+which only the pending device may send, the earlier messages and any key left
+for it are dropped first. Numbers keep rising across a restart. An exchange
+holds at most 32 messages.
+
+**`GET /v1/enrolments/{device_id}/messages?after=N`** returns
+`{ "messages": [ … ] }`, the messages numbered above `N`.
+
+**`PUT /v1/enrolments/{device_id}/key`**, from an approved device, leaves the
+account key encrypted for the pending device:
+
+```json
+{ "key_version": 1, "wrapped": "<base64, up to 256 bytes>" }
+```
+
+**`GET /v1/enrolments/{device_id}/key`**, from the pending device, returns it,
+or `not_found` while none has been left.
+
+**`POST /v1/enrolments/{device_id}/complete`**, from the pending device, says
+it has opened and saved the key. Only now does the server mark it approved; it
+deletes the key and the messages. A device is therefore never approved
+without the key, and one that stopped half-way can begin again. Without a key
+left by an approved device the answer is `not_found`.
+
+### `PUT /v1/recovery`
+
+From an approved device. Stores the recovery copy, replacing any earlier one:
+
+```json
+{ "key_version": 1, "wrapped": "<base64>", "claim_hash": "<base64, 32 bytes>" }
+```
+
+`wrapped` is the account key encrypted under a key derived from the person's
+recovery phrase. `claim_hash` is the SHA-256 hash of a claim code derived from
+the same phrase. Neither lets the server open the key.
+
+### `GET /v1/recovery`
+
+From any device of the account, pending ones included. Returns
+`{ "key_version": 1, "wrapped": "…" }`, or `not_found`.
+
+### `DELETE /v1/recovery`
+
+From an approved device. A pending device may not create, replace or delete
+the copy: someone who took over the person's email gets a pending device, and
+must not be able to destroy the way back in or to choose the claim code.
+
+### `POST /v1/recovery/claim`
+
+From a pending device that knows the phrase:
+
+```json
+{ "claim_code": "<base64>" }
+```
+
+If the code's hash is the stored one, the device is approved. Otherwise the
+answer is `recovery_rejected` and nothing changes.
+
+### `DELETE /v1/account`
+
+From an approved device. Deletes everything the server holds for the account.
+Its devices are answered `unauthenticated` from then on. The same person
+signing in afterwards starts a new account.
+
+### `POST /v1/account/reset`
+
+From any device of the account. A reset deletes the account's notes, its
+recovery copy and every other device; the calling device becomes approved and
+is the account's first device again; the epoch rises.
+
+```json
+{ "done": true, "epoch": 2 }
+```
+
+- An approved device resets at once.
+- A pending device resets at once if the account holds no notes.
+- Otherwise a pending device can only ask. The answer is
+  `{ "done": false, "effective_at_ms": …, "epoch": 1 }`, and the same call
+  made by the same device after that time performs the reset. Asking again
+  does not restart the wait, and another pending device neither replaces the
+  request nor inherits it.
+
+The wait is seven days. It exists because a pending device is all that someone
+who took over the person's email can get.
+
+### `DELETE /v1/account/reset`
+
+From an approved device. Cancels a reset that was asked for.
 
 ### `POST /v1/notes/push`
 
@@ -151,12 +279,17 @@ Blobs changed after change number `N`, lowest first:
 ```json
 { "epoch": 1, "items": [ { "note_id": "…", "change": 12, "key_version": 1, "format_version": 1,
                            "ciphertext": "…" } ],
-  "next_after": 12, "more": false }
+  "next_after": 12, "more": false, "pending_devices": 0 }
 ```
 
 A page holds notes for as long as their blobs fit in the batch limit
 together, and always at least one. `more` says whether to pull again from
 `next_after`. A purged note has `"ciphertext": null`.
+
+Two fields say what needs the person's attention, so that a device learns of
+it at its next sync: `pending_devices` is how many devices are waiting to be
+approved, and `reset_effective_at_ms` is present while a reset has been asked
+for.
 
 ## Limits
 
@@ -169,6 +302,10 @@ together, and always at least one. `more` says whether to pull again from
 | Blobs per account | 50 MiB |
 | Requests per account | 600 in ten minutes |
 | Devices waiting for approval | 3 per account |
+| A request to join | lapses after 7 days |
+| Messages in one approval exchange | 32, of 1 KiB each |
+| An encrypted copy of the account key | 256 bytes |
+| A reset asked for by a pending device | takes effect after 7 days |
 | Device token | stops working after 90 days without use |
 
 **When an account is full,** a push that grows a note by more than 1 KiB is
@@ -178,5 +315,5 @@ marker to the note's document, so this rule is what lets deletes through.
 
 ## Not built yet
 
-Step 6 of the redesign adds the endpoints for approving a device, for the
-recovery phrase, and for resetting or deleting an account.
+Changing the account key, which is what finally shuts out a device that was
+removed, is step 8 of the redesign. Attachments are step 9.

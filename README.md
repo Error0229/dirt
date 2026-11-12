@@ -157,6 +157,8 @@ processes, so they run wherever `cargo test` does.
 ## Documentation
 
 - [docs/DESIGN.md](docs/DESIGN.md): product vision and standing decisions.
+- [docs/SECURITY.md](docs/SECURITY.md): what is protected, from whom, and
+  what is not.
 - [docs/plans/](docs/plans/): the redesign and its implementation plan.
 - [docs/mobile-ui-conventions.md](docs/mobile-ui-conventions.md): conventions
   for the Android interface.

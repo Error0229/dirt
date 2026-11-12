@@ -269,10 +269,27 @@ pub async fn pull(
             },
         )
         .collect();
+    // What needs the person's attention: devices waiting to join, and a
+    // reset somebody asked for. A device learns both at its next sync.
+    let (pending_devices, reset_effective_at_ms): (i64, Option<i64>) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM devices \
+                  WHERE account_id = a.id AND status = 'pending' \
+                    AND created_at >= now() - make_interval(days => $2)), \
+                (extract(epoch FROM a.reset_requested_at + make_interval(days => $3)) * 1000)::bigint \
+           FROM accounts a WHERE a.id = $1",
+    )
+    .bind(device.account_id)
+    .bind(i32::try_from(limits::PENDING_DEVICE_DAYS).unwrap_or(i32::MAX))
+    .bind(i32::try_from(limits::RESET_DELAY_DAYS).unwrap_or(i32::MAX))
+    .fetch_one(&state.pool)
+    .await?;
+
     Ok(device.respond(PullResponse {
         epoch: device.epoch,
         items,
         next_after,
         more,
+        pending_devices: u32::try_from(pending_devices).unwrap_or(u32::MAX),
+        reset_effective_at_ms,
     }))
 }

@@ -12,8 +12,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dirt_proto::api::{
-    DeviceInfo, DeviceList, ErrorBody, NonceResponse, PullResponse, PushRequest, PushResponse,
-    RegisterDeviceRequest, RegisterDeviceResponse, PROTOCOL_HEADER, PROTOCOL_VERSION,
+    DeviceList, EnrolmentMessage, EnrolmentMessages, ErrorBody, MyDevice, NonceResponse,
+    PostEnrolmentMessage, PullResponse, PushRequest, PushResponse, PutRecovery, RecoveryClaim,
+    RegisterDeviceRequest, RegisterDeviceResponse, ResetResponse, WrappedKey, PROTOCOL_HEADER,
+    PROTOCOL_VERSION,
 };
 // What a client needs in order to act on a failure, re-exported so that the
 // interface crates do not depend on the protocol crate for it.
@@ -243,8 +245,10 @@ impl ApiClient {
             .await
     }
 
-    /// This device's own entry: whether it is approved yet.
-    pub async fn me(&self) -> Result<DeviceInfo, ApiError> {
+    /// This device's own entry, with what it needs to know about its
+    /// account: whether it is approved yet, who could approve it, whether a
+    /// recovery copy exists.
+    pub async fn me(&self) -> Result<MyDevice, ApiError> {
         self.get("/v1/devices/me".to_owned()).await
     }
 
@@ -267,6 +271,125 @@ impl ApiClient {
     /// Blobs changed after change number `after`.
     pub async fn pull(&self, after: i64) -> Result<PullResponse, ApiError> {
         self.get(format!("/v1/notes/pull?after={after}")).await
+    }
+
+    // ---- The approval exchange ----
+
+    /// Adds a message to the exchange of the waiting device `device`. With
+    /// `restart`, which only that device may ask for, the server first
+    /// drops the exchange so far.
+    pub async fn post_enrolment_message(
+        &self,
+        device: Uuid,
+        body: Vec<u8>,
+        restart: bool,
+    ) -> Result<EnrolmentMessage, ApiError> {
+        self.call(
+            "POST",
+            format!("/v1/enrolments/{device}/messages"),
+            Some(&PostEnrolmentMessage { body, restart }),
+        )
+        .await
+    }
+
+    /// The messages of an exchange numbered above `after`.
+    pub async fn enrolment_messages(
+        &self,
+        device: Uuid,
+        after: i64,
+    ) -> Result<Vec<EnrolmentMessage>, ApiError> {
+        let answer: EnrolmentMessages = self
+            .get(format!("/v1/enrolments/{device}/messages?after={after}"))
+            .await?;
+        Ok(answer.messages)
+    }
+
+    /// Leaves the account key, encrypted for the waiting device.
+    pub async fn put_enrolment_key(&self, device: Uuid, key: &WrappedKey) -> Result<(), ApiError> {
+        self.call::<_, serde_json::Value>("PUT", format!("/v1/enrolments/{device}/key"), Some(key))
+            .await
+            .map(|_| ())
+    }
+
+    /// The encrypted key left for this waiting device, or `None` if no
+    /// approved device has left one yet.
+    pub async fn enrolment_key(&self, device: Uuid) -> Result<Option<WrappedKey>, ApiError> {
+        not_found_is_none(self.get(format!("/v1/enrolments/{device}/key")).await)
+    }
+
+    /// Tells the server this waiting device has the key. The server then
+    /// approves it.
+    pub async fn complete_enrolment(&self, device: Uuid) -> Result<(), ApiError> {
+        self.call::<(), serde_json::Value>(
+            "POST",
+            format!("/v1/enrolments/{device}/complete"),
+            None,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    // ---- The recovery copy ----
+
+    pub async fn put_recovery(&self, copy: &PutRecovery) -> Result<(), ApiError> {
+        self.call::<_, serde_json::Value>("PUT", "/v1/recovery".to_owned(), Some(copy))
+            .await
+            .map(|_| ())
+    }
+
+    /// The account's recovery copy, or `None` if it has none.
+    pub async fn recovery(&self) -> Result<Option<WrappedKey>, ApiError> {
+        not_found_is_none(self.get("/v1/recovery".to_owned()).await)
+    }
+
+    pub async fn delete_recovery(&self) -> Result<(), ApiError> {
+        self.call::<(), serde_json::Value>("DELETE", "/v1/recovery".to_owned(), None)
+            .await
+            .map(|_| ())
+    }
+
+    /// Presents the claim code derived from the recovery phrase. The server
+    /// approves this device if the code is the account's.
+    pub async fn claim_recovery(&self, claim_code: Vec<u8>) -> Result<(), ApiError> {
+        self.call::<_, serde_json::Value>(
+            "POST",
+            "/v1/recovery/claim".to_owned(),
+            Some(&RecoveryClaim { claim_code }),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    // ---- The account ----
+
+    pub async fn delete_account(&self) -> Result<(), ApiError> {
+        self.call::<(), serde_json::Value>("DELETE", "/v1/account".to_owned(), None)
+            .await
+            .map(|_| ())
+    }
+
+    /// Resets the account, or asks for it to be reset. The answer says
+    /// which happened.
+    pub async fn reset_account(&self) -> Result<ResetResponse, ApiError> {
+        self.call::<(), _>("POST", "/v1/account/reset".to_owned(), None)
+            .await
+    }
+
+    /// Refuses a reset that a waiting device asked for.
+    pub async fn cancel_reset(&self) -> Result<(), ApiError> {
+        self.call::<(), serde_json::Value>("DELETE", "/v1/account/reset".to_owned(), None)
+            .await
+            .map(|_| ())
+    }
+}
+
+/// Turns the server's "nothing here" into `None`, for things that may
+/// simply not exist yet.
+fn not_found_is_none<T>(result: Result<T, ApiError>) -> Result<Option<T>, ApiError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.code() == Some(ErrorCode::NotFound) => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
