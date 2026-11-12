@@ -63,6 +63,15 @@ which notes refer to it, because devices have to tell it that for files to
 be cleaned up. So it knows how many files each note has. (No client
 attaches files yet: step 9 of the redesign.)
 
+A picture gets a thumbnail, made on the device that attaches it and
+encrypted as a second file with a key of its own. To the server the two are
+two files of one note. The thumbnail holds the picture's pixels made small
+and nothing else: not where or when a photograph was taken, which the
+picture itself still carries inside its own encryption. A file is tried as
+a picture by reading it, with a limit on how much memory that may take, so
+a file that falsely claims to be an enormous picture is attached without a
+thumbnail and costs nothing more.
+
 The storage is a third party and is not trusted. A device sends it the
 sealed file and the link the server signed, and nothing else: not its
 token, and no header of its own. What the storage returns is kept on a

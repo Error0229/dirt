@@ -38,5 +38,9 @@ tokio.workspace = true
 tower = { version = "0.5", features = ["util"] }
 uuid.workspace = true
 
+[dev-dependencies]
+# Makes a picture for a test to attach.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
 [lints]
 workspace = true

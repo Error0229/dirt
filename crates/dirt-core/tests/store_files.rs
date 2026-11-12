@@ -902,3 +902,143 @@ async fn a_note_from_the_server_brings_its_references() {
     assert_eq!(to_confirm(store).await, [(photo.file_id, note)]);
     assert!(to_release(store, FAR_FUTURE).await.is_empty());
 }
+
+// ---- Thumbnails ----
+
+/// A picture file with these many pixels, as a camera or a screenshot
+/// would leave it.
+fn a_picture(desk: &Desk, name: &str, width: u32, height: u32) -> PathBuf {
+    let path = desk.folder.path().join(name);
+    image::RgbImage::from_pixel(width, height, image::Rgb([30, 90, 200]))
+        .save_with_format(&path, image::ImageFormat::Png)
+        .unwrap();
+    path
+}
+
+/// A picture gets a thumbnail when it is attached: a second, small file
+/// with a key of its own, kept and named like any other.
+#[tokio::test]
+async fn a_picture_is_attached_with_a_thumbnail() {
+    let desk = desk();
+    let store = &desk.store;
+    let note = store.create_note("the whiteboard").await.unwrap().id;
+    let source = a_picture(&desk, "whiteboard.png", 800, 600);
+
+    let attached = store
+        .attach_file(&note, &source, "whiteboard.png", "image/png")
+        .await
+        .unwrap();
+
+    let thumbnail = attached
+        .thumbnail
+        .clone()
+        .expect("a picture has a thumbnail");
+    assert_ne!(thumbnail.file_id, attached.file_id);
+    assert_ne!(thumbnail.key, attached.key);
+    let small = on_the_shelf(store, thumbnail.file_id).unwrap();
+    assert_eq!(small.len() as u64, thumbnail.size);
+    let opened = image::load_from_memory(&small).unwrap();
+    assert_eq!((opened.width(), opened.height()), (256, 192));
+    assert_eq!(
+        image::guess_format(&small).unwrap(),
+        image::ImageFormat::Jpeg
+    );
+    // The picture itself is kept as it was.
+    assert_eq!(
+        on_the_shelf(store, attached.file_id).unwrap(),
+        std::fs::read(&source).unwrap()
+    );
+    assert_eq!(
+        store.note_attachments(&note).await.unwrap(),
+        std::slice::from_ref(&attached)
+    );
+    let mut in_use = store.files_in_use().await.unwrap();
+    in_use.sort();
+    let mut both = vec![attached.file_id, thumbnail.file_id];
+    both.sort();
+    assert_eq!(in_use, both);
+    assert_eq!(files_on_the_shelf(store), 2);
+
+    // A file that is not a picture has none, whatever it is called.
+    let text = desk.a_file("minutes.png", b"not a picture at all");
+    let plain = store
+        .attach_file(&note, &text, "minutes.png", "image/png")
+        .await
+        .unwrap();
+    assert_eq!(plain.thumbnail, None);
+    assert_eq!(files_on_the_shelf(store), 3);
+
+    // Removing the picture removes its thumbnail from the note with it.
+    store.detach_file(&note, attached.file_id).await.unwrap();
+    assert_eq!(store.files_in_use().await.unwrap(), [plain.file_id]);
+}
+
+/// The server counts a thumbnail as one of a note's files, so the device
+/// does too. A picture that fits only without its thumbnail is attached
+/// without, and nothing is left on the shelf that the note does not name.
+#[tokio::test]
+async fn a_thumbnail_counts_as_one_of_a_notes_files() {
+    let desk = desk();
+    let store = &desk.store;
+    let most = usize::try_from(limits::MAX_FILES_PER_NOTE).unwrap();
+    let picture = a_picture(&desk, "photo.png", 300, 300);
+
+    // Pictures fill a note at half the number.
+    let full = store.create_note("an album").await.unwrap().id;
+    for _ in 0..most / 2 {
+        let attached = store
+            .attach_file(&full, &picture, "photo.png", "image/png")
+            .await
+            .unwrap();
+        assert!(attached.thumbnail.is_some());
+    }
+    assert_eq!(files_on_the_shelf(store), most);
+    let refused = store
+        .attach_file(&full, &picture, "photo.png", "image/png")
+        .await;
+    assert!(
+        matches!(refused, Err(Error::InvalidInput(_))),
+        "{refused:?}"
+    );
+    assert_eq!(files_on_the_shelf(store), most, "nothing is left behind");
+    assert_eq!(store.note_attachments(&full).await.unwrap().len(), most / 2);
+
+    // Room for one file: the picture goes in without its thumbnail.
+    let nearly = store.create_note("nearly full").await.unwrap().id;
+    let text = desk.a_file("small.txt", b"x");
+    for _ in 0..most - 1 {
+        store
+            .attach_file(&nearly, &text, "small.txt", "text/plain")
+            .await
+            .unwrap();
+    }
+    let last = store
+        .attach_file(&nearly, &picture, "photo.png", "image/png")
+        .await
+        .unwrap();
+    assert_eq!(last.thumbnail, None);
+    assert_eq!(
+        store.note_attachments(&nearly).await.unwrap().last(),
+        Some(&last)
+    );
+    assert_eq!(files_on_the_shelf(store), most * 2, "no spare thumbnail");
+}
+
+/// A picture that cannot be attached leaves neither itself nor its
+/// thumbnail on the shelf.
+#[tokio::test]
+async fn a_picture_that_cannot_be_attached_leaves_nothing_behind() {
+    let desk = desk();
+    let store = &desk.store;
+    let picture = a_picture(&desk, "photo.png", 300, 300);
+    let note = store.create_note("thrown away").await.unwrap().id;
+    store.delete_note(&note).await.unwrap();
+
+    for target in [note, NoteId::new()] {
+        let refused = store
+            .attach_file(&target, &picture, "photo.png", "image/png")
+            .await;
+        assert!(matches!(refused, Err(Error::NotFound(_))), "{refused:?}");
+    }
+    assert_eq!(files_on_the_shelf(store), 0);
+}

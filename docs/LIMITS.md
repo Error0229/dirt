@@ -170,7 +170,7 @@ free allowance is paid for, so they are also the owner's to change
 |---|---|---|
 | One file | 10 MiB | A photograph from a phone, a short recording, a PDF. It is uploaded in one request, so there is no resuming to build |
 | Files per account | 200 MiB | The storage's free allowance is 10 GB for every account together. A file is counted once, however many notes refer to it, and from the moment a link is issued |
-| Files a note refers to | 20 | Each adds its key and name to the note's document, which is sent whole on every edit |
+| Files a note refers to | 20 | Each adds its key and name to the note's document, which is sent whole on every edit. A picture's thumbnail is a file and counts as one, so a note holds ten pictures. A picture that fits only without its thumbnail is attached without |
 | An upload no note confirmed | discarded after 7 days | A device asked for a link and never finished. Its space comes back |
 | A file no note refers to | deleted after 30 days | A device that was away with an unsent edit to a purged note keeps the note's text as a new note, and its files with it. The files have to be there still |
 | An upload link | 15 minutes | Time to send 10 MiB on a slow connection. It is for one object of one exact size |

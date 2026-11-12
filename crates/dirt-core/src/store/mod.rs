@@ -32,7 +32,7 @@ pub use sync_state::{
 use dirt_proto::api::limits;
 
 use crate::files::shelf::Shelf;
-use crate::files::{seal, Attachment, FileKey, FilePart};
+use crate::files::{seal, thumbnail, Attachment, FileKey, FilePart, Thumbnail};
 use crate::models::{Note, NoteId, Settings};
 use crate::notes::NoteDoc;
 use crate::{Error, Result};
@@ -216,6 +216,11 @@ impl Store {
     /// and named in the note's document. The copy is what the note has
     /// from now on: the file at `source` is not touched again, and changing
     /// it changes nothing here.
+    ///
+    /// A picture gets a thumbnail, which is a second, small file with a
+    /// key of its own. It counts as one of the note's files, as the server
+    /// counts it. A picture that would fit in the note only without its
+    /// thumbnail is attached without.
     pub async fn attach_file(
         &self,
         note: &NoteId,
@@ -226,40 +231,65 @@ impl Store {
         let (note, source) = (*note, source.to_path_buf());
         let (name, media_type) = (name.to_owned(), media_type.to_owned());
         let shelf = self.shelf();
-        self.write(move |c| {
-            let size = std::fs::metadata(&source)?.len();
-            let most = u64::try_from(limits::MAX_FILE_BYTES).unwrap_or(u64::MAX);
-            if seal::sealed_size(size) > most {
-                return Err(Error::InvalidInput(format!(
-                    "the file is too large to attach: {size} bytes"
-                )));
+        // The files first, away from the thread that writes: reading a
+        // large photograph to make it small takes a moment, and nothing
+        // else that is written should wait for it.
+        let made = shelf.clone();
+        let prepared = self
+            .read(move |_| {
+                let size = std::fs::metadata(&source)?.len();
+                let most = u64::try_from(limits::MAX_FILE_BYTES).unwrap_or(u64::MAX);
+                if seal::sealed_size(size) > most {
+                    return Err(Error::InvalidInput(format!(
+                        "the file is too large to attach: {size} bytes"
+                    )));
+                }
+                let mut attachment = Attachment {
+                    file_id: uuid::Uuid::now_v7(),
+                    name,
+                    media_type,
+                    size,
+                    key: FileKey::generate(),
+                    added_at_ms: now_ms(),
+                    thumbnail: None,
+                };
+                let copied = made.add(attachment.file_id, &source)?;
+                if copied != size {
+                    let _ = made.remove(attachment.file_id);
+                    return Err(Error::InvalidInput(
+                        "the file changed while it was being attached".to_owned(),
+                    ));
+                }
+                // Made from the copy, which no longer changes. A thumbnail
+                // that cannot be kept is done without.
+                if let Some(picture) = thumbnail::make(&made.path(attachment.file_id)) {
+                    let file_id = uuid::Uuid::now_v7();
+                    if made.put(file_id, &picture).is_ok() {
+                        attachment.thumbnail = Some(Thumbnail {
+                            file_id,
+                            key: FileKey::generate(),
+                            size: picture.len() as u64,
+                        });
+                    }
+                }
+                Ok(attachment)
+            })
+            .await?;
+
+        let on_shelf = prepared.parts();
+        let named = self
+            .write(move |c| notes::attach(c, &note, prepared, now_ms()))
+            .await;
+        // Whatever was put on the shelf and is not named after all is of
+        // no use: the whole attachment, or a thumbnail the note had no
+        // room for.
+        let kept = named.as_ref().map(Attachment::parts).unwrap_or_default();
+        for part in on_shelf {
+            if !kept.iter().any(|kept| kept.file_id == part.file_id) {
+                let _ = shelf.remove(part.file_id);
             }
-            let attachment = Attachment {
-                file_id: uuid::Uuid::now_v7(),
-                name,
-                media_type,
-                size,
-                key: FileKey::generate(),
-                added_at_ms: now_ms(),
-                thumbnail: None,
-            };
-            let copied = shelf.add(attachment.file_id, &source)?;
-            let named = if copied == size {
-                notes::attach(c, &note, &attachment, attachment.added_at_ms)
-            } else {
-                // The file changed while it was being copied.
-                Err(Error::InvalidInput(
-                    "the file changed while it was being attached".to_owned(),
-                ))
-            };
-            if let Err(error) = named {
-                // Not attached after all: the copy is of no use.
-                let _ = shelf.remove(attachment.file_id);
-                return Err(error);
-            }
-            Ok(attachment)
-        })
-        .await
+        }
+        named
     }
 
     /// Removes a file from a note. Returns whether the note had it.
