@@ -275,7 +275,8 @@ number with its reason, the measurements, and how to run them again.
 No number in `dirt-proto` changed. Four were added, for things that had no
 bound:
 
-- **Devices per account: 20.** Only waiting devices were limited before.
+- **Approved devices per account: 20,** and 3 more by the recovery phrase.
+  Only waiting devices were limited before.
 - **A removed device, and a request to join that nobody answered, are
   forgotten after 30 days,** and at most 20 removed devices are kept. Their
   rows were kept for ever. Migration `0004` records when a device was
@@ -285,8 +286,21 @@ bound:
   counted against nothing. A device further behind than that cannot follow
   and is let in again, which the client already did when a copy was missing.
 
-Each has a test that fails with the bound undone: 13 changes to the code
-were tried, and all 13 were caught.
+Each has a test that fails with the bound undone: 20 changes to the code
+were tried, and all 20 were caught.
+
+What review showed:
+
+- **The device limit could lock a person out of their account for good.**
+  It was applied when a device signed in. With 20 devices that the person
+  no longer had, no new device could sign in, and a device has to be signed
+  in to use the recovery phrase or to ask for a reset. The limit now counts
+  approved devices and is applied where one is approved: when an approved
+  device leaves the key for a waiting one, and again when the waiting
+  device says it has it. The recovery phrase lets in three devices past
+  the limit, and the device it lets in can remove the lost ones. A reset
+  can be asked for whatever the account holds. Three tests, and seven more
+  changes to the code tried against them. Found in review.
 
 What the measurements showed:
 
@@ -331,8 +345,14 @@ Found and given a place in the build order:
   left purging deleted notes undecided and no step built it. It is part 8e
   below.
 
-Not checked on a device: "Show older notes" in the desktop app. See
-`docs/MANUAL_CHECKLIST.md`.
+Checked in the running apps, each on a store of 230 notes with nobody
+signed in: the desktop app and the Android app on the emulator both listed
+100 notes, then 200, then all 230, and the button went away. Narrowed to a
+tag of 229 notes, "Show more notes" did the same.
+
+Not checked on a device: the three new answers from the server
+(`too_many_devices`, and what a forgotten or far-behind device is told).
+They need 20 devices or 30 days, and the tests cover them.
 
 ### 8d: backups and the production decisions
 

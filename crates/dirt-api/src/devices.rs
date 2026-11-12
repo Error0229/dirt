@@ -171,23 +171,9 @@ pub async fn register(
     let status = if first_device {
         DeviceStatus::Approved
     } else {
-        // Every device that has not been removed holds a place, a waiting
-        // one too, whether or not its request has lapsed: it can renew it.
-        // Writing the account's row above locked it, so two registrations
-        // cannot both take the last place.
-        let (held,): (i64,) = sqlx::query_as(
-            "SELECT count(*) FROM devices WHERE account_id = $1 AND status <> 'revoked'",
-        )
-        .bind(account_id)
-        .fetch_one(&mut *tx)
-        .await?;
-        if held >= limits::MAX_DEVICES_PER_ACCOUNT {
-            return Err(ApiError::new(
-                ErrorCode::TooManyDevices,
-                "this account already has as many devices as it may; \
-                 remove one from a device that is signed in",
-            ));
-        }
+        // The limit on an account's devices is not applied here. It counts
+        // approved devices, and is applied when one more is approved: see
+        // `room_for_a_device`.
         // Requests that have lapsed no longer hold a place.
         let (pending,): (i64,) = sqlx::query_as(
             "SELECT count(*) FROM devices \
@@ -271,6 +257,37 @@ async fn forget_old_devices(
     .bind(limits::MAX_REMOVED_DEVICES)
     .execute(&mut **tx)
     .await?;
+    Ok(())
+}
+
+/// Refuses to approve one more device if the account has as many approved
+/// devices as it may, or `past_the_limit` more than that.
+///
+/// The limit is applied here and not when a device signs in. A person who
+/// has lost every device has to be able to sign a new one in, to use the
+/// recovery phrase or to ask for a reset, however many devices the account
+/// has. The recovery phrase lets a few devices in past the limit for the
+/// same reason; another device does not, because it can remove one first.
+///
+/// The caller holds the account's lock (`keys::lock_account`), so two
+/// approvals cannot both take the last place.
+pub async fn room_for_a_device(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+    past_the_limit: i64,
+) -> ApiResult<()> {
+    let (approved,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM devices WHERE account_id = $1 AND status = 'approved'",
+    )
+    .bind(account_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if approved >= limits::MAX_DEVICES_PER_ACCOUNT + past_the_limit {
+        return Err(ApiError::new(
+            ErrorCode::TooManyDevices,
+            "this account already has as many devices as it may; remove one first",
+        ));
+    }
     Ok(())
 }
 

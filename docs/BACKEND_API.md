@@ -84,8 +84,10 @@ nonce. It then spends the nonce.
   `pending` until an approved device hands it the key.
 - An account may have three devices pending at a time. A fourth is refused
   with `too_many_pending_devices`.
-- An account may have 20 devices, counting every one that has not been
-  removed. The next is refused with `too_many_devices` until one is removed.
+- An account may have 20 approved devices. Signing in is never refused for
+  that: the limit is applied when a device is approved (see "The approval
+  exchange" and `POST /v1/recovery/claim`). A person who has lost every
+  device can therefore always sign a new one in.
 
 Registering is also when the server forgets what the account no longer needs:
 a device removed more than 30 days ago, a request to join that was made more
@@ -191,6 +193,12 @@ deletes the key and the messages. A device is therefore never approved
 without the key, and one that stopped half-way can begin again. Without a key
 left by an approved device the answer is `not_found`.
 
+An account may have 20 approved devices. With that many, leaving a key is
+answered `too_many_devices`, so the person at the approving device learns of
+it and can remove one. `complete` is answered the same if the last place was
+taken after the key was left; the key stays, and the device is let in once a
+place is free.
+
 ### `PUT /v1/recovery`
 
 From an approved device. Stores the recovery copy, replacing any earlier one:
@@ -224,6 +232,10 @@ From a pending device that knows the phrase:
 
 If the code's hash is the stored one, the device is approved. Otherwise the
 answer is `recovery_rejected` and nothing changes.
+
+An account that already has 20 approved devices takes up to 3 more this way,
+and then answers `too_many_devices`. The person may have none of those
+devices left; the device the phrase lets in is what removes them.
 
 ### `DELETE /v1/account`
 
@@ -384,7 +396,7 @@ stored under an older one. `GET /v1/devices/me` reports `key_version` too.
 | Blobs per account | 50 MiB |
 | Requests per account | 600 in ten minutes |
 | Devices waiting for approval | 3 per account |
-| Devices, removed ones not counted | 20 per account |
+| Approved devices | 20 per account, and 3 more by the recovery phrase |
 | A removed device, or an unanswered request to join | forgotten after 30 days |
 | Removed devices remembered | 20 per account |
 | Copies of later account keys kept for a device | the 100 latest versions |

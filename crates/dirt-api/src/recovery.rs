@@ -131,6 +131,15 @@ pub async fn claim(
         ));
     }
     if device.status == DeviceStatus::Pending {
+        // The phrase lets a device in when the account is full, a few
+        // times over. The person may have none of those devices left, and
+        // the device let in here is what removes them.
+        crate::devices::room_for_a_device(
+            &mut tx,
+            device.account_id,
+            limits::RECOVERY_DEVICES_PAST_LIMIT,
+        )
+        .await?;
         sqlx::query("UPDATE devices SET status = 'approved' WHERE id = $1 AND status = 'pending'")
             .bind(device.id)
             .execute(&mut *tx)

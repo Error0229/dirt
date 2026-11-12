@@ -132,7 +132,8 @@ away from the database. That is the firewall's part, below.
 
 | Limit | Number | Why this number |
 |---|---|---|
-| Devices per account | 20 | A change of the key carries a copy for each device in one request, and each device stores copies of later keys. A computer counts once for its CLI and its desktop app together |
+| Approved devices per account | 20 | A change of the key carries a copy for each device in one request, and each device stores copies of later keys. A computer counts once for its CLI and its desktop app together. The limit is applied when a device is approved and never when it signs in, so a person who has lost every device can still sign a new one in |
+| Devices the recovery phrase lets in past that | 3 | With every place taken by devices the person no longer has, the phrase must still get them in. The device it lets in can remove the lost ones |
 | Devices waiting for approval | 3 | Enough for a person setting up their devices. Someone who has only the Clerk sign-in can add no more than this for the account's devices to look at |
 | A request to join lapses | after 7 days | Long enough to reach another device. The request can be renewed by signing in again |
 | A removed device, or an unanswered request, is forgotten | after 30 days | Until then a removed device is told that it was removed, which is the more useful message. Afterwards its token is unknown |
@@ -144,8 +145,8 @@ away from the database. That is the firewall's part, below.
 | A sign-in nonce | 10 minutes | Time to complete a sign-in in the browser |
 
 With every limit at its most, what one account can make the server hold
-outside its notes is well under a megabyte: 40 device rows, 2,000 key copies
-of about 105 bytes, 96 messages of 1 KiB, and a day of request counts.
+outside its notes is well under a megabyte: some 60 device rows, 2,300 key
+copies of about 105 bytes, 96 messages of 1 KiB, and a day of request counts.
 
 ### Sizes fixed by a format
 
@@ -163,7 +164,11 @@ bytes, and an exchange holds 3 at its end against 32 allowed.
   index first. The same search takes 27 ms. A test reads the query's plan
   and fails if the order changes.
 - **An account could have any number of devices.** Only waiting devices were
-  limited. The limit is 20.
+  limited. The limit is 20 approved devices. It was first applied when a
+  device signed in. Review showed that this could lock a person out for
+  good: with all 20 lost, no new device could sign in to use the recovery
+  phrase or to ask for a reset. It is applied when a device is approved,
+  and the recovery phrase lets in 3 more.
 - **A removed device's row was kept for ever,** and so was a request to join
   that nobody answered. They are forgotten after 30 days, and no more than
   20 removed devices are kept.

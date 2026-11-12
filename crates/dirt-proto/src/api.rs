@@ -50,10 +50,17 @@ pub mod limits {
     pub const REQUEST_WINDOW_SECS: i64 = 600;
     /// Devices one account may have waiting for approval.
     pub const MAX_PENDING_DEVICES: i64 = 3;
-    /// Devices one account may have, waiting ones included and removed
-    /// ones not. A change of the account's key carries a copy for each, in
-    /// one request.
+    /// Approved devices one account may have.
+    ///
+    /// A change of the account's key carries a copy for each, in one
+    /// request. The limit is applied when a device is approved, not when
+    /// it signs in: a person who has lost every device must still be able
+    /// to sign a new one in.
     pub const MAX_DEVICES_PER_ACCOUNT: i64 = 20;
+    /// Devices the recovery phrase may let in past that limit. With every
+    /// place taken by devices the person no longer has, the phrase still
+    /// gets them in, and the device it lets in can remove the lost ones.
+    pub const RECOVERY_DEVICES_PAST_LIMIT: i64 = 3;
     /// The server forgets a removed device, and a request to join that
     /// lapsed, after this long. Until then a removed device is told that
     /// it was removed; afterwards its token is simply unknown.
@@ -113,8 +120,8 @@ pub enum ErrorCode {
     SignInRejected,
     /// The account already has as many devices waiting as it may.
     TooManyPendingDevices,
-    /// The account already has as many devices as it may. One has to be
-    /// removed before another can sign in.
+    /// The account already has as many approved devices as it may. One
+    /// has to be removed before another can be let in.
     TooManyDevices,
     /// The client speaks a newer protocol than this server.
     UnsupportedProtocol,

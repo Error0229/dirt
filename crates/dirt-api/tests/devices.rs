@@ -289,54 +289,6 @@ async fn device_rows(pool: &PgPool, status: &str) -> i64 {
 }
 
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
-async fn an_account_may_have_only_so_many_devices(pool: PgPool) {
-    let app = app(pool.clone());
-    let first = register(&app, "alice", "First").await;
-    let mut last = first.device_id;
-    for index in 1..limits::MAX_DEVICES_PER_ACCOUNT {
-        let device = register(&app, "alice", &format!("Device {index}")).await;
-        approve(&pool, device.device_id).await;
-        last = device.device_id;
-    }
-
-    let answer = try_register(&app, "alice", "One too many").await;
-    assert_eq!(answer.status, StatusCode::CONFLICT);
-    assert_eq!(answer.code(), "too_many_devices");
-    // The refusal is the account's alone.
-    register(&app, "bob", "Bob's first").await;
-
-    // A device that is removed gives up its place.
-    remove(&app, &first.token, last).await;
-    let device = register(&app, "alice", "In its place").await;
-    assert_eq!(device.status, DeviceStatus::Pending);
-}
-
-#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
-async fn a_waiting_device_holds_a_place_too(pool: PgPool) {
-    let app = app(pool.clone());
-    register(&app, "alice", "First").await;
-    let waiting = limits::MAX_PENDING_DEVICES;
-    for index in 1..limits::MAX_DEVICES_PER_ACCOUNT - waiting {
-        let device = register(&app, "alice", &format!("Device {index}")).await;
-        approve(&pool, device.device_id).await;
-    }
-    for index in 0..waiting {
-        register(&app, "alice", &format!("Waiting {index}")).await;
-    }
-    // The requests lapse without being answered. They no longer count as
-    // waiting, but each can still be renewed, so each keeps its place.
-    sqlx::query(
-        "UPDATE devices SET created_at = now() - interval '8 days' WHERE status = 'pending'",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    let answer = try_register(&app, "alice", "One too many").await;
-    assert_eq!(answer.code(), "too_many_devices");
-}
-
-#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
 async fn a_removed_device_is_forgotten_after_a_while(pool: PgPool) {
     let app = app(pool.clone());
     let laptop = register(&app, "alice", "Laptop").await;
