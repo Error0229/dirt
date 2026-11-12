@@ -15,7 +15,7 @@
 use std::time::Instant;
 
 use dirt_core::notes::NoteDoc;
-use dirt_core::session::SessionState;
+use dirt_core::session::{Approval, ExchangeStep, Join, SessionState};
 use dirt_proto::api::limits;
 use dirt_sim::{Client, Server};
 use sqlx::PgPool;
@@ -68,6 +68,99 @@ fn the_size_of_a_note_on_the_server() {
         "the note limit of {} is reached first by notes under {} bytes",
         limits::MAX_NOTES_PER_ACCOUNT,
         per_account / usize::try_from(limits::MAX_NOTES_PER_ACCOUNT).unwrap_or(1)
+    );
+}
+
+/// What deleting a note adds to its document. A full account still takes
+/// a push that grows a note by `FULL_ACCOUNT_GROWTH_BYTES`, so that a
+/// delete goes through; this is what a delete needs of that.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn what_a_delete_adds_to_a_note() {
+    println!("\ndevices that edited the note | bytes before | bytes after the delete | added");
+    for devices in [1_u64, 2, 5, 20] {
+        let document = NoteDoc::new(1);
+        document.set_text("a line of text, about as long as a thought", 1_000);
+        let mut text = document.text();
+        for device in 2..=devices {
+            let other = NoteDoc::from_bytes(device, &document.encode()).unwrap();
+            text.push_str(" and more");
+            other.set_text(&text, 1_000 + i64::try_from(device).unwrap_or(0));
+            document.merge(&other.encode()).unwrap();
+        }
+        let before = document.encode().len();
+        document.delete();
+        let after = document.encode().len();
+        println!(
+            "{devices:>28} | {before:>12} | {after:>22} | {:>5}",
+            after - before
+        );
+    }
+    println!(
+        "a full account takes growth of up to {} bytes",
+        limits::FULL_ACCOUNT_GROWTH_BYTES
+    );
+}
+
+/// What letting a device in, a recovery phrase and a change of the key
+/// leave on the server, against the sizes the server allows for them.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+#[ignore = "a measurement, not a check"]
+async fn what_an_approval_stores(pool: PgPool) {
+    let server = Server::with_sign_in(pool.clone()).await;
+    let laptop = Client::new(&server, "Laptop", false);
+    laptop.sign_in("alice").await.unwrap();
+    let phone = Client::new(&server, "Phone", false);
+    let SessionState::WaitingForApproval { device_id, .. } = phone.sign_in("alice").await.unwrap()
+    else {
+        panic!("the second device should wait");
+    };
+
+    let mut join: Join = phone.session.begin_join().await.unwrap();
+    let target = laptop
+        .session
+        .waiting_devices()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|waiting| waiting.id == device_id)
+        .unwrap();
+    let mut approval: Approval = laptop.session.begin_approval(target).unwrap();
+    approval.poll().await.unwrap();
+    join.poll().await.unwrap();
+    approval.poll().await.unwrap();
+    approval.confirm().await.unwrap();
+    let (messages, longest): (i64, i32) =
+        sqlx::query_as("SELECT count(*), COALESCE(max(length(body)), 0) FROM enrolment_messages")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let (for_device,): (i32,) = sqlx::query_as("SELECT length(wrapped) FROM enrolment_keys")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(join.confirm().await.unwrap(), ExchangeStep::Done);
+    println!(
+        "\nan approval exchange: {messages} messages on the server at its end, the longest {longest} bytes \
+         (allowed: {} of {} bytes)",
+        limits::MAX_ENROLMENT_MESSAGES,
+        limits::MAX_ENROLMENT_MESSAGE_BYTES
+    );
+
+    laptop.session.create_recovery_phrase().await.unwrap();
+    let (under_phrase,): (i32,) = sqlx::query_as("SELECT length(wrapped) FROM recovery_keys")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    laptop.session.change_account_key().await.unwrap();
+    let (after_change,): (i32,) = sqlx::query_as("SELECT max(length(wrapped)) FROM device_keys")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    println!(
+        "copies of the account key: {for_device} bytes for a waiting device, {under_phrase} under \
+         a recovery phrase, {after_change} after a change of the key (allowed: {})",
+        limits::MAX_WRAPPED_KEY_BYTES
     );
 }
 

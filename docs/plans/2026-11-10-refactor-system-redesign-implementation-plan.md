@@ -857,6 +857,9 @@ Carried forward:
   - Key rotation.
   - A limits review. It includes the desktop app's list and search, which
     reach only the 100 most recently edited notes. From step 7.
+  - Purging deleted notes. The limits review found that the note quota
+    counts every note an account ever wrote until this exists. Step 9's
+    file expiry depends on it too.
   - The Neon and Vercel plan decisions (amendments A1 and A2).
   - How security reports are taken: whether to switch on GitHub's private
     vulnerability reporting. From step 6.

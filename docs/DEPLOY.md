@@ -56,6 +56,19 @@ and client ID to sign in with.
    the region beside the database.
 4. Set `DATABASE_URL` (pooled), `CLERK_ISSUER` and `CLERK_CLIENT_ID` on the
    Vercel project.
+5. Set the firewall's rate limit, from a folder linked to the project:
+
+   ```bash
+   vercel firewall rules add "Per-address limit on the API" \
+     --condition '{"type":"path","op":"pre","value":"/v1/"}' \
+     --action rate_limit --rate-limit-keys ip \
+     --rate-limit-requests 1200 --rate-limit-window 600 --yes
+   vercel firewall publish --yes
+   ```
+
+   One address may then make 1,200 requests to the API in ten minutes, and is
+   answered `429` beyond that. `docs/LIMITS.md` gives the reason for the
+   number and what was tried. The free plan allows one such rule.
 
 ### Each deploy
 
@@ -98,7 +111,10 @@ From trial 4 of the redesign
   plan.
 - **Neon's free plan** covers about 13 hours a day of an awake database,
   shared by all users. Sync is driven by events and not a timer for this
-  reason.
+  reason. Anyone who sends one request every five minutes can use the
+  month's allowance up, and no rate limit sees it: see "What no rule stops"
+  in `docs/LIMITS.md`. The free plan also holds 1 GB, and writes fail when
+  it is full.
 - **Clerk** needs a production instance on a domain you own before real users
   sign in. Its development instances are capped at 100 users.
 

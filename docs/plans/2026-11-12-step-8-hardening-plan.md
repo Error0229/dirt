@@ -262,18 +262,106 @@ What review showed:
 
 ### 8c: the limits review
 
-- [ ] Each quota and limit in `dirt-proto` against measured use, with the
+- [x] Each quota and limit in `dirt-proto` against measured use, with the
       reason for its number.
-- [ ] The desktop app's list and search reaching every note, from step 7.
+- [x] The desktop app's list and search reaching every note, from step 7.
       Measured first: how many notes the list can show before it slows.
-- [ ] Unauthenticated traffic: what the hosting platform's firewall does,
+- [x] Unauthenticated traffic: what the hosting platform's firewall does,
       checked and not assumed.
+
+**Result (2026-11-12): done. `docs/LIMITS.md` is the record.** It has each
+number with its reason, the measurements, and how to run them again.
+
+No number in `dirt-proto` changed. Four were added, for things that had no
+bound:
+
+- **Devices per account: 20.** Only waiting devices were limited before.
+- **A removed device, and a request to join that nobody answered, are
+  forgotten after 30 days,** and at most 20 removed devices are kept. Their
+  rows were kept for ever. Migration `0004` records when a device was
+  removed.
+- **Copies of later account keys: the 100 latest versions for each device.**
+  Every change of the key left a copy for every device for ever, and they
+  counted against nothing. A device further behind than that cannot follow
+  and is let in again, which the client already did when a copy was missing.
+
+Each has a test that fails with the bound undone: 13 changes to the code
+were tried, and all 13 were caught.
+
+What the measurements showed:
+
+- **Search took 22 seconds in a store of 20,000 notes** for a word that
+  every note held, in all three clients. SQLite read the notes first and
+  asked the full-text index about each. The query now fixes the order, and
+  the same search takes 27 ms. A test reads the query's plan. Nothing before
+  this had searched a store of that size.
+- **The whole-account operations fit.** With 20,000 notes, the first send
+  takes 42 requests, a new device 41, and a change of the key 166, against
+  600 allowed in ten minutes. None takes longer than 76 seconds with no
+  network in the way.
+- **The list.** The store lists 100 notes in 0.2 ms and all 20,000 in 15 ms,
+  so the store is not what limits the list. Both apps now have "Show older
+  notes", which adds 100 at a time; search results grow the same way. How
+  long an app takes to draw a very long list was not measured: the desktop
+  window cannot be driven reliably from here, and adding 100 at a time
+  avoids needing to know.
+
+What the firewall does, tried on `dirt-trial`:
+
+- With no rule, a burst of 300 requests with no token was served in full.
+  Vercel's automatic protection is for attacks, and a burst that size is not
+  one.
+- With one rate-limit rule, which the free plan allows, exactly 1,200 of
+  1,400 requests from one address were served and the rest were answered
+  `429` by the firewall. The rule is left on the trial project and its
+  command is in `docs/DEPLOY.md`.
+- **No rule stops a slow trickle.** One request every five minutes that
+  reaches the database keeps it awake all month, which uses up the free
+  plan's compute allowance on the seventeenth day and suspends the database
+  until the next month. `POST /v1/nonces` is such a request and needs no
+  account. Keeping it away from the database was considered and not built:
+  anyone can sign up, and a signed-in device can do the same. What closes it
+  is a database plan with no allowance to use up. That is the Neon decision
+  under "Needs a person", and 8d writes it up with this as its main reason.
+
+Found and given a place in the build order:
+
+- **The note limit counts deleted notes, and nothing removes them.** An
+  account that has ever written 20,000 notes is full for good. The design
+  left purging deleted notes undecided and no step built it. It is part 8e
+  below.
+
+Not checked on a device: "Show older notes" in the desktop app. See
+`docs/MANUAL_CHECKLIST.md`.
 
 ### 8d: backups and the production decisions
 
 - [ ] A scheduled dump of the database, and a restore from one, tried.
 - [ ] The four decisions under "Needs a person", each written up.
 - [ ] `docs/DEPLOY.md` for a production deployment.
+
+### 8e: purging deleted notes
+
+The limits review found that this has to exist: see 8c. Step 9 needs it
+too, since an attachment's file is to expire with its note's purge.
+
+- **Settle first:** when a deleted note is purged, and who says so. The
+  server cannot tell a deleted note from a live one, so a device has to ask.
+  Default: a device asks for a note to be purged once it has been deleted
+  for 30 days by that device's reading of the note, and the server agrees
+  only if the note has not changed since the change number the device
+  names.
+- **Settled in step 4:** a purged note keeps its row, with no blob and a new
+  change number, so that every device learns of the purge by pulling. Edits
+  a device still holds for a purged note become a new note.
+- [ ] Server: the purge request. The account's note count and bytes fall.
+- [ ] Core: asking for purges during a sync, and taking a purge that
+      arrives: the local note goes, unless it holds edits the purge did not
+      cover.
+- [ ] A long-offline device that comes back with an edit to a purged note
+      keeps the edit, as a new note. Tested in `dirt-sim`.
+- [ ] `docs/LIMITS.md` and `docs/BACKEND_API.md` say what the note limit
+      counts once purging exists.
 
 ## Exit
 
