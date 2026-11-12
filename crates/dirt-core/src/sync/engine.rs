@@ -61,6 +61,11 @@ pub enum SyncError {
     Api(#[from] ApiError),
     #[error(transparent)]
     Store(#[from] Error),
+    /// Another program on this device signed out, or replaced the account's
+    /// key, since this engine was made. Syncing with what this engine holds
+    /// would upload notes that the account's devices cannot read.
+    #[error("this device's keys were changed by another program; they have to be read again")]
+    Superseded,
 }
 
 impl SyncError {
@@ -71,7 +76,9 @@ impl SyncError {
     pub const fn class(&self) -> ErrorClass {
         match self {
             Self::Api(error) => error.class(),
-            Self::Store(_) => ErrorClass::TryAgainLater,
+            // The session reads the keys again when the person comes back
+            // to the app, and syncs with them.
+            Self::Store(_) | Self::Superseded => ErrorClass::TryAgainLater,
         }
     }
 }
@@ -85,7 +92,12 @@ pub struct SyncEngine {
     /// How many documents this engine has merged into the store, over all
     /// its cycles, including cycles that went on to fail.
     merged: AtomicU64,
+    /// Asked before every cycle: are this engine's keys still the device's?
+    still_current: Option<Guard>,
 }
+
+/// A check an engine makes before each cycle.
+pub type Guard = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// What became of one pulled or returned blob.
 enum Applied {
@@ -105,7 +117,18 @@ impl SyncEngine {
             account_id,
             key,
             merged: AtomicU64::new(0),
+            still_current: None,
         }
+    }
+
+    /// Makes the engine ask `still_current` before every cycle, and refuse
+    /// to sync once the answer is no. The desktop app and the CLI share one
+    /// device's keys: when one of them replaces the account key or signs
+    /// out, the other's engine must stop using what it holds.
+    #[must_use]
+    pub fn guarded(mut self, still_current: Guard) -> Self {
+        self.still_current = Some(still_current);
+        self
     }
 
     /// How many documents from the server this engine has merged into the
@@ -120,6 +143,11 @@ impl SyncEngine {
 
     /// Runs one cycle and reports what it did.
     pub async fn run_once(&self) -> Result<SyncReport, SyncError> {
+        if let Some(still_current) = &self.still_current {
+            if !still_current() {
+                return Err(SyncError::Superseded);
+            }
+        }
         let mut report = SyncReport::default();
         for _ in 0..MAX_ROUNDS {
             self.pull(&mut report).await?;

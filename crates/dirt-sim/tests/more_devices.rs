@@ -694,3 +694,101 @@ async fn deleting_the_account_empties_the_server_and_keeps_the_notes_on_the_devi
         Err(SessionError::NotReady)
     ));
 }
+
+// ---- Requests that fail, and people who change their mind ----
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn an_exchange_survives_a_request_whose_answer_is_lost(pool: PgPool) {
+    let server = Server::with_sign_in(pool).await;
+    let laptop = laptop_with_a_note(&server).await;
+    let phone = waiting_device(&server, "Phone").await;
+    let mut join = phone.session.begin_join().await.unwrap();
+    let target = laptop.session.waiting_devices().await.unwrap().remove(0);
+    let mut approval = laptop.session.begin_approval(target).unwrap();
+
+    // The laptop's answer reaches the server, but the laptop never hears
+    // so. It sends the same answer again and goes on.
+    laptop.transport.lose_next_answer("POST /v1/enrolments/");
+    assert!(approval.poll().await.is_err());
+    assert_eq!(approval.poll().await.unwrap(), ExchangeStep::Waiting);
+
+    // The same happens to the phone's reveal.
+    phone.transport.lose_next_answer("POST /v1/enrolments/");
+    assert!(join.poll().await.is_err());
+    let ExchangeStep::Compare { code: on_phone } = join.poll().await.unwrap() else {
+        panic!("the phone should show a code after trying again");
+    };
+    assert_eq!(
+        approval.poll().await.unwrap(),
+        ExchangeStep::Compare { code: on_phone },
+        "sending twice changed nothing"
+    );
+
+    approval.confirm().await.unwrap();
+    assert_eq!(join.confirm().await.unwrap(), ExchangeStep::Done);
+    assert_eq!(approval.poll().await.unwrap(), ExchangeStep::Done);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn the_new_device_can_still_call_it_off_after_the_key_was_left(pool: PgPool) {
+    let server = Server::with_sign_in(pool).await;
+    let laptop = laptop_with_a_note(&server).await;
+    let phone = waiting_device(&server, "Phone").await;
+    let (mut approval, mut join, _, _) = until_codes(&laptop, &phone).await;
+
+    // The laptop's person confirms. Then the phone's person looks properly
+    // and says the codes differ.
+    assert_eq!(approval.confirm().await.unwrap(), ExchangeStep::Finishing);
+    join.reject(CancelReason::Mismatch).await.unwrap();
+
+    assert_eq!(
+        approval.poll().await.unwrap(),
+        ExchangeStep::Cancelled(CancelReason::Mismatch)
+    );
+    assert_eq!(server.device_status(target_id(&approval)).await, "revoked");
+    // The key that was left for it is gone from the server.
+    assert_eq!(enrolment_rows(&server).await, (0, 0));
+}
+
+// ---- Two programs on one device ----
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_program_stops_syncing_when_the_other_one_replaces_the_account_key(pool: PgPool) {
+    let server = Server::with_sign_in(pool).await;
+    // The desktop app and the CLI on one computer share the keys.
+    let desktop = laptop_with_a_note(&server).await;
+    let cli = desktop.second_program(&server);
+    assert!(cli.session.state().is_ready());
+    let old_key = desktop.account_key();
+
+    assert_eq!(
+        cli.session.reset_account().await.unwrap(),
+        ResetOutcome::Done
+    );
+
+    // The desktop app still holds the old key. It must not send anything
+    // encrypted with it: no device that joins later could read that.
+    let Err(SessionError::Sync(error)) = desktop.session.sync_now().await else {
+        panic!("a program holding a replaced key must not sync");
+    };
+    assert_eq!(error.class(), ErrorClass::TryAgainLater);
+    assert_eq!(server.blob_count().await, 0);
+
+    // When the person comes back to it, it reads the keys again.
+    assert!(desktop.session.reload().unwrap().is_ready());
+    assert_ne!(desktop.account_key().as_bytes(), old_key.as_bytes());
+    desktop.session.sync_now().await.unwrap();
+    assert_eq!(server.blob_count().await, 1);
+
+    // A device that joins now, with the new key, reads what was sent.
+    let phone = approved_device(&server, &desktop, "Phone").await;
+    phone.session.sync_now().await.unwrap();
+    assert!(phone
+        .session
+        .store()
+        .note_problems()
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(phone.notes().await[0].1, "written on the laptop");
+}

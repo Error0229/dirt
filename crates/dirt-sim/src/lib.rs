@@ -211,11 +211,14 @@ pub struct InProcess {
 }
 
 impl InProcess {
-    fn take_fault(&self, path: &str) -> Option<Fault> {
+    /// A fault is named by the start of a path, or by a method and the
+    /// start of a path, as in `POST /v1/notes/`.
+    fn take_fault(&self, method: &str, path: &str) -> Option<Fault> {
+        let with_method = format!("{method} {path}");
         let mut faults = self.faults.lock().expect("faults");
-        let index = faults
-            .iter()
-            .position(|(prefix, _)| path.starts_with(prefix.as_str()))?;
+        let index = faults.iter().position(|(prefix, _)| {
+            path.starts_with(prefix.as_str()) || with_method.starts_with(prefix.as_str())
+        })?;
         Some(faults.remove(index).1)
     }
 
@@ -259,7 +262,7 @@ impl Transport for InProcess {
             if self.offline.load(Ordering::SeqCst) {
                 return Err("there is no network".to_owned());
             }
-            let fault = self.take_fault(&request.path);
+            let fault = self.take_fault(request.method, &request.path);
             let fault = match fault {
                 Some(Fault::Before(action)) => {
                     action().await;
@@ -594,6 +597,19 @@ impl Client {
         drop(session);
         change(&mut config);
         Self::open(config, transport, secrets, folder)
+    }
+
+    /// Another program on the same device, running at the same time: the
+    /// CLI beside the desktop app. It shares the data folder and the secure
+    /// storage, and has its own connection to the server.
+    #[must_use]
+    pub fn second_program(&self, server: &Server) -> Self {
+        Self::open(
+            self.config.clone(),
+            server.transport(),
+            Arc::clone(&self.secrets),
+            Arc::clone(&self.folder),
+        )
     }
 
     /// The app's data folder.

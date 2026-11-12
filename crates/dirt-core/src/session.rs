@@ -224,6 +224,18 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Whether two records are the same sign-in with the same keys. A reset
+/// keeps the account, the device and the token and replaces the account
+/// key, so the key has to be compared too.
+fn same_keys(a: &DeviceSecrets, b: &DeviceSecrets) -> bool {
+    let key = |secrets: &DeviceSecrets| secrets.account_key.as_ref().map(|key| *key.as_bytes());
+    a.account_id == b.account_id
+        && a.device_id == b.device_id
+        && a.token == b.token
+        && a.approved == b.approved
+        && key(a) == key(b)
+}
+
 fn account_folder(data_folder: &Path, account_id: Uuid) -> Result<PathBuf, Error> {
     let name = StoreName::account(&account_id.to_string())?;
     let database = store_path(data_folder, &name);
@@ -388,12 +400,21 @@ impl Session {
         let name = StoreName::account(&secrets.account_id.to_string())?;
         let store = Store::open(store_path(&config.data_folder, &name))?;
         let api = self.api().with_token(secrets.token.clone());
-        let engine = Arc::new(SyncEngine::new(
-            store.clone(),
-            api,
-            secrets.account_id,
-            key.clone(),
-        ));
+        // Another program on this device may sign out or replace the
+        // account key while this one runs. The engine asks before each
+        // cycle whether what it holds is still what secure storage holds.
+        let stored = Arc::clone(&self.inner.secrets);
+        let mine = secrets.clone();
+        let still_current = move || match DeviceSecrets::read(&*stored) {
+            Ok(Some(now)) => same_keys(&now, &mine),
+            Ok(None) => false,
+            // Storage that cannot be read just now says nothing either way.
+            Err(_) => true,
+        };
+        let engine = Arc::new(
+            SyncEngine::new(store.clone(), api, secrets.account_id, key.clone())
+                .guarded(Arc::new(still_current)),
+        );
         self.inner.status.send_replace(SyncStatus::default());
         let worker = config.background_sync.then(|| {
             SyncWorker::spawn(
@@ -619,12 +640,7 @@ impl Session {
         let current = self.saved_secrets();
         let same = match (&stored, &current) {
             (None, None) => true,
-            (Some(a), Some(b)) => {
-                a.account_id == b.account_id
-                    && a.device_id == b.device_id
-                    && a.token == b.token
-                    && a.is_ready() == b.is_ready()
-            }
+            (Some(a), Some(b)) => same_keys(a, b),
             _ => false,
         };
         if !same {

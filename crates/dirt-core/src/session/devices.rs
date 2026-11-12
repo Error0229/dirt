@@ -82,6 +82,10 @@ pub struct Join {
     exchange: String,
     /// The number of the last message read.
     cursor: i64,
+    /// This device's reveal, until the server has taken it. Sending it is
+    /// tried again on every poll, so a request that fails does not leave
+    /// the exchange stuck.
+    unsent_reveal: Option<Vec<u8>>,
     phase: JoinPhase,
 }
 
@@ -111,6 +115,19 @@ impl Join {
         Ok(mine)
     }
 
+    /// Sends this device's reveal if the server has not taken it yet.
+    /// Sending it twice does no harm: the approving device acts on the
+    /// first and passes over the second.
+    async fn send_reveal(&mut self) -> Result<(), SessionError> {
+        if let Some(reveal) = &self.unsent_reveal {
+            self.api
+                .post_enrolment_message(self.secrets.device_id, reveal.clone(), false)
+                .await?;
+            self.unsent_reveal = None;
+        }
+        Ok(())
+    }
+
     /// Looks for what the other device has sent and moves the exchange on.
     /// The interface calls this every few seconds while the screen is open.
     pub async fn poll(&mut self) -> Result<ExchangeStep, SessionError> {
@@ -120,6 +137,7 @@ impl Join {
         if let JoinPhase::Cancelled(reason) = self.phase {
             return Ok(ExchangeStep::Cancelled(reason));
         }
+        self.send_reveal().await?;
 
         let messages = match self.new_messages().await {
             Ok(messages) => messages,
@@ -152,17 +170,15 @@ impl Join {
                     };
                     match joining.receive_key(relayed.sender, &message) {
                         Ok((agreed, reveal)) => {
-                            self.api
-                                .post_enrolment_message(
-                                    self.secrets.device_id,
-                                    reveal.encode(),
-                                    false,
-                                )
-                                .await?;
+                            // The state is kept before anything is sent, so
+                            // that a failed request can be tried again.
+                            self.unsent_reveal = Some(reveal.encode());
                             self.phase = JoinPhase::Comparing(agreed);
                         }
                         Err(error) => {
-                            self.phase = JoinPhase::Cancelled(CancelReason::Declined);
+                            // A key that cannot be used is a fault or an
+                            // interference. Nothing more is accepted.
+                            self.reject(CancelReason::Mismatch).await?;
                             return Err(error.into());
                         }
                     }
@@ -170,6 +186,7 @@ impl Join {
                 _ => {}
             }
         }
+        self.send_reveal().await?;
 
         match &self.phase {
             JoinPhase::AwaitingKey(_) | JoinPhase::Moving => Ok(ExchangeStep::Waiting),
@@ -257,9 +274,11 @@ enum ApprovalPhase {
     /// The new device has not opened its screen yet.
     AwaitingCommit,
     /// This device has answered and waits for the new device's key.
+    /// `answered` is the number the server gave the answer, once it has
+    /// taken it.
     AwaitingReveal {
         approving: Approving,
-        answered: i64,
+        answered: Option<i64>,
     },
     /// The code is on screen.
     Comparing(Agreed),
@@ -279,6 +298,9 @@ pub struct Approval {
     target: DeviceInfo,
     exchange: Option<String>,
     cursor: i64,
+    /// This device's answer, until the server has taken it. Sending it is
+    /// tried again on every poll.
+    unsent_key: Option<Vec<u8>>,
     phase: ApprovalPhase,
 }
 
@@ -297,8 +319,26 @@ impl Approval {
         &self.target
     }
 
+    /// Sends this device's answer if the server has not taken it yet. The
+    /// same bytes are sent each time, so if an earlier try did arrive the
+    /// new device sees the same key twice and nothing changes.
+    async fn send_key(&mut self) -> Result<(), SessionError> {
+        if let Some(key) = &self.unsent_key {
+            let posted = self
+                .api
+                .post_enrolment_message(self.target.id, key.clone(), false)
+                .await?;
+            self.unsent_key = None;
+            if let ApprovalPhase::AwaitingReveal { answered, .. } = &mut self.phase {
+                *answered = Some(posted.seq);
+            }
+        }
+        Ok(())
+    }
+
     /// Answers a commitment from the new device: a first one, or a new one
-    /// after that device began again.
+    /// after that device began again. The answer is sent by
+    /// [`send_key`](Self::send_key).
     async fn answer(&mut self, commit: &Message) -> Result<(), SessionError> {
         let answered = Approving::answer(
             self.secrets.account_id,
@@ -310,14 +350,11 @@ impl Approval {
         );
         match answered {
             Ok((approving, key)) => {
-                let posted = self
-                    .api
-                    .post_enrolment_message(self.target.id, key.encode(), false)
-                    .await?;
                 self.exchange = Some(approving.exchange().to_owned());
+                self.unsent_key = Some(key.encode());
                 self.phase = ApprovalPhase::AwaitingReveal {
                     approving,
-                    answered: posted.seq,
+                    answered: None,
                 };
                 Ok(())
             }
@@ -349,9 +386,9 @@ impl Approval {
             ApprovalPhase::Done => return Ok(ExchangeStep::Done),
             ApprovalPhase::Cancelled(reason) => return Ok(ExchangeStep::Cancelled(reason)),
             ApprovalPhase::HandledElsewhere => return Ok(ExchangeStep::HandledElsewhere),
-            ApprovalPhase::AwaitingCompletion => return self.check_completion().await,
             _ => {}
         }
+        self.send_key().await?;
 
         let fetched = match self
             .api
@@ -359,9 +396,14 @@ impl Approval {
             .await
         {
             Ok(messages) => messages,
-            // The request is gone: approved by another device, removed, or
-            // lapsed.
+            // The request is gone. If this device had left the key, the new
+            // device may have fetched it and been approved; the device list
+            // says. Otherwise another device approved or removed it, or the
+            // request lapsed.
             Err(error) if error.code() == Some(crate::api::ErrorCode::NotFound) => {
+                if matches!(self.phase, ApprovalPhase::AwaitingCompletion) {
+                    return self.check_completion().await;
+                }
                 self.phase = ApprovalPhase::HandledElsewhere;
                 return Ok(ExchangeStep::HandledElsewhere);
             }
@@ -398,7 +440,10 @@ impl Approval {
                 // Another approved device answered this exchange first.
                 Message::Key { .. } if !from_me && !from_new_device && current => {
                     if let ApprovalPhase::AwaitingReveal { answered, .. } = &self.phase {
-                        if relayed.seq < *answered {
+                        // Theirs came first if this device's has no number
+                        // yet, or a higher one.
+                        if answered.map_or(true, |mine| relayed.seq < mine) {
+                            self.unsent_key = None;
                             self.phase = ApprovalPhase::HandledElsewhere;
                             return Ok(ExchangeStep::HandledElsewhere);
                         }
@@ -436,6 +481,14 @@ impl Approval {
             }
         }
 
+        self.send_key().await?;
+
+        // With the key left, the new device has only to fetch it. It may
+        // still call the exchange off, which the loop above has handled, or
+        // begin again, which has put this device back to answering.
+        if matches!(self.phase, ApprovalPhase::AwaitingCompletion) {
+            return self.check_completion().await;
+        }
         Ok(match &self.phase {
             ApprovalPhase::Comparing(agreed) => ExchangeStep::Compare {
                 code: agreed.code(),
@@ -572,6 +625,7 @@ impl Session {
             secrets,
             exchange: joining.exchange().to_owned(),
             cursor: posted.seq,
+            unsent_reveal: None,
             phase: JoinPhase::AwaitingKey(joining),
         })
     }
@@ -597,6 +651,7 @@ impl Session {
             target: device,
             exchange: None,
             cursor: 0,
+            unsent_key: None,
             phase: ApprovalPhase::AwaitingCommit,
         })
     }

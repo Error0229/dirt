@@ -130,6 +130,18 @@ the number of waiting devices and the time a pending reset takes effect.
   lapse.
 - **Deleting an account keeps the notes on the device that did it.** They
   exist nowhere else by then, so they are moved back into its local store.
+- **A program must not sync with a key another program replaced.** The
+  desktop app and the CLI share one device's keys. After a reset by one, the
+  other still held the old key, and reading the keys again did not notice,
+  because the account, the device and the token were unchanged. It could
+  have sent notes no later device could read. The sync engine now asks
+  before each cycle whether its keys are still the device's, and reading
+  the keys again compares the key itself. Found in review.
+- **A request that fails must not strand the exchange.** Each side now keeps
+  what it has to send until the server has taken it, and sends the same
+  bytes again. Found in review.
+- **The approving device goes on listening after it has left the key.** The
+  new device's person may still say the codes differ. Found in review.
 - The commitment check, the rule that a device cannot complete without a
   key, and the rule that a waiting device cannot reset an account with notes
   were each broken by hand to confirm a test fails.
