@@ -17,6 +17,18 @@
 //! connection of another process closes and SQLite has the file to itself.
 //! A program that cannot open its notes cannot do anything, so opening is
 //! given more patience than a single write.
+//!
+//! A fourth came the same way, from a write that failed once on a loaded
+//! machine with the file busy: a write waits half a minute for its turn,
+//! and looks often. SQLite's own waiting looks ten times a second and
+//! gives no process a turn. A process that is short of processor time is
+//! mostly paused while it holds the file, and when it runs again it
+//! finishes one write and begins the next in the same breath, so another
+//! process that looks only now and then can find the file taken every
+//! time for many seconds. Forty copies of the two-process test at once
+//! showed it: with a wait of five seconds more than half of them failed.
+//! A thought that could not be saved is the one failure this app must not
+//! have, so a write waits as long as a person plausibly would.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -26,10 +38,26 @@ use rusqlite::{Connection, ErrorCode, OptionalExtension, Transaction, Transactio
 use crate::Result;
 
 /// How long a connection waits for another process's write to finish.
-pub(super) const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+pub(super) const BUSY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long a connection pauses between two looks at a busy file. Short,
+/// so that the moment the file is free is not missed.
+const BUSY_PAUSE: Duration = Duration::from_millis(5);
 
 /// How long opening a store keeps trying while the file is busy.
-const OPEN_PATIENCE: Duration = Duration::from_secs(20);
+const OPEN_PATIENCE: Duration = Duration::from_secs(60);
+
+/// What a connection does when it finds the file busy: pause and say to
+/// look again, until it has paused for [`BUSY_TIMEOUT`] in all. `looks` is
+/// how many times it has found the file busy so far in this one wait.
+fn wait_for_the_file(looks: i32) -> bool {
+    let waited = BUSY_PAUSE.saturating_mul(u32::try_from(looks).unwrap_or(u32::MAX));
+    if waited >= BUSY_TIMEOUT {
+        return false;
+    }
+    std::thread::sleep(BUSY_PAUSE);
+    true
+}
 
 /// The version of the tables below, kept in SQLite's `user_version`.
 const SCHEMA_VERSION: i64 = 5;
@@ -106,7 +134,7 @@ pub(super) fn retry_while_busy<T>(mut step: impl FnMut() -> Result<T>) -> Result
 /// Opens one connection the way every Dirt process must.
 pub(super) fn open_connection(path: &Path) -> Result<Connection> {
     let connection = Connection::open(path)?;
-    connection.busy_timeout(BUSY_TIMEOUT)?;
+    connection.busy_handler(Some(wait_for_the_file))?;
 
     // When two processes switch a fresh file at the same moment, SQLite fails
     // one of them at once instead of waiting. The mode is stored in the file,
