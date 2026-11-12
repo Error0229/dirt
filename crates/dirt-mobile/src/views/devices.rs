@@ -96,8 +96,22 @@ fn session_of(state: &AppState) -> Option<Session> {
 pub fn Devices() -> Element {
     let state = use_context::<AppState>();
     let mut view_signal = state.view;
-    let notice: Notice = use_signal(|| None);
+    let mut notice: Notice = use_signal(|| None);
     let session_state = (state.session_state)();
+
+    // The panel that was running the exchange goes away the moment this
+    // device is let in, so the news is given here.
+    let mut was_waiting = use_signal(|| false);
+    use_effect(move || {
+        let now = (state.session_state)();
+        let waiting = matches!(now, SessionState::WaitingForApproval { .. });
+        if *was_waiting.peek() && now.is_ready() {
+            notice.set(Some((false, "This device was let in.".to_owned())));
+        }
+        if *was_waiting.peek() != waiting {
+            was_waiting.set(waiting);
+        }
+    });
 
     let body = if (state.session)().is_none() {
         rsx! {
@@ -232,6 +246,13 @@ fn ExchangePanel(
 #[component]
 fn ConfirmedButton(label: String, disabled: bool, onconfirm: EventHandler<()>) -> Element {
     let mut armed = use_signal(|| false);
+    // The label is written in lower case so that it reads on after "Yes, ".
+    // On its own it starts with a capital.
+    let mut letters = label.chars();
+    let standing_alone: String = letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default();
     rsx! {
         if armed() {
             UiButton {
@@ -259,7 +280,7 @@ fn ConfirmedButton(label: String, disabled: bool, onconfirm: EventHandler<()>) -
                 variant: ButtonVariant::Secondary,
                 disabled,
                 onclick: move |_| armed.set(true),
-                "{label}"
+                "{standing_alone}"
             }
         }
     }

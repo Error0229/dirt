@@ -12,11 +12,12 @@ A redesign is in progress, and `main` is partway through it.
 - **Build order:**
   [docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md](docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md)
 
-**Where it stands: step 5 of 9.** One device signs in through Clerk and syncs
-its notes through the new server, which stores only ciphertext it cannot
-read. **A second device cannot join yet:** it signs in and then waits, because
-handing it the account key is step 6. Until then sync keeps one device's
-notes backed up, and the desktop app and the CLI on one computer in step.
+**Where it stands: step 6 of 9.** Devices sign in through Clerk and sync
+their notes through the new server, which stores only ciphertext it cannot
+read. A second device is let into an account by comparing a short code with
+a device that is already in, or with the account's recovery phrase.
+[docs/SECURITY.md](docs/SECURITY.md) says what that protects and what it does
+not.
 
 ## Workspace layout
 
@@ -66,6 +67,31 @@ first, so a slow or missing network costs nothing but a warning.
 
 The CLI and the desktop app on one computer are one device. They share the
 data folder and the keychain entry, so signing in with either signs in both.
+
+### More than one device
+
+The first device to sign in to an account makes the key that encrypts its
+notes. Every later device signs in and then waits to be let in:
+
+```bash
+dirt auth join          # on the new device: ask to be let in
+dirt devices approve    # on a device that is already in: answer
+```
+
+Both show the same code of three groups of four digits. Say on each whether
+they match. If they do, the new device gets the key; if they do not, it is
+turned away, because someone may be between the two.
+
+```bash
+dirt devices              # list the account's devices
+dirt devices remove <ID>  # remove one
+dirt auth phrase new      # make a recovery phrase: 24 words, shown once
+dirt auth recover         # on a new device: get in with the phrase
+```
+
+The recovery phrase is optional. Without it, losing every device loses the
+notes. The desktop app has all of this in Settings → Devices, and the
+Android app under Settings → Devices and recovery phrase.
 
 ### Run the desktop app
 
@@ -129,14 +155,14 @@ cargo run -p dirt-api                # listens on 0.0.0.0:8080
 
 ### Known limitations
 
-- **One device per account.** The first device of an account is approved at
-  once. A later one signs in and waits: nothing can hand it the account key
-  until step 6.
-- **You cannot sign out yet.** Signing out deletes the account key from the
-  device, and on an account's only approved device that is the only copy.
-  It is refused until step 6 adds the recovery phrase.
-- **Lose the device, lose the notes.** For the same reason: until the
-  recovery phrase exists, the account key is in one place.
+- **A removed device keeps what it had.** Removing a device stops it reaching
+  the server. It keeps the notes it already had and the key that reads them.
+  Changing the account's key, which ends that, is step 8.
+- **The only device of an account cannot sign out without a recovery
+  phrase.** Its copy of the account key would be the last.
+- **Lose every device and the phrase, lose the notes.** That is what the
+  server being unable to read them means. The account can be reset and
+  started again.
 - **The desktop app does not watch the file.** It reloads its list when its
   window regains focus. If the CLI changes a note that is open in the desktop
   editor, the desktop app's next save replaces that change.

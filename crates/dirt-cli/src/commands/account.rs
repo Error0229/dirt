@@ -9,7 +9,25 @@ use crate::cli::{AuthCommands, PhraseCommands};
 use crate::context::{describe, Context};
 use crate::error::CliError;
 
-pub async fn run_auth(command: AuthCommands, context: &Context) -> Result<(), CliError> {
+pub async fn run_auth(command: AuthCommands, context: Context) -> Result<(), CliError> {
+    // The two commands that remove the account's store from this computer
+    // let go of the store first, so that its files can go at once and not
+    // only the next time `dirt` runs.
+    let (command, context) = match command {
+        AuthCommands::Logout { discard_unsynced } => {
+            let session = context.into_session()?;
+            logout(&session, discard_unsynced).await?;
+            session.remove_signed_out_stores();
+            return Ok(());
+        }
+        AuthCommands::DeleteAccount { yes } => {
+            let session = context.into_session()?;
+            delete_account(&session, yes).await?;
+            session.remove_signed_out_stores();
+            return Ok(());
+        }
+        other => (other, &context),
+    };
     match command {
         AuthCommands::Status => {
             for line in status_lines(context).await? {
@@ -21,8 +39,8 @@ pub async fn run_auth(command: AuthCommands, context: &Context) -> Result<(), Cl
             move_local_notes,
             no_browser,
         } => login(context.require_session()?, move_local_notes, no_browser).await,
-        AuthCommands::Logout { discard_unsynced } => {
-            logout(context.require_session()?, discard_unsynced).await
+        AuthCommands::Logout { .. } | AuthCommands::DeleteAccount { .. } => {
+            unreachable!("handled above")
         }
         AuthCommands::Join => crate::commands::devices::join(context.require_session()?).await,
         AuthCommands::Recover => recover(context.require_session()?).await,
@@ -36,9 +54,6 @@ pub async fn run_auth(command: AuthCommands, context: &Context) -> Result<(), Cl
                 .map_err(sentence)?;
             println!("The reset was refused. Nothing was changed.");
             Ok(())
-        }
-        AuthCommands::DeleteAccount { yes } => {
-            delete_account(context.require_session()?, yes).await
         }
     }
 }
@@ -88,10 +103,10 @@ async fn phrase(session: &Session, command: PhraseCommands) -> Result<(), CliErr
             }
             println!();
             println!(
-                "Write it down and keep it somewhere safe. It is not stored anywhere and                  will not be shown again."
+                "Write it down and keep it somewhere safe. It is not stored anywhere and will not be shown again."
             );
             println!(
-                "Anyone who has it and can sign in as you can read your notes.                  A phrase made earlier no longer works."
+                "Anyone who has it and can sign in as you can read your notes. A phrase made earlier no longer works."
             );
         }
         PhraseCommands::Remove => {
