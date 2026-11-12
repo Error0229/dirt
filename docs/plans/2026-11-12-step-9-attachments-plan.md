@@ -277,6 +277,11 @@ What review showed:
   is deleted, which is four times the life of a link. A test issues links,
   resets the account, sweeps, and then uploads: the objects are still
   queued, and go when the hour is over. Found in the second review.
+- **The hour was checked when the queue was listed and not again when a
+  key was taken from it.** In between, a file could be asked for again and
+  the account reset, leaving a new entry under the key the sweep held. The
+  wait is now asked about again under the account's lock. Found in the
+  third review.
 
 Not tried: Cloudflare R2 itself. Everything above ran against the gateway.
 

@@ -868,6 +868,51 @@ async fn an_upload_that_arrives_after_its_file_was_swept_is_still_deleted(pool: 
     assert_eq!(queued(&pool).await, 0);
 }
 
+/// A sweep lists the objects that have waited long enough, and then takes
+/// them one at a time. Between the two, a file can be asked for again, which
+/// takes its key out of the queue and issues a new link, and the account
+/// reset, which queues the key afresh. The sweep then holds a key from its
+/// list whose entry is new, and must leave it: its hour has only begun.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_key_queued_afresh_while_a_sweep_runs_is_not_deleted_by_it(pool: PgPool) {
+    file_bucket().await;
+    let app = app(pool.clone());
+    let device = register(&app, "alice", "Laptop").await;
+    let token = &device.token;
+    let file = upload(&app, token, b"asked for twice").await;
+    let key = FileStore::object_key(device.account_id, file);
+
+    // Queued, and its hour over: a sweep lists it now.
+    post(&app, "/v1/account/reset", Some(token), json!({})).await;
+    the_wait_is_over(&pool).await;
+    // The device asks for the file again and is given a link. Asking
+    // deletes what the account has waiting, the old object among it. Then
+    // the account is reset again, before the device has used the link.
+    let link: UploadLink = ask_to_upload(&app, token, file, 15).await.json();
+    post(&app, "/v1/account/reset", Some(token), json!({})).await;
+    assert_eq!(queued(&pool).await, 1);
+    assert_eq!(stored(&device, file).await, None);
+
+    // The sweep reaches the key it listed. The entry under it is new.
+    let store = file_store();
+    let deleted = dirt_api::files::delete_waiting_object(&pool, &store, &key)
+        .await
+        .unwrap();
+    assert!(!deleted);
+    assert_eq!(queued(&pool).await, 1, "the key is still remembered");
+
+    // The device uses its link. What it leaves is deleted in its time,
+    // because the key is still in the queue to say it is there.
+    assert!(put(&link.url, b"asked for twice").await.is_success());
+    assert_eq!(stored(&device, file).await, Some(15));
+    the_wait_is_over(&pool).await;
+    assert!(dirt_api::files::delete_waiting_object(&pool, &store, &key)
+        .await
+        .unwrap());
+    assert_eq!(stored(&device, file).await, None);
+    assert_eq!(queued(&pool).await, 0);
+}
+
 /// A file is confirmed for a note in the moment it falls due. Whichever
 /// request the server takes first, it never ends up saying a file is there
 /// when its object is gone, and neither request fails.

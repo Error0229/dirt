@@ -442,7 +442,7 @@ pub async fn orphan_account(
     sqlx::query(
         "INSERT INTO orphan_objects (object_key) \
          SELECT account_id::text || '/' || file_id::text FROM files WHERE account_id = $1 \
-         ON CONFLICT DO NOTHING",
+         ON CONFLICT (object_key) DO UPDATE SET created_at = now()",
     )
     .bind(account_id)
     .execute(&mut **tx)
@@ -510,10 +510,14 @@ pub async fn sweep(
         let Some((size,)) = gone else {
             continue;
         };
-        sqlx::query("INSERT INTO orphan_objects (object_key) VALUES ($1) ON CONFLICT DO NOTHING")
-            .bind(FileStore::object_key(account_id, file_id))
-            .execute(&mut *tx)
-            .await?;
+        // A key that is somehow queued already starts its wait again.
+        sqlx::query(
+            "INSERT INTO orphan_objects (object_key) VALUES ($1) \
+             ON CONFLICT (object_key) DO UPDATE SET created_at = now()",
+        )
+        .bind(FileStore::object_key(account_id, file_id))
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("UPDATE accounts SET file_bytes = GREATEST(file_bytes - $2, 0) WHERE id = $1")
             .bind(account_id)
             .bind(size)
@@ -538,31 +542,50 @@ pub async fn sweep(
     .await?;
     let mut deleted = 0;
     for (key,) in orphans {
-        let mut tx = pool.begin().await?;
-        // The account may be gone, which is why its objects are here. If
-        // it is not, its lock keeps an upload of this very file waiting
-        // until the object has been dealt with.
-        if let Some(account_id) = key.split('/').next().and_then(|id| id.parse().ok()) {
-            lock_account(&mut tx, account_id).await?;
+        if delete_waiting_object(pool, store, &key).await? {
+            deleted += 1;
         }
-        let taken = sqlx::query("DELETE FROM orphan_objects WHERE object_key = $1")
-            .bind(&key)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        if taken == 0 {
-            // A new upload of the file called the deletion off.
-            continue;
-        }
-        if let Err(error) = store.delete(&key).await {
-            // Dropping the transaction leaves the key queued.
-            tracing::warn!("an object was not deleted and will be tried again: {error}");
-            continue;
-        }
-        tx.commit().await?;
-        deleted += 1;
     }
     Ok(deleted)
+}
+
+/// Deletes one queued object from the storage, if it has waited long
+/// enough, and says whether it did.
+///
+/// The wait is asked about here, under the account's lock, and not only
+/// when the queue was listed. Between the two, the file may have been asked
+/// for again, which takes the key out of the queue and issues a new link,
+/// and the account reset, which puts the key back. The entry that is there
+/// now is a new one, and its hour has only begun.
+pub async fn delete_waiting_object(pool: &PgPool, store: &FileStore, key: &str) -> ApiResult<bool> {
+    let mut tx = pool.begin().await?;
+    // The account may be gone, which is why its objects are here. If it is
+    // not, its lock keeps an upload of this very file waiting until the
+    // object has been dealt with.
+    if let Some(account_id) = key.split('/').next().and_then(|id| id.parse().ok()) {
+        lock_account(&mut tx, account_id).await?;
+    }
+    let taken = sqlx::query(
+        "DELETE FROM orphan_objects \
+          WHERE object_key = $1 AND created_at < now() - make_interval(secs => $2)",
+    )
+    .bind(key)
+    .bind(f64::from(OBJECT_WAIT_SECS))
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if taken == 0 {
+        // A new upload of the file called the deletion off, or the key was
+        // queued afresh and has not waited yet.
+        return Ok(false);
+    }
+    if let Err(error) = store.delete(key).await {
+        // Dropping the transaction leaves the key queued.
+        tracing::warn!("an object was not deleted and will be tried again: {error}");
+        return Ok(false);
+    }
+    tx.commit().await?;
+    Ok(true)
 }
 
 /// Compares two secrets without stopping at the first byte that differs.
