@@ -99,10 +99,9 @@ async fn receive_capture(
     // More than one may be waiting: two shares can arrive before either is
     // asked for.
     while let Some(capture) = take_capture() {
-        let writing = *view.peek() == View::Editor;
         match capture {
             Capture::Blank => {
-                if !writing {
+                if *view.peek() != View::Editor {
                     selected_note_id.set(None);
                     view.set(View::Editor);
                 }
@@ -123,7 +122,9 @@ async fn receive_capture(
                             Ok(refreshed) => notes.set(refreshed),
                             Err(error) => tracing::warn!("Listing after a share failed: {error}"),
                         }
-                        if !writing {
+                        // Asked now, not before the note was saved: the
+                        // person may have begun writing in the meantime.
+                        if *view.peek() != View::Editor {
                             view.set(View::List);
                         }
                     }

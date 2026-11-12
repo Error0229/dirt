@@ -50,6 +50,23 @@ pub fn List() -> Element {
             store?.find_notes(&query, tag.as_deref()).await.ok()
         }
     });
+    // A tag can stop being in use while the list is narrowed to it: its
+    // last note is deleted, or edited to drop the tag. The row of tags,
+    // "All" included, is gone then, so the list widens by itself. It would
+    // otherwise go on showing nothing, with no way to change that.
+    use_effect(move || {
+        let Some(in_use) = tags() else {
+            return;
+        };
+        let stale = state
+            .tag_filter
+            .peek()
+            .as_ref()
+            .is_some_and(|active| !in_use.iter().any(|(tag, _)| tag == active));
+        if stale {
+            state.tag_filter.set(None);
+        }
+    });
     let tags = tags().unwrap_or_default();
     // `None` while the store has not answered yet.
     let shown: Option<Vec<Note>> = if narrowed {
