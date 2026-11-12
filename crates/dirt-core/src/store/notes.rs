@@ -431,17 +431,33 @@ fn full_text_query(input: &str) -> Option<String> {
     }
 }
 
+/// Notes matching a full-text query, best match first.
+///
+/// `CROSS JOIN` is SQLite's way of fixing the order of a join: the table
+/// on its left is read first. Left to choose, SQLite reads `notes` first
+/// and asks the index about each note in turn, and each such question
+/// walks the whole list of notes that hold the word. With 20,000 notes
+/// holding the word typed, that took 22 seconds. Read first, the index
+/// answers once.
+const SEARCH_SQL: &str = "SELECT n.id, n.text, n.edited_at FROM notes_fts f \
+       CROSS JOIN notes n ON n.rowid = f.rowid \
+      WHERE notes_fts MATCH ?1 AND n.deleted = 0 \
+      ORDER BY f.rank, n.edited_at DESC LIMIT ?2";
+
+/// The same, for notes that also carry a tag. The index is read first here
+/// too, then the note, then its tags.
+const SEARCH_WITH_TAG_SQL: &str = "SELECT n.id, n.text, n.edited_at FROM notes_fts f \
+       CROSS JOIN notes n ON n.rowid = f.rowid \
+       CROSS JOIN note_tags t ON t.note_id = n.id AND t.tag = ?2 \
+      WHERE notes_fts MATCH ?1 AND n.deleted = 0 \
+      ORDER BY f.rank, n.edited_at DESC LIMIT ?3";
+
 /// Live notes matching every word of `query`, best match first.
 pub(super) fn search(connection: &Connection, query: &str, limit: usize) -> Result<Vec<Note>> {
     let Some(query) = full_text_query(query) else {
         return Ok(Vec::new());
     };
-    let mut statement = connection.prepare(
-        "SELECT n.id, n.text, n.edited_at FROM notes_fts f \
-           JOIN notes n ON n.rowid = f.rowid \
-          WHERE notes_fts MATCH ?1 AND n.deleted = 0 \
-          ORDER BY f.rank, n.edited_at DESC LIMIT ?2",
-    )?;
+    let mut statement = connection.prepare(SEARCH_SQL)?;
     let rows = statement.query_map(params![query, to_sql_count(limit)], note_from_row)?;
     collect(rows)
 }
@@ -473,13 +489,7 @@ pub(super) fn find(
     let Some(tag) = tag else {
         return search(connection, query, limit);
     };
-    let mut statement = connection.prepare(
-        "SELECT n.id, n.text, n.edited_at FROM notes_fts f \
-           JOIN notes n ON n.rowid = f.rowid \
-           JOIN note_tags t ON t.note_id = n.id \
-          WHERE notes_fts MATCH ?1 AND t.tag = ?2 AND n.deleted = 0 \
-          ORDER BY f.rank, n.edited_at DESC LIMIT ?3",
-    )?;
+    let mut statement = connection.prepare(SEARCH_WITH_TAG_SQL)?;
     let rows = statement.query_map(params![words, tag, to_sql_count(limit)], note_from_row)?;
     collect(rows)
 }
@@ -499,6 +509,48 @@ pub(super) fn revision(connection: &Connection, id: &NoteId) -> Result<Option<i6
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tables a statement reads, in the order SQLite reads them.
+    fn read_order(connection: &Connection, sql: &str) -> Vec<String> {
+        let mut statement = connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap();
+        let steps = statement
+            .query_map(params!["\"word\"*", "tag", 100], |row| {
+                row.get::<_, String>(3)
+            })
+            .unwrap();
+        steps
+            .map(|step| step.expect("a step of the plan"))
+            .filter(|step| step.starts_with("SCAN") || step.starts_with("SEARCH"))
+            .collect()
+    }
+
+    /// A search has to begin at the full-text index. Begun at the notes,
+    /// it asks the index once for every note, which with many notes takes
+    /// many seconds.
+    #[test]
+    fn a_search_reads_the_full_text_index_first() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut connection =
+            super::super::schema::open_connection(&folder.path().join("notes.db")).unwrap();
+        super::super::schema::set_up(&mut connection).unwrap();
+
+        let plain = read_order(&connection, &SEARCH_SQL.replace("?2", "?3"));
+        assert!(
+            plain[0].contains("SCAN f VIRTUAL TABLE"),
+            "the search reads in this order: {plain:?}"
+        );
+        assert!(plain[1].starts_with("SEARCH n "), "{plain:?}");
+
+        let tagged = read_order(&connection, SEARCH_WITH_TAG_SQL);
+        assert!(
+            tagged[0].contains("SCAN f VIRTUAL TABLE"),
+            "the search with a tag reads in this order: {tagged:?}"
+        );
+        assert!(tagged[1].starts_with("SEARCH n "), "{tagged:?}");
+        assert!(tagged[2].starts_with("SEARCH t "), "{tagged:?}");
+    }
 
     #[test]
     fn a_typed_query_becomes_quoted_prefix_terms() {
