@@ -94,6 +94,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: AuthCommands,
     },
+    /// List the account's devices, approve one that is waiting, or remove
+    /// one
+    Devices {
+        #[command(subcommand)]
+        command: Option<DeviceCommands>,
+    },
     /// Open TUI interface
     Tui,
 }
@@ -133,6 +139,58 @@ pub enum AuthCommands {
         /// are deleted
         #[arg(long)]
         discard_unsynced: bool,
+    },
+    /// On a device that is waiting: ask another device of the account to
+    /// let this one in, by comparing a code
+    Join,
+    /// On a device that is waiting: get in with the account's recovery
+    /// phrase
+    Recover,
+    /// Make or remove the account's recovery phrase
+    Phrase {
+        #[command(subcommand)]
+        command: PhraseCommands,
+    },
+    /// Reset the account: delete its notes on the server and every other
+    /// device, and start again from this device
+    Reset {
+        /// Do not ask for confirmation
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Refuse a reset that a waiting device asked for
+    CancelReset,
+    /// Delete the account and everything the server holds for it. The notes
+    /// stay on this computer
+    DeleteAccount {
+        /// Do not ask for confirmation
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum PhraseCommands {
+    /// Make a recovery phrase and show it once. An earlier phrase stops
+    /// working
+    New,
+    /// Remove the recovery phrase, so that it no longer opens the account
+    Remove,
+}
+
+#[derive(Subcommand)]
+pub enum DeviceCommands {
+    /// List the account's devices
+    List,
+    /// Let a waiting device in, by comparing a code with it
+    Approve {
+        /// The start of the device's ID, if more than one is waiting
+        device: Option<String>,
+    },
+    /// Remove a device from the account
+    Remove {
+        /// The start of the device's ID
+        device: String,
     },
 }
 

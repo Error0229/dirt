@@ -2,9 +2,10 @@
 
 use std::io::{self, BufRead, IsTerminal, Write};
 
-use dirt_core::session::{Session, SessionState, SignOutError, Unsynced};
+use dirt_core::session::{ResetOutcome, Session, SessionState, SignOutError, Unsynced};
+use dirt_core::util::as_sentence;
 
-use crate::cli::AuthCommands;
+use crate::cli::{AuthCommands, PhraseCommands};
 use crate::context::{describe, Context};
 use crate::error::CliError;
 
@@ -23,7 +24,126 @@ pub async fn run_auth(command: AuthCommands, context: &Context) -> Result<(), Cl
         AuthCommands::Logout { discard_unsynced } => {
             logout(context.require_session()?, discard_unsynced).await
         }
+        AuthCommands::Join => crate::commands::devices::join(context.require_session()?).await,
+        AuthCommands::Recover => recover(context.require_session()?).await,
+        AuthCommands::Phrase { command } => phrase(context.require_session()?, command).await,
+        AuthCommands::Reset { yes } => reset(context.require_session()?, yes).await,
+        AuthCommands::CancelReset => {
+            context
+                .require_session()?
+                .cancel_reset()
+                .await
+                .map_err(sentence)?;
+            println!("The reset was refused. Nothing was changed.");
+            Ok(())
+        }
+        AuthCommands::DeleteAccount { yes } => {
+            delete_account(context.require_session()?, yes).await
+        }
     }
+}
+
+fn sentence(error: impl std::fmt::Display) -> CliError {
+    CliError::Account(as_sentence(&error))
+}
+
+fn when(at_ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(at_ms).map_or_else(
+        || "later".to_owned(),
+        |at| at.format("%Y-%m-%d %H:%M UTC").to_string(),
+    )
+}
+
+/// On a waiting device: opens the account with its recovery phrase.
+async fn recover(session: &Session) -> Result<(), CliError> {
+    if session.state().is_ready() {
+        println!("This device already reads the account's notes.");
+        return Ok(());
+    }
+    println!("Type the account's recovery phrase, all 24 words, then press Enter:");
+    let mut typed = String::new();
+    io::stdin().lock().read_line(&mut typed)?;
+    session
+        .recover_with_phrase(&typed)
+        .await
+        .map_err(sentence)?;
+    println!("This device was let in. Run `dirt sync` to fetch the notes.");
+    Ok(())
+}
+
+async fn phrase(session: &Session, command: PhraseCommands) -> Result<(), CliError> {
+    match command {
+        PhraseCommands::New => {
+            let phrase = session.create_recovery_phrase().await.map_err(sentence)?;
+            println!("The account's recovery phrase:");
+            println!();
+            for (index, line) in phrase
+                .words()
+                .split(' ')
+                .collect::<Vec<_>>()
+                .chunks(6)
+                .enumerate()
+            {
+                println!("  {:>2}.  {}", index * 6 + 1, line.join(" "));
+            }
+            println!();
+            println!(
+                "Write it down and keep it somewhere safe. It is not stored anywhere and                  will not be shown again."
+            );
+            println!(
+                "Anyone who has it and can sign in as you can read your notes.                  A phrase made earlier no longer works."
+            );
+        }
+        PhraseCommands::Remove => {
+            session.remove_recovery_phrase().await.map_err(sentence)?;
+            println!("The recovery phrase was removed. It no longer opens the account.");
+        }
+    }
+    Ok(())
+}
+
+async fn reset(session: &Session, yes: bool) -> Result<(), CliError> {
+    let question = "Resetting deletes the account's notes on the server, its recovery phrase \
+                    and every other device. Notes on this device are kept and sent again. \
+                    Reset the account? [y/N] ";
+    if !yes && !confirm(question)? {
+        println!("Nothing was changed.");
+        return Ok(());
+    }
+    match session.reset_account().await.map_err(sentence)? {
+        ResetOutcome::Done => {
+            println!("The account was reset. This is now its only device, with a new key.");
+            match session.sync_now().await {
+                Ok(report) => println!("Synced: {} sent.", report.pushed),
+                Err(error) => eprintln!("Not synced yet: {}", describe(&error)),
+            }
+        }
+        ResetOutcome::Scheduled { effective_at_ms } => {
+            println!(
+                "This device is not approved, and the account holds notes, so the reset \
+                 has to wait. The account's other devices are told, and any of them can \
+                 refuse it."
+            );
+            println!(
+                "Run `dirt auth reset` again after {} to go ahead.",
+                when(effective_at_ms)
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn delete_account(session: &Session, yes: bool) -> Result<(), CliError> {
+    let question = "Deleting removes the account and everything the server holds for it, \
+                    for every device. The notes on this computer are kept, outside any \
+                    account. Delete the account? [y/N] ";
+    if !yes && !confirm(question)? {
+        println!("Nothing was changed.");
+        return Ok(());
+    }
+    session.delete_account().await.map_err(sentence)?;
+    println!("The account was deleted. Its notes are still on this computer.");
+    Ok(())
 }
 
 fn account_error(error: impl std::fmt::Display) -> CliError {
@@ -46,10 +166,39 @@ pub async fn status_lines(context: &Context) -> Result<Vec<String>, CliError> {
         SessionState::WaitingForApproval { account_id, .. } => {
             lines.push(format!("Signed in to account {account_id}."));
             lines.push(
-                "This device is waiting to be approved by another device of the account, \
-                 and cannot read its notes yet."
-                    .to_owned(),
+                "This device is waiting to be let in, and cannot read the notes yet.".to_owned(),
             );
+            // What the person can do depends on what the account has.
+            match session.my_device().await {
+                Ok(me) => {
+                    if me.approvers > 0 {
+                        lines.push(
+                            "Run `dirt auth join` here, and approve it on a device that is \
+                             already signed in."
+                                .to_owned(),
+                        );
+                    }
+                    if me.recovery_available {
+                        lines.push(
+                            "Or run `dirt auth recover` and type the recovery phrase.".to_owned(),
+                        );
+                    }
+                    if me.approvers == 0 && !me.recovery_available {
+                        lines.push(
+                            "No device is left that could let it in, and the account has no \
+                             recovery phrase. `dirt auth reset` starts the account again."
+                                .to_owned(),
+                        );
+                    }
+                    if let Some(at) = me.reset_effective_at_ms {
+                        lines.push(format!(
+                            "A reset was asked for. It can go ahead after {}.",
+                            when(at)
+                        ));
+                    }
+                }
+                Err(error) => lines.push(format!("The server could not be asked: {error}.")),
+            }
         }
         SessionState::Ready { account_id, .. } => {
             lines.push(format!("Signed in to account {account_id}."));
@@ -83,6 +232,32 @@ pub async fn status_lines(context: &Context) -> Result<Vec<String>, CliError> {
                     "{waiting} note(s) written before signing in are not in the account. \
                      Run `dirt auth login --move-local-notes` to move them."
                 ));
+            }
+            // What needs the person's attention. The server is asked; with
+            // no network these lines are left out.
+            if let Ok(me) = session.my_device().await {
+                if !me.recovery_available && me.approvers == 0 {
+                    lines.push(
+                        "This is the only device that can read the account, and it has no \
+                         recovery phrase. `dirt auth phrase new` makes one."
+                            .to_owned(),
+                    );
+                }
+                if let Some(at) = me.reset_effective_at_ms {
+                    lines.push(format!(
+                        "A device that is not approved asked to reset this account. It takes \
+                         effect after {}. If that was not you, run `dirt auth cancel-reset`.",
+                        when(at)
+                    ));
+                }
+            }
+            if let Ok(devices) = session.waiting_devices().await {
+                if !devices.is_empty() {
+                    lines.push(format!(
+                        "{} device(s) are waiting to be let in. Run `dirt devices approve`.",
+                        devices.len()
+                    ));
+                }
             }
         }
     }
