@@ -1,36 +1,15 @@
-//! Mobile note export helpers.
-// The Android interface does not call this module yet; only the host
-// tests do.
-#![allow(dead_code)]
+//! Exporting every note to one file.
+//!
+//! The file's contents are `dirt-core`'s, the same as the desktop app and
+//! the CLI write. Where the file goes is the person's choice, made on
+//! Android's own screen for that (`services::activity::save_file`), so this
+//! module only makes the file's name and text.
+#![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
-use dirt_core::export::{
-    render_notes_export, suggested_export_file_name as core_suggested_export_file_name,
-    ExportFormat,
-};
+use dirt_core::export::{render_notes_export, suggested_export_file_name, ExportFormat};
 use thiserror::Error;
 
-use crate::config::default_mobile_data_directory;
 use crate::data::MobileNoteStore;
-
-const EXPORT_DIR_NAME: &str = "dirt-exports";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MobileExportFormat {
-    Json,
-    Markdown,
-}
-
-impl From<MobileExportFormat> for ExportFormat {
-    fn from(value: MobileExportFormat) -> Self {
-        match value {
-            MobileExportFormat::Json => Self::Json,
-            MobileExportFormat::Markdown => Self::Markdown,
-        }
-    }
-}
 
 #[derive(Debug, Error)]
 pub enum MobileExportError {
@@ -38,73 +17,70 @@ pub enum MobileExportError {
     Database(#[from] dirt_core::Error),
     #[error(transparent)]
     Serialization(#[from] serde_json::Error),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
 }
 
-pub async fn export_notes_to_path(
-    note_store: Arc<MobileNoteStore>,
-    format: MobileExportFormat,
-    output_path: &Path,
-) -> Result<usize, MobileExportError> {
-    let notes = note_store.list_all_notes().await?;
-    let rendered = render_notes_export(&notes, format.into())?;
-
-    if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(output_path, rendered)?;
-    Ok(notes.len())
+/// A file ready to be saved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportFile {
+    /// The name offered to the person, which they may change.
+    pub name: String,
+    pub mime_type: &'static str,
+    pub text: String,
+    /// How many notes the file holds.
+    pub notes: usize,
 }
 
-#[must_use]
-pub fn suggested_export_file_name(format: MobileExportFormat, timestamp_ms: i64) -> String {
-    core_suggested_export_file_name(format.into(), timestamp_ms)
-}
-
-#[must_use]
-pub fn default_export_directory() -> PathBuf {
-    dirs::download_dir()
-        .or_else(dirs::document_dir)
-        .or_else(dirs::data_local_dir)
-        .or_else(dirs::data_dir)
-        .unwrap_or_else(default_mobile_data_directory)
-        .join(EXPORT_DIR_NAME)
+/// Every note in `store`, as a file in `format`.
+pub async fn export_file(
+    store: &MobileNoteStore,
+    format: ExportFormat,
+    now_ms: i64,
+) -> Result<ExportFile, MobileExportError> {
+    let notes = store.list_all_notes().await?;
+    Ok(ExportFile {
+        name: suggested_export_file_name(format, now_ms),
+        mime_type: match format {
+            ExportFormat::Json => "application/json",
+            ExportFormat::Markdown => "text/markdown",
+        },
+        text: render_notes_export(&notes, format)?,
+        notes: notes.len(),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn suggested_export_file_name_matches_format() {
-        assert_eq!(
-            suggested_export_file_name(MobileExportFormat::Json, 123),
-            "dirt-export-123.json"
-        );
-        assert_eq!(
-            suggested_export_file_name(MobileExportFormat::Markdown, 456),
-            "dirt-export-456.md"
-        );
-    }
-
     #[tokio::test(flavor = "multi_thread")]
-    async fn export_notes_to_path_writes_markdown() {
-        let (folder, store) = MobileNoteStore::open_temporary();
-        let store = Arc::new(store);
+    async fn an_export_holds_every_note_under_a_name_for_its_format() {
+        let (_folder, store) = MobileNoteStore::open_temporary();
         store.create_note("Mobile export #one").await.unwrap();
         store.create_note("Mobile export #two").await.unwrap();
 
-        let output_path = folder.path().join("export.md");
+        let markdown = export_file(&store, ExportFormat::Markdown, 456)
+            .await
+            .unwrap();
+        assert_eq!(markdown.name, "dirt-export-456.md");
+        assert_eq!(markdown.mime_type, "text/markdown");
+        assert_eq!(markdown.notes, 2);
+        assert!(markdown.text.contains("Mobile export #one"));
+        assert!(markdown.text.contains("Mobile export #two"));
 
-        let exported_count =
-            export_notes_to_path(store, MobileExportFormat::Markdown, &output_path)
-                .await
-                .unwrap();
-        assert_eq!(exported_count, 2);
+        let json = export_file(&store, ExportFormat::Json, 123).await.unwrap();
+        assert_eq!(json.name, "dirt-export-123.json");
+        assert_eq!(json.mime_type, "application/json");
+        let parsed: serde_json::Value = serde_json::from_str(&json.text).unwrap();
+        assert_eq!(parsed.as_array().map(Vec::len), Some(2));
+    }
 
-        let exported = std::fs::read_to_string(&output_path).unwrap();
-        assert!(exported.contains("Mobile export #one"));
-        assert!(exported.contains("Mobile export #two"));
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_export_reaches_past_the_notes_the_list_shows() {
+        let (_folder, store) = MobileNoteStore::open_temporary();
+        for number in 0..130 {
+            store.create_note(&format!("note {number}")).await.unwrap();
+        }
+        let exported = export_file(&store, ExportFormat::Json, 1).await.unwrap();
+        assert_eq!(exported.notes, 130);
     }
 }

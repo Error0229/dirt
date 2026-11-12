@@ -827,7 +827,8 @@ Carried forward:
 - **Deliverables:**
   - A scheduled database dump stored outside Neon.
   - Key rotation.
-  - A limits review.
+  - A limits review. It includes the desktop app's list and search, which
+    reach only the 100 most recently edited notes. From step 7.
   - The Neon and Vercel plan decisions (amendments A1 and A2).
   - How security reports are taken: whether to switch on GitHub's private
     vulnerability reporting. From step 6.

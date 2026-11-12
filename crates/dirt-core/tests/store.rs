@@ -683,3 +683,86 @@ fn opening_outlasts_a_program_that_holds_the_file_for_a_long_time() {
     assert!(started.elapsed() >= held_for, "it waited for the lock");
     release.join().unwrap();
 }
+
+/// What a list with a search box and a tag filter shows. It has to reach
+/// notes a client has not loaded: the oldest note here is beyond the first
+/// hundred.
+#[tokio::test]
+async fn finding_notes_by_words_and_tag_looks_through_every_note() {
+    let (_folder, store) = temp_store();
+    let oldest = store
+        .create_note("call the plumber about the boiler #home")
+        .await
+        .unwrap();
+    for number in 0..120 {
+        store
+            .create_note(&format!("filler {number} #work"))
+            .await
+            .unwrap();
+    }
+    let newest = store
+        .create_note("plumbing course starts in May #work")
+        .await
+        .unwrap();
+    let first_page = store.list_notes(100, 0).await.unwrap();
+    assert!(first_page.iter().all(|note| note.id != oldest.id));
+
+    let ids =
+        |notes: Vec<dirt_core::Note>| notes.into_iter().map(|note| note.id).collect::<Vec<_>>();
+
+    // Words alone, as the start of longer words.
+    let found = ids(store.find_notes("plumb", None, 50).await.unwrap());
+    assert_eq!(found.len(), 2);
+    assert!(found.contains(&oldest.id) && found.contains(&newest.id));
+    // Every word has to match, in any order and not side by side.
+    assert_eq!(
+        ids(store.find_notes("boiler call", None, 50).await.unwrap()),
+        [oldest.id]
+    );
+
+    // A tag alone, with or without its sign, most recently edited first.
+    assert_eq!(
+        ids(store.find_notes("", Some("#home"), 50).await.unwrap()),
+        [oldest.id]
+    );
+    let work = store.find_notes("  ", Some("work"), 200).await.unwrap();
+    assert_eq!(work.len(), 121);
+    assert_eq!(work[0].id, newest.id);
+
+    // Both together.
+    assert_eq!(
+        ids(store.find_notes("plumb", Some("work"), 50).await.unwrap()),
+        [newest.id]
+    );
+    assert!(store
+        .find_notes("boiler", Some("work"), 50)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Neither: the list itself.
+    assert_eq!(
+        ids(store.find_notes("", None, 100).await.unwrap()),
+        ids(first_page)
+    );
+    // Text with nothing to search for matches nothing, tag or no tag.
+    assert!(store.find_notes("!!!", None, 50).await.unwrap().is_empty());
+    assert!(store
+        .find_notes("!!!", Some("work"), 50)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // A deleted note is not found.
+    store.delete_note(&oldest.id).await.unwrap();
+    assert!(store
+        .find_notes("boiler", None, 50)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .find_notes("", Some("home"), 50)
+        .await
+        .unwrap()
+        .is_empty());
+}

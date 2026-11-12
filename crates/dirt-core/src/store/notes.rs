@@ -446,6 +446,44 @@ pub(super) fn search(connection: &Connection, query: &str, limit: usize) -> Resu
     collect(rows)
 }
 
+/// Live notes that match every word of `query` and carry `tag`. Either may
+/// be left out: an empty query matches every note, and no tag means any.
+///
+/// With words to match, the best match comes first; without, the most
+/// recently edited. A query with text but no letter or digit matches
+/// nothing, as it does in [`search`].
+pub(super) fn find(
+    connection: &Connection,
+    query: &str,
+    tag: Option<&str>,
+    limit: usize,
+) -> Result<Vec<Note>> {
+    let tag = tag
+        .map(|tag| tag.trim().trim_start_matches('#').to_lowercase())
+        .filter(|tag| !tag.is_empty());
+    let Some(words) = full_text_query(query) else {
+        if !query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        return tag.map_or_else(
+            || list(connection, limit, 0),
+            |tag| list_by_tag(connection, &tag, limit, 0),
+        );
+    };
+    let Some(tag) = tag else {
+        return search(connection, query, limit);
+    };
+    let mut statement = connection.prepare(
+        "SELECT n.id, n.text, n.edited_at FROM notes_fts f \
+           JOIN notes n ON n.rowid = f.rowid \
+           JOIN note_tags t ON t.note_id = n.id \
+          WHERE notes_fts MATCH ?1 AND t.tag = ?2 AND n.deleted = 0 \
+          ORDER BY f.rank, n.edited_at DESC LIMIT ?3",
+    )?;
+    let rows = statement.query_map(params![words, tag, to_sql_count(limit)], note_from_row)?;
+    collect(rows)
+}
+
 /// The local revision counter of a note, deleted or not. Step 5's sync reads
 /// it to tell whether a note changed while a push was in flight.
 pub(super) fn revision(connection: &Connection, id: &NoteId) -> Result<Option<i64>> {

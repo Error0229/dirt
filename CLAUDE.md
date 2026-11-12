@@ -151,6 +151,8 @@ Hooks run:
 - `docs/DESIGN.md` - Product vision, non-goals and standing product decisions
 - `docs/SECURITY.md` - What is protected, from whom, and what is not
 - `docs/BACKEND_API.md` - The server's protocol
+- `docs/feature-parity.md` - What each client does. Change a client's row in the pull request that changes the client
+- `docs/MANUAL_CHECKLIST.md` - What to try by hand on real devices
 - `docs/plans/` - The redesign and its implementation plan
 - `docs/brainstorms/` - Feature brainstorms
 - `docs/archive/` - Superseded documents, kept as a record

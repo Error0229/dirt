@@ -102,6 +102,13 @@ pub fn Editor() -> Element {
     let cancel = move |_| {
         state.view.set(View::List);
         state.selected_note_id.set(None);
+        // A note opened from a search was added to the list's notes for
+        // the editor to find. The list goes back to what the store holds.
+        spawn(async move {
+            if let Some(store) = (state.store)() {
+                refresh_notes_signal(&store, &mut state).await;
+            }
+        });
     };
 
     let header_label = if is_existing { "Edit note" } else { "New note" };

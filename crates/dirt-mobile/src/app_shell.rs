@@ -11,6 +11,10 @@
 //! Android may stop the app while the browser is in front, so the redirect
 //! is also asked for at start-up; the session saved the attempt before the
 //! browser opened.
+//!
+//! The activity is asked in the same way for what came from outside the
+//! app: text another app shared, which becomes a note at once, and a press
+//! of the home-screen widget, which opens a blank note.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,6 +22,7 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use dirt_core::api::HttpTransport;
 use dirt_core::config::ServerAddress;
+use dirt_core::models::{Note, NoteId};
 use dirt_core::secrets::slot_name;
 use dirt_core::session::{Session, SessionConfig, SessionError, SessionState};
 use dirt_core::store::{store_path, StoreName};
@@ -27,8 +32,8 @@ use dirt_core::Store;
 use crate::bootstrap_config::load_bootstrap_config;
 use crate::config::default_mobile_data_directory;
 use crate::data::MobileNoteStore;
+use crate::services::activity::{take_capture, take_redirect, Capture};
 use crate::services::secure_storage::EncryptedPrefs;
-use crate::services::sign_in::take_redirect;
 use crate::state::{AppState, View};
 use crate::ui::MOBILE_UI_STYLES;
 use crate::views::{Devices, Editor, List, Settings};
@@ -77,6 +82,63 @@ async fn finish_sign_in(session: &Session, redirect: &str) -> Option<String> {
     }
 }
 
+/// Deals with what was asked of the app from outside it, if anything was.
+///
+/// Shared text is saved as a note straight away: capture does not wait for
+/// the person, who finds the note at the top of the list. The widget asks
+/// for a blank note to write in. Neither takes the person out of a note
+/// they are in the middle of writing.
+async fn receive_capture(
+    store: Signal<Option<Arc<MobileNoteStore>>>,
+    session: Signal<Option<Session>>,
+    mut notes: Signal<Vec<Note>>,
+    mut selected_note_id: Signal<Option<NoteId>>,
+    mut view: Signal<View>,
+    mut startup_issue: Signal<Option<String>>,
+) {
+    // More than one may be waiting: two shares can arrive before either is
+    // asked for.
+    while let Some(capture) = take_capture() {
+        match capture {
+            Capture::Blank => {
+                if *view.peek() != View::Editor {
+                    selected_note_id.set(None);
+                    view.set(View::Editor);
+                }
+            }
+            Capture::Shared(text) => {
+                let Some(note_store) = store.peek().clone() else {
+                    startup_issue.set(Some(
+                        "What was shared could not be saved: the notes are not open.".to_owned(),
+                    ));
+                    continue;
+                };
+                match note_store.create_note(&text).await {
+                    Ok(_) => {
+                        if let Some(current) = session.peek().as_ref() {
+                            current.notify(Trigger::Changed);
+                        }
+                        match note_store.list_notes().await {
+                            Ok(refreshed) => notes.set(refreshed),
+                            Err(error) => tracing::warn!("Listing after a share failed: {error}"),
+                        }
+                        // Asked now, not before the note was saved: the
+                        // person may have begun writing in the meantime.
+                        if *view.peek() != View::Editor {
+                            view.set(View::List);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!("A shared text could not be saved: {error}");
+                        startup_issue
+                            .set(Some(format!("What was shared could not be saved: {error}")));
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[component]
 pub fn AppShell() -> Element {
     // The address the app was built with. One that cannot be an address
@@ -89,6 +151,8 @@ pub fn AppShell() -> Element {
     let mut notes = use_signal(Vec::new);
     let mut selected_note_id = use_signal(|| None);
     let mut view = use_signal(|| View::List);
+    let search_query = use_signal(String::new);
+    let tag_filter = use_signal(|| None::<String>);
     let mut startup_issue = use_signal(|| None::<String>);
     let mut store: Signal<Option<Arc<MobileNoteStore>>> = use_signal(|| None);
     let mut session: Signal<Option<Session>> = use_signal(|| None);
@@ -99,6 +163,8 @@ pub fn AppShell() -> Element {
         notes,
         selected_note_id,
         view,
+        search_query,
+        tag_filter,
         startup_issue,
         store,
         session,
@@ -160,6 +226,9 @@ pub fn AppShell() -> Element {
                     startup_issue.set(Some(problem));
                 }
             }
+
+            // The app may have been started by a share or by the widget.
+            receive_capture(store, session, notes, selected_note_id, view, startup_issue).await;
         }
     });
 
@@ -252,6 +321,9 @@ pub fn AppShell() -> Element {
                     dioxus.send(true);
                 }
             });
+            // The activity says when something arrived while the page was
+            // visible all along.
+            window.addEventListener("dirt-activity", () => dioxus.send(true));
             // Stay alive, so that the messages above keep arriving.
             await new Promise(() => {});
             "#,
@@ -260,6 +332,8 @@ pub fn AppShell() -> Element {
             if let Some(current) = session.peek().clone() {
                 current.notify(Trigger::Returned);
             }
+            // A share or the widget may be what brought the app forward.
+            receive_capture(store, session, notes, selected_note_id, view, startup_issue).await;
         }
     });
 
