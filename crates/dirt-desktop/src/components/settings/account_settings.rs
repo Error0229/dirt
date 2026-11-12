@@ -140,13 +140,21 @@ pub(super) fn AccountSettingsTab() -> Element {
                         unsynced.set(None);
                         message.set(Some((MessageKind::Info, "Signed out.".to_owned())));
                     }
-                    Err(SignOutError::Unsynced { notes, cause }) => {
-                        unsynced.set(Some(notes));
-                        let why = cause.map_or_else(String::new, |cause| format!(" ({cause})"));
+                    Err(SignOutError::Unsynced {
+                        notes,
+                        files,
+                        cause,
+                    }) => {
+                        unsynced.set(Some(notes + files));
                         message.set(Some((
                             MessageKind::Error,
                             format!(
-                                "{notes} note(s) have not been synced{why}. Signing out would delete them. Export them from the Data tab first."
+                                "{} To keep a copy of the notes, export them from the Data tab first.",
+                                dirt_core::sync::overview::sign_out_would_lose(
+                notes,
+                files,
+                cause.as_deref(),
+            )
                             ),
                         )));
                     }

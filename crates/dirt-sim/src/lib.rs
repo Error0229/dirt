@@ -6,6 +6,10 @@
 //! that reaches the server through [`InProcess`], a transport that calls the
 //! router directly and can be told to misbehave.
 //!
+//! Files go where they go for an app: to the file storage, over HTTP, by
+//! the links the server signs. The storage is the one `compose.yaml` runs.
+//! A test that stores a file calls [`file_bucket`] first.
+//!
 //! A [`Client`] is a whole client core as an app holds it: a
 //! [`Session`](dirt_core::session::Session) that signs in through a
 //! [`provider`], a stand-in for the identity provider that speaks the real
@@ -27,8 +31,8 @@ use axum::http::Request;
 use axum::Router;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use dirt_api::{build_router, AppState, Config, Keys};
-use dirt_core::api::{ApiClient, BoxFuture, HttpRequest, HttpResponse, Transport};
+use dirt_api::{build_router, AppState, Config, FileStore, FilesConfig, Keys};
+use dirt_core::api::{ApiClient, BoxFuture, HttpRequest, HttpResponse, StorageRequest, Transport};
 use dirt_core::crypto::{AccountKey, DeviceKeyPair};
 use dirt_core::secrets::{DeviceSecrets, MemorySecrets, SecretStore};
 use dirt_core::session::{Session, SessionConfig, SessionError, SessionState};
@@ -107,16 +111,28 @@ impl Server {
     /// [`Device::sign_in`] are given tokens signed in its name.
     #[must_use]
     pub fn new(pool: PgPool) -> Self {
-        Self::trusting(pool, ISSUER.to_owned())
+        Self::trusting(pool, ISSUER.to_owned(), true)
     }
 
     /// A server with a running identity provider, for clients that sign in
     /// the way an app does.
     pub async fn with_sign_in(pool: PgPool) -> Self {
-        Self::trusting(pool, provider::start().await)
+        Self::trusting(pool, provider::start().await, true)
     }
 
-    fn trusting(pool: PgPool, issuer_url: String) -> Self {
+    /// The same, given no file storage: what `dirt-api` is until its
+    /// owner has opened a storage account.
+    pub async fn without_file_storage(pool: PgPool) -> Self {
+        Self::trusting(pool, provider::start().await, false)
+    }
+
+    fn trusting(pool: PgPool, issuer_url: String, with_files: bool) -> Self {
+        // Building the store reaches nothing. Only a test that stores a
+        // file needs the storage to be running.
+        let files = with_files.then(FilesConfig::local);
+        let store = files
+            .as_ref()
+            .map(|config| Arc::new(FileStore::new(config).expect("the local file store")));
         let router = build_router(AppState {
             pool: pool.clone(),
             config: Arc::new(Config {
@@ -124,11 +140,11 @@ impl Server {
                 clerk_issuer: issuer_url.clone(),
                 clerk_client_id: CLIENT_ID.to_owned(),
                 bind_addr: "127.0.0.1:0".parse().expect("address"),
-                files: None,
-                cron_secret: None,
+                files,
+                cron_secret: Some(CRON_SECRET.to_owned()),
             }),
             keys: Arc::new(Keys::Fixed(issuer().published.clone())),
-            files: None,
+            files: store,
         });
         Self {
             router,
@@ -151,7 +167,26 @@ impl Server {
             faults: Mutex::new(Vec::new()),
             offline: AtomicBool::new(false),
             requests: AtomicUsize::new(0),
+            storage: reqwest::Client::new(),
+            storage_requests: AtomicUsize::new(0),
+            storage_failures: AtomicUsize::new(0),
+            storage_answers_lost: AtomicUsize::new(0),
         })
+    }
+
+    /// Makes the daily request, as the platform's scheduler does. Returns
+    /// how many objects it deleted from the storage.
+    pub async fn daily_sweep(&self) -> u64 {
+        let request = Request::builder()
+            .uri("/v1/maintenance/sweep")
+            .header("authorization", format!("Bearer {CRON_SECRET}"))
+            .body(Body::empty())
+            .expect("request");
+        let response = self.router.clone().oneshot(request).await.expect("sweep");
+        assert!(response.status().is_success(), "{}", response.status());
+        let body = response.into_body().collect().await.expect("body");
+        let answer: serde_json::Value = serde_json::from_slice(&body.to_bytes()).expect("json");
+        answer["deleted"].as_u64().expect("a count")
     }
 
     /// The status the server holds for a device.
@@ -192,6 +227,24 @@ impl Server {
     }
 }
 
+/// What the daily request presents in these tests.
+const CRON_SECRET: &str = "the cron secret of the simulation";
+
+/// The file storage from `compose.yaml`, as the server reaches it.
+#[must_use]
+pub fn file_store() -> FileStore {
+    FileStore::new(&FilesConfig::local()).expect("the local file store's settings")
+}
+
+/// Makes the storage's bucket if it is not there. A test that stores a
+/// file calls this first.
+pub async fn file_bucket() {
+    file_store()
+        .create_bucket()
+        .await
+        .expect("the file store from compose.yaml is running: `docker compose up -d`");
+}
+
 /// Something a transport can be told to do to the next matching request.
 enum Fault {
     /// Let the server handle the request, then lose its answer.
@@ -211,6 +264,27 @@ pub struct InProcess {
     offline: AtomicBool,
     /// How many requests were attempted, whether or not they got through.
     requests: AtomicUsize,
+    /// Reaches the file storage, which is not in this process.
+    storage: reqwest::Client,
+    /// How many requests to the storage were attempted.
+    storage_requests: AtomicUsize,
+    /// How many of the next requests to the storage never reach it.
+    storage_failures: AtomicUsize,
+    /// How many of the next requests to the storage reach it and lose
+    /// their answer.
+    storage_answers_lost: AtomicUsize,
+}
+
+/// Takes one from a count of faults still to happen, if any are left.
+fn take_one(count: &AtomicUsize) -> bool {
+    let mut left = count.load(Ordering::SeqCst);
+    while left > 0 {
+        match count.compare_exchange(left, left - 1, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return true,
+            Err(now) => left = now,
+        }
+    }
+    false
 }
 
 impl InProcess {
@@ -240,6 +314,23 @@ impl InProcess {
     /// How many requests the client has attempted.
     pub fn requests(&self) -> usize {
         self.requests.load(Ordering::SeqCst)
+    }
+
+    /// How many requests to the file storage the client has attempted.
+    pub fn storage_requests(&self) -> usize {
+        self.storage_requests.load(Ordering::SeqCst)
+    }
+
+    /// The next `count` requests to the file storage fail without
+    /// reaching it, while the server stays in reach.
+    pub fn fail_storage(&self, count: usize) {
+        self.storage_failures.store(count, Ordering::SeqCst);
+    }
+
+    /// The next request to the file storage reaches it and its answer is
+    /// lost.
+    pub fn lose_next_storage_answer(&self) {
+        self.storage_answers_lost.store(1, Ordering::SeqCst);
     }
 
     /// Loses the server's answer to the next request whose path starts with
@@ -311,6 +402,38 @@ impl Transport for InProcess {
                     body = serde_json::to_vec(&json).map_err(|e| e.to_string())?;
                 }
                 Some(Fault::Before(_)) | None => {}
+            }
+            Ok(HttpResponse { status, body })
+        })
+    }
+
+    fn send_to_storage(
+        &self,
+        request: StorageRequest,
+    ) -> BoxFuture<'_, Result<HttpResponse, String>> {
+        Box::pin(async move {
+            self.storage_requests.fetch_add(1, Ordering::SeqCst);
+            if self.offline.load(Ordering::SeqCst) {
+                return Err("there is no network".to_owned());
+            }
+            if take_one(&self.storage_failures) {
+                return Err("the storage could not be reached".to_owned());
+            }
+            let method = reqwest::Method::from_bytes(request.method.as_bytes())
+                .map_err(|error| error.to_string())?;
+            let mut builder = self.storage.request(method, &request.url);
+            if let Some(body) = request.body {
+                builder = builder.body(body);
+            }
+            let response = builder.send().await.map_err(|error| error.to_string())?;
+            let status = response.status().as_u16();
+            let body = response
+                .bytes()
+                .await
+                .map_err(|error| error.to_string())?
+                .to_vec();
+            if take_one(&self.storage_answers_lost) {
+                return Err("the connection was lost".to_owned());
             }
             Ok(HttpResponse { status, body })
         })
@@ -542,6 +665,7 @@ pub const fn fast_timing() -> Timing {
         longest_retry: Duration::from_millis(240),
         // As the apps have it. A test that wants a purge shortens it.
         purge_after: dirt_core::sync::worker::default_purge_after(),
+        spare_file_wait: dirt_core::sync::worker::DEFAULT_SPARE_FILE_WAIT,
     }
 }
 

@@ -2,15 +2,15 @@
 //! words (design section 9.4).
 //!
 //! The desktop app, the Android app and the CLI all show the same things:
-//! when the last sync succeeded, how many notes wait to be sent, why the
-//! last cycle failed, and each note that could not be synced, with the
-//! reason and what would release it. The words are here so that the three
-//! cannot drift apart.
+//! when the last sync succeeded, how many notes and files wait to be sent,
+//! why the last cycle failed, and each note that could not be synced and
+//! each file that could not be sent, with the reason and what would
+//! release it. The words are here so that the three cannot drift apart.
 
 use dirt_proto::api::ErrorClass;
 
 use super::worker::{SyncFailure, SyncStatus};
-use crate::store::{NoteProblem, ProblemKind};
+use crate::store::{FileProblem, NoteProblem, ProblemKind};
 use crate::util::as_sentence;
 
 /// How many characters of a note's first line name it.
@@ -25,10 +25,15 @@ pub struct SyncOverview {
     pub last_synced_ms: Option<i64>,
     /// Notes waiting to be sent.
     pub unsent: usize,
+    /// Files this device holds that the server has not taken.
+    pub files_unsent: usize,
     /// Why the last cycle failed, if it did.
     pub failure: Option<SyncFailure>,
     /// Each note that could not be synced.
     pub problems: Vec<NoteProblem>,
+    /// Each file the server refused. It is on this device and nowhere
+    /// else.
+    pub file_problems: Vec<FileProblem>,
     /// Notes the server still holds under the key before the account's
     /// present one, as of the last sync. While there are any, a change of
     /// the account's key is not complete.
@@ -43,8 +48,10 @@ impl From<&SyncStatus> for SyncOverview {
             syncing: status.syncing,
             last_synced_ms: status.last_synced_ms,
             unsent: status.unsent,
+            files_unsent: status.files_unsent,
             failure: status.failure.clone(),
             problems: Vec::new(),
+            file_problems: Vec::new(),
             old_key_notes: status.old_key_notes,
         }
     }
@@ -80,6 +87,17 @@ impl SyncOverview {
         }
     }
 
+    /// How many files could not be sent, in words that lead into the list
+    /// of them, or nothing when none.
+    #[must_use]
+    pub fn file_problem_count(&self) -> Option<String> {
+        match self.file_problems.len() {
+            0 => None,
+            1 => Some("1 file could not be sent:".to_owned()),
+            count => Some(format!("{count} files could not be sent:")),
+        }
+    }
+
     /// What is left of a change of the account's key, in words, or nothing
     /// when no change is under way.
     #[must_use]
@@ -98,14 +116,13 @@ impl SyncOverview {
         }
     }
 
-    /// How many notes wait to be sent, in words, or nothing when none do.
+    /// How many notes and files wait to be sent, in words, or nothing
+    /// when none do.
     #[must_use]
     pub fn waiting(&self) -> Option<String> {
-        match self.unsent {
-            0 => None,
-            1 => Some("1 note is waiting to be sent".to_owned()),
-            count => Some(format!("{count} notes are waiting to be sent")),
-        }
+        let (what, several) = notes_and_files(self.unsent, self.files_unsent)?;
+        let verb = if several { "are" } else { "is" };
+        Some(format!("{what} {verb} waiting to be sent"))
     }
 
     /// The whole view as lines of text, for an interface that has only
@@ -127,8 +144,47 @@ impl SyncOverview {
             lines.push(format!("    {}", as_sentence(&problem.reason)));
             lines.push(format!("    {}", problem.release()));
         }
+        lines.extend(self.file_problem_count());
+        for problem in &self.file_problems {
+            lines.push(format!("  {} ({})", problem.title(), problem.note_id));
+            lines.push(format!("    {}", as_sentence(&problem.reason)));
+            lines.push(format!("    {}", problem.release()));
+        }
         lines
     }
+}
+
+/// So many notes and files, in words: "1 note", "2 notes and 1 file".
+/// With it, whether that is more than one thing. Nothing for none.
+fn notes_and_files(notes: usize, files: usize) -> Option<(String, bool)> {
+    let counted = |count: usize, one: &str| match count {
+        0 => None,
+        1 => Some(format!("1 {one}")),
+        count => Some(format!("{count} {one}s")),
+    };
+    let what = match (counted(notes, "note"), counted(files, "file")) {
+        (None, None) => return None,
+        (Some(notes), Some(files)) => format!("{notes} and {files}"),
+        (Some(one), None) | (None, Some(one)) => one,
+    };
+    Some((what, notes + files > 1))
+}
+
+/// What signing out now would delete, for an interface to show before it
+/// asks whether to sign out all the same. `cause` is why the last sync
+/// did not send them, if it failed.
+#[must_use]
+pub fn sign_out_would_lose(notes: usize, files: usize, cause: Option<&str>) -> String {
+    let Some((what, several)) = notes_and_files(notes, files) else {
+        return "Everything on this device has reached the server.".to_owned();
+    };
+    let (verb, them) = if several {
+        ("have", "them")
+    } else {
+        ("has", "it")
+    };
+    let why = cause.map_or_else(String::new, |cause| format!(" ({cause})"));
+    format!("{what} {verb} not reached the server{why}. Signing out would delete {them}.")
 }
 
 impl SyncFailure {
@@ -149,6 +205,17 @@ impl SyncFailure {
     }
 }
 
+/// What to call a note with this text: the start of its first line, or
+/// nothing for a note with no text.
+fn first_line(text: &str) -> Option<String> {
+    let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
+    let mut title: String = line.chars().take(TITLE_LENGTH).collect();
+    if line.chars().count() > TITLE_LENGTH {
+        title.push('…');
+    }
+    Some(title)
+}
+
 impl NoteProblem {
     /// What to call the note: the start of its first line, or words for a
     /// note with no text or one this device does not hold.
@@ -157,14 +224,24 @@ impl NoteProblem {
         let Some(text) = &self.text else {
             return "A note this device has never been able to read".to_owned();
         };
-        let Some(line) = text.lines().map(str::trim).find(|line| !line.is_empty()) else {
-            return "A note with no text".to_owned();
-        };
-        let mut title: String = line.chars().take(TITLE_LENGTH).collect();
-        if line.chars().count() > TITLE_LENGTH {
-            title.push('…');
-        }
-        title
+        first_line(text).unwrap_or_else(|| "A note with no text".to_owned())
+    }
+}
+
+impl FileProblem {
+    /// What to call the file: its name, and the note it is attached to.
+    #[must_use]
+    pub fn title(&self) -> String {
+        let file = self.name.as_deref().unwrap_or("A file");
+        let note = first_line(&self.note_text).unwrap_or_else(|| "a note with no text".to_owned());
+        format!("{file}, attached to: {note}")
+    }
+
+    /// What becomes of the file meanwhile, as a sentence for the person.
+    #[must_use]
+    pub const fn release(&self) -> &'static str {
+        "It is kept on this device, which is the only place it is, and is tried again at \
+         each sync."
     }
 }
 
@@ -227,6 +304,96 @@ mod tests {
     }
 
     #[test]
+    fn what_waits_is_counted_in_notes_and_files() {
+        let waiting = |unsent, files_unsent| {
+            SyncOverview {
+                unsent,
+                files_unsent,
+                ..SyncOverview::default()
+            }
+            .waiting()
+        };
+        assert_eq!(waiting(0, 0), None);
+        assert_eq!(waiting(1, 0).unwrap(), "1 note is waiting to be sent");
+        assert_eq!(waiting(0, 1).unwrap(), "1 file is waiting to be sent");
+        assert_eq!(waiting(0, 3).unwrap(), "3 files are waiting to be sent");
+        assert_eq!(
+            waiting(1, 1).unwrap(),
+            "1 note and 1 file are waiting to be sent"
+        );
+        assert_eq!(
+            waiting(2, 5).unwrap(),
+            "2 notes and 5 files are waiting to be sent"
+        );
+    }
+
+    #[test]
+    fn the_text_view_names_each_file_that_could_not_be_sent() {
+        let file = |name: Option<&str>, note_text: &str| FileProblem {
+            file_id: uuid::Uuid::from_u128(1),
+            note_id: NoteId::new(),
+            reason: "the account's storage for files is full".to_owned(),
+            name: name.map(str::to_owned),
+            note_text: note_text.to_owned(),
+        };
+        let photo = file(Some("whiteboard.jpg"), "\nthe meeting\nwho came");
+        let overview = SyncOverview {
+            last_synced_ms: Some(0),
+            file_problems: vec![photo.clone()],
+            ..SyncOverview::default()
+        };
+        assert_eq!(
+            overview.lines(0)[1..],
+            [
+                "Nothing is waiting to be sent".to_owned(),
+                "1 file could not be sent:".to_owned(),
+                format!(
+                    "  whiteboard.jpg, attached to: the meeting ({})",
+                    photo.note_id
+                ),
+                "    The account's storage for files is full.".to_owned(),
+                "    It is kept on this device, which is the only place it is, and is tried again \
+                 at each sync."
+                    .to_owned(),
+            ]
+        );
+        assert_eq!(
+            file(None, "  ").title(),
+            "A file, attached to: a note with no text"
+        );
+        let two = SyncOverview {
+            file_problems: vec![photo.clone(), photo],
+            ..SyncOverview::default()
+        };
+        assert_eq!(
+            two.file_problem_count().unwrap(),
+            "2 files could not be sent:"
+        );
+        assert_eq!(SyncOverview::default().file_problem_count(), None);
+    }
+
+    #[test]
+    fn signing_out_says_what_it_would_delete() {
+        assert_eq!(
+            sign_out_would_lose(1, 0, None),
+            "1 note has not reached the server. Signing out would delete it."
+        );
+        assert_eq!(
+            sign_out_would_lose(0, 1, Some("there is no network")),
+            "1 file has not reached the server (there is no network). \
+             Signing out would delete it."
+        );
+        assert_eq!(
+            sign_out_would_lose(2, 1, None),
+            "2 notes and 1 file have not reached the server. Signing out would delete them."
+        );
+        assert_eq!(
+            sign_out_would_lose(0, 0, None),
+            "Everything on this device has reached the server."
+        );
+    }
+
+    #[test]
     fn a_note_is_named_by_its_first_line_with_text() {
         assert_eq!(
             problem(Some("\n  \nshopping list\nmilk"), ProblemKind::Held).title(),
@@ -258,11 +425,13 @@ mod tests {
             syncing: false,
             last_synced_ms: Some(0),
             unsent: 2,
+            files_unsent: 0,
             failure: Some(SyncFailure {
                 class: ErrorClass::TryAgainLater,
                 message: "connection refused".to_owned(),
             }),
             problems: vec![held.clone(), refused.clone()],
+            file_problems: Vec::new(),
             old_key_notes: 0,
         };
         let lines = overview.lines(120_000);

@@ -252,6 +252,8 @@ use the server that it happened, and what to check:
 | The account's key was changed | The server is back at the old key. Every device says it has to sign in again, and signing in again does not help | Start the account again (`dirt auth reset`, or Devices in the apps) from a device that holds the notes. They are sent again under a new key. Then sign the other devices in again |
 | The account was reset | The server holds the notes from before the reset, under a key no device has. Devices list them as notes they cannot read | The same: start the account again from a device that holds the notes |
 | A recovery phrase was made | The phrase opens nothing | Make a new one |
+| A file was attached | The server does not know the file. The storage still holds it, and is not part of a dump | Nothing. A device that holds the file sends it again at its next sync. Until then other devices say the file is not on the server |
+| A file's last thirty days ended | The server lists the file again, until the daily request removes it again, and the storage no longer has it | Nothing. No note referred to it |
 | A deleted note was purged | A device that still holds the note sends it again. If the note is deleted on that device it stays deleted, and is purged again in time. If that device never saw the delete, **the note is back** | Delete it again |
 | The account was deleted | **It exists again,** with its notes as they were | The operator deletes it again. Keep a record of deletions since the oldest dump you might restore |
 

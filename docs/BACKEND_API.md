@@ -516,6 +516,15 @@ whose old object is still queued: after a reset, the device that remains
 sends its files again under the IDs its notes name. Asking takes the object
 out of the queue, so that its deletion cannot overtake the new upload.
 
+**What a device does with these.** After its notes have synced, a device
+confirms every reference the server has not taken, for every note it holds,
+whether or not it holds the file. If the answer is `not_uploaded` or
+`no_such_file` and the device holds the file, it asks for a link, uploads
+and confirms again; if it does not hold the file it asks again at its next
+cycle. No device keeps a record of what it has uploaded: the server is
+asked. A new epoch makes a device confirm everything again. A request to
+the storage carries the signed link and nothing else of the device's.
+
 **`GET /v1/maintenance/sweep`** is the daily request. It must carry
 `Authorization: Bearer <CRON_SECRET>`; to anyone else, and on a server
 given no secret, there is no such address. It answers `{ "deleted": 3 }`.

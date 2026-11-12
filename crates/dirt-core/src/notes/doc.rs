@@ -144,6 +144,30 @@ impl NoteDoc {
         attachments
     }
 
+    /// The ID of every file the note names: each attachment, and each
+    /// thumbnail of one.
+    ///
+    /// An entry that this version cannot read is counted too, by its ID.
+    /// A later version wrote it and still wants the file. Were it left
+    /// out, this device would in time tell the server that the note had
+    /// stopped naming the file.
+    #[must_use]
+    pub fn named_files(&self) -> Vec<uuid::Uuid> {
+        let txn = self.doc.transact();
+        let mut files = Vec::new();
+        for (file_id, value) in self.files.iter(&txn) {
+            let Ok(id) = file_id.parse() else { continue };
+            files.push(id);
+            let thumbnail = out_as_str(&value)
+                .and_then(|entry| Attachment::from_entry(file_id, entry))
+                .and_then(|attachment| attachment.thumbnail);
+            if let Some(thumbnail) = thumbnail {
+                files.push(thumbnail.file_id);
+            }
+        }
+        files
+    }
+
     /// Attaches a file to the note. This is an edit.
     ///
     /// Returns `false`, and writes nothing, if the note already names a
@@ -313,5 +337,35 @@ fn out_as_str(value: &Out) -> Option<&str> {
     match value {
         Out::Any(Any::String(s)) => Some(s.as_ref()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An entry written by a later version, in a layout this one cannot
+    /// read, is not shown as an attachment. The note names the file all
+    /// the same: a device that left it out would in time tell the server
+    /// the file was no longer wanted.
+    #[test]
+    fn a_file_whose_entry_cannot_be_read_is_still_named() {
+        let doc = NoteDoc::new(7_100_000_000_000_001);
+        doc.set_text("the whiteboard", 1_000);
+        let later = uuid::Uuid::now_v7();
+        {
+            let mut txn = doc.doc.transact_mut();
+            doc.files
+                .insert(&mut txn, later.to_string(), "{\"layout\":2}".to_owned());
+            // Not a file's ID at all: named by nothing.
+            doc.files
+                .insert(&mut txn, "not an id".to_owned(), "{}".to_owned());
+        }
+
+        assert!(doc.attachments().is_empty());
+        assert_eq!(doc.named_files(), [later]);
+        // And it survives being stored and loaded.
+        let loaded = NoteDoc::from_bytes(7_100_000_000_000_002, &doc.encode()).unwrap();
+        assert_eq!(loaded.named_files(), [later]);
     }
 }

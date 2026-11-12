@@ -63,6 +63,18 @@ which notes refer to it, because devices have to tell it that for files to
 be cleaned up. So it knows how many files each note has. (No client
 attaches files yet: step 9 of the redesign.)
 
+The storage is a third party and is not trusted. A device sends it the
+sealed file and the link the server signed, and nothing else: not its
+token, and no header of its own. What the storage returns is kept on a
+device only if every piece opens with the file's key and the result is the
+size the note says. Anything else is discarded and reported as damaged. The
+storage, or anyone who can write to it, can therefore withhold a file or
+destroy it, and cannot replace it with another.
+
+A file that a device holds is kept beside the notes' database, as it was
+attached: not encrypted, as the notes there are not. What protects both is
+the device.
+
 **Backups.** The operator keeps dumps of the server's database for about
 thirty days. A dump holds what the server holds, so it holds no note that
 anyone but the account's devices can read. It is encrypted to a key the

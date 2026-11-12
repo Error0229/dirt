@@ -376,10 +376,15 @@ async fn signing_out_with_notes_that_cannot_be_sent_asks_first(pool: PgPool) {
     // The cycle is cut off, so the note cannot reach the server.
     phone.transport.lose_next_answer("/v1/notes/pull");
     let error = phone.session.sign_out(Unsynced::Refuse).await.unwrap_err();
-    let SignOutError::Unsynced { notes, cause } = error else {
+    let SignOutError::Unsynced {
+        notes,
+        files,
+        cause,
+    } = error
+    else {
         panic!("expected the unsynced note to stop the sign-out: {error}");
     };
-    assert_eq!(notes, 1);
+    assert_eq!((notes, files), (1, 0));
     assert!(cause.is_some());
     assert!(phone.session.state().is_ready());
     assert_eq!(phone.notes().await[0].1, "not sent yet");

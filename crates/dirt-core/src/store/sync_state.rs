@@ -448,6 +448,10 @@ pub(super) fn begin_epoch(connection: &mut Connection, epoch: i32) -> Result<()>
         [],
     )?;
     tx.execute("DELETE FROM sync_problems", [])?;
+    // The server may know nothing now of the files it was told about: a
+    // reset discards them, and a restore forgets those sent after the
+    // backup. Each is confirmed again, and sent again if it has to be.
+    tx.execute("UPDATE file_links SET confirmed = 0, problem = NULL", [])?;
     tx.commit()?;
     Ok(())
 }

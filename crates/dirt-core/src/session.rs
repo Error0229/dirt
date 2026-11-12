@@ -37,7 +37,7 @@ use crate::identity::{Attempt, IdentityClient, IdentityError, Loopback};
 use crate::key_change::KeyRing;
 use crate::secrets::{DeviceSecrets, SecretError, SecretStore};
 use crate::store::{store_path, StoreName};
-use crate::sync::engine::{KeyKeeper, StoredKeys, SyncEngine, SyncError, SyncReport};
+use crate::sync::engine::{FileError, KeyKeeper, StoredKeys, SyncEngine, SyncError, SyncReport};
 use crate::sync::overview::SyncOverview;
 use crate::sync::worker::{SyncStatus, SyncWorker, Timing, Trigger};
 use crate::{Error, Store};
@@ -153,9 +153,13 @@ pub enum SignOutError {
     /// Some notes have not reached the server. Signing out would delete
     /// them. The caller may export them and sign out again with
     /// [`Unsynced::Discard`].
-    #[error("{notes} note(s) have not been synced and would be lost")]
+    #[error("{}", crate::sync::overview::sign_out_would_lose(*notes, *files, None))]
     Unsynced {
         notes: usize,
+        /// Files this device holds that the server has not taken. The
+        /// note that names one may have synced, and would then name a file
+        /// that exists nowhere.
+        files: usize,
         /// Why they could not be synced, if a sync was tried and failed.
         cause: Option<String>,
     },
@@ -579,7 +583,8 @@ impl Session {
         let engine = Arc::new(
             SyncEngine::new(store.clone(), api, secrets.account_id, first)
                 .kept_by(keys, Arc::new(keeper))
-                .purging_after(config.timing.purge_after),
+                .purging_after(config.timing.purge_after)
+                .clearing_spare_files_after(config.timing.spare_file_wait),
         );
         self.inner.status.send_replace(SyncStatus::default());
         let worker = config.background_sync.then(|| {
@@ -859,6 +864,33 @@ impl Session {
         Ok(engine.run_once().await?)
     }
 
+    /// Where a file that `note` names is on this device, fetching it
+    /// first if the device does not hold it and is signed in.
+    ///
+    /// The path is into the store's own folder. An app shows the file
+    /// from there or copies it out; it does not change it.
+    pub async fn fetch_file(
+        &self,
+        note: &crate::models::NoteId,
+        file_id: uuid::Uuid,
+    ) -> Result<std::path::PathBuf, FileError> {
+        if let Some(engine) = self.engine() {
+            return engine.fetch_file(note, file_id).await;
+        }
+        // Signed out, or waiting to be let in: the device has the files it
+        // holds and no way to fetch another.
+        let store = self.store();
+        if store.file_part(note, file_id).await?.is_none() {
+            return Err(FileError::NotAttached);
+        }
+        let shelf = store.shelf();
+        if shelf.holds(file_id) {
+            Ok(shelf.path(file_id))
+        } else {
+            Err(FileError::Missing)
+        }
+    }
+
     /// How sync stands for the account, with each note that could not be
     /// synced. The counts are read from the store, so they are as true for
     /// a program with no background worker, as the CLI is, as for one with.
@@ -872,8 +904,10 @@ impl Session {
             syncing: status.syncing,
             last_synced_ms: store.last_synced_ms().await?,
             unsent: store.unsent_count().await?,
+            files_unsent: store.unsent_file_count().await?,
             failure: status.failure,
             problems: store.note_problems().await?,
+            file_problems: store.file_problems().await?,
             old_key_notes: status.old_key_notes,
         })
     }
@@ -927,7 +961,7 @@ impl Session {
     /// Refused on the account's only approved device unless the account has
     /// a recovery phrase: that device's key is otherwise the only thing that
     /// can read the account's notes. Refused, unless `unsynced` says to
-    /// discard them, while notes have not reached the server.
+    /// discard them, while notes or files have not reached the server.
     pub async fn sign_out(&self, unsynced: Unsynced) -> Result<(), SignOutError> {
         let Some(secrets) = self.saved_secrets() else {
             return Ok(());
@@ -959,9 +993,11 @@ impl Session {
             // the store's files are deleted below.
             drop(engine);
             let waiting = self.store().unsynced_count().await?;
-            if waiting > 0 && unsynced == Unsynced::Refuse {
+            let files = self.store().unsynced_file_count().await?;
+            if (waiting > 0 || files > 0) && unsynced == Unsynced::Refuse {
                 return Err(SignOutError::Unsynced {
                     notes: waiting,
+                    files,
                     cause,
                 });
             }

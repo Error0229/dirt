@@ -88,11 +88,48 @@ pub struct Attachment {
     pub thumbnail: Option<Thumbnail>,
 }
 
+/// One file as the storage holds it: an attachment, or its thumbnail.
+/// Each is sent, fetched and kept by itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilePart {
+    pub file_id: Uuid,
+    pub key: FileKey,
+    /// The size before encryption, in bytes.
+    pub size: u64,
+}
+
+impl FilePart {
+    /// The size of the file as it is stored: encrypted.
+    #[must_use]
+    pub const fn stored_size(&self) -> u64 {
+        seal::sealed_size(self.size)
+    }
+}
+
 impl Attachment {
     /// The size of the file as it is stored: encrypted.
     #[must_use]
     pub const fn stored_size(&self) -> u64 {
         seal::sealed_size(self.size)
+    }
+
+    /// The files this attachment is made of: itself, and its thumbnail if
+    /// it has one.
+    #[must_use]
+    pub fn parts(&self) -> Vec<FilePart> {
+        let mut parts = vec![FilePart {
+            file_id: self.file_id,
+            key: self.key.clone(),
+            size: self.size,
+        }];
+        if let Some(thumbnail) = &self.thumbnail {
+            parts.push(FilePart {
+                file_id: thumbnail.file_id,
+                key: thumbnail.key.clone(),
+                size: thumbnail.size,
+            });
+        }
+        parts
     }
 
     /// The attachment as the note's document holds it, under its file ID.

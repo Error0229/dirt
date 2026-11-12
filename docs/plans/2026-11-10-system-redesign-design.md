@@ -402,6 +402,10 @@ note and refuses a lower one, which stops the server replaying an old version.
   today.
 - Notes created before sign-in live in a local store and are uploaded to the
   account on first sign-in. Every note has a unique ID, so nothing can collide.
+- Files attached to notes, in a folder beside the database, each named by
+  its ID. Per file and note: whether the server has been told that the note
+  refers to the file, and since when the note has been without it
+  (section 10).
 
 ### 6.6 What this replaces
 
@@ -673,6 +677,10 @@ integration uses a Postgres service container.
   bytes. R2 charges nothing for downloads.
 - **Offline:** the file is kept locally and queued for upload. The note syncs
   on its own, and other devices show a placeholder until the file arrives.
+  The queue is not a list of uploads. A device asks the server to record
+  that a note refers to a file, and uploads the file when the answer is
+  that the server does not have it. So a file lost to a restore is sent
+  again by the same rule that sends it the first time.
 - **Thumbnails:** a small encrypted thumbnail is uploaded alongside, because
   the server cannot generate one.
 - **Clean-up:** the server cannot tell which files are referenced, so clients

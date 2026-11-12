@@ -12,7 +12,7 @@ use dioxus::prelude::*;
 use dirt_core::api::ErrorClass;
 use dirt_core::export::ExportFormat;
 use dirt_core::session::{SessionState, SignOutError, Unsynced};
-use dirt_core::store::NoteProblem;
+use dirt_core::store::{FileProblem, NoteProblem};
 use dirt_core::sync::overview::SyncOverview;
 use dirt_core::sync::worker::Trigger;
 use dirt_core::util::{as_sentence, now_ms};
@@ -207,13 +207,18 @@ pub fn Settings() -> Element {
                         unsynced.set(None);
                         message.set(Some((MessageKind::Info, "Signed out.".to_owned())));
                     }
-                    Err(SignOutError::Unsynced { notes, cause }) => {
-                        unsynced.set(Some(notes));
-                        let why = cause.map_or_else(String::new, |cause| format!(" ({cause})"));
+                    Err(SignOutError::Unsynced {
+                        notes,
+                        files,
+                        cause,
+                    }) => {
+                        unsynced.set(Some(notes + files));
                         message.set(Some((
                             MessageKind::Error,
-                            format!(
-                                "{notes} note(s) have not been synced{why}. Signing out would delete them."
+                            dirt_core::sync::overview::sign_out_would_lose(
+                                notes,
+                                files,
+                                cause.as_deref(),
                             ),
                         )));
                     }
@@ -246,6 +251,7 @@ pub fn Settings() -> Element {
         .as_ref()
         .map(dirt_core::sync::worker::SyncFailure::advice);
     let problem_count = shown.problem_count();
+    let file_problem_count = shown.file_problem_count();
     let key_change = shown.key_change();
 
     rsx! {
@@ -393,6 +399,12 @@ pub fn Settings() -> Element {
                     for problem in shown.problems {
                         ProblemNote { key: "{problem.note_id}", problem }
                     }
+                    if let Some(text) = file_problem_count {
+                        p { style: "{WARNING}", "{text}" }
+                    }
+                    for problem in shown.file_problems {
+                        ProblemFile { key: "{problem.file_id}-{problem.note_id}", problem }
+                    }
                     UiButton {
                         r#type: "button",
                         block: true,
@@ -505,6 +517,30 @@ async fn save_export(
             MessageKind::Error,
             format!("The file could not be saved: {why}."),
         ),
+    }
+}
+
+/// One file that could not be sent: which it is, why, and what becomes of
+/// it meanwhile.
+#[component]
+fn ProblemFile(problem: FileProblem) -> Element {
+    let title = problem.title();
+    let reason = as_sentence(&problem.reason);
+    let release = problem.release();
+
+    rsx! {
+        div {
+            style: "
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+                padding: 8px 10px;
+                border-left: 3px solid #b91c1c;
+            ",
+            p { style: "margin: 0; font-size: 14px; color: #111827;", "{title}" }
+            p { style: "{TEXT}", "{reason}" }
+            p { style: "{TEXT}", "{release}" }
+        }
     }
 }
 

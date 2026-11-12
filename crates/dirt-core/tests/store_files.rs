@@ -411,3 +411,494 @@ async fn each_store_has_a_shelf_of_its_own() {
     );
     assert_ne!(desk.store.shelf().path(file), other.shelf().path(file));
 }
+
+// ---- What the store keeps for telling the server about files ----
+
+use std::time::Duration;
+
+use dirt_core::files::FilePart;
+use dirt_core::store::FileLink;
+
+const ACCOUNT: Uuid = Uuid::from_u128(0x0a11_ce00_0000_0000_0000_0000_0000_0001);
+
+/// A note that the server holds, with a file attached after that.
+async fn synced_note_with_file(desk: &Desk, text: &str) -> (NoteId, Uuid) {
+    let store = &desk.store;
+    let note = store.create_note(text).await.unwrap().id;
+    let source = desk.a_file(&format!("{}.jpg", Uuid::now_v7()), b"a photograph");
+    let file = store
+        .attach_file(&note, &source, "photo.jpg", "image/jpeg")
+        .await
+        .unwrap()
+        .file_id;
+    (note, file)
+}
+
+/// Records that the server holds the note as this device does.
+async fn sent(store: &Store, note: &NoteId, change: i64) {
+    let revision = store.note_revision(note).await.unwrap().unwrap();
+    store
+        .mark_note_pushed(note, revision, change)
+        .await
+        .unwrap();
+}
+
+async fn to_confirm(store: &Store) -> Vec<(Uuid, NoteId)> {
+    pairs(store.files_to_confirm(0, 100).await.unwrap())
+}
+
+async fn to_release(store: &Store, unnamed_before_ms: i64) -> Vec<(Uuid, NoteId)> {
+    pairs(
+        store
+            .files_to_release(unnamed_before_ms, 100)
+            .await
+            .unwrap(),
+    )
+}
+
+fn pairs(links: Vec<FileLink>) -> Vec<(Uuid, NoteId)> {
+    links
+        .into_iter()
+        .map(|link| (link.file_id, link.note_id))
+        .collect()
+}
+
+async fn link(store: &Store, file: Uuid) -> FileLink {
+    store
+        .files_to_confirm(0, 100)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|link| link.file_id == file)
+        .unwrap()
+}
+
+const FAR_FUTURE: i64 = i64::MAX;
+
+/// A reference is offered to the server once the server holds the note,
+/// and not again once it has been taken.
+#[tokio::test]
+async fn a_file_is_confirmed_once_its_note_is_on_the_server() {
+    let desk = desk();
+    let store = &desk.store;
+    let (note, file) = synced_note_with_file(&desk, "the whiteboard").await;
+
+    // The server has never had the note: a reference to it would be
+    // refused.
+    assert!(to_confirm(store).await.is_empty());
+    assert_eq!(store.unsent_file_count().await.unwrap(), 1);
+
+    sent(store, &note, 4).await;
+    assert_eq!(to_confirm(store).await, [(file, note)]);
+
+    store
+        .mark_file_confirmed(&link(store, file).await)
+        .await
+        .unwrap();
+    assert!(to_confirm(store).await.is_empty());
+    assert_eq!(store.unsent_file_count().await.unwrap(), 0);
+    // An edit to the note's text changes nothing about its file.
+    store
+        .update_note(&note, "the whiteboard, later")
+        .await
+        .unwrap();
+    assert!(to_confirm(store).await.is_empty());
+    assert!(to_release(store, FAR_FUTURE).await.is_empty());
+}
+
+/// References are listed a page at a time, in an order that does not
+/// change, so that those at the front which cannot be settled do not keep
+/// the rest from being asked about.
+#[tokio::test]
+async fn references_to_confirm_are_listed_in_pages() {
+    let desk = desk();
+    let store = &desk.store;
+    let mut all = Vec::new();
+    for text in ["one", "two", "three"] {
+        let (note, file) = synced_note_with_file(&desk, text).await;
+        sent(store, &note, 1).await;
+        all.push((file, note));
+    }
+
+    let first = store.files_to_confirm(0, 2).await.unwrap();
+    assert_eq!(first.len(), 2);
+    let rest = store.files_to_confirm(first[1].position, 2).await.unwrap();
+    assert_eq!(rest.len(), 1);
+    let mut listed = pairs(first);
+    listed.extend(pairs(rest));
+    assert_eq!(listed, all);
+}
+
+/// A file removed from a note is released only after this device has seen
+/// the note without it for the wait, and only once the removal is on the
+/// server. Until then the device keeps the file.
+#[tokio::test]
+async fn a_removed_file_is_released_after_the_wait_and_then_leaves_the_shelf() {
+    let desk = desk();
+    let store = &desk.store;
+    let (note, file) = synced_note_with_file(&desk, "the whiteboard").await;
+    sent(store, &note, 1).await;
+    store
+        .mark_file_confirmed(&link(store, file).await)
+        .await
+        .unwrap();
+    let before = chrono::Utc::now().timestamp_millis() - 1;
+
+    assert!(store.detach_file(&note, file).await.unwrap());
+
+    // The removal has not been sent. Nothing may be told to the server.
+    assert!(to_release(store, FAR_FUTURE).await.is_empty());
+    sent(store, &note, 2).await;
+    // Sent, and the wait is not over.
+    assert!(to_release(store, before).await.is_empty());
+    assert_eq!(store.clear_spare_files(Duration::ZERO).await.unwrap(), 0);
+    assert!(
+        store.shelf().holds(file),
+        "kept while there is something to tell"
+    );
+
+    // The wait is over.
+    let due = store.files_to_release(FAR_FUTURE, 100).await.unwrap();
+    assert_eq!(pairs(due.clone()), [(file, note)]);
+    // A note with a problem is not spoken for: what the server holds of
+    // it is not what this device holds.
+    store
+        .flag_note_problem(
+            &note,
+            "held".to_owned(),
+            dirt_core::store::ProblemKind::Held,
+        )
+        .await
+        .unwrap();
+    assert!(to_release(store, FAR_FUTURE).await.is_empty());
+    store.clear_note_problem(&note).await.unwrap();
+
+    store.forget_file_link(&due[0]).await.unwrap();
+    assert!(to_release(store, FAR_FUTURE).await.is_empty());
+    assert_eq!(store.clear_spare_files(Duration::ZERO).await.unwrap(), 1);
+    assert!(!store.shelf().holds(file));
+    assert!(store.get_note(&note).await.unwrap().is_some());
+}
+
+/// A file that was never confirmed is released all the same when it is
+/// removed: the answer to a confirm may have been lost, and the server may
+/// hold the reference.
+#[tokio::test]
+async fn a_file_removed_before_it_was_confirmed_is_still_released() {
+    let desk = desk();
+    let store = &desk.store;
+    let (note, file) = synced_note_with_file(&desk, "the whiteboard").await;
+    sent(store, &note, 1).await;
+
+    store.detach_file(&note, file).await.unwrap();
+    sent(store, &note, 2).await;
+
+    // No longer to confirm, and not counted as waiting to be sent.
+    assert!(to_confirm(store).await.is_empty());
+    assert_eq!(store.unsent_file_count().await.unwrap(), 0);
+    assert_eq!(to_release(store, FAR_FUTURE).await, [(file, note)]);
+}
+
+/// A file nothing needs is removed from the device only when it has
+/// stayed unneeded for the wait. A file is put on the shelf a moment
+/// before the note that names it is written, by this program or by another
+/// with the same store open, and must not be taken for spare then.
+#[tokio::test]
+async fn a_spare_file_is_removed_only_after_it_has_stayed_spare() {
+    let desk = desk();
+    let store = &desk.store;
+    let shelf = store.shelf();
+    let arriving = Uuid::now_v7();
+    shelf
+        .add(
+            arriving,
+            &desk.a_file("arriving.jpg", b"about to be attached"),
+        )
+        .unwrap();
+    let hour = Duration::from_secs(3_600);
+
+    // Seen spare for the first time: noted, and left.
+    assert_eq!(store.clear_spare_files(hour).await.unwrap(), 0);
+    assert_eq!(store.clear_spare_files(hour).await.unwrap(), 0);
+    assert!(shelf.holds(arriving));
+
+    // A file that came to be needed is forgotten as spare, however long
+    // ago it was first seen.
+    let (note, file) = synced_note_with_file(&desk, "the whiteboard").await;
+    assert_eq!(store.clear_spare_files(Duration::ZERO).await.unwrap(), 1);
+    assert!(!shelf.holds(arriving));
+    assert!(shelf.holds(file));
+
+    // A deleted note still names its file.
+    store.delete_note(&note).await.unwrap();
+    assert_eq!(store.clear_spare_files(Duration::ZERO).await.unwrap(), 0);
+    assert!(shelf.holds(file));
+
+    // When the note goes, the file is spare, and the wait starts then.
+    sent(store, &note, 1).await;
+    let revision = store.note_revision(&note).await.unwrap().unwrap();
+    assert!(store.drop_purged_note(&note, revision).await.unwrap());
+    assert_eq!(store.clear_spare_files(hour).await.unwrap(), 0);
+    assert!(shelf.holds(file));
+    assert_eq!(store.clear_spare_files(Duration::ZERO).await.unwrap(), 1);
+    assert!(!shelf.holds(file));
+}
+
+/// Something that stopped half-way through a file leaves a part of one.
+/// It goes in time, and one being written now is left alone.
+#[tokio::test]
+async fn what_an_interrupted_fetch_left_is_cleared_in_time() {
+    let desk = desk();
+    let shelf = desk.store.shelf();
+    let file = Uuid::now_v7();
+    let unfinished = shelf.unfinished_of_my_own(file).unwrap();
+    std::fs::write(&unfinished, b"half of").unwrap();
+    assert_ne!(unfinished, shelf.unfinished_of_my_own(file).unwrap());
+
+    let now = std::time::SystemTime::now();
+    assert_eq!(
+        shelf
+            .clear_unfinished(now - Duration::from_secs(3_600))
+            .unwrap(),
+        0
+    );
+    assert!(unfinished.exists());
+    assert_eq!(
+        shelf
+            .clear_unfinished(now + Duration::from_secs(3_600))
+            .unwrap(),
+        1
+    );
+    assert!(!unfinished.exists());
+    assert!(shelf.list().unwrap().is_empty());
+}
+
+/// A new epoch: the server was reset or restored, and may know nothing of
+/// the files it was told about. Every reference is offered again.
+#[tokio::test]
+async fn a_new_epoch_offers_every_reference_again() {
+    let desk = desk();
+    let store = &desk.store;
+    let (note, file) = synced_note_with_file(&desk, "the whiteboard").await;
+    sent(store, &note, 1).await;
+    let reference = link(store, file).await;
+    store
+        .flag_file_problem(
+            &reference,
+            "the account's storage for files is full".to_owned(),
+        )
+        .await
+        .unwrap();
+    let problems = store.file_problems().await.unwrap();
+    assert_eq!(problems.len(), 1);
+    // Named as the person knows it: the file's name and the note's text.
+    assert_eq!(problems[0].name.as_deref(), Some("photo.jpg"));
+    assert_eq!(problems[0].note_text, "the whiteboard");
+    // Refused: it is listed with its reason and not counted as waiting.
+    // It is still a file that exists only here.
+    assert_eq!(store.unsent_file_count().await.unwrap(), 0);
+    assert_eq!(store.unsynced_file_count().await.unwrap(), 1);
+    store.mark_file_confirmed(&reference).await.unwrap();
+    assert!(store.file_problems().await.unwrap().is_empty());
+    assert_eq!(store.unsynced_file_count().await.unwrap(), 0);
+
+    store.begin_epoch(7).await.unwrap();
+
+    // Not until the note is on the server again.
+    assert!(to_confirm(store).await.is_empty());
+    sent(store, &note, 1).await;
+    assert_eq!(to_confirm(store).await, [(file, note)]);
+    assert_eq!(store.unsent_file_count().await.unwrap(), 1);
+}
+
+/// A file is sealed for the account from the shelf, and what comes back
+/// from the storage is kept only if it opens to the file the note names.
+#[tokio::test]
+async fn a_file_is_sealed_from_the_shelf_and_kept_only_if_it_opens() {
+    let desk = desk();
+    let store = &desk.store;
+    let note = store.create_note("the whiteboard").await.unwrap().id;
+    let contents: Vec<u8> = (0..200_000u32).map(|i| (i % 249) as u8).collect();
+    let attached = store
+        .attach_file(
+            &note,
+            &desk.a_file("photo.jpg", &contents),
+            "photo.jpg",
+            "image/jpeg",
+        )
+        .await
+        .unwrap();
+    let part = store
+        .file_part(&note, attached.file_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((part.size, &part.key), (attached.size, &attached.key));
+    assert_eq!(store.file_part(&note, Uuid::now_v7()).await.unwrap(), None);
+    assert_eq!(
+        store
+            .file_part(&NoteId::new(), attached.file_id)
+            .await
+            .unwrap(),
+        None
+    );
+
+    let sealed = store.sealed_file(ACCOUNT, part.clone()).await.unwrap();
+    assert_eq!(sealed.len() as u64, attached.stored_size());
+
+    // Another device: it has the note and not the file.
+    let other = Store::open(desk.folder.path().join("other").join("notes.db")).unwrap();
+    // Sealed for another account, cut short, or changed: not kept.
+    let mut changed = sealed.clone();
+    changed[sealed.len() / 2] ^= 1;
+    let elsewhere = Uuid::from_u128(2);
+    for (account, bytes) in [
+        (elsewhere, sealed.clone()),
+        (ACCOUNT, sealed[..sealed.len() - 1].to_vec()),
+        (ACCOUNT, changed),
+        (ACCOUNT, Vec::new()),
+    ] {
+        let kept = other
+            .keep_fetched_file(account, part.clone(), bytes)
+            .await
+            .unwrap();
+        assert_eq!(kept, None);
+        assert!(!other.shelf().holds(part.file_id));
+        assert_eq!(
+            files_on_the_shelf(&other),
+            0,
+            "nothing half-written is left"
+        );
+    }
+    // The right file under a key that opens it, at another size than the
+    // note says: not the file the note names.
+    let shorter = FilePart {
+        size: part.size - 1,
+        ..part.clone()
+    };
+    assert_eq!(
+        other
+            .keep_fetched_file(ACCOUNT, shorter, sealed.clone())
+            .await
+            .unwrap(),
+        None
+    );
+
+    let kept = other
+        .keep_fetched_file(ACCOUNT, part.clone(), sealed.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept, other.shelf().path(part.file_id));
+    assert_eq!(std::fs::read(kept).unwrap(), contents);
+    // Fetched a second time, by another program say: the copy stays.
+    assert!(other
+        .keep_fetched_file(ACCOUNT, part.clone(), sealed)
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(files_on_the_shelf(&other), 1);
+
+    // A file that is not what the note says is not sent.
+    std::fs::write(store.shelf().path(part.file_id), b"something else").unwrap();
+    let error = store.sealed_file(ACCOUNT, part.clone()).await.unwrap_err();
+    assert!(matches!(error, Error::InvalidInput(_)), "{error}");
+    std::fs::remove_file(store.shelf().path(part.file_id)).unwrap();
+    assert!(store.sealed_file(ACCOUNT, part).await.is_err());
+}
+
+/// A note that arrives from the server naming a file gives this device a
+/// reference to confirm too: it may be the device that keeps the note as
+/// new after a purge.
+#[tokio::test]
+async fn a_note_from_the_server_brings_its_references() {
+    let desk = desk();
+    let store = &desk.store;
+    let elsewhere = dirt_core::notes::NoteDoc::new(7_100_000_000_000_009);
+    elsewhere.set_text("written elsewhere", 1_000);
+    let thumbnail = dirt_core::files::Thumbnail {
+        file_id: Uuid::now_v7(),
+        key: dirt_core::files::FileKey::generate(),
+        size: 40,
+    };
+    let photo = dirt_core::files::Attachment {
+        file_id: Uuid::now_v7(),
+        name: "photo.jpg".to_owned(),
+        media_type: "image/jpeg".to_owned(),
+        size: 10,
+        key: dirt_core::files::FileKey::generate(),
+        added_at_ms: 2_000,
+        thumbnail: Some(thumbnail.clone()),
+    };
+    elsewhere.attach(&photo, 2_000);
+    let note = NoteId::new();
+    store
+        .apply_remote_note(&note, elsewhere.encode(), 3)
+        .await
+        .unwrap();
+
+    let mut wanted = to_confirm(store).await;
+    wanted.sort();
+    let mut expected = vec![(photo.file_id, note), (thumbnail.file_id, note)];
+    expected.sort();
+    assert_eq!(wanted, expected);
+    // This device holds neither file, so it has nothing of its own to
+    // send, and nothing that deleting its store would lose.
+    assert_eq!(store.unsent_file_count().await.unwrap(), 0);
+    assert_eq!(store.unsynced_file_count().await.unwrap(), 0);
+    // The thumbnail is a file with a key of its own.
+    let part = store
+        .file_part(&note, thumbnail.file_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((part.size, part.key), (40, thumbnail.key));
+
+    // The server takes both references.
+    for link in store.files_to_confirm(0, 100).await.unwrap() {
+        store.mark_file_confirmed(&link).await.unwrap();
+    }
+    assert!(to_confirm(store).await.is_empty());
+
+    // The file is removed elsewhere. Both references are dated here.
+    elsewhere.detach(photo.file_id, 4_000);
+    store
+        .apply_remote_note(&note, elsewhere.encode(), 5)
+        .await
+        .unwrap();
+    assert!(to_confirm(store).await.is_empty());
+    let mut due = to_release(store, FAR_FUTURE).await;
+    due.sort();
+    assert_eq!(due, expected);
+
+    // The note comes to name the file again. Another device that saw it
+    // removed may have told the server so by now, which this device cannot
+    // know. The reference is offered again, though the server once took
+    // it: otherwise the server could delete a file that a note names.
+    let listed = store.files_to_release(FAR_FUTURE, 100).await.unwrap();
+    let plain = dirt_core::files::Attachment {
+        thumbnail: None,
+        ..photo.clone()
+    };
+    elsewhere.attach(&plain, 6_000);
+    store
+        .apply_remote_note(&note, elsewhere.encode(), 7)
+        .await
+        .unwrap();
+    assert_eq!(to_confirm(store).await, [(photo.file_id, note)]);
+    // The thumbnail is still gone, and still to be released.
+    assert_eq!(
+        to_release(store, FAR_FUTURE).await,
+        [(thumbnail.file_id, note)]
+    );
+
+    // And if this device was itself telling the server when it happened:
+    // the answer to a release listed earlier does not forget a reference
+    // that is named again.
+    for link in &listed {
+        store.mark_file_confirmed(link).await.unwrap();
+        store.forget_file_link(link).await.unwrap();
+    }
+    assert_eq!(to_confirm(store).await, [(photo.file_id, note)]);
+    assert!(to_release(store, FAR_FUTURE).await.is_empty());
+}

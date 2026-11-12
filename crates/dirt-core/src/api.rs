@@ -12,10 +12,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dirt_proto::api::{
-    ChangeKey, DeviceKeys, DeviceList, EnrolmentMessage, EnrolmentMessages, ErrorBody, KeyChanged,
-    MyDevice, NonceResponse, OldKeyNotes, PostEnrolmentMessage, PullResponse, PurgeRequest,
-    PurgeResponse, PushRequest, PushResponse, PutRecovery, RecoveryClaim, RegisterDeviceRequest,
-    RegisterDeviceResponse, ResetResponse, WrappedKey, PROTOCOL_HEADER, PROTOCOL_VERSION,
+    ChangeKey, DeviceKeys, DeviceList, DownloadLink, EnrolmentMessage, EnrolmentMessages,
+    ErrorBody, FileReference, FileReferences, FileResults, KeyChanged, MyDevice, NonceResponse,
+    OldKeyNotes, PostEnrolmentMessage, PullResponse, PurgeRequest, PurgeResponse, PushRequest,
+    PushResponse, PutRecovery, RecoveryClaim, RegisterDeviceRequest, RegisterDeviceResponse,
+    ResetResponse, UploadLink, UploadRequest, WrappedKey, PROTOCOL_HEADER, PROTOCOL_VERSION,
 };
 // What a client needs in order to act on a failure, re-exported so that the
 // interface crates do not depend on the protocol crate for it.
@@ -43,11 +44,37 @@ pub struct HttpResponse {
     pub body: Vec<u8>,
 }
 
+/// One request to the file storage, at an address the server signed.
+///
+/// A file's bytes never pass through the server. The server gives a link,
+/// and the device sends to the storage or fetches from it directly.
+#[derive(Debug, Clone)]
+pub struct StorageRequest {
+    /// `PUT` to send a file, `GET` to fetch one.
+    pub method: &'static str,
+    /// The whole address, as the server gave it.
+    pub url: String,
+    pub body: Option<Vec<u8>>,
+}
+
 /// How requests reach the server.
 pub trait Transport: Send + Sync {
     /// Sends one request. An error means no answer came back at all.
     fn send(&self, request: HttpRequest) -> BoxFuture<'_, Result<HttpResponse, String>>;
+
+    /// Sends one request to the file storage. A transport that has no way
+    /// to reach it says so, and files then wait on the device.
+    fn send_to_storage(
+        &self,
+        _request: StorageRequest,
+    ) -> BoxFuture<'_, Result<HttpResponse, String>> {
+        Box::pin(async { Err("this transport cannot reach the file storage".to_owned()) })
+    }
 }
+
+/// How long one file may take to send or fetch. Ten megabytes on a slow
+/// connection is minutes, where a request to the server is seconds.
+const STORAGE_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// The transport the apps use: HTTPS to the server's address.
 pub struct HttpTransport {
@@ -79,6 +106,33 @@ impl Transport for HttpTransport {
             for (name, value) in request.headers {
                 builder = builder.header(name, value);
             }
+            if let Some(body) = request.body {
+                builder = builder.body(body);
+            }
+            let response = builder.send().await.map_err(|error| error.to_string())?;
+            let status = response.status().as_u16();
+            let body = response
+                .bytes()
+                .await
+                .map_err(|error| error.to_string())?
+                .to_vec();
+            Ok(HttpResponse { status, body })
+        })
+    }
+
+    fn send_to_storage(
+        &self,
+        request: StorageRequest,
+    ) -> BoxFuture<'_, Result<HttpResponse, String>> {
+        Box::pin(async move {
+            let method = reqwest::Method::from_bytes(request.method.as_bytes())
+                .map_err(|error| error.to_string())?;
+            // The address is used exactly as it was signed. Nothing of
+            // this device's is added to it: no token, no header.
+            let mut builder = self
+                .http
+                .request(method, &request.url)
+                .timeout(STORAGE_TIMEOUT);
             if let Some(body) = request.body {
                 builder = builder.body(body);
             }
@@ -275,6 +329,87 @@ impl ApiClient {
             .await
     }
 
+    // ---- Files ----
+
+    /// A link to send one sealed file of exactly `size` bytes.
+    pub async fn upload_link(&self, file_id: Uuid, size: i64) -> Result<UploadLink, ApiError> {
+        self.call(
+            "POST",
+            "/v1/files".to_owned(),
+            Some(&UploadRequest { file_id, size }),
+        )
+        .await
+    }
+
+    /// A link to fetch one sealed file.
+    pub async fn download_link(&self, file_id: Uuid) -> Result<DownloadLink, ApiError> {
+        self.get(format!("/v1/files/{file_id}")).await
+    }
+
+    /// Tells the server that these notes refer to these files.
+    pub async fn confirm_files(&self, items: Vec<FileReference>) -> Result<FileResults, ApiError> {
+        self.call(
+            "POST",
+            "/v1/files/confirm".to_owned(),
+            Some(&FileReferences { items }),
+        )
+        .await
+    }
+
+    /// Tells the server that these notes no longer refer to these files.
+    pub async fn release_files(&self, items: Vec<FileReference>) -> Result<FileResults, ApiError> {
+        self.call(
+            "POST",
+            "/v1/files/release".to_owned(),
+            Some(&FileReferences { items }),
+        )
+        .await
+    }
+
+    /// Sends a sealed file to the storage through a link from
+    /// [`Self::upload_link`]. The device's token is not sent: the link is
+    /// all the storage needs, and all it is given.
+    pub async fn put_file(&self, url: String, sealed: Vec<u8>) -> Result<(), ApiError> {
+        let response = self
+            .transport
+            .send_to_storage(StorageRequest {
+                method: "PUT",
+                url,
+                body: Some(sealed),
+            })
+            .await
+            .map_err(ApiError::Network)?;
+        if (200..300).contains(&response.status) {
+            Ok(())
+        } else {
+            Err(ApiError::Network(format!(
+                "the file storage answered {}",
+                response.status
+            )))
+        }
+    }
+
+    /// Fetches a sealed file from the storage through a link from
+    /// [`Self::download_link`]. `None` if the storage has no such file.
+    pub async fn get_file(&self, url: String) -> Result<Option<Vec<u8>>, ApiError> {
+        let response = self
+            .transport
+            .send_to_storage(StorageRequest {
+                method: "GET",
+                url,
+                body: None,
+            })
+            .await
+            .map_err(ApiError::Network)?;
+        match response.status {
+            status if (200..300).contains(&status) => Ok(Some(response.body)),
+            404 => Ok(None),
+            status => Err(ApiError::Network(format!(
+                "the file storage answered {status}"
+            ))),
+        }
+    }
+
     /// Blobs changed after change number `after`.
     pub async fn pull(&self, after: i64) -> Result<PullResponse, ApiError> {
         self.get(format!("/v1/notes/pull?after={after}")).await
@@ -466,6 +601,166 @@ mod tests {
         fn send(&self, _: HttpRequest) -> BoxFuture<'_, Result<HttpResponse, String>> {
             Box::pin(async { Err("no route to host".to_owned()) })
         }
+    }
+
+    /// A file storage that answers every request with one status, and
+    /// remembers what it was asked.
+    struct Storage {
+        status: u16,
+        seen: Mutex<Vec<StorageRequest>>,
+    }
+
+    impl Storage {
+        fn client(status: u16) -> (Arc<Self>, ApiClient) {
+            let transport = Arc::new(Self {
+                status,
+                seen: Mutex::new(Vec::new()),
+            });
+            let client = ApiClient::new(Arc::clone(&transport) as Arc<dyn Transport>)
+                .with_token("the device's token".to_owned());
+            (transport, client)
+        }
+    }
+
+    impl Transport for Storage {
+        fn send(&self, _: HttpRequest) -> BoxFuture<'_, Result<HttpResponse, String>> {
+            Box::pin(async { Err("this is not the server".to_owned()) })
+        }
+
+        fn send_to_storage(
+            &self,
+            request: StorageRequest,
+        ) -> BoxFuture<'_, Result<HttpResponse, String>> {
+            self.seen.lock().unwrap().push(request);
+            Box::pin(async move {
+                Ok(HttpResponse {
+                    status: self.status,
+                    body: b"sealed bytes".to_vec(),
+                })
+            })
+        }
+    }
+
+    /// A file goes to the address the server signed and nowhere else, as
+    /// it was sealed. The request has no place for the device's token:
+    /// the storage is another party, and the link is all it is given.
+    #[tokio::test]
+    async fn a_file_is_sent_and_fetched_at_the_signed_address() {
+        let (storage, client) = Storage::client(200);
+        let link = "https://storage.example/bucket/account/file?X-Amz-Signature=abc";
+
+        client
+            .put_file(link.to_owned(), b"sealed".to_vec())
+            .await
+            .unwrap();
+        let fetched = client.get_file(link.to_owned()).await.unwrap();
+
+        assert_eq!(fetched.as_deref(), Some(&b"sealed bytes"[..]));
+        let seen = storage.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!((seen[0].method, seen[0].url.as_str()), ("PUT", link));
+        assert_eq!(seen[0].body.as_deref(), Some(&b"sealed"[..]));
+        assert_eq!((seen[1].method, seen[1].url.as_str()), ("GET", link));
+        assert_eq!(seen[1].body, None);
+    }
+
+    #[tokio::test]
+    async fn a_storage_that_refuses_is_a_failure_to_try_again() {
+        // A file that is not there is an answer, not a failure.
+        let (_storage, client) = Storage::client(404);
+        assert_eq!(
+            client.get_file("https://s/x".to_owned()).await.unwrap(),
+            None
+        );
+        // An upload to a place that is not there is a failure.
+        let error = client
+            .put_file("https://s/x".to_owned(), Vec::new())
+            .await
+            .unwrap_err();
+        assert_eq!(error.class(), ErrorClass::TryAgainLater);
+
+        for status in [403, 500, 503] {
+            let (_storage, client) = Storage::client(status);
+            let error = client.get_file("https://s/x".to_owned()).await.unwrap_err();
+            assert_eq!(error.class(), ErrorClass::TryAgainLater, "{status}");
+            let error = client
+                .put_file("https://s/x".to_owned(), Vec::new())
+                .await
+                .unwrap_err();
+            assert_eq!(error.class(), ErrorClass::TryAgainLater, "{status}");
+        }
+    }
+
+    /// A transport written before files, or one with no way to the
+    /// storage, says so. Files then wait.
+    #[tokio::test]
+    async fn a_transport_with_no_way_to_the_storage_says_so() {
+        let (_transport, client) = Canned::client(200, "{}");
+        let error = client
+            .put_file("https://s/x".to_owned(), Vec::new())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ApiError::Network(_)), "{error}");
+        assert!(client.get_file("https://s/x".to_owned()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn the_calls_for_files_go_where_the_protocol_says() {
+        let file = Uuid::from_u128(7);
+        let note: dirt_proto::NoteId = "0192d3a8-0000-7000-8000-000000000001".parse().unwrap();
+        let (transport, client) = Canned::client(
+            200,
+            r#"{"url":"https://s/x","size":9,"expires_in_secs":300}"#,
+        );
+        client.upload_link(file, 9).await.unwrap();
+        client.download_link(file).await.unwrap();
+        let (results, results_client) = Canned::client(200, r#"{"results":[]}"#);
+        let reference = || {
+            vec![FileReference {
+                file_id: file,
+                note_id: note,
+            }]
+        };
+        results_client.confirm_files(reference()).await.unwrap();
+        results_client.release_files(reference()).await.unwrap();
+
+        let asked = |transport: &Canned| -> Vec<(&'static str, String, Option<String>)> {
+            transport
+                .seen
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|request| {
+                    (
+                        request.method,
+                        request.path.clone(),
+                        request
+                            .body
+                            .as_ref()
+                            .map(|body| String::from_utf8(body.clone()).unwrap()),
+                    )
+                })
+                .collect()
+        };
+        let body = format!(r#"{{"items":[{{"file_id":"{file}","note_id":"{note}"}}]}}"#);
+        assert_eq!(
+            asked(&transport),
+            [
+                (
+                    "POST",
+                    "/v1/files".to_owned(),
+                    Some(format!(r#"{{"file_id":"{file}","size":9}}"#))
+                ),
+                ("GET", format!("/v1/files/{file}"), None),
+            ]
+        );
+        assert_eq!(
+            asked(&results),
+            [
+                ("POST", "/v1/files/confirm".to_owned(), Some(body.clone())),
+                ("POST", "/v1/files/release".to_owned(), Some(body)),
+            ]
+        );
     }
 
     #[tokio::test]

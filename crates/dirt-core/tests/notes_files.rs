@@ -167,3 +167,31 @@ fn a_note_written_before_files_existed_has_none() {
     assert!(loaded.attach(&file("added later.png", 2_000), 2_000));
     assert_eq!(names(&loaded), ["added later.png"]);
 }
+
+/// What the store keeps and tells the server about is every file a note
+/// names, thumbnails included.
+#[test]
+fn a_note_names_its_files_and_their_thumbnails() {
+    let doc = NoteDoc::new(LAPTOP);
+    let plain = file("notes.pdf", 1_000);
+    let thumbnail = dirt_core::files::Thumbnail {
+        file_id: Uuid::now_v7(),
+        key: FileKey::generate(),
+        size: 900,
+    };
+    let photo = Attachment {
+        thumbnail: Some(thumbnail.clone()),
+        ..file("photo.jpg", 2_000)
+    };
+    doc.attach(&plain, 1_000);
+    doc.attach(&photo, 2_000);
+
+    let mut named = doc.named_files();
+    named.sort();
+    let mut expected = vec![plain.file_id, photo.file_id, thumbnail.file_id];
+    expected.sort();
+    assert_eq!(named, expected);
+
+    doc.detach(photo.file_id, 3_000);
+    assert_eq!(doc.named_files(), [plain.file_id]);
+}
