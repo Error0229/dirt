@@ -392,14 +392,23 @@ What was decided while building:
   the reference after thirty days and the file would be deleted under the
   device that wants it.
 - **A new epoch offers every reference again** (a reset, or a restore).
+- **Signing out is refused while a file is only on this device,** as it is
+  for a note that has not been sent. Signing out deletes the account's
+  store. The note that names the file may have synced, and would go on
+  naming a file that existed nowhere. Found while reading the code back.
+  The three clients say what would be lost in one set of words, from
+  `dirt_core::sync::overview`, which also counts files among what is
+  waiting to be sent.
 - **Local schema version 5:** what this device has told the server about
   each file a note names, and which files on it are waiting to be removed.
 
-Thirteen tests with whole devices, the real server and a real file
+Fifteen tests with whole devices, the real server and a real file
 storage: the cases the plan lists, and the storage failing while the server
 answers, an upload whose answer was lost, an open app trying again, a
 server with no storage, a full account, a note written before signing in,
-and a stored object with one byte changed. Sixteen more tests of the core.
+a stored object with one byte changed, a release for a file the server has
+forgotten, and signing out. Eighteen more tests of the core. Each rule was
+undone in turn, 32 in all, to see a test fail.
 
 Not checked on a real device: no client attaches a file yet.
 

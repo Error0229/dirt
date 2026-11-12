@@ -691,9 +691,12 @@ async fn a_new_epoch_offers_every_reference_again() {
         .unwrap();
     assert_eq!(store.file_problems().await.unwrap().len(), 1);
     // Refused: it is listed with its reason and not counted as waiting.
+    // It is still a file that exists only here.
     assert_eq!(store.unsent_file_count().await.unwrap(), 0);
+    assert_eq!(store.unsynced_file_count().await.unwrap(), 1);
     store.mark_file_confirmed(&reference).await.unwrap();
     assert!(store.file_problems().await.unwrap().is_empty());
+    assert_eq!(store.unsynced_file_count().await.unwrap(), 0);
 
     store.begin_epoch(7).await.unwrap();
 
@@ -835,8 +838,10 @@ async fn a_note_from_the_server_brings_its_references() {
     let mut expected = vec![(photo.file_id, note), (thumbnail.file_id, note)];
     expected.sort();
     assert_eq!(wanted, expected);
-    // This device holds neither file, so it has nothing of its own to send.
+    // This device holds neither file, so it has nothing of its own to
+    // send, and nothing that deleting its store would lose.
     assert_eq!(store.unsent_file_count().await.unwrap(), 0);
+    assert_eq!(store.unsynced_file_count().await.unwrap(), 0);
     // The thumbnail is a file with a key of its own.
     let part = store
         .file_part(&note, thumbnail.file_id)
