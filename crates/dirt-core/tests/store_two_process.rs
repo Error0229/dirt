@@ -22,6 +22,12 @@
 //! A third rule, a longer retry around opening, was added after
 //! `four_processes_also_lose_nothing` failed once in CI on Windows with the
 //! file busy at open. `tests/store.rs` holds the test for that rule.
+//!
+//! A fourth, a write that waits half a minute for its turn and looks
+//! often, was added after `two_processes_lose_no_write_and_see_no_busy_error`
+//! failed once in CI on Windows with the file busy at a write. Running
+//! forty copies of that test at once on one machine brings it out: with a
+//! wait of five seconds, 22 of the 40 failed; with this rule, none.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
