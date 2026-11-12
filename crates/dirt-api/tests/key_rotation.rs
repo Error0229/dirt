@@ -706,3 +706,48 @@ async fn one_account_cannot_change_or_read_anothers_keys(pool: PgPool) {
     assert_eq!(pull(&app, &stranger.token, 0).await.key_version, 1);
     assert_eq!(old_notes(&app, &stranger.token).await.total, 0);
 }
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn copies_too_far_back_to_be_reached_are_dropped(pool: PgPool) {
+    let app = app(pool.clone());
+    let (laptop, phone) = two_devices(&app, &pool).await;
+    // The phone stays away while the key is changed again and again.
+    let changes = limits::MAX_KEPT_KEY_VERSIONS + 2;
+    for version in 1..=changes {
+        let keys = vec![
+            wrapped_for(laptop.device_id, b"for the laptop"),
+            wrapped_for(phone.device_id, b"for the phone"),
+        ];
+        let answer = change_key(&app, &laptop.token, version, keys).await;
+        assert_eq!(answer.status, StatusCode::OK);
+    }
+    let latest = changes + 1;
+
+    // Each device has the newest copies and no more than may be kept.
+    let kept = my_keys(&app, &phone.token, 1).await;
+    let versions: Vec<i32> = kept.iter().map(|(version, _)| *version).collect();
+    let oldest_kept = latest - limits::MAX_KEPT_KEY_VERSIONS + 1;
+    assert_eq!(versions, (oldest_kept..=latest).collect::<Vec<_>>());
+    let (rows,): (i64,) = sqlx::query_as("SELECT count(*) FROM device_keys")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 2 * i64::from(limits::MAX_KEPT_KEY_VERSIONS));
+
+    // Another account's copies are not touched by this one's changes.
+    let bob = register(&app, "bob", "Bob's laptop").await;
+    let answer = change_key(
+        &app,
+        &bob.token,
+        1,
+        vec![wrapped_for(bob.device_id, b"for bob")],
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK);
+    let keys = vec![
+        wrapped_for(laptop.device_id, b"for the laptop"),
+        wrapped_for(phone.device_id, b"for the phone"),
+    ];
+    change_key(&app, &laptop.token, latest, keys).await;
+    assert_eq!(my_keys(&app, &bob.token, 1).await.len(), 1);
+}

@@ -166,9 +166,28 @@ pub async fn register(
     .rows_affected()
         == 1;
 
+    forget_old_devices(&mut tx, account_id).await?;
+
     let status = if first_device {
         DeviceStatus::Approved
     } else {
+        // Every device that has not been removed holds a place, a waiting
+        // one too, whether or not its request has lapsed: it can renew it.
+        // Writing the account's row above locked it, so two registrations
+        // cannot both take the last place.
+        let (held,): (i64,) = sqlx::query_as(
+            "SELECT count(*) FROM devices WHERE account_id = $1 AND status <> 'revoked'",
+        )
+        .bind(account_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if held >= limits::MAX_DEVICES_PER_ACCOUNT {
+            return Err(ApiError::new(
+                ErrorCode::TooManyDevices,
+                "this account already has as many devices as it may; \
+                 remove one from a device that is signed in",
+            ));
+        }
         // Requests that have lapsed no longer hold a place.
         let (pending,): (i64,) = sqlx::query_as(
             "SELECT count(*) FROM devices \
@@ -213,6 +232,46 @@ pub async fn register(
         first_device,
         epoch,
     }))
+}
+
+/// Deletes what the account no longer needs to remember about devices:
+/// those removed long ago, requests to join that lapsed long ago, and the
+/// oldest removed devices past the number kept.
+///
+/// It runs when a device registers, which is the only time a row is added,
+/// so the rows of an account stay bounded without a scheduled job. A device
+/// forgotten here is told its token is unknown, where before it was told
+/// it had been removed. Either way it has to sign in again and be let in.
+async fn forget_old_devices(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+) -> ApiResult<()> {
+    // A device that asked for a reset is kept while the reset waits: it
+    // has to be able to come back when the wait is over.
+    sqlx::query(
+        "DELETE FROM devices d USING accounts a \
+          WHERE d.account_id = $1 AND a.id = d.account_id \
+            AND ((d.status = 'revoked' \
+                  AND d.revoked_at < now() - make_interval(days => $2)) \
+              OR (d.status = 'pending' \
+                  AND d.created_at < now() - make_interval(days => $2) \
+                  AND a.reset_requested_by IS DISTINCT FROM d.id))",
+    )
+    .bind(account_id)
+    .bind(i32::try_from(limits::REMOVED_DEVICE_DAYS).unwrap_or(i32::MAX))
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "DELETE FROM devices WHERE id IN \
+            (SELECT id FROM devices \
+              WHERE account_id = $1 AND status = 'revoked' \
+              ORDER BY revoked_at DESC, id DESC OFFSET $2)",
+    )
+    .bind(account_id)
+    .bind(limits::MAX_REMOVED_DEVICES)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 type DeviceRow = (Uuid, String, Vec<u8>, String, i64, i64);
@@ -325,13 +384,15 @@ pub async fn revoke(
     // The account is part of the condition, so one account can never revoke
     // another's device, whatever ID it sends.
     let mut tx = state.pool.begin().await?;
-    let revoked =
-        sqlx::query("UPDATE devices SET status = 'revoked' WHERE id = $1 AND account_id = $2")
-            .bind(target)
-            .bind(device.account_id)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
+    let revoked = sqlx::query(
+        "UPDATE devices SET status = 'revoked', revoked_at = COALESCE(revoked_at, now()) \
+              WHERE id = $1 AND account_id = $2",
+    )
+    .bind(target)
+    .bind(device.account_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
     if revoked == 0 {
         return Err(ApiError::new(ErrorCode::NotFound, "no such device"));
     }

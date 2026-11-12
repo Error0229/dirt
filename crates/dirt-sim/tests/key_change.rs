@@ -800,3 +800,47 @@ async fn an_open_app_reports_the_key_change_it_made(pool: PgPool) {
     .await;
     assert_eq!(app.session.sync_status().old_key_notes, 0);
 }
+
+/// The server keeps only so many copies of later keys for a device. One
+/// that was away through more changes than that finds the copy that follows
+/// its own key gone. It says so and stops, with its notes as they were:
+/// signing in again makes it a new device, which another device lets in.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_device_too_far_behind_to_follow_stops_and_keeps_its_notes(pool: PgPool) {
+    let server = Server::with_sign_in(pool.clone()).await;
+    let laptop = laptop_with_a_note(&server).await;
+    let phone = approved_device(&server, &laptop, "Phone").await;
+    phone.transport.set_offline(true);
+    write(&phone, "written on the phone while it was away").await;
+
+    laptop.session.change_account_key().await.unwrap();
+    laptop.session.change_account_key().await.unwrap();
+    // What the server does to a copy once more changes have been made than
+    // it keeps copies for.
+    sqlx::query("DELETE FROM device_keys WHERE device_id = $1 AND key_version = 2")
+        .bind(device_id(&phone))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    phone.transport.set_offline(false);
+    let error = phone.session.sync_now().await.unwrap_err();
+    let SessionError::Sync(error) = error else {
+        panic!("expected a sync failure, got {error:?}");
+    };
+    assert!(
+        matches!(error, SyncError::KeyUnavailable),
+        "expected the key to be out of reach, got {error:?}"
+    );
+    assert_eq!(error.class(), ErrorClass::StopUntilSignedIn);
+    // It adopted nothing: the third key's copy is there, but it opens only
+    // with the second.
+    assert_eq!(secrets_of(&phone).key_version, 1);
+    assert_eq!(
+        texts(&phone).await,
+        [
+            "written on the laptop",
+            "written on the phone while it was away"
+        ]
+    );
+}

@@ -50,6 +50,21 @@ pub mod limits {
     pub const REQUEST_WINDOW_SECS: i64 = 600;
     /// Devices one account may have waiting for approval.
     pub const MAX_PENDING_DEVICES: i64 = 3;
+    /// Devices one account may have, waiting ones included and removed
+    /// ones not. A change of the account's key carries a copy for each, in
+    /// one request.
+    pub const MAX_DEVICES_PER_ACCOUNT: i64 = 20;
+    /// The server forgets a removed device, and a request to join that
+    /// lapsed, after this long. Until then a removed device is told that
+    /// it was removed; afterwards its token is simply unknown.
+    pub const REMOVED_DEVICE_DAYS: i64 = 30;
+    /// Removed devices the server remembers for one account. Past this the
+    /// oldest are forgotten early.
+    pub const MAX_REMOVED_DEVICES: i64 = 20;
+    /// Copies of later account keys the server keeps for one device. A
+    /// device that misses more changes of the key than this has to be let
+    /// in again, as a new device is.
+    pub const MAX_KEPT_KEY_VERSIONS: i32 = 100;
     /// Longest device name, in bytes.
     pub const MAX_DEVICE_NAME_BYTES: usize = 100;
     /// Length of a device's public key (X25519).
@@ -98,6 +113,9 @@ pub enum ErrorCode {
     SignInRejected,
     /// The account already has as many devices waiting as it may.
     TooManyPendingDevices,
+    /// The account already has as many devices as it may. One has to be
+    /// removed before another can sign in.
+    TooManyDevices,
     /// The client speaks a newer protocol than this server.
     UnsupportedProtocol,
     /// The request is malformed or breaks a rule of the protocol.
@@ -152,6 +170,7 @@ impl ErrorCode {
             | Self::DevicePending
             | Self::SignInRejected
             | Self::TooManyPendingDevices
+            | Self::TooManyDevices
             // The device stays as it was: waiting.
             | Self::RecoveryRejected => ErrorClass::StopUntilSignedIn,
             // A request the server cannot make sense of means the two sides
@@ -583,7 +602,10 @@ mod tests {
             (ErrorCode::DevicePending, StopUntilSignedIn),
             (ErrorCode::SignInRejected, StopUntilSignedIn),
             (ErrorCode::TooManyPendingDevices, StopUntilSignedIn),
+            (ErrorCode::TooManyDevices, StopUntilSignedIn),
             (ErrorCode::RecoveryRejected, StopUntilSignedIn),
+            (ErrorCode::KeyChanged, TryAgainLater),
+            (ErrorCode::DevicesChanged, TryAgainLater),
             (ErrorCode::UnsupportedProtocol, UpdateTheApp),
             (ErrorCode::InvalidRequest, UpdateTheApp),
             (ErrorCode::PayloadTooLarge, UpdateTheApp),

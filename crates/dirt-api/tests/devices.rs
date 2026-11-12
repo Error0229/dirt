@@ -265,6 +265,188 @@ async fn an_account_may_have_only_so_many_devices_waiting(pool: PgPool) {
     assert_eq!(answer.code(), "too_many_pending_devices");
 }
 
+async fn approve(pool: &PgPool, device: uuid::Uuid) {
+    sqlx::query("UPDATE devices SET status = 'approved' WHERE id = $1")
+        .bind(device)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn remove(app: &axum::Router, token: &str, device: uuid::Uuid) {
+    let path = format!("/v1/devices/{device}");
+    let answer = call(app, Method::DELETE, &path, Some(token), None).await;
+    assert_eq!(answer.status, StatusCode::OK);
+}
+
+async fn device_rows(pool: &PgPool, status: &str) -> i64 {
+    let (rows,): (i64,) = sqlx::query_as("SELECT count(*) FROM devices WHERE status = $1")
+        .bind(status)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    rows
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn an_account_may_have_only_so_many_devices(pool: PgPool) {
+    let app = app(pool.clone());
+    let first = register(&app, "alice", "First").await;
+    let mut last = first.device_id;
+    for index in 1..limits::MAX_DEVICES_PER_ACCOUNT {
+        let device = register(&app, "alice", &format!("Device {index}")).await;
+        approve(&pool, device.device_id).await;
+        last = device.device_id;
+    }
+
+    let answer = try_register(&app, "alice", "One too many").await;
+    assert_eq!(answer.status, StatusCode::CONFLICT);
+    assert_eq!(answer.code(), "too_many_devices");
+    // The refusal is the account's alone.
+    register(&app, "bob", "Bob's first").await;
+
+    // A device that is removed gives up its place.
+    remove(&app, &first.token, last).await;
+    let device = register(&app, "alice", "In its place").await;
+    assert_eq!(device.status, DeviceStatus::Pending);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_waiting_device_holds_a_place_too(pool: PgPool) {
+    let app = app(pool.clone());
+    register(&app, "alice", "First").await;
+    let waiting = limits::MAX_PENDING_DEVICES;
+    for index in 1..limits::MAX_DEVICES_PER_ACCOUNT - waiting {
+        let device = register(&app, "alice", &format!("Device {index}")).await;
+        approve(&pool, device.device_id).await;
+    }
+    for index in 0..waiting {
+        register(&app, "alice", &format!("Waiting {index}")).await;
+    }
+    // The requests lapse without being answered. They no longer count as
+    // waiting, but each can still be renewed, so each keeps its place.
+    sqlx::query(
+        "UPDATE devices SET created_at = now() - interval '8 days' WHERE status = 'pending'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let answer = try_register(&app, "alice", "One too many").await;
+    assert_eq!(answer.code(), "too_many_devices");
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_removed_device_is_forgotten_after_a_while(pool: PgPool) {
+    let app = app(pool.clone());
+    let laptop = register(&app, "alice", "Laptop").await;
+    let long_ago = register(&app, "alice", "Removed long ago").await;
+    let lately = register(&app, "alice", "Removed lately").await;
+    for device in [&long_ago, &lately] {
+        approve(&pool, device.device_id).await;
+        remove(&app, &laptop.token, device.device_id).await;
+    }
+    // Another account removed a device as long ago.
+    let bob = register(&app, "bob", "Bob's laptop").await;
+    let bobs = register(&app, "bob", "Bob's old phone").await;
+    remove(&app, &bob.token, bobs.device_id).await;
+    // The time of removal is moved back from where the server set it, so
+    // that this fails if the server did not record it.
+    sqlx::query(
+        "UPDATE devices SET revoked_at = revoked_at - make_interval(days => $3) \
+          WHERE id IN ($1, $2)",
+    )
+    .bind(long_ago.device_id)
+    .bind(bobs.device_id)
+    .bind(i32::try_from(limits::REMOVED_DEVICE_DAYS).unwrap() + 1)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Nothing is forgotten until a device registers.
+    assert_eq!(device_rows(&pool, "revoked").await, 3);
+
+    register(&app, "alice", "Phone").await;
+
+    // An account tidies up after itself only: Bob's is still remembered.
+    assert_eq!(device_rows(&pool, "revoked").await, 2);
+    let answer = get(&app, "/v1/devices/me", Some(&bobs.token)).await;
+    assert_eq!(answer.code(), "device_revoked");
+    // The one removed lately is still told why it is refused.
+    let answer = get(&app, "/v1/devices/me", Some(&lately.token)).await;
+    assert_eq!(answer.code(), "device_revoked");
+    // The other's token is unknown now. Either way it has to sign in again.
+    let answer = get(&app, "/v1/devices/me", Some(&long_ago.token)).await;
+    assert_eq!(answer.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(answer.code(), "unauthenticated");
+    // And it comes back as a new device, not as the one it was.
+    let again = sign_in_again(&app, "alice", "Back", vec![7; 32], &long_ago.token).await;
+    assert_ne!(again.device_id, long_ago.device_id);
+    assert_eq!(again.status, DeviceStatus::Pending);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_request_to_join_that_lapsed_long_ago_is_forgotten(pool: PgPool) {
+    let app = app(pool.clone());
+    register(&app, "alice", "Laptop").await;
+    let lapsed = register(&app, "alice", "Lapsed").await;
+    let asked_for_a_reset = register(&app, "alice", "Asked for a reset").await;
+    let waiting = register(&app, "alice", "Still waiting").await;
+    sqlx::query(
+        "UPDATE devices SET created_at = now() - make_interval(days => $3) WHERE id IN ($1, $2)",
+    )
+    .bind(lapsed.device_id)
+    .bind(asked_for_a_reset.device_id)
+    .bind(i32::try_from(limits::REMOVED_DEVICE_DAYS).unwrap() + 1)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // A device that asked for the account to be reset has to be able to
+    // come back when the wait is over, however long ago it asked to join.
+    sqlx::query("UPDATE accounts SET reset_requested_at = now(), reset_requested_by = $1")
+        .bind(asked_for_a_reset.device_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    register(&app, "alice", "Phone").await;
+
+    let left: Vec<(uuid::Uuid,)> =
+        sqlx::query_as("SELECT id FROM devices WHERE status = 'pending' ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let left: Vec<uuid::Uuid> = left.into_iter().map(|(id,)| id).collect();
+    assert!(!left.contains(&lapsed.device_id));
+    assert!(left.contains(&asked_for_a_reset.device_id));
+    assert!(left.contains(&waiting.device_id));
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn only_so_many_removed_devices_are_remembered(pool: PgPool) {
+    let app = app(pool.clone());
+    register(&app, "alice", "Laptop").await;
+    // A device signs in and out, over and over. Signing out of a waiting
+    // device removes it.
+    let mut removed = Vec::new();
+    for index in 0..limits::MAX_REMOVED_DEVICES + 3 {
+        let device = register(&app, "alice", &format!("Visit {index}")).await;
+        remove(&app, &device.token, device.device_id).await;
+        removed.push(device);
+    }
+
+    register(&app, "alice", "Phone").await;
+
+    assert_eq!(
+        device_rows(&pool, "revoked").await,
+        limits::MAX_REMOVED_DEVICES
+    );
+    // The oldest went first.
+    let oldest = get(&app, "/v1/devices/me", Some(&removed[0].token)).await;
+    assert_eq!(oldest.code(), "unauthenticated");
+    let newest = get(&app, "/v1/devices/me", Some(&removed.last().unwrap().token)).await;
+    assert_eq!(newest.code(), "device_revoked");
+}
+
 // ---- Device rights ----
 
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]

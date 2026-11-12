@@ -35,7 +35,7 @@ A client acts on the code's class and nothing else.
 | Class | Codes | What the client does |
 |---|---|---|
 | Try again later | `server_error`, `rate_limited`, `key_changed`, `devices_changed` | Back off and retry; show as offline. The last two a device puts right itself and then asks again: see "Changing the account's key" |
-| Stop until signed in | `unauthenticated`, `device_revoked`, `device_expired`, `device_pending`, `sign_in_rejected`, `too_many_pending_devices`, `recovery_rejected` | Stop syncing. Local notes are untouched |
+| Stop until signed in | `unauthenticated`, `device_revoked`, `device_expired`, `device_pending`, `sign_in_rejected`, `too_many_pending_devices`, `too_many_devices`, `recovery_rejected` | Stop syncing. Local notes are untouched |
 | Update the app | `unsupported_protocol`, `invalid_request`, `payload_too_large` | Stop. Never overwrite what this version cannot read |
 | Problem with one note | `not_found`, `note_too_large`, `quota_exceeded` | Flag that note and keep syncing the rest |
 
@@ -82,7 +82,17 @@ nonce. It then spends the nonce.
 - The first device an account ever has is `approved` and has
   `first_device: true`: it must create the account key. Every later device is
   `pending` until an approved device hands it the key.
-- An account may have three devices pending at a time.
+- An account may have three devices pending at a time. A fourth is refused
+  with `too_many_pending_devices`.
+- An account may have 20 devices, counting every one that has not been
+  removed. The next is refused with `too_many_devices` until one is removed.
+
+Registering is also when the server forgets what the account no longer needs:
+a device removed more than 30 days ago, a request to join that was made more
+than 30 days ago and never answered, and the oldest removed devices past 20.
+A device forgotten this way is answered `unauthenticated` where it was
+answered `device_revoked` or `device_expired`. Either way it signs in again
+and is let in as a new device.
 
 A device whose token expired signs in again with one more field,
 `"previous_token": "…"`, holding the token it had. If the account has a
@@ -133,6 +143,8 @@ An approved device may remove any device of its account. A pending device may
 remove only itself, which is what signing out of it does.
 
 Removing a device ends its approval exchange and any reset it asked for.
+The device stays in the list, marked `revoked`, until the server forgets it
+(see `POST /v1/devices`).
 
 ### The approval exchange
 
@@ -299,6 +311,11 @@ While a key version is the account's present one:
 Removing a device removes its wrapped copies. A reset starts the versions
 again at 1.
 
+The server keeps the copies of the 100 latest versions for each device. A
+device opens the copies it missed one after another, so one that was away
+through more than 100 changes of the key finds the copy that follows its own
+key gone. It can no longer follow, and is let in again as a new device.
+
 ### `POST /v1/notes/push`
 
 ```json
@@ -356,6 +373,8 @@ stored under an older one. `GET /v1/devices/me` reports `key_version` too.
 
 ## Limits
 
+`docs/LIMITS.md` gives the reason for each number and what was measured.
+
 | Limit | Value |
 |---|---|
 | One note's blob | 1 MiB |
@@ -365,6 +384,10 @@ stored under an older one. `GET /v1/devices/me` reports `key_version` too.
 | Blobs per account | 50 MiB |
 | Requests per account | 600 in ten minutes |
 | Devices waiting for approval | 3 per account |
+| Devices, removed ones not counted | 20 per account |
+| A removed device, or an unanswered request to join | forgotten after 30 days |
+| Removed devices remembered | 20 per account |
+| Copies of later account keys kept for a device | the 100 latest versions |
 | A request to join | lapses after 7 days |
 | Messages in one approval exchange | 32, of 1 KiB each |
 | An encrypted copy of the account key | 256 bytes |

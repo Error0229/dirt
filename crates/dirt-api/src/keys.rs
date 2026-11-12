@@ -141,6 +141,19 @@ pub async fn change(
         .execute(&mut *tx)
         .await?;
     }
+    // A device opens the copies it missed one after another, so a copy is
+    // of use only with every copy before it. Those too far back to be
+    // reached are dropped, which bounds what an account's key changes can
+    // leave behind. A device that far behind is let in again as a new one.
+    sqlx::query(
+        "DELETE FROM device_keys \
+          WHERE key_version <= $2 \
+            AND device_id IN (SELECT id FROM devices WHERE account_id = $1)",
+    )
+    .bind(device.account_id)
+    .bind(next - limits::MAX_KEPT_KEY_VERSIONS)
+    .execute(&mut *tx)
+    .await?;
     // Every note the server holds is now under an older key.
     let (old_key_notes,): (i64,) = sqlx::query_as(
         "UPDATE accounts \
