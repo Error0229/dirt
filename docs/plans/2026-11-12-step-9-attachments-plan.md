@@ -269,6 +269,15 @@ What review showed:
   turn: either the file is kept, with its object, or it is gone, with its
   object; never a row without one. Found in review.
 
+- **An upload could arrive after its file had been swept,** and leave an
+  object that nothing remembered. A link works for fifteen minutes and the
+  storage knows nothing of the server's rows. With the locking above, a
+  sweep could still take a file's row and its place in the queue while a
+  link for it was good. An object now waits an hour in the queue before it
+  is deleted, which is four times the life of a link. A test issues links,
+  resets the account, sweeps, and then uploads: the objects are still
+  queued, and go when the hour is over. Found in the second review.
+
 Not tried: Cloudflare R2 itself. Everything above ran against the gateway.
 
 ### 9b: the core

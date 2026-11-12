@@ -175,6 +175,7 @@ free allowance is paid for, so they are also the owner's to change
 | A file no note refers to | deleted after 30 days | A device that was away with an unsent edit to a purged note keeps the note's text as a new note, and its files with it. The files have to be there still |
 | An upload link | 15 minutes | Time to send 10 MiB on a slow connection. It is for one object of one exact size |
 | A download link | 5 minutes | A device asks for one each time it needs a file it does not hold |
+| An object whose row has gone | deleted an hour later | Four times the life of an upload link. A link issued just before the row went can still be used, and an upload that arrived after the object was deleted would put it back with nothing to remember it by |
 
 ### Sizes fixed by a format
 

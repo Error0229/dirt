@@ -149,6 +149,15 @@ async fn make_due(pool: &PgPool, file: Uuid) {
         .unwrap();
 }
 
+/// Lets the objects waiting to be deleted have waited long enough: an hour,
+/// so that no upload link for one of them can still be in use.
+async fn the_wait_is_over(pool: &PgPool) {
+    sqlx::query("UPDATE orphan_objects SET created_at = created_at - interval '2 hours'")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 async fn sweep_all(app: &Router) -> Answer {
     call(
         app,
@@ -475,8 +484,8 @@ async fn a_note_refers_to_only_so_many_files(pool: PgPool) {
 }
 
 /// What is due goes when the account next asks for a link, and once a day
-/// for every account. The object goes from the store and the space comes
-/// back to the account.
+/// for every account. The row goes and the space comes back at once; the
+/// object goes from the store an hour later.
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
 async fn what_is_due_is_deleted_from_the_store(pool: PgPool) {
     file_bucket().await;
@@ -491,27 +500,40 @@ async fn what_is_due_is_deleted_from_the_store(pool: PgPool) {
     assert_eq!(file_bytes(&pool, alice.account_id).await, 13);
     make_due(&pool, abandoned).await;
     make_due(&pool, bobs).await;
-    assert_eq!(stored(&alice, abandoned).await, Some(9));
 
-    // Alice asks for another link. Her due file goes; Bob's is not hers to
-    // sweep, and her kept file is not due.
+    // Alice asks for another link. Her due file is no longer hers; Bob's
+    // is not hers to sweep, and her kept file is not due.
     ask_to_upload(&app, &alice.token, Uuid::now_v7(), 1).await;
 
-    assert_eq!(stored(&alice, abandoned).await, None);
     assert_eq!(row(&pool, abandoned).await, None);
     assert_eq!(file_bytes(&pool, alice.account_id).await, 4 + 1);
-    assert_eq!(stored(&alice, kept).await, Some(4));
-    assert_eq!(stored(&bob, bobs).await, Some(16));
+    assert!(row(&pool, bobs).await.is_some());
     // A link to a file that has gone is no longer given.
     let answer = get(&app, &format!("/v1/files/{abandoned}"), Some(&alice.token)).await;
     assert_eq!(answer.status, StatusCode::NOT_FOUND);
+    // Its object waits, and asking again does not hurry it.
+    assert_eq!(stored(&alice, abandoned).await, Some(9));
+    ask_to_upload(&app, &alice.token, Uuid::now_v7(), 1).await;
+    assert_eq!(stored(&alice, abandoned).await, Some(9));
 
-    // The daily request does it for everyone.
+    // An hour on, her next request for a link deletes it.
+    the_wait_is_over(&pool).await;
+    ask_to_upload(&app, &alice.token, Uuid::now_v7(), 1).await;
+    assert_eq!(stored(&alice, abandoned).await, None);
+    assert_eq!(stored(&alice, kept).await, Some(4));
+    assert_eq!(queued(&pool).await, 0);
+
+    // The daily request does it for everyone: Bob's row today, and his
+    // object the day after.
     let answer = sweep_all(&app).await;
     assert_eq!(answer.status, StatusCode::OK);
-    assert_eq!(answer.body["deleted"], 1);
-    assert_eq!(stored(&bob, bobs).await, None);
+    assert_eq!(answer.body["deleted"], 0);
+    assert_eq!(row(&pool, bobs).await, None);
     assert_eq!(file_bytes(&pool, bob.account_id).await, 0);
+    assert_eq!(stored(&bob, bobs).await, Some(16));
+    the_wait_is_over(&pool).await;
+    assert_eq!(sweep_all(&app).await.body["deleted"], 1);
+    assert_eq!(stored(&bob, bobs).await, None);
     assert_eq!(stored(&alice, kept).await, Some(4));
 }
 
@@ -573,18 +595,21 @@ async fn an_account_that_is_deleted_or_reset_takes_its_files_with_it(pool: PgPoo
     // The objects are still in the store, and remembered.
     assert_eq!(stored(&alice, alices).await, Some(7));
     assert_eq!(stored(&bob, bobs).await, Some(5));
-    // Another account asking for a link deletes what it has waiting, which
-    // is nothing. These are not its objects.
     let carol = register(&app, "carol", "Laptop").await;
-    ask_to_upload(&app, &carol.token, Uuid::now_v7(), 1).await;
-    assert_eq!(stored(&alice, alices).await, Some(7));
-    assert_eq!(stored(&bob, bobs).await, Some(5));
     let (queued,): (i64,) = sqlx::query_as("SELECT count(*) FROM orphan_objects")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(queued, 2);
+    // Not at once: see the test of a late upload.
+    assert_eq!(sweep_all(&app).await.body["deleted"], 0);
 
+    the_wait_is_over(&pool).await;
+    // Another account asking for a link deletes what it has waiting, which
+    // is nothing. These are not its objects.
+    ask_to_upload(&app, &carol.token, Uuid::now_v7(), 1).await;
+    assert_eq!(stored(&alice, alices).await, Some(7));
+    assert_eq!(stored(&bob, bobs).await, Some(5));
     let answer = sweep_all(&app).await;
     assert_eq!(answer.body["deleted"], 2);
     assert_eq!(stored(&alice, alices).await, None);
@@ -729,6 +754,7 @@ async fn a_store_that_cannot_be_reached_delays_a_deletion_and_loses_none(pool: P
     // Its object is still in the store, and remembered.
     assert_eq!(stored(&device, abandoned).await, Some(9));
     assert_eq!(queued(&pool).await, 1);
+    the_wait_is_over(&pool).await;
     let answer = sweep_all(&cut_off).await;
     assert_eq!(answer.body["deleted"], 0);
     assert_eq!(queued(&pool).await, 1);
@@ -748,7 +774,7 @@ async fn a_store_that_cannot_be_reached_delays_a_deletion_and_loses_none(pool: P
         Some(false)
     );
 
-    // With the store back, the object goes.
+    // With the store back, and the hour over, the object goes.
     assert_eq!(sweep_all(&app).await.body["deleted"], 1);
     assert_eq!(stored(&device, abandoned).await, None);
     assert_eq!(queued(&pool).await, 0);
@@ -758,59 +784,11 @@ async fn a_store_that_cannot_be_reached_delays_a_deletion_and_loses_none(pool: P
 /// A file's ID is its place in the store. After a reset, the device that
 /// remains sends its files again under the IDs its notes name, to the very
 /// places whose old objects are waiting to be deleted. That deletion must
-/// not take the new upload.
-///
-/// Asking for a link deletes what the account has waiting, so as a rule
-/// the old object is gone before the new one arrives.
-#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
-async fn a_file_sent_again_after_a_reset_is_not_deleted_as_the_old_one(pool: PgPool) {
-    file_bucket().await;
-    let app = app(pool.clone());
-    let device = register(&app, "alice", "Laptop").await;
-    let token = &device.token;
-    let note = a_note(&app, token).await;
-    let bytes = b"the same file, before and after";
-    let file = Uuid::now_v7();
-    let link: UploadLink = ask_to_upload(&app, token, file, bytes.len()).await.json();
-    assert!(put(&link.url, bytes).await.is_success());
-    confirm(&app, token, file, note).await;
-
-    let reset = post(&app, "/v1/account/reset", Some(token), json!({})).await;
-    assert_eq!(reset.status, StatusCode::OK);
-    assert_eq!(queued(&pool).await, 1);
-
-    // The device sends its note and the file again.
-    let note = a_note(&app, token).await;
-    let link: UploadLink = ask_to_upload(&app, token, file, bytes.len()).await.json();
-    assert_eq!(queued(&pool).await, 0);
-    assert_eq!(
-        stored(&device, file).await,
-        None,
-        "the old object went first"
-    );
-    assert_eq!(
-        confirm(&app, token, file, note).await,
-        FileOutcome::NotUploaded
-    );
-    assert!(put(&link.url, bytes).await.is_success());
-    assert_eq!(confirm(&app, token, file, note).await, FileOutcome::Done);
-
-    // Nothing is left that could delete it.
-    assert_eq!(sweep_all(&app).await.body["deleted"], 0);
-    assert_eq!(fetch(&app, token, file).await.unwrap(), bytes);
-    assert_eq!(row(&pool, file).await, Some((true, None)));
-}
-
-/// The case the rule above does not cover: the old object could not be
-/// deleted before the file was asked for again, because the store could
-/// not be reached just then. Its deletion is called off, so that it cannot
-/// happen later, after the device has sent the file again or found it
-/// still there.
+/// not take the file. Asking for the file again calls it off.
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
 async fn a_file_asked_for_again_calls_off_the_deletion_of_its_old_object(pool: PgPool) {
     file_bucket().await;
     let app = app(pool.clone());
-    let cut_off = app_with_no_store_listening(pool.clone());
     let device = register(&app, "alice", "Laptop").await;
     let token = &device.token;
     let note = a_note(&app, token).await;
@@ -824,23 +802,69 @@ async fn a_file_asked_for_again_calls_off_the_deletion_of_its_old_object(pool: P
     assert_eq!(queued(&pool).await, 2);
     let note = a_note(&app, token).await;
 
-    // The device asks again while the store cannot be reached. Nothing
-    // can be deleted, and the link is signed all the same.
+    // The device sends its note again and asks to send the file again.
     assert_eq!(
-        ask_to_upload(&cut_off, token, file, 16).await.status,
+        ask_to_upload(&app, token, file, 16).await.status,
         StatusCode::OK
     );
     // The deletion of this file's object is called off. The other's is not.
     assert_eq!(queued(&pool).await, 1);
-
-    // The store is back. The object that was there is the file, byte for
-    // byte, since a file never changes: it is confirmed as it stands.
+    // The object that is there is the file, byte for byte, since a file
+    // never changes. It can be confirmed as it stands.
     assert_eq!(confirm(&app, token, file, note).await, FileOutcome::Done);
+
+    the_wait_is_over(&pool).await;
     assert_eq!(sweep_all(&app).await.body["deleted"], 1);
 
     assert_eq!(fetch(&app, token, file).await.unwrap(), b"wanted after all");
     assert_eq!(row(&pool, file).await, Some((true, None)));
     assert_eq!(stored(&device, other).await, None);
+    assert_eq!(queued(&pool).await, 0);
+}
+
+/// A link works for a quarter of an hour, and the store knows nothing of
+/// the server's rows. A device is given a link; the account is reset before
+/// it uses it; the sweep runs; and then the upload arrives. If the object's
+/// place in the queue had gone with that sweep, the upload would leave an
+/// object that nothing remembers. It waits an hour, by which time no link
+/// for it can work.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn an_upload_that_arrives_after_its_file_was_swept_is_still_deleted(pool: PgPool) {
+    file_bucket().await;
+    let app = app(pool.clone());
+    let device = register(&app, "alice", "Laptop").await;
+    let token = &device.token;
+    let file = Uuid::now_v7();
+    let link: UploadLink = ask_to_upload(&app, token, file, 4).await.json();
+    let never_confirmed = Uuid::now_v7();
+    let late: UploadLink = ask_to_upload(&app, token, never_confirmed, 9).await.json();
+
+    let reset = post(&app, "/v1/account/reset", Some(token), json!({})).await;
+    assert_eq!(reset.status, StatusCode::OK);
+    // The same for a file that simply fell due.
+    let second = register(&app, "bob", "Laptop").await;
+    let due = Uuid::now_v7();
+    let due_link: UploadLink = ask_to_upload(&app, &second.token, due, 3).await.json();
+    make_due(&pool, due).await;
+
+    // The sweep runs before any of the uploads.
+    assert_eq!(sweep_all(&app).await.body["deleted"], 0);
+    assert_eq!(queued(&pool).await, 3);
+
+    // The uploads arrive. The store takes them: the links are good.
+    assert!(put(&link.url, b"late").await.is_success());
+    assert!(put(&late.url, b"very late").await.is_success());
+    assert!(put(&due_link.url, b"due").await.is_success());
+    assert_eq!(stored(&device, file).await, Some(4));
+    // Sweeping again, inside the hour, still leaves them queued.
+    assert_eq!(sweep_all(&app).await.body["deleted"], 0);
+    assert_eq!(queued(&pool).await, 3);
+
+    the_wait_is_over(&pool).await;
+    assert_eq!(sweep_all(&app).await.body["deleted"], 3);
+    assert_eq!(stored(&device, file).await, None);
+    assert_eq!(stored(&device, never_confirmed).await, None);
+    assert_eq!(stored(&second, due).await, None);
     assert_eq!(queued(&pool).await, 0);
 }
 
@@ -887,6 +911,7 @@ async fn confirming_a_file_while_it_is_swept_never_leaves_a_row_without_an_objec
         );
 
         // Whatever is left to delete is deleted before looking.
+        the_wait_is_over(&pool).await;
         sweep_all(&app).await;
         let outcome = confirmed.json::<FileResults>().results.remove(0).outcome;
         match (outcome, row(&pool, file).await) {

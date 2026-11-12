@@ -47,6 +47,17 @@ use crate::{ApiJson, AppState};
 const SWEEP_WITH_UPLOAD: i64 = 20;
 /// How many the daily request deletes.
 const SWEEP_DAILY: i64 = 500;
+/// How long an object waits in the queue before it is deleted from the
+/// storage.
+///
+/// A link to upload it may have been issued just before its row went, and
+/// a device may still be sending through it. The storage knows nothing of
+/// the queue: an upload that finished after the object was deleted would
+/// put it back, with no row and no place in the queue to say it is there.
+/// So the object is deleted only when no link for it can still work and no
+/// upload begun under one can still be running: four times the life of a
+/// link.
+const OBJECT_WAIT_SECS: u32 = 4 * limits::UPLOAD_LINK_SECS;
 
 fn days(count: i64) -> i32 {
     i32::try_from(count).unwrap_or(i32::MAX)
@@ -458,10 +469,10 @@ pub async fn orphan_account(
 ///    in one transaction. From here on the server says the file is gone,
 ///    which is true whether or not step 2 has happened.
 /// 2. A queued object is deleted from the storage, and then its place in
-///    the queue. If the storage cannot be reached the key stays queued and
-///    is tried again. If the transaction fails after the object has gone,
-///    the key is still queued, and deleting an object that is not there
-///    succeeds.
+///    the queue, once it has waited an hour (see [`OBJECT_WAIT_SECS`]). If
+///    the storage cannot be reached the key stays queued and is tried
+///    again. If the transaction fails after the object has gone, the key
+///    is still queued, and deleting an object that is not there succeeds.
 ///
 /// Both steps hold the account's lock. A device that asks to upload the
 /// same file again takes the key out of the queue (see [`upload`]), under
@@ -516,11 +527,13 @@ pub async fn sweep(
     let prefix = account.map(|account| format!("{account}/"));
     let orphans: Vec<(String,)> = sqlx::query_as(
         "SELECT object_key FROM orphan_objects \
-          WHERE $1::text IS NULL OR starts_with(object_key, $1) \
+          WHERE ($1::text IS NULL OR starts_with(object_key, $1)) \
+            AND created_at < now() - make_interval(secs => $3) \
           ORDER BY created_at LIMIT $2",
     )
     .bind(&prefix)
     .bind(limit)
+    .bind(f64::from(OBJECT_WAIT_SECS))
     .fetch_all(pool)
     .await?;
     let mut deleted = 0;

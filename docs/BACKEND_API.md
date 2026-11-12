@@ -495,8 +495,16 @@ day, in two steps:
 1. The file's row is removed and its object queued, together. From then on
    the server says the file is gone: `not_found` for a download link,
    `no_such_file` for a confirm.
-2. The queued object is deleted from the storage. If the storage cannot be
-   reached, it stays queued and is tried again.
+2. The queued object is deleted from the storage, an hour or more after it
+   was queued. If the storage cannot be reached, it stays queued and is
+   tried again.
+
+The hour is for upload links. One may have been issued just before the row
+went, and a link works for fifteen minutes. The storage knows nothing of
+the server's rows, so an upload that arrived after the object had been
+deleted would put it back with nothing to say it was there. After an hour
+no link for the object can work and no upload begun under one can still be
+running.
 
 So the server never says a file is there when its object is gone, and a
 storage that cannot be reached delays a deletion and loses none. Deleting
