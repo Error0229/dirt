@@ -256,12 +256,17 @@ pub async fn me(
     .bind(device.id)
     .fetch_one(&state.pool)
     .await?;
-    let (approvers, recovery_available, reset_effective_at_ms): (i64, bool, Option<i64>) =
-        sqlx::query_as(
+    let (approvers, recovery_available, reset_effective_at_ms, key_version): (
+        i64,
+        bool,
+        Option<i64>,
+        i32,
+    ) = sqlx::query_as(
             "SELECT (SELECT count(*) FROM devices \
                       WHERE account_id = a.id AND status = 'approved' AND id <> $2), \
                     EXISTS (SELECT 1 FROM recovery_keys WHERE account_id = a.id), \
-                    (extract(epoch FROM a.reset_requested_at + make_interval(days => $3)) * 1000)::bigint \
+                    (extract(epoch FROM a.reset_requested_at + make_interval(days => $3)) * 1000)::bigint, \
+                    a.key_version \
                FROM accounts a WHERE a.id = $1",
         )
         .bind(device.account_id)
@@ -274,6 +279,7 @@ pub async fn me(
         approvers: u32::try_from(approvers).unwrap_or(u32::MAX),
         recovery_available,
         reset_effective_at_ms,
+        key_version,
     }))
 }
 
@@ -336,6 +342,11 @@ pub async fn revoke(
         .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM enrolment_keys WHERE device_id = $1")
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
+    // Its wrapped copies of the account's keys are of no more use to it.
+    sqlx::query("DELETE FROM device_keys WHERE device_id = $1")
         .bind(target)
         .execute(&mut *tx)
         .await?;
