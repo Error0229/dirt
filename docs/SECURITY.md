@@ -52,6 +52,14 @@ are inside the ciphertext. It cannot tell a deleted note from a live one,
 until a device asks for the note to be purged thirty days after it was
 deleted: the server then knows that it was.
 
+**Files.** A file attached to a note is encrypted on the device with a key
+of its own, which is kept inside the note's document. The server and the
+storage see neither the key, nor the file's name or type, nor its
+contents. The server does see that a file exists, how large it is, and
+which notes refer to it, because devices have to tell it that for files to
+be cleaned up. So it knows how many files each note has. (No client
+attaches files yet: step 9 of the redesign.)
+
 **Backups.** The operator keeps dumps of the server's database for about
 thirty days. A dump holds what the server holds, so it holds no note that
 anyone but the account's devices can read. It is encrypted to a key the

@@ -207,7 +207,7 @@ much for each account that fills itself.
 
 **The owner does:** opens the R2 account, makes a bucket and a token
 limited to it, and gives the trial server the bucket's address and the
-token. `docs/DEPLOY.md` will list the settings when part 9a is built.
+token. `docs/DEPLOY.md` lists the settings.
 
 **Until then:** attachments are built and tested against a store on the
 developer's machine that speaks the same protocol. They cannot be tried on

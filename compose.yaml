@@ -1,10 +1,25 @@
-# Postgres for the server's tests and for running `dirt-api` locally.
-# Version 18 matches the Neon project.
+# What the server needs around it, for its tests and for running `dirt-api`
+# locally: Postgres, and object storage for files.
 #
 #   docker compose up -d
 #   export DATABASE_URL=postgres://postgres:dirt@127.0.0.1:55432/postgres
 #   cargo test -p dirt-api
+#
+# Postgres 18 matches the Neon project. The file store speaks the S3
+# protocol, as Cloudflare R2 does in production; the server's tests find it
+# at 127.0.0.1:59000 without being told (`FilesConfig::local`).
 services:
+  files:
+    # Pinned to the build the tests were written against.
+    image: versity/versitygw@sha256:8319a530d08d537426e2f855bae5280709795dc73a3f0c347973ef915d6343c5
+    environment:
+      ROOT_ACCESS_KEY: dirt
+      ROOT_SECRET_KEY: dirt-local-files
+      VGW_BACKEND: posix
+      # Kept in the container: the tests' files are of no use afterwards.
+      VGW_BACKEND_ARG: /tmp
+    ports:
+      - "127.0.0.1:59000:7070"
   postgres:
     image: postgres:18
     environment:

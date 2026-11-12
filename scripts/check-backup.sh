@@ -35,9 +35,9 @@ MIGRATE_DATABASE_URL="$server/$source_db" cargo run --quiet -p dirt-api -- migra
 psql --no-psqlrc --quiet --set ON_ERROR_STOP=1 --dbname="$server/$source_db" <<'SQL'
 INSERT INTO accounts (id, clerk_issuer, clerk_user_id, email, change_counter, epoch,
                       key_version, key_established, note_count, bytes_used, old_key_notes,
-                      purged_count)
+                      purged_count, file_bytes)
 VALUES ('01932aaa-0000-7000-8000-000000000001', 'https://issuer.example', 'user_1',
-        'someone@example.com', 4, 2, 2, true, 3, 300007, 1, 1);
+        'someone@example.com', 4, 2, 2, true, 3, 300007, 1, 1, 77);
 INSERT INTO devices (id, account_id, name, public_key, token_hash, status, revoked_at)
 VALUES ('01932aaa-0000-7000-8000-000000000011', '01932aaa-0000-7000-8000-000000000001',
         'Laptop', decode(repeat('07', 32), 'hex'), '\x01', 'approved', NULL),
@@ -61,6 +61,15 @@ INSERT INTO enrolment_keys (device_id, approver_id, key_version, wrapped)
 VALUES ('01932aaa-0000-7000-8000-000000000012', '01932aaa-0000-7000-8000-000000000011', 2, '\x44');
 INSERT INTO recovery_keys (account_id, key_version, wrapped, claim_hash)
 VALUES ('01932aaa-0000-7000-8000-000000000001', 2, '\x55', decode(repeat('66', 32), 'hex'));
+-- A file one note refers to, and one that is due to be deleted. The
+-- objects themselves are in the file storage, which a dump does not hold.
+INSERT INTO files (account_id, file_id, size, confirmed, delete_after)
+VALUES ('01932aaa-0000-7000-8000-000000000001', '01932aaa-0000-7000-8000-000000000031', 70, true, NULL),
+       ('01932aaa-0000-7000-8000-000000000001', '01932aaa-0000-7000-8000-000000000032', 7, false, now());
+INSERT INTO file_notes (account_id, file_id, note_id)
+VALUES ('01932aaa-0000-7000-8000-000000000001', '01932aaa-0000-7000-8000-000000000031',
+        '01932aaa-0000-7000-8000-000000000021');
+INSERT INTO orphan_objects (object_key) VALUES ('an-account-that-is-gone/a-file');
 INSERT INTO nonces (nonce_hash, expires_at) VALUES ('\x77', now());
 INSERT INTO request_counts (account_id, window_start, requests)
 VALUES ('01932aaa-0000-7000-8000-000000000001', now(), 5);
@@ -98,13 +107,16 @@ RESTORE_DATABASE_URL="$server/$target_db" BACKUP_AGE_IDENTITY="$work/key.txt" \
 contents="
   SELECT 'accounts', md5(string_agg(md5(row(id, clerk_issuer, clerk_user_id, email, change_counter,
            key_version, key_established, note_count, bytes_used, old_key_notes, purged_count,
-           reset_requested_at, reset_requested_by, created_at)::text), '' ORDER BY id)) FROM accounts
+           file_bytes, reset_requested_at, reset_requested_by, created_at)::text), '' ORDER BY id)) FROM accounts
   UNION ALL SELECT 'devices', md5(string_agg(md5(d::text), '' ORDER BY id)) FROM devices d
   UNION ALL SELECT 'notes', md5(string_agg(md5(n::text), '' ORDER BY note_id)) FROM notes n
   UNION ALL SELECT 'device_keys', md5(string_agg(md5(k::text), '' ORDER BY device_id, key_version)) FROM device_keys k
   UNION ALL SELECT 'enrolment_messages', md5(string_agg(md5(m::text), '' ORDER BY device_id, seq)) FROM enrolment_messages m
   UNION ALL SELECT 'enrolment_keys', md5(string_agg(md5(e::text), '' ORDER BY device_id)) FROM enrolment_keys e
   UNION ALL SELECT 'recovery_keys', md5(string_agg(md5(r::text), '' ORDER BY account_id)) FROM recovery_keys r
+  UNION ALL SELECT 'files', md5(string_agg(md5(f::text), '' ORDER BY file_id)) FROM files f
+  UNION ALL SELECT 'file_notes', md5(string_agg(md5(n::text), '' ORDER BY file_id, note_id)) FROM file_notes n
+  UNION ALL SELECT 'orphan_objects', md5(string_agg(md5(o::text), '' ORDER BY object_key)) FROM orphan_objects o
   UNION ALL SELECT 'migrations', md5(string_agg(version::text || encode(checksum, 'hex'), '' ORDER BY version)) FROM _sqlx_migrations
   ORDER BY 1"
 before="$(in_db "$source_db" "$contents")"

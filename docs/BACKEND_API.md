@@ -34,10 +34,10 @@ A client acts on the code's class and nothing else.
 
 | Class | Codes | What the client does |
 |---|---|---|
-| Try again later | `server_error`, `rate_limited`, `key_changed`, `devices_changed` | Back off and retry; show as offline. The last two a device puts right itself and then asks again: see "Changing the account's key" |
+| Try again later | `server_error`, `rate_limited`, `key_changed`, `devices_changed`, `files_unavailable` | Back off and retry; show as offline. `key_changed` and `devices_changed` a device puts right itself and then asks again: see "Changing the account's key". `files_unavailable` concerns files only: notes go on syncing |
 | Stop until signed in | `unauthenticated`, `device_revoked`, `device_expired`, `device_pending`, `sign_in_rejected`, `too_many_pending_devices`, `too_many_devices`, `recovery_rejected` | Stop syncing. Local notes are untouched |
 | Update the app | `unsupported_protocol`, `invalid_request`, `payload_too_large` | Stop. Never overwrite what this version cannot read |
-| Problem with one note | `not_found`, `note_too_large`, `quota_exceeded` | Flag that note and keep syncing the rest |
+| Problem with one note | `not_found`, `note_too_large`, `quota_exceeded`, `file_too_large` | Flag that note and keep syncing the rest |
 
 ## Endpoints
 
@@ -416,6 +416,88 @@ that device, the person wrote something there that no other device has
 seen. The device keeps the text as a new note, with a new ID, which syncs
 like any other.
 
+### Files
+
+A file attached to a note is encrypted on the device and kept in object
+storage, not in the database. The server never handles its bytes: it signs
+a link, and the device sends to the storage or fetches from it directly.
+The server knows that a file exists, how large it is and which notes refer
+to it. It does not know its name, its type, its key or its contents: those
+are in the note's document, which it cannot read.
+
+A server with no storage answers every call here `files_unavailable`. So
+does one whose storage cannot be reached when it has to be asked. Notes are
+not affected.
+
+**`POST /v1/files`** asks for a link to upload one file:
+
+```json
+{ "file_id": "…", "size": 48213 }
+```
+
+`file_id` is made by the device. `size` is the size of the encrypted bytes.
+The answer is `{ "url": "…", "expires_in_secs": 900 }`: one `PUT` of
+exactly `size` bytes to `url`. The length is part of what the link's
+signature covers, so the storage refuses a body of any other length.
+
+- The size is counted against the account from this moment, whether or not
+  anything is uploaded.
+- Asking again for the same file at the same size gives a new link and
+  counts nothing more. That is how an upload is tried again. Another size
+  is `invalid_request`: a file never changes.
+- `file_too_large` over 10 MiB; `quota_exceeded` when the account's files
+  would pass 200 MiB.
+- If no note ever refers to the file, it is discarded after seven days.
+
+**`GET /v1/files/{id}`** answers `{ "url": "…", "size": 48213,
+"expires_in_secs": 300 }`: one `GET` of the file's bytes. `not_found` if the
+account has no such file.
+
+**`POST /v1/files/confirm`** says that notes refer to files, and
+**`POST /v1/files/release`** that they no longer do. The server cannot read
+a note, so devices tell it:
+
+```json
+{ "items": [ { "file_id": "…", "note_id": "…" } ] }
+```
+
+Each item gets its own result, in order:
+`{ "results": [ { "file_id": "…", "note_id": "…", "status": "done" } ] }`.
+
+| Status | Meaning |
+|---|---|
+| `done` | Confirmed, or released. Either may be repeated |
+| `not_uploaded` | The server knows the file but the storage does not hold it at the size asked for. The device uploads it again |
+| `no_such_file` | The server does not know the file: never asked for, discarded, or lost to a restore. A device that holds the file asks for a link and uploads it again |
+| `no_such_note` | On confirming: the server does not hold the note, or it was purged. A device tries again once the note has synced |
+| `rejected` | With `quota_exceeded`: the note already refers to 20 files |
+
+Before a file is confirmed for the first time the server asks the storage
+whether it is there, at the size asked for. A file is counted as present
+only after that.
+
+A file may be confirmed for more than one note. Step 8e keeps an unsent
+edit to a purged note as a new note, and that note keeps the files: the
+device confirms them for it. Two devices may each do so. The file is
+counted against the account once.
+
+**A file is kept for as long as any note refers to it,** and for thirty
+days after the last one stops, by being purged or by a release. Confirming
+it for a note in that time keeps it. A device releases a file only when it
+has itself seen the note without it for thirty days, with nothing unsent,
+as it purges a note.
+
+**Deleting.** Nothing is deleted from the storage in the request that
+decides it. The decision is a date on the file, and what is due is deleted
+when the account next asks for an upload link, and for every account once a
+day. A storage that cannot be reached delays a deletion and loses none.
+Deleting or resetting an account removes its files' rows at once and
+queues the objects.
+
+**`GET /v1/maintenance/sweep`** is the daily request. It must carry
+`Authorization: Bearer <CRON_SECRET>`; to anyone else, and on a server
+given no secret, there is no such address. It answers `{ "deleted": 3 }`.
+
 ### `GET /v1/notes/pull?after=N`
 
 Blobs changed after change number `N`, lowest first:
@@ -452,6 +534,12 @@ stored under an older one. `GET /v1/devices/me` reports `key_version` too.
 | Notes per account | 20,000. A deleted note counts until it is purged |
 | Purged notes per account | 100,000 |
 | A deleted note is purged | 30 days after a device saw it deleted |
+| One file | 10 MiB |
+| Files per account | 200 MiB |
+| Files a note refers to | 20 |
+| An upload no note confirmed | discarded after 7 days |
+| A file no note refers to | deleted after 30 days |
+| An upload link, a download link | good for 15 minutes, 5 minutes |
 | Blobs per account | 50 MiB |
 | Requests per account | 600 in ten minutes |
 | Devices waiting for approval | 3 per account |
@@ -472,4 +560,5 @@ marker to the note's document, so this rule is what lets deletes through.
 
 ## Not built yet
 
-Attachments are step 9 of the redesign.
+Attachments are step 9 of the redesign. The server's part, above, is built.
+No client attaches a file yet.

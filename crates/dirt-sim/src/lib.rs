@@ -124,8 +124,11 @@ impl Server {
                 clerk_issuer: issuer_url.clone(),
                 clerk_client_id: CLIENT_ID.to_owned(),
                 bind_addr: "127.0.0.1:0".parse().expect("address"),
+                files: None,
+                cron_secret: None,
             }),
             keys: Arc::new(Keys::Fixed(issuer().published.clone())),
+            files: None,
         });
         Self {
             router,

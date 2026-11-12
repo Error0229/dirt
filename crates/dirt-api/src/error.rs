@@ -55,8 +55,11 @@ impl ApiError {
             ErrorCode::UnsupportedProtocol => StatusCode::UPGRADE_REQUIRED,
             ErrorCode::InvalidRequest => StatusCode::BAD_REQUEST,
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
-            ErrorCode::PayloadTooLarge | ErrorCode::NoteTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            ErrorCode::PayloadTooLarge | ErrorCode::NoteTooLarge | ErrorCode::FileTooLarge => {
+                StatusCode::PAYLOAD_TOO_LARGE
+            }
             ErrorCode::QuotaExceeded => StatusCode::INSUFFICIENT_STORAGE,
+            ErrorCode::FilesUnavailable => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 }

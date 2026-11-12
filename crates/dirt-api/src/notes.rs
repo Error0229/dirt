@@ -355,6 +355,9 @@ async fn purge_one(pool: &PgPool, account_id: Uuid, item: &PurgeItem) -> ApiResu
     .bind(i64::from(stored_under < key_version))
     .execute(&mut *tx)
     .await?;
+    // The note refers to no file any more. Files that no other note refers
+    // to start their last thirty days.
+    crate::files::forget_note(&mut tx, account_id, note).await?;
     tx.commit().await?;
     Ok(PurgeOutcome::Purged { change })
 }

@@ -32,6 +32,11 @@ tables you migrated.
 | `CLERK_ISSUER` | The Clerk instance that signs ID tokens, with no trailing slash |
 | `CLERK_CLIENT_ID` | The client ID of the Clerk OAuth application the clients use. Public, not a secret |
 | `DIRT_API_BIND_ADDR` | Where the local program listens. Ignored on Vercel |
+| `FILES_S3_ENDPOINT` | The address of the object storage for files, without the bucket. With none of the `FILES_S3_` settings, the server syncs notes and refuses files |
+| `FILES_S3_BUCKET` | The bucket files are kept in |
+| `FILES_S3_REGION` | The storage's region. `auto`, which Cloudflare R2 uses, if left out |
+| `FILES_S3_ACCESS_KEY_ID`, `FILES_S3_SECRET_ACCESS_KEY` | A key that may read, write and delete in that bucket and nothing else |
+| `CRON_SECRET` | What the daily request that deletes expired files must present. Vercel sends it by itself. Without it nobody can make that request |
 
 The server holds no Clerk secret key. It only checks tokens against Clerk's
 published keys, which it fetches from the issuer and keeps for an hour.
@@ -56,7 +61,14 @@ and client ID to sign in with.
    the region beside the database.
 4. Set `DATABASE_URL` (pooled), `CLERK_ISSUER` and `CLERK_CLIENT_ID` on the
    Vercel project.
-5. Set the firewall's rate limit, from a folder linked to the project:
+5. **Files.** Make a Cloudflare R2 bucket and a token limited to it, and
+   set the five `FILES_S3_` variables on the Vercel project. The endpoint
+   is the account's S3 address, `https://<account>.r2.cloudflarestorage.com`.
+   Set `CRON_SECRET` to a random string of sixteen characters or more:
+   `vercel.json` asks Vercel to call `/v1/maintenance/sweep` once a day,
+   at some point in the hour after 04:00 UTC, and Vercel presents the secret
+   when it does. Until the storage exists, leave all of these out.
+6. Set the firewall's rate limit, from a folder linked to the project:
 
    ```bash
    vercel firewall rules add "Per-address limit on the API" \
@@ -132,7 +144,9 @@ address. The first three are the owner's decisions, written up in
       owner holds, and the server runs on that domain.
 - [ ] Dumps are being stored: the "Database backup" workflow has run and a
       dump from it has been restored once, as below.
-- [ ] The firewall's rate limit is set (step 5 of the one-time set-up).
+- [ ] The firewall's rate limit is set (step 6 of the one-time set-up).
+- [ ] The file storage is set up (step 5), and a file attached on one device
+      has been opened on another through it.
 - [ ] Migrations are applied and `/healthz` answers.
 - [ ] `docs/MANUAL_CHECKLIST.md` has been run against this server, on a real
       phone as well as the emulator.

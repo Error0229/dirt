@@ -12,7 +12,7 @@ use axum::http::{header, HeaderMap, Method, Request, StatusCode};
 use axum::Router;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use dirt_api::{build_router, AppState, Config, Keys};
+use dirt_api::{build_router, AppState, Config, FileStore, FilesConfig, Keys};
 use dirt_proto::api::{
     NonceResponse, PullResponse, PushItem, PushOutcome, PushRequest, PushResponse,
     RegisterDeviceRequest, RegisterDeviceResponse,
@@ -73,9 +73,29 @@ pub fn state(pool: PgPool) -> AppState {
             clerk_issuer: ISSUER.to_owned(),
             clerk_client_id: CLIENT_ID.to_owned(),
             bind_addr: "127.0.0.1:0".parse().unwrap(),
+            files: Some(FilesConfig::local()),
+            cron_secret: Some(CRON_SECRET.to_owned()),
         }),
         keys: Arc::new(Keys::Fixed(issuer().published.clone())),
+        files: Some(Arc::new(file_store())),
     }
+}
+
+/// What the daily request presents in these tests.
+pub const CRON_SECRET: &str = "the cron secret of the tests";
+
+/// The file store from `compose.yaml`. Building it reaches nothing.
+pub fn file_store() -> FileStore {
+    FileStore::new(&FilesConfig::local()).expect("the local file store's settings")
+}
+
+/// Makes the store's bucket if it is not there. Tests that store files
+/// call this first.
+pub async fn file_bucket() {
+    file_store()
+        .create_bucket()
+        .await
+        .expect("the file store from compose.yaml is running: `docker compose up -d`");
 }
 
 /// The server, on the database `#[sqlx::test]` made for this test.

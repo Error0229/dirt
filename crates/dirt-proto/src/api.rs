@@ -54,6 +54,22 @@ pub mod limits {
     /// The point past which a full account accepts no growth at all, as a
     /// percentage of [`MAX_ACCOUNT_BYTES`].
     pub const ACCOUNT_CEILING_PERCENT: i64 = 105;
+    /// Largest file, as the encrypted bytes that are stored.
+    pub const MAX_FILE_BYTES: i64 = 10 * 1024 * 1024;
+    /// Most encrypted file bytes one account may hold. A file is counted
+    /// once, however many notes refer to it.
+    pub const MAX_ACCOUNT_FILE_BYTES: i64 = 200 * 1024 * 1024;
+    /// Files one note may refer to.
+    pub const MAX_FILES_PER_NOTE: i64 = 20;
+    /// An upload that no note ever confirmed is discarded after this long.
+    pub const UNCONFIRMED_FILE_DAYS: i64 = 7;
+    /// A file is deleted this long after the last note that referred to it
+    /// stopped, by being purged or by the file being removed from it.
+    pub const UNREFERENCED_FILE_DAYS: i64 = 30;
+    /// How long a link to upload a file works.
+    pub const UPLOAD_LINK_SECS: u32 = 15 * 60;
+    /// How long a link to download a file works.
+    pub const DOWNLOAD_LINK_SECS: u32 = 5 * 60;
     /// Authenticated requests one account may make in one window.
     pub const REQUESTS_PER_WINDOW: i32 = 600;
     /// Length of the request-counting window, in seconds.
@@ -153,6 +169,11 @@ pub enum ErrorCode {
     /// The account's approved devices are not the ones a key change was
     /// prepared for. Fetch the list and prepare it again.
     DevicesChanged,
+    /// This server has no storage for files, or cannot reach it. Notes are
+    /// not affected; files wait on the device.
+    FilesUnavailable,
+    /// The file is larger than a file may be.
+    FileTooLarge,
 }
 
 /// What a client does about an error. The class alone decides: no client
@@ -178,9 +199,11 @@ impl ErrorCode {
         match self {
             // The last two are put right by the device itself, which then
             // makes the request again.
-            Self::ServerError | Self::RateLimited | Self::KeyChanged | Self::DevicesChanged => {
-                ErrorClass::TryAgainLater
-            }
+            Self::ServerError
+            | Self::RateLimited
+            | Self::KeyChanged
+            | Self::DevicesChanged
+            | Self::FilesUnavailable => ErrorClass::TryAgainLater,
             Self::Unauthenticated
             | Self::DeviceRevoked
             | Self::DeviceExpired
@@ -195,9 +218,10 @@ impl ErrorCode {
             Self::UnsupportedProtocol | Self::InvalidRequest | Self::PayloadTooLarge => {
                 ErrorClass::UpdateTheApp
             }
-            Self::NotFound | Self::NoteTooLarge | Self::QuotaExceeded => {
-                ErrorClass::ProblemWithOneNote
-            }
+            Self::NotFound
+            | Self::NoteTooLarge
+            | Self::QuotaExceeded
+            | Self::FileTooLarge => ErrorClass::ProblemWithOneNote,
         }
     }
 }
@@ -581,6 +605,90 @@ pub struct PurgeResponse {
     pub results: Vec<PurgeResult>,
 }
 
+// ---- Files ----
+
+/// `POST /v1/files`: asks for a link to upload one encrypted file.
+///
+/// The server never sees a file's bytes, its name or its key. It signs a
+/// link to the storage for an object of exactly `size` bytes, and counts
+/// that size against the account from this moment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadRequest {
+    /// The file's ID, made by the device. It names the file in the note's
+    /// document.
+    pub file_id: Uuid,
+    /// The size of the encrypted file in bytes.
+    pub size: i64,
+}
+
+/// A link for one `PUT` of the file's bytes, with a `Content-Length` of
+/// exactly the size asked for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadLink {
+    pub url: String,
+    pub expires_in_secs: u32,
+}
+
+/// `GET /v1/files/{id}`: a link for one `GET` of the file's bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DownloadLink {
+    pub url: String,
+    /// The size of the encrypted file in bytes.
+    pub size: i64,
+    pub expires_in_secs: u32,
+}
+
+/// One file as one note refers to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileReference {
+    pub file_id: Uuid,
+    pub note_id: NoteId,
+}
+
+/// `POST /v1/files/confirm` and `POST /v1/files/release`.
+///
+/// The server cannot read a note, so it cannot tell which files a note
+/// refers to. Devices tell it: a file is confirmed for a note once the
+/// note that names it has synced, and released when the note no longer
+/// names it. A file is kept for as long as any note refers to it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileReferences {
+    pub items: Vec<FileReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum FileOutcome {
+    /// Confirmed, or released.
+    Done,
+    /// The server knows the file but the storage does not hold it at the
+    /// size that was asked for. The device uploads it again.
+    NotUploaded,
+    /// The server does not know the file: it was never asked for, was
+    /// discarded, or was lost to a restore. A device that holds the file
+    /// asks for a link and uploads it again.
+    NoSuchFile,
+    /// The server does not hold the note, or the note was purged. A note
+    /// that has not synced yet is tried again after it has.
+    NoSuchNote,
+    /// Refused for a reason that concerns this file alone.
+    Rejected { code: ErrorCode, message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileResult {
+    pub file_id: Uuid,
+    pub note_id: NoteId,
+    #[serde(flatten)]
+    pub outcome: FileOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileResults {
+    /// One result per item, in the order the items were sent.
+    pub results: Vec<FileResult>,
+}
+
 /// `GET /v1/notes/pull?after=N`
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullResponse {
@@ -673,6 +781,8 @@ mod tests {
             (ErrorCode::RecoveryRejected, StopUntilSignedIn),
             (ErrorCode::KeyChanged, TryAgainLater),
             (ErrorCode::DevicesChanged, TryAgainLater),
+            (ErrorCode::FilesUnavailable, TryAgainLater),
+            (ErrorCode::FileTooLarge, ProblemWithOneNote),
             (ErrorCode::UnsupportedProtocol, UpdateTheApp),
             (ErrorCode::InvalidRequest, UpdateTheApp),
             (ErrorCode::PayloadTooLarge, UpdateTheApp),
