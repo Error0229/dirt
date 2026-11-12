@@ -156,6 +156,14 @@ pub enum AuthCommands {
     },
     /// Refuse a reset that a waiting device asked for
     CancelReset,
+    /// Change the account's key, so that a device removed earlier can read
+    /// nothing written from now on. The recovery phrase has to be made
+    /// again afterwards
+    ChangeKey {
+        /// Do not ask for confirmation
+        #[arg(long)]
+        yes: bool,
+    },
     /// Delete the account and everything the server holds for it. The notes
     /// stay on this computer
     DeleteAccount {
@@ -187,5 +195,9 @@ pub enum DeviceCommands {
     Remove {
         /// The start of the device's ID
         device: String,
+        /// Change the account's key as well, so that the removed device
+        /// can read nothing written from now on
+        #[arg(long)]
+        change_key: bool,
     },
 }

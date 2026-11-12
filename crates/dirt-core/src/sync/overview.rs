@@ -29,6 +29,10 @@ pub struct SyncOverview {
     pub failure: Option<SyncFailure>,
     /// Each note that could not be synced.
     pub problems: Vec<NoteProblem>,
+    /// Notes the server still holds under the key before the account's
+    /// present one, as of the last sync. While there are any, a change of
+    /// the account's key is not complete.
+    pub old_key_notes: u64,
 }
 
 impl From<&SyncStatus> for SyncOverview {
@@ -41,6 +45,7 @@ impl From<&SyncStatus> for SyncOverview {
             unsent: status.unsent,
             failure: status.failure.clone(),
             problems: Vec::new(),
+            old_key_notes: status.old_key_notes,
         }
     }
 }
@@ -75,6 +80,24 @@ impl SyncOverview {
         }
     }
 
+    /// What is left of a change of the account's key, in words, or nothing
+    /// when no change is under way.
+    #[must_use]
+    pub fn key_change(&self) -> Option<String> {
+        match self.old_key_notes {
+            0 => None,
+            1 => Some(
+                "The account's key was changed. 1 note is still to be sent again under the \
+                 new key; it goes as your devices sync."
+                    .to_owned(),
+            ),
+            count => Some(format!(
+                "The account's key was changed. {count} notes are still to be sent again \
+                 under the new key; they go as your devices sync."
+            )),
+        }
+    }
+
     /// How many notes wait to be sent, in words, or nothing when none do.
     #[must_use]
     pub fn waiting(&self) -> Option<String> {
@@ -97,6 +120,7 @@ impl SyncOverview {
         if let Some(failure) = &self.failure {
             lines.push(format!("The last sync failed: {}", failure.advice()));
         }
+        lines.extend(self.key_change());
         lines.extend(self.problem_count());
         for problem in &self.problems {
             lines.push(format!("  {} ({})", problem.title(), problem.note_id));
@@ -239,6 +263,7 @@ mod tests {
                 message: "connection refused".to_owned(),
             }),
             problems: vec![held.clone(), refused.clone()],
+            old_key_notes: 0,
         };
         let lines = overview.lines(120_000);
         assert_eq!(lines[0], "Synced 2m ago");
@@ -262,5 +287,22 @@ mod tests {
 
         let quiet = SyncOverview::default().lines(0);
         assert_eq!(quiet, ["Never synced", "Nothing is waiting to be sent"]);
+
+        // A change of the account's key that is not finished is said.
+        let changing = SyncOverview {
+            old_key_notes: 3,
+            ..SyncOverview::default()
+        };
+        assert_eq!(
+            changing.lines(0)[2],
+            "The account's key was changed. 3 notes are still to be sent again under the new \
+             key; they go as your devices sync."
+        );
+        let nearly = SyncOverview {
+            old_key_notes: 1,
+            ..SyncOverview::default()
+        };
+        assert!(nearly.key_change().unwrap().contains("1 note is still"));
+        assert_eq!(SyncOverview::default().key_change(), None);
     }
 }

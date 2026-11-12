@@ -31,7 +31,9 @@ pub async fn run_devices(
     match command {
         None | Some(DeviceCommands::List) => list(session).await,
         Some(DeviceCommands::Approve { device }) => approve(session, device.as_deref()).await,
-        Some(DeviceCommands::Remove { device }) => remove(session, &device).await,
+        Some(DeviceCommands::Remove { device, change_key }) => {
+            remove(session, &device, change_key).await
+        }
     }
 }
 
@@ -90,7 +92,7 @@ fn pick<'a>(devices: &'a [DeviceInfo], prefix: &str) -> Result<&'a DeviceInfo, C
     }
 }
 
-async fn remove(session: &Session, prefix: &str) -> Result<(), CliError> {
+async fn remove(session: &Session, prefix: &str, change_key: bool) -> Result<(), CliError> {
     let devices = session.devices().await.map_err(failed)?;
     let device = pick(&devices, prefix)?;
     if device.current {
@@ -103,9 +105,12 @@ async fn remove(session: &Session, prefix: &str) -> Result<(), CliError> {
         "Removed {}. It can no longer reach the server.",
         device.name
     );
+    if change_key {
+        return crate::commands::account::change_key(session, true).await;
+    }
     println!(
         "It keeps the notes it already had and the key that reads them. \
-         Changing the account's key, which ends that, is not available yet."
+         Run `dirt auth change-key` so that it can read nothing written from now on."
     );
     Ok(())
 }

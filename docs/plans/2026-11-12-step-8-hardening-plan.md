@@ -199,12 +199,66 @@ that changing the key is not available. That is 8b.
 
 ### 8b: key rotation in the three clients
 
-- [ ] Desktop and Android: "Change the account's key" in Devices, offered
+- [x] Desktop and Android: "Change the account's key" in Devices, offered
       after removing a device; the progress of a rotation; the prompt for a
       new recovery phrase.
-- [ ] CLI: `dirt auth rotate-key`, and `dirt devices remove --rotate-key`.
-- [ ] Checked on real devices against `dirt-trial`, with one device removed
+- [x] CLI: `dirt auth change-key`, and `dirt devices remove --change-key`.
+- [x] Checked on real devices against `dirt-trial`, with one device removed
       and one offline during the rotation.
+
+**Result (2026-11-12): done, with the desktop screen not pressed.**
+
+- **The commands are named `change-key`,** not `rotate-key` as this plan
+  first had them. Every document and every screen says "change the
+  account's key", and the command says the same.
+- **The CLI** has `dirt auth change-key`, and `dirt devices remove <ID>
+  --change-key` for the usual case of removing a lost device. Removing
+  without the flag says what to run. It no longer says the key cannot be
+  changed.
+- **The desktop app and the Android app** have "The account's key" in
+  Devices, with a second press to confirm. Removing a device there says
+  the device still has the key and points to the change.
+- **The sync status view** says how many notes are still to be sent again
+  under a new key, in all three clients, from `dirt-core`.
+
+Checked on the CLI and the Android emulator against the server on
+`dirt-trial`, with migration `0003` applied:
+
+- The phone went offline and a note was written on it. The key was
+  changed from the CLI and a note written there. Back online, the phone
+  had the new note without anything being asked of the person, and its
+  own note reached the computer under the new key.
+- The key was changed again from the phone's Devices view, after a second
+  press. The computer followed at its next command.
+- `dirt devices remove <ID> --change-key` removed the phone and changed
+  the key. Every note on the server was then under the fourth key, and
+  the phone said "Signed in, but this device can no longer sync", which
+  is the line step 7 reworded and had not seen on a device.
+
+Not checked: the desktop app's "The account's key" row. Its window could
+not be driven during step 7's run and was not tried again; a person has
+to press it. The server on `dirt-trial` ran this step's code as it was
+before the review of 8a. The three faults the review found are covered by
+tests and were not run on devices.
+
+What the run showed:
+
+- **The apps said the recovery phrase no longer works on an account that
+  never had one.** They say it now only when there was one. That was
+  changed after the run and has not been seen on a device.
+
+What review showed:
+
+- **A recovery phrase still on screen stayed there after the key was
+  changed.** A person who made a phrase and changed the key before
+  pressing "I have written it down" was still told to write down words
+  that opened nothing. The apps clear them when the key changes. Found in
+  review; not seen on a device.
+- **An open app did not show the key change it had just made.** The apps
+  read how far a change has got from what the sync worker last reported,
+  and the change syncs past the worker. The session now asks the worker
+  for a sync when a change is made. A test with a running worker fails
+  without it. Found in review.
 
 ### 8c: the limits review
 

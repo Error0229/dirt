@@ -777,3 +777,26 @@ async fn a_program_follows_a_key_change_the_other_program_made(pool: PgPool) {
         .iter()
         .all(|(_, version, _)| *version == 2));
 }
+
+/// An app that stays open shows how far a key change has got from what its
+/// sync worker reports. The change is made past the worker, so the worker
+/// has to be told, or the app goes on showing the account as it was.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn an_open_app_reports_the_key_change_it_made(pool: PgPool) {
+    let server = Server::with_sign_in(pool.clone()).await;
+    let app = Client::new(&server, "Laptop", true);
+    app.sign_in("alice").await.unwrap();
+    write(&app, "written in the app").await;
+    dirt_sim::eventually("the app has synced under the first key", || async {
+        app.session.sync_status().key_version == 1 && server.blob_count().await == 1
+    })
+    .await;
+
+    app.session.change_account_key().await.unwrap();
+
+    dirt_sim::eventually("the app reports the new key", || async {
+        app.session.sync_status().key_version == 2
+    })
+    .await;
+    assert_eq!(app.session.sync_status().old_key_notes, 0);
+}
