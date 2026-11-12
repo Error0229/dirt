@@ -7,7 +7,11 @@ android_main_activity = "android/MainActivity.kt"
 # and `EncryptedSharedPreferences.create`. The account's keys are kept
 # there. Version is the most recent stable pre-1.1; the API has been frozen
 # since 1.0 so any 1.1.x build is compatible with the JNI bridge.
+#
+# AndroidX Browser gives the custom tab the sign-in page opens in
+# (`MainActivity.openSignInPage`).
 [android]
 gradle_dependencies = [
     "androidx.security:security-crypto:1.1.0-alpha06",
+    "androidx.browser:browser:1.8.0",
 ]

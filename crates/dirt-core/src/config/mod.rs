@@ -73,6 +73,27 @@ impl ServerAddress {
         Self::choose(std::env::var(SERVER_ADDRESS_VARIABLE).ok(), built_in)
     }
 
+    /// The server for the Android app: the address it was built with.
+    /// Android gives an app no environment to set.
+    ///
+    /// `.env.client` serves every client and usually names a server on
+    /// the computer as `127.0.0.1` or `localhost`. On a phone those are
+    /// the phone. They become `10.0.2.2`, which is the emulator's name for
+    /// the computer it runs on. An address of any other machine is kept.
+    pub fn on_android(built_in: Option<&str>) -> Result<Option<Self>, ConfigError> {
+        let Some(given) = normalize_text_option(built_in.map(str::to_owned)) else {
+            return Ok(None);
+        };
+        let url = with_host_renamed(&given, &["127.0.0.1", "localhost"], "10.0.2.2");
+        if !crate::util::is_http_url(&url) {
+            return Err(ConfigError::BuildIsNotAnAddress(given));
+        }
+        Ok(Some(Self {
+            url,
+            source: AddressSource::Build,
+        }))
+    }
+
     /// The rule itself, apart from where the environment's value is read.
     pub fn choose(
         from_environment: Option<String>,
@@ -106,11 +127,16 @@ impl ServerAddress {
 /// client, and may name the computer the way the Android emulator does
 /// (`10.0.2.2`) or as `localhost`. Both become `127.0.0.1`, so that the
 /// desktop app and the CLI name the server alike whichever was written.
+fn on_a_computer(address: &str) -> String {
+    with_host_renamed(address, &["10.0.2.2", "localhost"], "127.0.0.1")
+}
+
+/// `address` with its host replaced by `to` if the host is one of `from`.
 ///
 /// Only a host that is exactly one of those names is changed. `10.0.2.20`
 /// and `localhost.example` are other machines, and everything else in the
 /// address is kept as it was written.
-fn on_a_computer(address: &str) -> String {
+fn with_host_renamed(address: &str, from: &[&str], to: &str) -> String {
     let address = address.trim().trim_end_matches('/');
     let Some((scheme, rest)) = address.split_once("://") else {
         return address.to_owned();
@@ -128,8 +154,8 @@ fn on_a_computer(address: &str) -> String {
     }
     let host_end = host_and_port.find(':').unwrap_or(host_and_port.len());
     let (host, port) = host_and_port.split_at(host_end);
-    if host == "10.0.2.2" || host.eq_ignore_ascii_case("localhost") {
-        format!("{scheme}://{user}127.0.0.1{port}{tail}")
+    if from.iter().any(|name| host.eq_ignore_ascii_case(name)) {
+        format!("{scheme}://{user}{to}{port}{tail}")
     } else {
         address.to_owned()
     }
@@ -205,6 +231,33 @@ mod tests {
         for (written, reached) in changed {
             assert_eq!(on_a_computer(written), reached);
         }
+    }
+
+    #[test]
+    fn the_android_app_reaches_the_computer_by_the_emulators_name_for_it() {
+        let reached = |written: &str| {
+            ServerAddress::on_android(Some(written))
+                .unwrap()
+                .unwrap()
+                .url
+        };
+        assert_eq!(reached("http://127.0.0.1:8080/"), "http://10.0.2.2:8080");
+        assert_eq!(reached("http://localhost:8080"), "http://10.0.2.2:8080");
+        assert_eq!(reached("http://10.0.2.2:8080"), "http://10.0.2.2:8080");
+        // Other machines, whatever their names begin with.
+        assert_eq!(reached("http://127.0.0.10:8080"), "http://127.0.0.10:8080");
+        assert_eq!(
+            reached("https://localhost.example"),
+            "https://localhost.example"
+        );
+        assert_eq!(reached("https://sync.example"), "https://sync.example");
+
+        assert_eq!(ServerAddress::on_android(None).unwrap(), None);
+        assert_eq!(ServerAddress::on_android(Some(" ")).unwrap(), None);
+        assert_eq!(
+            ServerAddress::on_android(Some("sync.example")),
+            Err(ConfigError::BuildIsNotAnAddress("sync.example".to_owned()))
+        );
     }
 
     #[test]

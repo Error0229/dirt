@@ -1,14 +1,20 @@
 //! Mobile Settings: the account and sync.
 //!
 //! The view renders the session's four states, the same ones the desktop
-//! app and the CLI show. Signing in opens the system browser; the app shell
-//! picks the sign-in up again when Android brings the person back.
+//! app and the CLI show. Signing in opens a browser tab over the app; the
+//! app shell picks the sign-in up again when Android brings the person
+//! back.
+//!
+//! What is shown about sync, and in which words, comes from `dirt-core`'s
+//! sync overview, which the desktop app and `dirt sync --verbose` show too.
 
 use dioxus::prelude::*;
 use dirt_core::api::ErrorClass;
 use dirt_core::session::{SessionState, SignOutError, Unsynced};
-use dirt_core::sync::worker::{SyncStatus, Trigger};
-use dirt_core::util::as_sentence;
+use dirt_core::store::NoteProblem;
+use dirt_core::sync::overview::SyncOverview;
+use dirt_core::sync::worker::Trigger;
+use dirt_core::util::{as_sentence, now_ms};
 
 use crate::app_shell::REDIRECT_URI;
 use crate::state::{AppState, View};
@@ -43,6 +49,7 @@ pub fn Settings() -> Element {
     // Set when a sign-out found notes that have not reached the server.
     let mut unsynced: Signal<Option<usize>> = use_signal(|| None);
     let mut local_waiting = use_signal(|| 0usize);
+    let mut overview = use_signal(|| None::<SyncOverview>);
 
     let session = (state.session)();
     let session_state = (state.session_state)();
@@ -58,6 +65,21 @@ pub fn Settings() -> Element {
                 None => 0,
             };
             local_waiting.set(waiting);
+        });
+    });
+
+    // The counts and the notes that could not be synced are in the store;
+    // read them again whenever sync reports something new.
+    use_effect(move || {
+        let current = (state.session)();
+        let _ = (state.session_state)();
+        let _ = (state.sync_status)();
+        spawn(async move {
+            let read = match current {
+                Some(session) => session.sync_overview().await.ok(),
+                None => None,
+            };
+            overview.set(read);
         });
     });
 
@@ -103,6 +125,8 @@ pub fn Settings() -> Element {
                 // The attempt is saved by the session before the browser
                 // opens: Android may stop the app while it is in front.
                 let opened = match session.begin_sign_in(REDIRECT_URI).await {
+                    // A tab laid over the app, or else the browser itself.
+                    Ok(address) if crate::services::sign_in::open_sign_in_page(&address) => Ok(()),
                     Ok(address) => webbrowser::open(&address).map_err(|error| {
                         session.cancel_sign_in();
                         format!("Could not open the browser: {error}")
@@ -209,6 +233,15 @@ pub fn Settings() -> Element {
         .as_ref()
         .is_some_and(|failure| failure.class == ErrorClass::StopUntilSignedIn);
     let sync_session = session;
+    // Until the store has been read, the worker's own figures stand in.
+    let shown = overview().unwrap_or_else(|| SyncOverview::from(&status));
+    let last_synced = shown.last_synced(now_ms());
+    let waiting = shown.waiting();
+    let sync_failure = shown
+        .failure
+        .as_ref()
+        .map(dirt_core::sync::worker::SyncFailure::advice);
+    let problem_count = shown.problem_count();
 
     rsx! {
         div {
@@ -335,15 +368,18 @@ pub fn Settings() -> Element {
             if session_state.is_ready() {
                 div { style: "{PANEL}",
                     p { style: "{HEADING}", "Sync" }
-                    p { style: "{TEXT}", "{sync_summary(&status)}" }
-                    if status.unsent > 0 {
-                        p { style: "{TEXT}", "{status.unsent} note(s) waiting to be sent" }
+                    p { style: "{TEXT}", "{last_synced}" }
+                    if let Some(text) = waiting {
+                        p { style: "{TEXT}", "{text}" }
                     }
-                    if status.problems > 0 {
-                        p { style: "{WARNING}", "{status.problems} note(s) could not be synced." }
-                    }
-                    if let Some(text) = sync_failure(&status) {
+                    if let Some(text) = sync_failure {
                         p { style: "{WARNING}", "{text}" }
+                    }
+                    if let Some(text) = problem_count {
+                        p { style: "{WARNING}", "{text}" }
+                    }
+                    for problem in shown.problems {
+                        ProblemNote { key: "{problem.note_id}", problem }
                     }
                     UiButton {
                         r#type: "button",
@@ -363,45 +399,44 @@ pub fn Settings() -> Element {
     }
 }
 
-/// When the last sync was, in words.
-pub fn sync_summary(status: &SyncStatus) -> String {
-    if status.syncing {
-        return "Syncing...".to_owned();
-    }
-    let Some(at) = status.last_synced_ms else {
-        return "Never synced".to_owned();
+/// One note that could not be synced: which it is, why, and what releases
+/// it. A note that is on this device opens when it is pressed.
+#[component]
+fn ProblemNote(problem: NoteProblem) -> Element {
+    let mut state = use_context::<AppState>();
+    let id = problem.note_id;
+    let title = problem.title();
+    let reason = as_sentence(&problem.reason);
+    let release = problem.kind.release();
+    // Only a note in the list can be opened: not one this device never
+    // held, and not a deleted one.
+    let on_this_device = (state.notes)().iter().any(|note| note.id == id);
+    let name_style = if on_this_device {
+        "margin: 0; font-size: 14px; color: #111827; text-decoration: underline;"
+    } else {
+        "margin: 0; font-size: 14px; color: #111827;"
     };
-    let minutes = (chrono_now_ms() - at).max(0) / 60_000;
-    match minutes {
-        0 => "Synced just now".to_owned(),
-        1..=59 => format!("Synced {minutes}m ago"),
-        60..=1439 => format!("Synced {}h ago", minutes / 60),
-        _ => format!("Synced {}d ago", minutes / 1440),
+
+    rsx! {
+        div {
+            style: "
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+                padding: 8px 10px;
+                border-left: 3px solid #b91c1c;
+            ",
+            onclick: move |_| {
+                if on_this_device {
+                    state.selected_note_id.set(Some(id));
+                    state.view.set(View::Editor);
+                }
+            },
+            p { style: "{name_style}", "{title}" }
+            p { style: "{TEXT}", "{reason}" }
+            p { style: "{TEXT}", "{release}" }
+        }
     }
-}
-
-fn chrono_now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| {
-            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
-        })
-}
-
-/// Why the last sync failed, in words that say what to do.
-pub fn sync_failure(status: &SyncStatus) -> Option<String> {
-    let failure = status.failure.as_ref()?;
-    Some(match failure.class {
-        ErrorClass::TryAgainLater => {
-            "The server could not be reached. Your notes are saved and will be sent later."
-                .to_owned()
-        }
-        ErrorClass::StopUntilSignedIn => "This device has to sign in again.".to_owned(),
-        ErrorClass::UpdateTheApp => {
-            "This version of Dirt is too old to sync. Update the app.".to_owned()
-        }
-        ErrorClass::ProblemWithOneNote => failure.message.clone(),
-    })
 }
 
 #[component]

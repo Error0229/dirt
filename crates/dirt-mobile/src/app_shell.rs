@@ -5,19 +5,19 @@
 //! with no server, or a device whose secure storage cannot be used, has no
 //! session and keeps its notes in the local store.
 //!
-//! Signing in leaves the app for the system browser. Android brings the
-//! person back through the custom address `dev.dirt.app://callback`, which
-//! `MainActivity` writes to a file for this code to find. Android may stop
-//! the app while the browser is in front, so the redirect is also looked
-//! for at start-up; the session saved the attempt before the browser
-//! opened.
+//! Signing in leaves the app for the browser. Android brings the person
+//! back through the custom address `dev.dirt.app://callback`, which
+//! `MainActivity` keeps until this code asks for it (`services::sign_in`).
+//! Android may stop the app while the browser is in front, so the redirect
+//! is also asked for at start-up; the session saved the attempt before the
+//! browser opened.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use dioxus::prelude::*;
 use dirt_core::api::HttpTransport;
+use dirt_core::config::ServerAddress;
 use dirt_core::secrets::slot_name;
 use dirt_core::session::{Session, SessionConfig, SessionError, SessionState};
 use dirt_core::store::{store_path, StoreName};
@@ -25,9 +25,10 @@ use dirt_core::sync::worker::{SyncStatus, Timing, Trigger};
 use dirt_core::Store;
 
 use crate::bootstrap_config::load_bootstrap_config;
-use crate::config::{android_files_directory, default_mobile_data_directory};
+use crate::config::default_mobile_data_directory;
 use crate::data::MobileNoteStore;
 use crate::services::secure_storage::EncryptedPrefs;
+use crate::services::sign_in::take_redirect;
 use crate::state::{AppState, View};
 use crate::ui::MOBILE_UI_STYLES;
 use crate::views::{Devices, Editor, List, Settings};
@@ -35,9 +36,6 @@ use crate::views::{Devices, Editor, List, Settings};
 /// Where the sign-in service sends the browser afterwards. The manifest
 /// registers the app for this address.
 pub const REDIRECT_URI: &str = "dev.dirt.app://callback";
-
-/// The file `MainActivity` writes the redirect address to.
-const REDIRECT_FILE: &str = "redirect.txt";
 
 /// The name other devices see for this one.
 const DEVICE_NAME: &str = "Android device";
@@ -69,18 +67,6 @@ fn open_local_store() -> Result<Store, String> {
     .map_err(|error| error.to_string())
 }
 
-fn redirect_file() -> Option<PathBuf> {
-    android_files_directory().map(|folder| folder.join(REDIRECT_FILE))
-}
-
-/// The redirect address `MainActivity` left, if any. Taking it removes it.
-fn take_redirect() -> Option<String> {
-    let path = redirect_file()?;
-    let address = std::fs::read_to_string(&path).ok()?;
-    let _ = std::fs::remove_file(&path);
-    Some(address)
-}
-
 /// Finishes a sign-in with a redirect, and says what to tell the person if
 /// it failed. A redirect with no attempt to match is one that was already
 /// used or was cancelled, and is ignored.
@@ -93,8 +79,12 @@ async fn finish_sign_in(session: &Session, redirect: &str) -> Option<String> {
 
 #[component]
 pub fn AppShell() -> Element {
-    let bootstrap = load_bootstrap_config();
-    let server_url = bootstrap.managed_api_base_url();
+    // The address the app was built with. One that cannot be an address
+    // is said at start-up and not passed over.
+    let server_url =
+        ServerAddress::on_android(load_bootstrap_config().dirt_api_base_url.as_deref())
+            .map(|address| address.map(|address| address.url))
+            .map_err(|error| dirt_core::util::as_sentence(&error));
 
     let mut notes = use_signal(Vec::new);
     let mut selected_note_id = use_signal(|| None);
@@ -121,6 +111,14 @@ pub fn AppShell() -> Element {
     let _init = use_resource(move || {
         let server_url = server_url.clone();
         async move {
+            let server_url = match server_url {
+                Ok(url) => url,
+                Err(problem) => {
+                    tracing::error!("{problem}");
+                    startup_issue.set(Some(problem));
+                    None
+                }
+            };
             let opened_session = match server_url.as_deref().map(open_session) {
                 Some(Ok(opened)) => Some(opened),
                 Some(Err(error)) => {

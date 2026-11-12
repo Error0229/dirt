@@ -34,17 +34,6 @@ fn fallback_mobile_data_directory() -> PathBuf {
     )
 }
 
-/// The app's private files folder, which `MainActivity` knows as
-/// `filesDir`. The activity leaves the sign-in redirect there.
-#[cfg(target_os = "android")]
-pub fn android_files_directory() -> Option<PathBuf> {
-    android_process_name().map(|process_name| {
-        PathBuf::from("/data/user/0")
-            .join(process_name)
-            .join("files")
-    })
-}
-
 #[cfg(not(target_os = "android"))]
 fn fallback_mobile_data_directory() -> PathBuf {
     std::env::temp_dir().join("dirt")

@@ -138,13 +138,52 @@ What building it showed:
 
 ### 7b: the Android app
 
-- [ ] The redirect handed over by a JNI call.
-- [ ] The Android build's rewrite of `127.0.0.1` and `localhost` to the
+- [x] The redirect handed over by a JNI call.
+- [x] The Android build's rewrite of `127.0.0.1` and `localhost` to the
       emulator's name for the computer changed to match a whole host name.
-- [ ] The custom tab, tried.
-- [ ] The status view lists the notes.
-- [ ] Checked on the emulator: sign-in, the return, and a sign-in finished
+- [x] The custom tab, tried.
+- [x] The status view lists the notes.
+- [x] Checked on the emulator: sign-in, the return, and a sign-in finished
       after the app was stopped behind the browser.
+
+**Result (2026-11-12): done, with one screen not yet seen on a device.**
+
+- **The hand-off.** `MainActivity` keeps the redirect address in memory and
+  gives it up once, to `services::sign_in::take_redirect`, which asks
+  through JNI. Nothing is written to the app's files: after a sign-in the
+  folder holds no redirect. The activity's part is static, so it does not
+  depend on which activity object Android has made, and its two methods
+  are marked to be kept through code shrinking, because they are found by
+  name at run time.
+- **Local references.** The redirect is asked for about three times a
+  second while a sign-in is under way. Each call runs in a JNI local
+  frame, so a thread that stays attached does not fill its table of
+  references while the person is at the sign-in page.
+- **The custom tab: adopted.** The sign-in page opens in a tab of the
+  browser laid over the app, in the app's own task. When the redirect
+  brings the app forward the tab closes by itself; with a full browser tab
+  the person was left to close it. If the activity cannot open one, the
+  browser is opened as before.
+- **The server address.** The Android build writes the address down as it
+  was given, and the app applies `ServerAddress::on_android` when it
+  starts. That uses the same whole-host rule as the desktop app and the
+  CLI, in the other direction.
+- **The status view** lists each note that could not be synced, with the
+  core's words. A note that is on the device opens when it is pressed.
+
+Checked on the emulator against the server on `dirt-trial`:
+
+- Sign in from Settings: the custom tab opened on Clerk's page, "Allow"
+  closed it, and Settings showed the device signed in and synced.
+- The same with the app's process stopped while the tab was in front: the
+  redirect started the app again and it finished the sign-in from the
+  attempt the session had saved.
+
+Not checked on a device: the list of notes that could not be synced. It
+needs a note the phone cannot read, which takes a second device and a
+damaged copy on the server; 7c's run of the checklist makes one.
+
+The test account was deleted from the trial database afterwards.
 
 ### 7c: the documents and the checklist
 

@@ -1,17 +1,15 @@
-//! Mobile bootstrap configuration loaded from build-time generated JSON.
+//! The server address the Android app was built with.
 //!
-//! `build.rs` writes `mobile-bootstrap.json` to `OUT_DIR` containing the
-//! `DIRT_API_BASE_URL` value resolved from the workspace `.env.client`
-//! (with `localhost`/`127.0.0.1` rewritten to `10.0.2.2` for the
-//! Android emulator). We `include_str!` it at compile time so a
-//! packaged APK works without an env var at launch — the bearer token
-//! still has to come from the runtime environment.
+//! `build.rs` writes `DIRT_MOBILE_API_BASE_URL`, or else
+//! `DIRT_API_BASE_URL`, from `.env.client` into `mobile-bootstrap.json`,
+//! which is included here, so a packaged APK needs nothing set when it
+//! starts. The app passes the address to
+//! `dirt_core::config::ServerAddress::on_android`.
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
 pub use dirt_core::config::BootstrapConfig;
 
-/// Load the build-time mobile bootstrap manifest. Always succeeds —
-/// missing fields just yield `None` on the corresponding Option.
+/// Load the build-time mobile bootstrap manifest.
 #[must_use]
 pub fn load_bootstrap_config() -> BootstrapConfig {
     let raw = include_str!(concat!(env!("OUT_DIR"), "/mobile-bootstrap.json"));
