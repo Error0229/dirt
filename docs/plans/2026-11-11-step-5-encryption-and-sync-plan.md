@@ -172,6 +172,16 @@ What building it showed:
   includes cycles that failed. Found in review.
 - **Android knows when the app comes back through the web view.** The page
   becomes visible again, which needs no Java. Found missing in review.
+- **Opening a store could fail on a busy file.** The four-process store test
+  failed once in CI on Windows: one process found the file busy while
+  opening. It did not happen again in 25 local runs, nor with eight
+  processes opening sixty fresh files, nor with four processes opening and
+  closing three hundred times each, so the cause is not pinned down. The
+  likeliest is three processes writing without a pause on a slow disk for
+  longer than the five seconds one wait lasts. Opening now tries again for
+  up to twenty seconds, which covers that and the other ways an open can
+  find the file busy. A test holds the file for six and a half seconds and
+  checks that the store still opens.
 - **Two apps can claim the redirect.** The emulator still held the trial's
   app, registered for the same address, so Android asked which to open.
   PKCE is why choosing the wrong one gives that app nothing.

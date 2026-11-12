@@ -18,6 +18,10 @@
 //! showed that each rule is needed, with a control run for each
 //! (`trials/sqlite-two-process/` on the `trials/step-1` branch). The store
 //! has no switch to turn a rule off, so the controls are not repeated here.
+//!
+//! A third rule, a longer retry around opening, was added after
+//! `four_processes_also_lose_nothing` failed once in CI on Windows with the
+//! file busy at open. `tests/store.rs` holds the test for that rule.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};

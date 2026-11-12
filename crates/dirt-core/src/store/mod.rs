@@ -96,12 +96,18 @@ impl Store {
         if let Some(folder) = path.parent() {
             std::fs::create_dir_all(folder)?;
         }
-        let mut write_connection = schema::open_connection(&path)?;
-        let store_id = schema::set_up(&mut write_connection)?;
+        // Each step is tried again while the file is busy: see `schema`.
+        // Setting up the tables is safe to repeat, because it looks at what
+        // is there inside its own transaction.
+        let (mut write_connection, store_id) = schema::retry_while_busy(|| {
+            let mut connection = schema::open_connection(&path)?;
+            let store_id = schema::set_up(&mut connection)?;
+            Ok((connection, store_id))
+        })?;
         // Open every connection before starting any thread, so that a
         // failure here leaves nothing running.
         let read_connections = (0..READERS)
-            .map(|_| schema::open_reader(&path))
+            .map(|_| schema::retry_while_busy(|| schema::open_reader(&path)))
             .collect::<Result<Vec<_>>>()?;
 
         let mut threads = Vec::with_capacity(READERS + 1);
