@@ -370,25 +370,31 @@ async fn two_devices_changing_the_key_at_once_make_one_change(pool: PgPool) {
     let laptop = laptop_with_a_note(&server).await;
     let phone = approved_device(&server, &laptop, "Phone").await;
 
-    let (on_laptop, on_phone) = tokio::join!(
-        laptop.session.change_account_key(),
-        phone.session.change_account_key(),
+    // Both prepare a change from the same key. The laptop's request reaches
+    // the server first: it is made while the phone's is on its way.
+    let first = laptop.session.clone();
+    let (told, laptops_outcome) = tokio::sync::oneshot::channel();
+    phone
+        .transport
+        .before_next("POST /v1/account/key", move || -> BoxFuture<'static, ()> {
+            Box::pin(async move {
+                let _ = told.send(first.change_account_key().await);
+            })
+        });
+    let on_phone = phone.session.change_account_key().await.unwrap();
+    let on_laptop = laptops_outcome.await.unwrap().unwrap();
+
+    assert!(
+        matches!(on_laptop, KeyChange::Changed { key_version: 2, .. }),
+        "{on_laptop:?}"
     );
-    let outcomes = [on_laptop.unwrap(), on_phone.unwrap()];
-    let made = outcomes
-        .iter()
-        .filter(|outcome| matches!(outcome, KeyChange::Changed { key_version: 2, .. }))
-        .count();
-    let followed = outcomes
-        .iter()
-        .filter(|outcome| {
-            matches!(
-                outcome,
-                KeyChange::ChangedByAnotherDevice { key_version: 2 }
-            )
-        })
-        .count();
-    assert_eq!((made, followed), (1, 1), "{outcomes:?}");
+    // The phone's request was for a key that had already been replaced. It
+    // made no second change: the account has a new key, which is what was
+    // asked for. It took the laptop's.
+    assert_eq!(
+        on_phone,
+        KeyChange::ChangedByAnotherDevice { key_version: 2 }
+    );
 
     laptop.session.sync_now().await.unwrap();
     phone.session.sync_now().await.unwrap();
