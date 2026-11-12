@@ -573,6 +573,12 @@ async fn an_account_that_is_deleted_or_reset_takes_its_files_with_it(pool: PgPoo
     // The objects are still in the store, and remembered.
     assert_eq!(stored(&alice, alices).await, Some(7));
     assert_eq!(stored(&bob, bobs).await, Some(5));
+    // Another account asking for a link deletes what it has waiting, which
+    // is nothing. These are not its objects.
+    let carol = register(&app, "carol", "Laptop").await;
+    ask_to_upload(&app, &carol.token, Uuid::now_v7(), 1).await;
+    assert_eq!(stored(&alice, alices).await, Some(7));
+    assert_eq!(stored(&bob, bobs).await, Some(5));
     let (queued,): (i64,) = sqlx::query_as("SELECT count(*) FROM orphan_objects")
         .fetch_one(&pool)
         .await
@@ -691,9 +697,17 @@ fn app_with_no_store_listening(pool: PgPool) -> Router {
     build_router(cut_off)
 }
 
-/// A store that cannot be reached delays a deletion and loses none: the
-/// row stays, so the file is tried again, and its space stays counted
-/// because the object is still there.
+async fn queued(pool: &PgPool) -> i64 {
+    let (queued,): (i64,) = sqlx::query_as("SELECT count(*) FROM orphan_objects")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    queued
+}
+
+/// A store that cannot be reached delays a deletion and loses none. The
+/// file's row goes when its time comes, whatever the store is doing, and
+/// its object waits in a queue until the store takes the deletion.
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
 async fn a_store_that_cannot_be_reached_delays_a_deletion_and_loses_none(pool: PgPool) {
     file_bucket().await;
@@ -709,11 +723,15 @@ async fn a_store_that_cannot_be_reached_delays_a_deletion_and_loses_none(pool: P
     // is signed, not fetched.
     let answer = ask_to_upload(&cut_off, &device.token, Uuid::now_v7(), 1).await;
     assert_eq!(answer.status, StatusCode::OK);
-    assert!(row(&pool, abandoned).await.is_some());
-    assert_eq!(file_bytes(&pool, device.account_id).await, 9 + 17 + 1);
+    // The server no longer knows the file, and its space has come back.
+    assert_eq!(row(&pool, abandoned).await, None);
+    assert_eq!(file_bytes(&pool, device.account_id).await, 17 + 1);
+    // Its object is still in the store, and remembered.
+    assert_eq!(stored(&device, abandoned).await, Some(9));
+    assert_eq!(queued(&pool).await, 1);
     let answer = sweep_all(&cut_off).await;
     assert_eq!(answer.body["deleted"], 0);
-    assert!(row(&pool, abandoned).await.is_some());
+    assert_eq!(queued(&pool).await, 1);
 
     // A file cannot be confirmed while the store cannot be asked about it.
     let answer = post(
@@ -730,11 +748,161 @@ async fn a_store_that_cannot_be_reached_delays_a_deletion_and_loses_none(pool: P
         Some(false)
     );
 
-    // With the store back, what was due goes.
+    // With the store back, the object goes.
     assert_eq!(sweep_all(&app).await.body["deleted"], 1);
-    assert_eq!(row(&pool, abandoned).await, None);
     assert_eq!(stored(&device, abandoned).await, None);
-    assert_eq!(file_bytes(&pool, device.account_id).await, 17 + 1);
+    assert_eq!(queued(&pool).await, 0);
+    assert_eq!(stored(&device, waiting).await, Some(17));
+}
+
+/// A file's ID is its place in the store. After a reset, the device that
+/// remains sends its files again under the IDs its notes name, to the very
+/// places whose old objects are waiting to be deleted. That deletion must
+/// not take the new upload.
+///
+/// Asking for a link deletes what the account has waiting, so as a rule
+/// the old object is gone before the new one arrives.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_file_sent_again_after_a_reset_is_not_deleted_as_the_old_one(pool: PgPool) {
+    file_bucket().await;
+    let app = app(pool.clone());
+    let device = register(&app, "alice", "Laptop").await;
+    let token = &device.token;
+    let note = a_note(&app, token).await;
+    let bytes = b"the same file, before and after";
+    let file = Uuid::now_v7();
+    let link: UploadLink = ask_to_upload(&app, token, file, bytes.len()).await.json();
+    assert!(put(&link.url, bytes).await.is_success());
+    confirm(&app, token, file, note).await;
+
+    let reset = post(&app, "/v1/account/reset", Some(token), json!({})).await;
+    assert_eq!(reset.status, StatusCode::OK);
+    assert_eq!(queued(&pool).await, 1);
+
+    // The device sends its note and the file again.
+    let note = a_note(&app, token).await;
+    let link: UploadLink = ask_to_upload(&app, token, file, bytes.len()).await.json();
+    assert_eq!(queued(&pool).await, 0);
+    assert_eq!(
+        stored(&device, file).await,
+        None,
+        "the old object went first"
+    );
+    assert_eq!(
+        confirm(&app, token, file, note).await,
+        FileOutcome::NotUploaded
+    );
+    assert!(put(&link.url, bytes).await.is_success());
+    assert_eq!(confirm(&app, token, file, note).await, FileOutcome::Done);
+
+    // Nothing is left that could delete it.
+    assert_eq!(sweep_all(&app).await.body["deleted"], 0);
+    assert_eq!(fetch(&app, token, file).await.unwrap(), bytes);
+    assert_eq!(row(&pool, file).await, Some((true, None)));
+}
+
+/// The case the rule above does not cover: the old object could not be
+/// deleted before the file was asked for again, because the store could
+/// not be reached just then. Its deletion is called off, so that it cannot
+/// happen later, after the device has sent the file again or found it
+/// still there.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_file_asked_for_again_calls_off_the_deletion_of_its_old_object(pool: PgPool) {
+    file_bucket().await;
+    let app = app(pool.clone());
+    let cut_off = app_with_no_store_listening(pool.clone());
+    let device = register(&app, "alice", "Laptop").await;
+    let token = &device.token;
+    let note = a_note(&app, token).await;
+    let file = upload(&app, token, b"wanted after all").await;
+    confirm(&app, token, file, note).await;
+    let other = upload(&app, token, b"not wanted again").await;
+    confirm(&app, token, other, note).await;
+
+    let reset = post(&app, "/v1/account/reset", Some(token), json!({})).await;
+    assert_eq!(reset.status, StatusCode::OK);
+    assert_eq!(queued(&pool).await, 2);
+    let note = a_note(&app, token).await;
+
+    // The device asks again while the store cannot be reached. Nothing
+    // can be deleted, and the link is signed all the same.
+    assert_eq!(
+        ask_to_upload(&cut_off, token, file, 16).await.status,
+        StatusCode::OK
+    );
+    // The deletion of this file's object is called off. The other's is not.
+    assert_eq!(queued(&pool).await, 1);
+
+    // The store is back. The object that was there is the file, byte for
+    // byte, since a file never changes: it is confirmed as it stands.
+    assert_eq!(confirm(&app, token, file, note).await, FileOutcome::Done);
+    assert_eq!(sweep_all(&app).await.body["deleted"], 1);
+
+    assert_eq!(fetch(&app, token, file).await.unwrap(), b"wanted after all");
+    assert_eq!(row(&pool, file).await, Some((true, None)));
+    assert_eq!(stored(&device, other).await, None);
+    assert_eq!(queued(&pool).await, 0);
+}
+
+/// A file is confirmed for a note in the moment it falls due. Whichever
+/// request the server takes first, it never ends up saying a file is there
+/// when its object is gone, and neither request fails.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn confirming_a_file_while_it_is_swept_never_leaves_a_row_without_an_object(pool: PgPool) {
+    file_bucket().await;
+    let app = app(pool.clone());
+    let device = register(&app, "alice", "Laptop").await;
+    let token = device.token.clone();
+    let note = a_note(&app, &token).await;
+
+    let mut kept = 0;
+    for round in 0..12 {
+        let file = upload(&app, &token, format!("round {round}").as_bytes()).await;
+        make_due(&pool, file).await;
+
+        let confirming = post(
+            &app,
+            "/v1/files/confirm",
+            Some(&token),
+            json!({ "items": [naming(file, note)] }),
+        );
+        // Each is given the first move in turn.
+        let (confirmed, swept) = if round % 2 == 0 {
+            tokio::join!(confirming, sweep_all(&app))
+        } else {
+            let (swept, confirmed) = tokio::join!(sweep_all(&app), confirming);
+            (confirmed, swept)
+        };
+        assert_eq!(
+            confirmed.status,
+            StatusCode::OK,
+            "round {round}: {:?}",
+            confirmed.body
+        );
+        assert_eq!(
+            swept.status,
+            StatusCode::OK,
+            "round {round}: {:?}",
+            swept.body
+        );
+
+        // Whatever is left to delete is deleted before looking.
+        sweep_all(&app).await;
+        let outcome = confirmed.json::<FileResults>().results.remove(0).outcome;
+        match (outcome, row(&pool, file).await) {
+            (FileOutcome::Done, Some((true, None))) => {
+                assert!(stored(&device, file).await.is_some(), "round {round}");
+                kept += 1;
+                // Make room in the note for the next round.
+                assert_eq!(release(&app, &token, file, note).await, FileOutcome::Done);
+            }
+            (FileOutcome::NoSuchFile, None) => {
+                assert_eq!(stored(&device, file).await, None, "round {round}");
+            }
+            other => panic!("round {round}: the file was left as {other:?}"),
+        }
+    }
+    println!("confirmed first in {kept} of 12 rounds");
 }
 
 /// The server does not rely on the storage refusing a body of the wrong

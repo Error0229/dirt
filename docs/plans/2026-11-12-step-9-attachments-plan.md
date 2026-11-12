@@ -221,9 +221,11 @@ protocol.
   counts a file as present. The first has not been seen on Cloudflare R2,
   which nobody has an account for yet; the second does not depend on it.
 - **Nothing is deleted in the request that decides it.** A file due to go
-  has a date, and an account's objects are queued when the account is
-  deleted or reset. A storage that cannot be reached delays a deletion and
-  loses none; a test cuts the store off and sees the row stay.
+  has a date. When it comes, the row is removed and the object queued in
+  one transaction, and the object is deleted from the storage as a second
+  step that is tried until it works. An account's objects are queued the
+  same way when it is deleted or reset. A test cuts the store off and sees
+  the object wait in the queue.
 - **The daily request** is `GET /v1/maintenance/sweep`, asked for by
   `vercel.json` and open only to whoever holds `CRON_SECRET`.
 - **A server with no storage** answers `files_unavailable` to file
@@ -233,7 +235,8 @@ protocol.
 - **The backup check** carries the three new tables. A dump holds the
   files' rows and not the files.
 
-Fourteen tests, against Postgres and the store. Each rule was undone in
+Seventeen tests, against Postgres and the store, after the changes that
+review asked for. Each rule was undone in
 turn, 25 in all, to see a test fail:
 
 - 22 failed a test at once.
@@ -246,6 +249,25 @@ turn, 25 in all, to see a test fail:
   is read and again when its row is taken, so that a file confirmed in
   between is left alone. Either check alone does the work the tests can
   see; with both removed, three tests fail.
+
+What review showed:
+
+- **A file sent again after a reset could be deleted as the old one.** A
+  file's ID is its place in the storage. After a reset the device that
+  remains sends its files again under the same IDs, to the places whose
+  old objects were queued for deletion, and the queue would have deleted
+  the new upload. Asking to upload a file now takes its object out of the
+  queue, under the account's lock. Found in review.
+- **A sweep and a confirmation could wait on each other,** because one
+  locked the file and then the account and the other the reverse. And a
+  sweep that failed after deleting an object left a row saying the file
+  was there. Every request that touches an account's files now takes the
+  account's lock first, and a file's row is removed before its object is
+  deleted, not after. Confirming also asks the storage inside the lock, so
+  what it learns cannot be out of date. A test confirms a file in the
+  moment it falls due, twelve times with each side given the first move in
+  turn: either the file is kept, with its object, or it is gone, with its
+  object; never a row without one. Found in review.
 
 Not tried: Cloudflare R2 itself. Everything above ran against the gateway.
 

@@ -488,11 +488,25 @@ has itself seen the note without it for thirty days, with nothing unsent,
 as it purges a note.
 
 **Deleting.** Nothing is deleted from the storage in the request that
-decides it. The decision is a date on the file, and what is due is deleted
+decides it. The decision is a date on the file. What is due is dealt with
 when the account next asks for an upload link, and for every account once a
-day. A storage that cannot be reached delays a deletion and loses none.
-Deleting or resetting an account removes its files' rows at once and
-queues the objects.
+day, in two steps:
+
+1. The file's row is removed and its object queued, together. From then on
+   the server says the file is gone: `not_found` for a download link,
+   `no_such_file` for a confirm.
+2. The queued object is deleted from the storage. If the storage cannot be
+   reached, it stays queued and is tried again.
+
+So the server never says a file is there when its object is gone, and a
+storage that cannot be reached delays a deletion and loses none. Deleting
+or resetting an account removes its files' rows at once and queues the
+objects.
+
+A file's ID is its place in the storage. A device may ask to upload a file
+whose old object is still queued: after a reset, the device that remains
+sends its files again under the IDs its notes name. Asking takes the object
+out of the queue, so that its deletion cannot overtake the new upload.
 
 **`GET /v1/maintenance/sweep`** is the daily request. It must carry
 `Authorization: Bearer <CRON_SECRET>`; to anyone else, and on a server
