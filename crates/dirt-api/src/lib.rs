@@ -1,19 +1,24 @@
 //! dirt-api: the Dirt server.
 //!
-//! It does four things: checks a Clerk sign-in once per device and issues
-//! that device a token; keeps the registry of devices; stores each note as
-//! an encrypted blob that it cannot read, replacing it only when the writer
-//! saw the version being replaced; and enforces limits.
+//! It does five things: checks a Clerk sign-in once per device and issues
+//! that device a token; keeps the registry of devices; relays the exchange
+//! by which one device hands the account key to another, and keeps the
+//! optional recovery copy of that key, without being able to read either;
+//! stores each note as an encrypted blob that it cannot read, replacing it
+//! only when the writer saw the version being replaced; and enforces limits.
 //!
 //! It sends no email, merges nothing and never inspects a note. The protocol
 //! types live in `dirt-proto`, shared with the clients.
 
+pub mod account;
 pub mod auth;
 pub mod clerk;
 pub mod config;
 pub mod devices;
+pub mod enrolments;
 pub mod error;
 pub mod notes;
+pub mod recovery;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,7 +28,7 @@ use axum::extract::{DefaultBodyLimit, FromRequest, Request};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use dirt_proto::api::{ErrorCode, PROTOCOL_HEADER, PROTOCOL_VERSION};
 use serde::de::DeserializeOwned;
@@ -84,6 +89,30 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/devices", post(devices::register).get(devices::list))
         .route("/v1/devices/me", get(devices::me))
         .route("/v1/devices/{id}", delete(devices::revoke))
+        .route(
+            "/v1/enrolments/{device_id}/messages",
+            post(enrolments::post_message).get(enrolments::messages),
+        )
+        .route(
+            "/v1/enrolments/{device_id}/key",
+            put(enrolments::put_key).get(enrolments::get_key),
+        )
+        .route(
+            "/v1/enrolments/{device_id}/complete",
+            post(enrolments::complete),
+        )
+        .route(
+            "/v1/recovery",
+            put(recovery::put)
+                .get(recovery::get)
+                .delete(recovery::delete),
+        )
+        .route("/v1/recovery/claim", post(recovery::claim))
+        .route("/v1/account", delete(account::delete))
+        .route(
+            "/v1/account/reset",
+            post(account::reset).delete(account::cancel_reset),
+        )
         .route("/v1/notes/push", post(notes::push))
         .route("/v1/notes/pull", get(notes::pull))
         .fallback(not_found)

@@ -47,7 +47,7 @@ impl ApiError {
             | ErrorCode::DeviceRevoked
             | ErrorCode::DeviceExpired
             | ErrorCode::SignInRejected => StatusCode::UNAUTHORIZED,
-            ErrorCode::DevicePending => StatusCode::FORBIDDEN,
+            ErrorCode::DevicePending | ErrorCode::RecoveryRejected => StatusCode::FORBIDDEN,
             ErrorCode::TooManyPendingDevices => StatusCode::CONFLICT,
             ErrorCode::UnsupportedProtocol => StatusCode::UPGRADE_REQUIRED,
             ErrorCode::InvalidRequest => StatusCode::BAD_REQUEST,

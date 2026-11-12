@@ -58,6 +58,22 @@ pub mod limits {
     pub const DEVICE_TOKEN_IDLE_DAYS: i64 = 90;
     /// How long a sign-in nonce can be used after it is issued.
     pub const NONCE_LIFETIME_SECS: u32 = 600;
+    /// A device's request to join an account lapses after this long without
+    /// being approved.
+    pub const PENDING_DEVICE_DAYS: i64 = 7;
+    /// Most messages one approval exchange may hold at a time.
+    pub const MAX_ENROLMENT_MESSAGES: i64 = 32;
+    /// Largest message in an approval exchange.
+    pub const MAX_ENROLMENT_MESSAGE_BYTES: usize = 1024;
+    /// Largest encrypted copy of the account key the server stores.
+    pub const MAX_WRAPPED_KEY_BYTES: usize = 256;
+    /// Length of the hash of a recovery claim code (SHA-256).
+    pub const CLAIM_HASH_BYTES: usize = 32;
+    /// Longest recovery claim code the server reads.
+    pub const MAX_CLAIM_CODE_BYTES: usize = 64;
+    /// A reset asked for by a device that is not approved takes effect
+    /// after this long, unless an approved device cancels it.
+    pub const RESET_DELAY_DAYS: i64 = 7;
 }
 
 // ---- Errors ----
@@ -94,6 +110,8 @@ pub enum ErrorCode {
     NoteTooLarge,
     /// The account is at its storage or note-count quota.
     QuotaExceeded,
+    /// The recovery claim code is not the account's.
+    RecoveryRejected,
 }
 
 /// What a client does about an error. The class alone decides: no client
@@ -123,7 +141,9 @@ impl ErrorCode {
             | Self::DeviceExpired
             | Self::DevicePending
             | Self::SignInRejected
-            | Self::TooManyPendingDevices => ErrorClass::StopUntilSignedIn,
+            | Self::TooManyPendingDevices
+            // The device stays as it was: waiting.
+            | Self::RecoveryRejected => ErrorClass::StopUntilSignedIn,
             // A request the server cannot make sense of means the two sides
             // disagree about the protocol, which only an update can fix.
             Self::UnsupportedProtocol | Self::InvalidRequest | Self::PayloadTooLarge => {
@@ -227,6 +247,103 @@ pub struct DeviceList {
     pub devices: Vec<DeviceInfo>,
 }
 
+/// `GET /v1/devices/me`: the calling device, with what it needs to know
+/// about its account in order to say what the person can do next.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MyDevice {
+    #[serde(flatten)]
+    pub device: DeviceInfo,
+    /// How many other devices of the account are approved: the devices
+    /// that could approve this one, or keep the account's key if this one
+    /// signs out.
+    #[serde(default)]
+    pub approvers: u32,
+    /// Whether the account has a recovery copy of its key.
+    #[serde(default)]
+    pub recovery_available: bool,
+    /// When a reset that was asked for takes effect, if one is pending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_effective_at_ms: Option<i64>,
+}
+
+// ---- Enrolment: handing the account key to a new device ----
+
+/// One message of an approval exchange, as the server relays it. The server
+/// numbers the messages and records who sent each; it does not read them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnrolmentMessage {
+    /// The message's number within this device's exchange. Numbers only
+    /// rise, also across a restart of the exchange.
+    pub seq: i64,
+    /// The device that posted it.
+    pub sender: Uuid,
+    #[serde(with = "base64_bytes")]
+    pub body: Vec<u8>,
+}
+
+/// `POST /v1/enrolments/{device_id}/messages`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PostEnrolmentMessage {
+    #[serde(with = "base64_bytes")]
+    pub body: Vec<u8>,
+    /// Sent by the waiting device to begin again: the server first drops
+    /// the earlier messages and any encrypted key.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub restart: bool,
+}
+
+/// `GET /v1/enrolments/{device_id}/messages?after=N`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnrolmentMessages {
+    pub messages: Vec<EnrolmentMessage>,
+}
+
+/// The account key encrypted for one reader. `PUT` and `GET
+/// /v1/enrolments/{device_id}/key`, and `GET /v1/recovery`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WrappedKey {
+    pub key_version: i32,
+    #[serde(with = "base64_bytes")]
+    pub wrapped: Vec<u8>,
+}
+
+// ---- Recovery ----
+
+/// `PUT /v1/recovery`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PutRecovery {
+    pub key_version: i32,
+    /// The account key encrypted under a key derived from the phrase.
+    #[serde(with = "base64_bytes")]
+    pub wrapped: Vec<u8>,
+    /// The SHA-256 hash of the claim code, which is also derived from the
+    /// phrase. A device that later presents the code is approved.
+    #[serde(with = "base64_bytes")]
+    pub claim_hash: Vec<u8>,
+}
+
+/// `POST /v1/recovery/claim`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoveryClaim {
+    #[serde(with = "base64_bytes")]
+    pub claim_code: Vec<u8>,
+}
+
+// ---- Account ----
+
+/// The answer to `POST /v1/account/reset`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResetResponse {
+    /// True if the account was reset by this request. The calling device
+    /// is then its only device and must make a new account key.
+    pub done: bool,
+    /// When the reset will happen, if it was only asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_at_ms: Option<i64>,
+    /// The account's epoch after the request.
+    pub epoch: i32,
+}
+
 // ---- Notes ----
 
 /// One note's encrypted document as the server holds it.
@@ -308,6 +425,13 @@ pub struct PullResponse {
     pub next_after: i64,
     /// True if more changes were waiting than fitted in this page.
     pub more: bool,
+    /// How many devices are waiting to be approved.
+    #[serde(default)]
+    pub pending_devices: u32,
+    /// When a reset that was asked for takes effect, if one is pending. An
+    /// approved device that did not expect it should cancel it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_effective_at_ms: Option<i64>,
 }
 
 mod base64_bytes {
@@ -370,6 +494,7 @@ mod tests {
             (ErrorCode::DevicePending, StopUntilSignedIn),
             (ErrorCode::SignInRejected, StopUntilSignedIn),
             (ErrorCode::TooManyPendingDevices, StopUntilSignedIn),
+            (ErrorCode::RecoveryRejected, StopUntilSignedIn),
             (ErrorCode::UnsupportedProtocol, UpdateTheApp),
             (ErrorCode::InvalidRequest, UpdateTheApp),
             (ErrorCode::PayloadTooLarge, UpdateTheApp),
