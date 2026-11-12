@@ -1,7 +1,8 @@
 //! Settings panel component.
 //!
 //! The Account tab signs in and out through the session. The Sync tab shows
-//! how sync is going and has the sync button.
+//! how sync is going and has the sync button. The Devices tab lets more
+//! devices into the account and holds the recovery phrase.
 
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
@@ -15,11 +16,13 @@ use crate::state::AppState;
 use crate::theme::resolve_theme;
 use account_settings::AccountSettingsTab;
 use data_settings::DataSettingsTab;
+use devices_settings::DevicesSettingsTab;
 use sync_settings::SyncSettingsTab;
 use theme_settings::ThemeSettingsTab;
 
 mod account_settings;
 mod data_settings;
+mod devices_settings;
 mod row;
 mod sync_settings;
 mod theme_settings;
@@ -30,6 +33,7 @@ enum SettingsTab {
     Data,
     Sync,
     Account,
+    Devices,
 }
 
 /// Settings panel component
@@ -203,6 +207,7 @@ pub fn SettingsPanel() -> Element {
                                 (SettingsTab::Data, "Data"),
                                 (SettingsTab::Sync, "Sync"),
                                 (SettingsTab::Account, "Account"),
+                                (SettingsTab::Devices, "Devices"),
                             ];
                             rsx! {
                                 for (tab, label) in tabs {
@@ -264,6 +269,7 @@ pub fn SettingsPanel() -> Element {
                     },
                     SettingsTab::Sync => rsx! { SyncSettingsTab {} },
                     SettingsTab::Account => rsx! { AccountSettingsTab {} },
+                    SettingsTab::Devices => rsx! { DevicesSettingsTab {} },
                 }
 
                 } // settings-body

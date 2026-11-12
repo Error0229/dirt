@@ -19,6 +19,8 @@ pub enum View {
     Editor,
     /// Settings: the account and sync.
     Settings,
+    /// The account's devices: letting one in, the recovery phrase.
+    Devices,
 }
 
 /// Context object passed via `use_context_provider` to every component.

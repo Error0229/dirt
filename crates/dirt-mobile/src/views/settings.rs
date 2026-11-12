@@ -241,7 +241,14 @@ pub fn Settings() -> Element {
                     },
                     SessionState::WaitingForApproval { .. } => rsx! {
                         p { style: "{TEXT}",
-                            "This device is waiting to be approved by another device of this account. Until then it cannot read the account's notes, and notes written here stay on this device."
+                            "This device is signed in but has not been let in yet. Until then it cannot read the account's notes, and notes written here stay on this device."
+                        }
+                        UiButton {
+                            r#type: "button",
+                            block: true,
+                            variant: ButtonVariant::Primary,
+                            onclick: move |_| view_signal.set(View::Devices),
+                            "Let this device in"
                         }
                         UiButton {
                             r#type: "button",
@@ -262,6 +269,23 @@ pub fn Settings() -> Element {
                     },
                     SessionState::Ready { .. } => rsx! {
                         p { style: "{TEXT}", "Signed in. Your notes sync with your other devices." }
+                        if status.pending_devices > 0 {
+                            p { style: "{TEXT}", "A device is waiting to be let into this account." }
+                        }
+                        if status.reset_effective_at_ms.is_some() {
+                            p { style: "{WARNING}", "Someone asked to start this account again." }
+                        }
+                        UiButton {
+                            r#type: "button",
+                            block: true,
+                            variant: if status.pending_devices > 0 || status.reset_effective_at_ms.is_some() {
+                                ButtonVariant::Primary
+                            } else {
+                                ButtonVariant::Secondary
+                            },
+                            onclick: move |_| view_signal.set(View::Devices),
+                            "Devices and recovery phrase"
+                        }
                         if must_sign_in_again {
                             p { style: "{WARNING}", "This device has to sign in again before it can sync." }
                             UiButton {
