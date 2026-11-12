@@ -274,7 +274,7 @@ mod tests {
     fn a_mistyped_phrase_is_caught_before_it_is_tried() {
         let phrase = RecoveryPhrase::generate();
         let words = phrase.words();
-        let mut list: Vec<&str> = words.split(' ').collect();
+        let list: Vec<&str> = words.split(' ').collect();
 
         // A word that is not on the list.
         let mut wrong_word = list.clone();
@@ -282,15 +282,20 @@ mod tests {
         // A word missing.
         let missing = list[..WORDS - 1].to_vec();
         // Two words swapped: every word is valid, the checksum is not.
-        let (first, second) = (list[0], list[1]);
-        assert_ne!(first, second, "an unlucky phrase; run again");
-        list[0] = second;
-        list[1] = first;
+        // A fixed phrase is used for this, the standard's own example. The
+        // checksum is eight bits, so two words swapped in a phrase made at
+        // random pass it once in 256 times, and a test that swapped them
+        // there failed that often.
+        let mut swapped: Vec<&str> = "legal winner thank year wave sausage worth useful              legal winner thank year wave sausage worth useful              legal winner thank year wave sausage worth title"
+            .split(' ')
+            .collect();
+        assert!(RecoveryPhrase::parse(&swapped.join(" ")).is_ok());
+        swapped.swap(0, 1);
 
         for text in [
             wrong_word.join(" "),
             missing.join(" "),
-            list.join(" "),
+            swapped.join(" "),
             String::new(),
             // A valid phrase of twelve words is not one of ours.
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"

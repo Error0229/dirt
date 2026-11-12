@@ -12,7 +12,9 @@ use dirt_core::api::BoxFuture;
 use dirt_core::crypto::{decrypt_note, AccountKey, BlobContext};
 use dirt_core::key_change::{unwrap_account_key, wrap_account_key, WrapContext};
 use dirt_core::secrets::DeviceSecrets;
-use dirt_core::session::{Approval, ExchangeStep, Join, KeyChange, SessionError, SessionState};
+use dirt_core::session::{
+    Approval, ExchangeStep, Join, KeyChange, ResetOutcome, SessionError, SessionState,
+};
 use dirt_core::store::ProblemKind;
 use dirt_core::sync::engine::SyncError;
 use dirt_proto::api::ErrorClass;
@@ -874,4 +876,120 @@ async fn a_device_too_far_behind_to_follow_is_let_in_again_with_its_notes(pool: 
         .await
         .iter()
         .all(|(_, version, _)| *version == 3));
+}
+
+/// The server's database is restored from a dump taken before the account's
+/// key was changed. The server is back at the old key and has lost the
+/// copies of the new one; the devices hold the new key and have let the old
+/// one go. No device can write, and none can get a key the server would
+/// take. Resetting the account from a device that holds the notes is the
+/// way out, and loses nothing: `docs/DEPLOY.md`, "After a restore".
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_restore_from_before_a_key_change_is_put_right_by_a_reset(pool: PgPool) {
+    let server = Server::with_sign_in(pool.clone()).await;
+    let laptop = laptop_with_a_note(&server).await;
+    let phone = approved_device(&server, &laptop, "Phone").await;
+
+    // The dump is taken here.
+    let dumped: Vec<(Uuid, Uuid, i64, i32, i32, Vec<u8>)> = sqlx::query_as(
+        "SELECT account_id, note_id, change_number, key_version, format_version, ciphertext \
+           FROM notes",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let (counter, count, bytes): (i64, i64, i64) =
+        sqlx::query_as("SELECT change_counter, note_count, bytes_used FROM accounts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    laptop.session.change_account_key().await.unwrap();
+    write(&laptop, "written under the second key").await;
+    laptop.session.sync_now().await.unwrap();
+    phone.session.sync_now().await.unwrap();
+    assert_eq!(secrets_of(&phone).key_version, 2);
+    assert!(secrets_of(&phone).older_keys.is_empty());
+
+    // The restore: the notes and the account as they were, the copies of
+    // the second key gone, and the epoch raised as the restore script does.
+    sqlx::query("DELETE FROM notes")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (account, note, change, key_version, format_version, ciphertext) in dumped {
+        sqlx::query(
+            "INSERT INTO notes (account_id, note_id, change_number, key_version, format_version, ciphertext) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(account)
+        .bind(note)
+        .bind(change)
+        .bind(key_version)
+        .bind(format_version)
+        .bind(ciphertext)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM device_keys")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE accounts SET key_version = 1, old_key_notes = 0, epoch = epoch + 1, \
+                change_counter = $1, note_count = $2, bytes_used = $3",
+    )
+    .bind(counter)
+    .bind(count)
+    .bind(bytes)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Neither device can sync, and trying again will not help: the server
+    // refuses notes under their key and has no copy of it to give.
+    write(&phone, "written on the phone after the restore").await;
+    for device in [&laptop, &phone] {
+        let error = device.session.sync_now().await.unwrap_err();
+        let SessionError::Sync(error) = error else {
+            panic!("expected a sync failure, got {error:?}");
+        };
+        assert!(matches!(error, SyncError::KeyUnavailable), "{error:?}");
+        assert_eq!(error.class(), ErrorClass::StopUntilSignedIn);
+    }
+    assert_eq!(
+        texts(&laptop).await.len(),
+        2,
+        "nothing on the laptop is lost"
+    );
+
+    // The way out. The laptop resets the account: a new first key, and
+    // every note the laptop holds sent again under it.
+    assert_eq!(
+        laptop.session.reset_account().await.unwrap(),
+        ResetOutcome::Done
+    );
+    laptop.session.sync_now().await.unwrap();
+    assert_eq!(account_state(&pool).await, (1, 0));
+    assert_eq!(blobs(&pool).await.len(), 2);
+
+    // The reset removed the phone from the account. It signs in again, is
+    // let in, and what it wrote in the meantime joins the rest.
+    let state = phone.sign_in("alice").await.unwrap();
+    assert!(matches!(state, SessionState::WaitingForApproval { .. }));
+    let_in(&laptop, &phone).await;
+    phone.session.sync_now().await.unwrap();
+    laptop.session.sync_now().await.unwrap();
+    let all = [
+        "written on the laptop",
+        "written on the phone after the restore",
+        "written under the second key",
+    ];
+    assert_eq!(texts(&phone).await, all);
+    assert_eq!(texts(&laptop).await, all);
+    assert!(blobs(&pool)
+        .await
+        .iter()
+        .all(|(_, version, _)| *version == 1));
 }

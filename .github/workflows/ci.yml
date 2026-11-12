@@ -144,6 +144,19 @@ jobs:
       - name: Run the sync simulation
         run: cargo test -p dirt-sim --verbose
 
+      # The scripts that dump the database and restore it, against the same
+      # server. The client programs must be as new as the server.
+      - name: Install the Postgres 18 client and age
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common age
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-18
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+
+      - name: Dump the database and restore it
+        run: scripts/check-backup.sh
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

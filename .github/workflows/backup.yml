@@ -1,0 +1,87 @@
+name: Database backup
+
+# Dumps the production database once a day, encrypts the dump and stores it
+# outside the database's own host. docs/DEPLOY.md, "Backups", says what to
+# set up and how to restore.
+#
+# The job does nothing until the settings below exist, so that the workflow
+# can be in the repository before the owner has chosen where dumps are kept.
+#
+# GitHub switches a scheduled workflow off after 60 days without a commit to
+# the repository, and says so by e-mail. Switch it on again when that happens.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Dump, encrypt and store
+    runs-on: ubuntu-latest
+    env:
+      # Secret: the database's direct endpoint, with a role that may read
+      # every table.
+      BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      # Not secret: the age public key dumps are encrypted to. The private
+      # key is kept by the owner and is never given to GitHub.
+      BACKUP_AGE_RECIPIENT: ${{ vars.BACKUP_AGE_RECIPIENT }}
+      # Where dumps are kept: any storage that speaks the S3 protocol.
+      BACKUP_S3_ENDPOINT: ${{ vars.BACKUP_S3_ENDPOINT }}
+      BACKUP_S3_BUCKET: ${{ vars.BACKUP_S3_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_S3_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+    steps:
+      - name: See whether backups are set up
+        id: setup
+        run: |
+          missing=""
+          for name in BACKUP_DATABASE_URL BACKUP_AGE_RECIPIENT BACKUP_S3_ENDPOINT \
+                      BACKUP_S3_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::notice::Backups are not set up. Missing:$missing. See docs/DEPLOY.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.setup.outputs.ready == 'true'
+
+      # pg_dump must be as new as the server.
+      - name: Install the Postgres 18 client and age
+        if: steps.setup.outputs.ready == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common age
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-18
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+
+      - name: Dump and encrypt
+        if: steps.setup.outputs.ready == 'true'
+        id: dump
+        run: |
+          file="dirt-$(date -u +%Y%m%dT%H%M%SZ).dump.age"
+          scripts/backup-database.sh "$file"
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+
+      # How long dumps are kept is a rule on the bucket, not something this
+      # job does: a job that can delete dumps could delete all of them.
+      - name: Store
+        if: steps.setup.outputs.ready == 'true'
+        run: |
+          aws s3 cp "${{ steps.dump.outputs.file }}" \
+            "s3://$BACKUP_S3_BUCKET/${{ steps.dump.outputs.file }}" \
+            --endpoint-url "$BACKUP_S3_ENDPOINT" --only-show-errors
+          echo "stored ${{ steps.dump.outputs.file }} in $BACKUP_S3_BUCKET"

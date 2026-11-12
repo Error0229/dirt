@@ -40,7 +40,7 @@ What the code on `main` uses today:
 - **Secrets**: the device token, device key and account key in the operating system's keychain (`keyring`) on desktop and CLI, and in Android's encrypted preferences
 - **More devices**: Matrix's short-code verification from `vodozemac` hands the account key to a new device; a 24-word `bip39` recovery phrase is the other way in
 
-What the redesign still adds: backups, purging deleted notes, and attachments. See the design's build order.
+What the redesign still adds: purging deleted notes, and attachments. See the design's build order.
 
 ## Project Structure
 
@@ -54,6 +54,7 @@ crates/
 ├── dirt-desktop/  # Dioxus desktop application
 ├── dirt-mobile/   # Dioxus Android application
 └── dirt-cli/      # Command-line interface (`dirt`)
+scripts/           # Dumping the server's database and restoring it
 docs/
 ├── DESIGN.md      # Product vision and standing decisions
 ├── plans/         # Redesign and implementation plan
@@ -152,6 +153,8 @@ Hooks run:
 - `docs/SECURITY.md` - What is protected, from whom, and what is not
 - `docs/BACKEND_API.md` - The server's protocol
 - `docs/LIMITS.md` - Every limit the server enforces, with its reason and what was measured. Change a number in `dirt_proto::api::limits` and its row here together
+- `docs/DEPLOY.md` - Running the server, backups, and what to do after a restore
+- `docs/OWNER_DECISIONS.md` - What only the owner can decide before the server is public: plans, storage, the sign-in service
 - `docs/feature-parity.md` - What each client does. Change a client's row in the pull request that changes the client
 - `docs/MANUAL_CHECKLIST.md` - What to try by hand on real devices
 - `docs/plans/` - The redesign and its implementation plan
