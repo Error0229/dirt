@@ -19,7 +19,7 @@ use dirt_core::Store;
 
 use crate::bootstrap_config::load_bootstrap_config;
 use crate::components::{QuickCapture, SettingsPanel};
-use crate::queries::{invalidate_notes_query, set_notes_store, use_notes_query};
+use crate::queries::{invalidate_notes_query, set_notes_store, set_open_note, use_notes_query};
 use crate::services::{data_folder, open_local_store};
 use crate::state::AppState;
 use crate::theme::{resolve_theme, ResolvedTheme};
@@ -130,6 +130,9 @@ pub fn App() -> Element {
             session.set(opened.session);
         }
     });
+
+    // The list is refreshed with the open note in it, whichever note it is.
+    use_effect(move || set_open_note(current_note_id()));
 
     // Follow the session: when the person signs in or out, the store in use
     // changes with them.

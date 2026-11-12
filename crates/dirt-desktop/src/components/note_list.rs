@@ -1,11 +1,18 @@
 //! Note list component with integrated tag chips
+//!
+//! The list holds the most recently edited notes. Searching and narrowing
+//! to a tag ask the store, which looks through every note, so a note older
+//! than the list reaches is found. The tags and their counts come from the
+//! store too, for the same reason. The Android app and the CLI find notes
+//! the same way.
 
-use std::collections::HashMap;
 use std::time::Duration;
 
 use dioxus::prelude::*;
+use dirt_core::models::Note;
 
 use super::NoteCard;
+use crate::queries::LISTED_NOTES;
 use crate::state::AppState;
 
 /// List of notes with tag filter chips
@@ -24,6 +31,36 @@ pub fn NoteList() -> Element {
     // Force periodic rerender so relative timestamps stay fresh.
     _ = timestamp_tick();
 
+    // Read from the store, and again when the notes change: the tags in
+    // use with how many notes carry each, how many notes there are, and,
+    // while a search or a tag narrows the list, the notes that match.
+    let tags = use_resource(move || {
+        let store = state.db_service.read().clone();
+        let _ = (state.notes)();
+        async move {
+            let store = store?;
+            let mut tags = store.list_tags().await.ok()?;
+            tags.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            let total = store.note_count().await.ok()?;
+            Some((tags, total))
+        }
+    });
+    let found = use_resource(move || {
+        let store = state.db_service.read().clone();
+        let query = (state.search_query)();
+        let tag = (state.active_tag_filter)();
+        let _ = (state.notes)();
+        async move {
+            if query.trim().is_empty() && tag.is_none() {
+                return None;
+            }
+            store?
+                .find_notes(&query, tag.as_deref(), LISTED_NOTES)
+                .await
+                .ok()
+        }
+    });
+
     let note_list_visible = (state.note_list_visible)();
     if !note_list_visible {
         return rsx! {};
@@ -32,35 +69,19 @@ pub fn NoteList() -> Element {
     let colors = (state.theme)().palette();
     let current_id = (state.current_note_id)();
     let active_tag = (state.active_tag_filter)();
-    let query = (state.search_query)().to_lowercase();
+    let query = (state.search_query)();
+    let narrowed = !query.trim().is_empty() || active_tag.is_some();
 
-    // Single pass: compute tag counts, total, and filtered notes from one read.
     let all_notes = (state.notes)();
-
-    let mut tag_counts: HashMap<String, usize> = HashMap::new();
-    let mut total_notes = 0usize;
-    let mut filtered_notes = Vec::new();
-
-    for note in &all_notes {
-        total_notes += 1;
-
-        let tags = note.tags();
-        for tag in &tags {
-            *tag_counts.entry(tag.clone()).or_insert(0) += 1;
-        }
-
-        let matches_query = query.is_empty() || note.content.to_lowercase().contains(&query);
-        let matches_tag = active_tag
-            .as_ref()
-            .is_none_or(|filter_tag| tags.iter().any(|t| t == filter_tag));
-
-        if matches_query && matches_tag {
-            filtered_notes.push(note.clone());
-        }
-    }
-
-    let mut sorted_tags: Vec<(String, usize)> = tag_counts.into_iter().collect();
-    sorted_tags.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let (sorted_tags, total_notes) = tags().flatten().unwrap_or_default();
+    // Nothing is shown for the moment it takes the store to answer.
+    let filtered_notes: Vec<Note> = if narrowed {
+        found().flatten().unwrap_or_default()
+    } else {
+        // The open note may be in what the app holds without being among
+        // the most recent. The list shows the most recent.
+        all_notes.iter().take(LISTED_NOTES).cloned().collect()
+    };
 
     rsx! {
         div {
@@ -173,6 +194,13 @@ pub fn NoteList() -> Element {
                                     updated_at_ms,
                                     is_selected,
                                     onclick: move |_| {
+                                        // A note found by searching may not
+                                        // be among those the app holds. The
+                                        // editor opens a note from them.
+                                        let held = state.notes.peek().iter().any(|held| held.id == note_id);
+                                        if !held {
+                                            state.notes.write().push(note.clone());
+                                        }
                                         state.current_note_id.set(Some(note_id));
                                     },
                                 }
