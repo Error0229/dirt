@@ -220,7 +220,7 @@ async fn run(
         let run_now = match trigger {
             Some(Trigger::Start | Trigger::Manual) => true,
             Some(Trigger::Returned) => {
-                !stopped && last_cycle.map_or(true, |at| at.elapsed() >= timing.return_gap)
+                !stopped && last_cycle.is_none_or(|at| at.elapsed() >= timing.return_gap)
             }
             Some(Trigger::Changed) => {
                 refresh_counts(&store, &status).await;

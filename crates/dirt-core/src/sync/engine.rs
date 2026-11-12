@@ -148,9 +148,16 @@ pub trait KeyKeeper: Send + Sync {
     /// The device's keys as secure storage holds them now.
     fn stored(&self) -> StoredKeys;
 
-    /// Stores `keys` as the device's keys. Called when the engine has
-    /// opened a newer key, and when it no longer needs the older ones.
-    fn keep(&self, keys: &KeyRing) -> Result<(), SyncError>;
+    /// Stores `to` as the device's keys in place of `from`. Called when
+    /// the engine has opened a newer key, and when it no longer needs the
+    /// older ones.
+    ///
+    /// `from` is what the engine believes is stored. If something else is,
+    /// nothing may be written: the other program on this device reset the
+    /// account or signed out while the engine was at work, and what it
+    /// stored is the only copy of a new key, or the absence of one. The
+    /// answer is then [`SyncError::Superseded`].
+    fn keep(&self, from: &KeyRing, to: &KeyRing) -> Result<(), SyncError>;
 
     /// The device's ID and its own key pair, which open the copies of a
     /// new account key made for it.
@@ -263,7 +270,8 @@ impl SyncEngine {
             return Err(SyncError::KeyUnavailable);
         };
         let (device_id, device_key) = keeper.device();
-        let mut ring = self.ring();
+        let held = self.ring();
+        let mut ring = held.clone();
         let copies = self.api.account_keys(ring.version()).await?;
         let mut moved = false;
         for copy in copies {
@@ -288,7 +296,7 @@ impl SyncEngine {
         if moved {
             // Stored before it is used: a note written under a key that
             // was then lost could be read by no one.
-            keeper.keep(&ring)?;
+            keeper.keep(&held, &ring)?;
             self.set_ring(ring);
         }
         Ok(moved)
@@ -314,14 +322,25 @@ impl SyncEngine {
     /// Returns how many this device could mark: it sends only notes it
     /// holds and has no problem with.
     async fn resend_old_key_notes(&self) -> Result<usize, SyncError> {
-        let listed = self.api.old_key_notes().await?;
         let mut marked = 0;
-        for note in &listed.notes {
-            if self.store.resend_note(note).await? {
-                marked += 1;
+        let mut after = 0;
+        // Every page is looked at, not only the first. A device may hold
+        // none of the notes on a page: one let in after an earlier change
+        // of the key never had the notes still under the key before that.
+        // Stopping there would leave the notes it does hold, further on,
+        // under the old key.
+        loop {
+            let listed = self.api.old_key_notes(after).await?;
+            for note in &listed.notes {
+                if self.store.resend_note(note).await? {
+                    marked += 1;
+                }
+            }
+            match listed.next_after {
+                Some(next) if next > after => after = next,
+                _ => return Ok(marked),
             }
         }
-        Ok(marked)
     }
 
     /// How many documents from the server this engine has merged into the
@@ -364,7 +383,7 @@ impl SyncEngine {
         }
         if resent_any {
             // The count in the report is from before the last push.
-            report.old_key_notes = self.api.old_key_notes().await?.total;
+            report.old_key_notes = self.api.old_key_notes(0).await?.total;
         }
         if report.old_key_notes == 0 {
             self.forget_older_keys()?;
@@ -379,13 +398,14 @@ impl SyncEngine {
     /// Lets go of the keys before the current one, once no note under
     /// them remains on the server.
     fn forget_older_keys(&self) -> Result<(), SyncError> {
-        let mut ring = self.ring();
-        if ring.older().is_empty() {
+        let held = self.ring();
+        if held.older().is_empty() {
             return Ok(());
         }
+        let mut ring = held.clone();
         ring.forget_older();
         if let Some(keeper) = &self.keeper {
-            keeper.keep(&ring)?;
+            keeper.keep(&held, &ring)?;
         }
         self.set_ring(ring);
         Ok(())

@@ -594,6 +594,124 @@ async fn an_approval_that_spans_a_key_change_hands_over_the_new_key(pool: PgPool
     assert_eq!(texts(&tablet).await, ["written on the laptop"]);
 }
 
+/// The desktop app is in the middle of fetching a new key when the CLI, on
+/// the same computer, resets the account. The reset stores a fresh key, and
+/// that record is its only copy: every other device is gone. When the
+/// app's fetch comes back it must not store what it fetched over it.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_key_fetched_while_the_other_program_resets_is_not_stored_over_the_new_key(pool: PgPool) {
+    let server = Server::with_sign_in(pool.clone()).await;
+    let desktop = laptop_with_a_note(&server).await;
+    let phone = approved_device(&server, &desktop, "Phone").await;
+    phone.session.change_account_key().await.unwrap();
+
+    // The desktop app's sync finds a new key and asks for its copy. While
+    // the answer is on its way, the other program's reset lands: the same
+    // account, device and token, and a new first key.
+    let after_reset = AccountKey::generate();
+    let stored = std::sync::Arc::clone(&desktop.secrets);
+    let fresh = after_reset.clone();
+    desktop
+        .transport
+        .rewrite_next_answer("GET /v1/account/keys", move |_answer| {
+            let mut secrets = DeviceSecrets::read(&*stored).unwrap().unwrap();
+            secrets.set_only_key(1, fresh);
+            secrets.write(&*stored).unwrap();
+        });
+
+    let refused = desktop.session.sync_now().await.unwrap_err();
+    assert!(
+        matches!(refused, SessionError::Sync(SyncError::Superseded)),
+        "{refused:?}"
+    );
+    let now = secrets_of(&desktop);
+    assert_eq!(now.key_version, 1);
+    assert_eq!(
+        now.account_key.unwrap().as_bytes(),
+        after_reset.as_bytes(),
+        "the key the reset stored was overwritten"
+    );
+    assert!(now.older_keys.is_empty());
+}
+
+/// The same with a sign-out in place of the reset: the fetched key must not
+/// bring the stored secrets back.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_key_fetched_while_the_other_program_signs_out_does_not_sign_it_back_in(pool: PgPool) {
+    let server = Server::with_sign_in(pool.clone()).await;
+    let desktop = laptop_with_a_note(&server).await;
+    let phone = approved_device(&server, &desktop, "Phone").await;
+    phone.session.change_account_key().await.unwrap();
+
+    let stored = std::sync::Arc::clone(&desktop.secrets);
+    desktop
+        .transport
+        .rewrite_next_answer("GET /v1/account/keys", move |_answer| {
+            dirt_core::secrets::SecretStore::clear(&*stored).unwrap();
+        });
+
+    let refused = desktop.session.sync_now().await.unwrap_err();
+    assert!(
+        matches!(refused, SessionError::Sync(SyncError::Superseded)),
+        "{refused:?}"
+    );
+    assert!(desktop.secrets_are_empty());
+}
+
+/// A device let in after one change of the key never had the notes still
+/// under the first key. When the key changes again, the server's list of
+/// notes to send again begins with those, a page of them, and the device
+/// can send none. It has to look further, where its own note is.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_device_that_can_send_none_of_the_first_page_sends_what_it_holds(pool: PgPool) {
+    let server = Server::with_sign_in(pool.clone()).await;
+    let page = dirt_proto::api::limits::MAX_BATCH_ITEMS;
+
+    // More notes than one page of the list holds, all under the first key.
+    let laptop = Client::new(&server, "Laptop", false);
+    laptop.sign_in("alice").await.unwrap();
+    for number in 0..page + 5 {
+        write(&laptop, &format!("an old note {number}")).await;
+    }
+    laptop.session.sync_now().await.unwrap();
+    let phone = approved_device(&server, &laptop, "Phone").await;
+
+    // The key changes, and nobody sends the notes again: the laptop goes
+    // away before it can, and the phone's sync is cut off after it has
+    // opened the new key.
+    laptop.transport.lose_next_answer("POST /v1/account/key");
+    laptop.session.change_account_key().await.unwrap_err();
+    laptop.transport.set_offline(true);
+    phone
+        .transport
+        .lose_next_answer("GET /v1/account/key/notes");
+    phone.session.sync_now().await.unwrap_err();
+    let old_notes = i64::try_from(page + 5).unwrap();
+    assert_eq!(account_state(&pool).await, (2, old_notes));
+
+    // A tablet is let in with the second key. It writes a note of its own.
+    let tablet = waiting_device(&server, "Tablet").await;
+    let_in(&phone, &tablet).await;
+    phone.transport.set_offline(true);
+    let own = write(&tablet, "written on the tablet").await;
+    tablet.session.sync_now().await.unwrap();
+    assert_eq!(account_state(&pool).await, (2, old_notes));
+
+    // The tablet changes the key again. Its own note is now under an older
+    // key too, behind a full page of notes it cannot read.
+    let changed = tablet.session.change_account_key().await.unwrap();
+    assert!(matches!(changed, KeyChange::Changed { key_version: 3, .. }));
+
+    let stored = blobs(&pool).await;
+    let sent = stored
+        .iter()
+        .find(|(note, _, _)| *note == own.as_uuid())
+        .unwrap();
+    assert_eq!(sent.1, 3, "the tablet's own note was not sent again");
+    // The notes it never held are still to be sent, by a device that can.
+    assert_eq!(account_state(&pool).await, (3, old_notes));
+}
+
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
 async fn a_reset_during_a_key_change_starts_the_keys_again(pool: PgPool) {
     let server = Server::with_sign_in(pool.clone()).await;

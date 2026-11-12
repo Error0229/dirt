@@ -38,6 +38,26 @@ fn to_count(count: i64) -> u64 {
     u64::try_from(count).unwrap_or(0)
 }
 
+/// Locks the account's row for the rest of the transaction and returns the
+/// version its notes are written under.
+///
+/// A change of the key holds this lock while it looks at which devices are
+/// approved and stores a copy for each. Whatever approves a device, or
+/// leaves a copy of the key for one, takes the same lock, so the two happen
+/// one after the other. Without it a device approved while a change was
+/// being made could be left without the new key.
+pub async fn lock_account(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+) -> ApiResult<i32> {
+    let (current,): (i32,) =
+        sqlx::query_as("SELECT key_version FROM accounts WHERE id = $1 FOR UPDATE")
+            .bind(account_id)
+            .fetch_one(&mut **tx)
+            .await?;
+    Ok(current)
+}
+
 /// Locks the account and checks that `key_version` is the version its
 /// notes are written under now.
 ///
@@ -51,11 +71,7 @@ pub async fn lock_present_key(
     account_id: Uuid,
     key_version: i32,
 ) -> ApiResult<()> {
-    let (current,): (i32,) =
-        sqlx::query_as("SELECT key_version FROM accounts WHERE id = $1 FOR UPDATE")
-            .bind(account_id)
-            .fetch_one(&mut **tx)
-            .await?;
+    let current = lock_account(tx, account_id).await?;
     if key_version == current {
         Ok(())
     } else {
@@ -88,13 +104,9 @@ pub async fn change(
     }
 
     let mut tx = state.pool.begin().await?;
-    // The account row is locked, as it is for a push, so a key change and
-    // the pushes around it happen one at a time.
-    let (current,): (i32,) =
-        sqlx::query_as("SELECT key_version FROM accounts WHERE id = $1 FOR UPDATE")
-            .bind(device.account_id)
-            .fetch_one(&mut *tx)
-            .await?;
+    // The account row is locked, as it is for a push and for approving a
+    // device, so a key change and what happens around it go one at a time.
+    let current = lock_account(&mut tx, device.account_id).await?;
     if request.from_version != current {
         return Err(ApiError::new(
             ErrorCode::KeyChanged,
@@ -203,37 +215,62 @@ pub async fn mine(
     Ok(device.respond(DeviceKeys { keys }))
 }
 
-/// `GET /v1/account/key/notes`: notes still stored under an older key, for
-/// a device to send again under the new one.
+#[derive(Debug, Deserialize)]
+pub struct OldNotesParams {
+    /// List notes whose last change is numbered after this.
+    #[serde(default)]
+    after: i64,
+}
+
+/// `GET /v1/account/key/notes?after=N`: notes still stored under an older
+/// key, for a device to send again under the new one.
+///
+/// The list comes in pages. A device may be able to send none of a page:
+/// one let in after an earlier change of the key holds none of the notes
+/// still under the key before that. It goes on to the next page, where
+/// there may be notes it can send.
 pub async fn old_notes(
     State(state): State<AppState>,
     Approved(device): Approved,
+    params: Result<Query<OldNotesParams>, QueryRejection>,
 ) -> ApiResult<Response> {
+    let Query(params) = params.map_err(|error| ApiError::invalid(error.body_text()))?;
+    if params.after < 0 {
+        return Err(ApiError::invalid("the cursor cannot be negative"));
+    }
     let (key_version, total): (i32, i64) =
         sqlx::query_as("SELECT key_version, old_key_notes FROM accounts WHERE id = $1")
             .bind(device.account_id)
             .fetch_one(&state.pool)
             .await?;
-    let rows: Vec<(Uuid,)> = if total > 0 {
+    let page = limits::MAX_BATCH_ITEMS;
+    let rows: Vec<(Uuid, i64)> = if total > 0 {
         sqlx::query_as(
-            "SELECT note_id FROM notes \
+            "SELECT note_id, change_number FROM notes \
               WHERE account_id = $1 AND key_version < $2 AND ciphertext IS NOT NULL \
-              ORDER BY change_number LIMIT $3",
+                AND change_number > $3 \
+              ORDER BY change_number LIMIT $4",
         )
         .bind(device.account_id)
         .bind(key_version)
-        .bind(i64::try_from(limits::MAX_BATCH_ITEMS).unwrap_or(i64::MAX))
+        .bind(params.after)
+        .bind(i64::try_from(page).unwrap_or(i64::MAX))
         .fetch_all(&state.pool)
         .await?
     } else {
         Vec::new()
     };
+    // A full page may be followed by another.
+    let next_after = (rows.len() == page)
+        .then(|| rows.last().map(|(_, change)| *change))
+        .flatten();
     Ok(device.respond(OldKeyNotes {
         key_version,
         notes: rows
             .into_iter()
-            .map(|(id,)| NoteId::from_uuid(id))
+            .map(|(id, _)| NoteId::from_uuid(id))
             .collect(),
         total: to_count(total),
+        next_after,
     }))
 }

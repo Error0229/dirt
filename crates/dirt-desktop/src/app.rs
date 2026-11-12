@@ -300,7 +300,7 @@ pub fn App() -> Element {
                 if let Some(fetched_notes) = fetched {
                     let changed = last_query_result
                         .as_ref()
-                        .map_or(true, |prev| *prev != fetched_notes);
+                        .is_none_or(|prev| *prev != fetched_notes);
                     if changed {
                         tracing::debug!("Notes query returned {} notes", fetched_notes.len());
                         last_query_result = Some(fetched_notes.clone());

@@ -52,7 +52,7 @@ pub fn NoteList() -> Element {
         let matches_query = query.is_empty() || note.content.to_lowercase().contains(&query);
         let matches_tag = active_tag
             .as_ref()
-            .map_or(true, |filter_tag| tags.iter().any(|t| t == filter_tag));
+            .is_none_or(|filter_tag| tags.iter().any(|t| t == filter_tag));
 
         if matches_query && matches_tag {
             filtered_notes.push(note.clone());
