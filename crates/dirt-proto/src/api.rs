@@ -399,10 +399,16 @@ pub struct DeviceKeys {
 pub struct OldKeyNotes {
     /// The version notes are written under now.
     pub key_version: i32,
-    /// Some of the notes still under an older key.
+    /// Some of the notes still under an older key, in the order the server
+    /// numbered their last change.
     pub notes: Vec<NoteId>,
     /// How many there are in all.
     pub total: u64,
+    /// Where the next page begins, if this one was full: pass it as
+    /// `after`. A device that can send none of a page again, because it
+    /// holds none of those notes, goes on to the next.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_after: Option<i64>,
 }
 
 /// The answer to `POST /v1/account/reset`.

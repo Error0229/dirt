@@ -19,7 +19,7 @@ const WORDS: [&str; 12] = [
 struct Rng(u64);
 
 impl Rng {
-    fn next(&mut self) -> u64 {
+    const fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;

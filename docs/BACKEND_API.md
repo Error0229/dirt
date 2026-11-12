@@ -274,11 +274,20 @@ the keys later than version `V`, oldest first:
 `{ "keys": [ { "key_version": 2, "wrapped": "…" } ] }`. Each copy opens
 with the key before it.
 
-**`GET /v1/account/key/notes`** lists notes still stored under an older
-key, up to 500, with how many there are in all:
-`{ "key_version": 2, "notes": [ "…" ], "total": 14 }`. A device sends the
-ones it holds again under the new key. A push that replaces such a note
-counts it off; at zero the change is complete.
+**`GET /v1/account/key/notes?after=N`** lists notes still stored under an
+older key, up to 500 at a time in the order of their last change, with how
+many there are in all:
+`{ "key_version": 2, "notes": [ "…" ], "total": 14, "next_after": 812 }`.
+`next_after` is present when the page was full: pass it as `after` for the
+next page. A device sends the notes it holds again under the new key, and
+looks at every page, because it may hold none of the notes on one. A push
+that replaces such a note counts it off; at zero the change is complete.
+
+Approving a device, by the approval exchange or the recovery phrase, and
+changing the key lock the same account row, so one happens wholly before
+the other. A change made first has removed the key left for the waiting
+device, or the recovery copy, and the approval finds none. A change made
+after must name the newly approved device.
 
 While a key version is the account's present one:
 

@@ -284,10 +284,10 @@ impl Join {
         // is approved the next time it looks.
         let mut secrets = self.secrets.clone();
         secrets.set_only_key(wrapped.key_version, account_key);
-        secrets.write(&*self.session.inner.secrets)?;
+        self.session.store_secrets(&secrets)?;
         self.api.complete_enrolment(secrets.device_id).await?;
         secrets.approved = true;
-        secrets.write(&*self.session.inner.secrets)?;
+        self.session.store_secrets(&secrets)?;
         self.session.activate(secrets)?;
         self.phase = JoinPhase::Done;
         Ok(ExchangeStep::Done)
@@ -468,7 +468,7 @@ impl Approval {
                     if let ApprovalPhase::AwaitingReveal { answered, .. } = &self.phase {
                         // Theirs came first if this device's has no number
                         // yet, or a higher one.
-                        if answered.map_or(true, |mine| relayed.seq < mine) {
+                        if answered.is_none_or(|mine| relayed.seq < mine) {
                             self.unsent_key = None;
                             self.phase = ApprovalPhase::HandledElsewhere;
                             return Ok(ExchangeStep::HandledElsewhere);
@@ -791,11 +791,11 @@ impl Session {
         let account_key = phrase.open(secrets.account_id, &copy.wrapped)?;
 
         secrets.set_only_key(copy.key_version, account_key);
-        secrets.write(&*self.inner.secrets)?;
+        self.store_secrets(&secrets)?;
         api.claim_recovery(phrase.claim_code(secrets.account_id))
             .await?;
         secrets.approved = true;
-        secrets.write(&*self.inner.secrets)?;
+        self.store_secrets(&secrets)?;
         self.activate(secrets)?;
         Ok(self.state())
     }
@@ -824,7 +824,7 @@ impl Session {
         // A reset starts the account's keys again from the first.
         fresh.set_only_key(KEY_VERSION, AccountKey::generate());
         // As at first sign-in: this record is the only copy of the new key.
-        fresh.write(&*self.inner.secrets)?;
+        self.store_secrets(&fresh)?;
         self.activate(fresh)?;
         Ok(ResetOutcome::Done)
     }

@@ -20,6 +20,7 @@ use dirt_proto::api::{
 };
 use dirt_proto::NoteId;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -450,6 +451,151 @@ async fn a_copy_of_a_replaced_key_is_not_accepted_for_a_new_device_or_a_phrase(p
         .json();
     assert!(!me.recovery_available);
     assert_eq!(recovery(2).await.status, StatusCode::OK);
+}
+
+/// A key change looks at which devices are approved and stores a copy of
+/// the new key for each, holding a lock on the account's row. Approving a
+/// device has to wait for that lock. If it did not, a device approved while
+/// a change was being made could be missed and left without the new key.
+///
+/// The test holds the lock itself, as a change in progress does, and
+/// checks that neither way of approving a device gets past it.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn approving_a_device_waits_for_a_key_change_in_progress(pool: PgPool) {
+    let app = app(pool.clone());
+    let laptop = register(&app, "alice", "Laptop").await;
+    let (account_id,): (Uuid,) = sqlx::query_as("SELECT account_id FROM devices WHERE id = $1")
+        .bind(laptop.device_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // One device waits with a key left for it by the approval exchange.
+    let tablet = register(&app, "alice", "Tablet").await;
+    post(
+        &app,
+        &format!("/v1/enrolments/{}/messages", tablet.device_id),
+        Some(&tablet.token),
+        json!({ "body": STANDARD.encode(b"commit"), "restart": true }),
+    )
+    .await;
+    call(
+        &app,
+        Method::PUT,
+        &format!("/v1/enrolments/{}/key", tablet.device_id),
+        Some(&laptop.token),
+        Some(json!({ "key_version": 1, "wrapped": STANDARD.encode(b"sealed") })),
+    )
+    .await;
+    // Another waits with the recovery phrase's claim code.
+    let phone = register(&app, "alice", "Phone").await;
+    let claim_code = b"the claim code";
+    let recovery = json!({
+        "key_version": 1,
+        "wrapped": STANDARD.encode(b"sealed"),
+        "claim_hash": STANDARD.encode(Sha256::digest(claim_code)),
+    });
+    call(
+        &app,
+        Method::PUT,
+        "/v1/recovery",
+        Some(&laptop.token),
+        Some(recovery),
+    )
+    .await;
+
+    let mut change_in_progress = pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM accounts WHERE id = $1 FOR UPDATE")
+        .bind(account_id)
+        .execute(&mut *change_in_progress)
+        .await
+        .unwrap();
+
+    let completing = {
+        let (app, token, device) = (app.clone(), tablet.token.clone(), tablet.device_id);
+        tokio::spawn(async move {
+            let path = format!("/v1/enrolments/{device}/complete");
+            post(&app, &path, Some(&token), json!({})).await.status
+        })
+    };
+    let claiming = {
+        let (app, token) = (app.clone(), phone.token.clone());
+        tokio::spawn(async move {
+            let body = json!({ "claim_code": STANDARD.encode(claim_code) });
+            post(&app, "/v1/recovery/claim", Some(&token), body)
+                .await
+                .status
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(!completing.is_finished(), "an approval got past the lock");
+    assert!(
+        !claiming.is_finished(),
+        "a recovery claim got past the lock"
+    );
+    let statuses: Vec<(String,)> =
+        sqlx::query_as("SELECT status FROM devices WHERE id = ANY($1) ORDER BY id")
+            .bind(vec![tablet.device_id, phone.device_id])
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(statuses.iter().all(|(status,)| status == "pending"));
+
+    change_in_progress.commit().await.unwrap();
+    assert_eq!(completing.await.unwrap(), StatusCode::OK);
+    assert_eq!(claiming.await.unwrap(), StatusCode::OK);
+}
+
+/// The list of notes still under an older key comes in pages, so that a
+/// device which can send none of one page gets to the next.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn the_notes_under_an_older_key_are_listed_in_pages(pool: PgPool) {
+    let app = app(pool.clone());
+    let laptop = register(&app, "alice", "Laptop").await;
+    let page = limits::MAX_BATCH_ITEMS;
+    let notes: Vec<NoteId> = (0..page + 3).map(|_| note_id()).collect();
+    for batch in notes.chunks(page) {
+        let items = batch
+            .iter()
+            .map(|note| item(*note, 0, b"x".to_vec()))
+            .collect();
+        let outcomes = push(&app, &laptop.token, items).await;
+        assert!(outcomes.iter().all(|outcome| accepted(outcome).is_some()));
+    }
+    change_key(
+        &app,
+        &laptop.token,
+        1,
+        vec![wrapped_for(laptop.device_id, b"l")],
+    )
+    .await;
+
+    let first: OldKeyNotes = get(&app, "/v1/account/key/notes", Some(&laptop.token))
+        .await
+        .json();
+    assert_eq!(first.notes, notes[..page]);
+    assert_eq!(first.total, u64::try_from(page + 3).unwrap());
+    let next = first
+        .next_after
+        .expect("a full page is followed by another");
+
+    let second: OldKeyNotes = get(
+        &app,
+        &format!("/v1/account/key/notes?after={next}"),
+        Some(&laptop.token),
+    )
+    .await
+    .json();
+    assert_eq!(second.notes, notes[page..]);
+    assert_eq!(second.total, u64::try_from(page + 3).unwrap());
+    assert_eq!(second.next_after, None);
+
+    assert_eq!(
+        get(&app, "/v1/account/key/notes?after=-1", Some(&laptop.token))
+            .await
+            .code(),
+        "invalid_request"
+    );
 }
 
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]

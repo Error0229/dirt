@@ -157,6 +157,43 @@ are sent again, that the recovery copy goes, and that an approving device
 hands over its present key. The two that were not caught at first are the
 last two findings above.
 
+What review showed, each fixed with a test that fails without the fix:
+
+- **A device approved while the key was being changed could be left
+  without the new key.** The change looked at which devices were approved
+  while holding a lock on the account's row; approving a device took no
+  lock. An approval that committed just after that look was missed, and
+  the device could not sync until it signed in again. Approving a device,
+  by the exchange or by the recovery phrase, now takes the same lock.
+  Found in review.
+- **A fetched key could be stored over a key another program had just
+  written.** The engine checked that the stored record was the same
+  sign-in, which a reset does not change, and then wrote. If the CLI reset
+  the account while the desktop app was fetching a key, the app's write
+  replaced the reset's key, which was its only copy; a sign-out could be
+  undone the same way. The write now replaces only the keys the engine
+  started from. Secure storage cannot do that in one step, so the check
+  and the write are made under a lock on a file in the data folder, which
+  every other write of the device's secrets takes too. Found in review.
+- **Sending notes again could stop at the first page of the list.** The
+  server listed the first 500 notes under an older key, and a device that
+  held none of them looked no further. A device let in after one change of
+  the key holds none of the notes still under the key before it, so its
+  own notes, further down, stayed under the old key after the next
+  change. The list is now paged and a device reads every page. Found in
+  review.
+- **A test that depended on timing.** "Two devices changing the key at
+  once" ran both side by side and expected one to be refused. In CI one
+  finished before the other had looked at the account, and both made a
+  change, one after the other, which is correct. The test now holds the
+  second request until the first change is made.
+- **The lints were held to a compiler older than the workspace builds
+  with.** `clippy.toml` named 1.76 as the oldest compiler; the
+  dependencies need 1.95, as the parent plan's amendment A7 records. The
+  file lock needs 1.89, which is how it showed. The setting now says 1.95,
+  and five places where the lints then asked for a newer idiom were
+  changed.
+
 Not in this part: any client's interface. `dirt devices remove` still says
 that changing the key is not available. That is 8b.
 

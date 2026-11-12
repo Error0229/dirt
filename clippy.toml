@@ -4,5 +4,8 @@
 # Allow more complex types in certain contexts
 type-complexity-threshold = 400
 
-# MSRV for lint suggestions
-msrv = "1.76.0"
+# The oldest compiler the workspace builds with, which the lints hold the
+# code to. yrs 0.28 needs 1.95, and that is the highest any dependency asks
+# for (implementation plan, amendment A7). rust-toolchain.toml pins what is
+# actually used.
+msrv = "1.95.0"

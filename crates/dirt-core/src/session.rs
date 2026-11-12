@@ -278,10 +278,55 @@ fn keys_follow(stored: &DeviceSecrets, mine: &DeviceSecrets) -> bool {
     }
 }
 
+/// The name of the file that is locked while this device's stored secrets
+/// are being changed.
+const SECRETS_LOCK: &str = "secrets.lock";
+
+/// Held while this device's stored secrets are read and then written.
+///
+/// The desktop app and the CLI on one computer keep their keys in one
+/// place, and secure storage has no way to say "replace this only if it is
+/// still what I read". The lock gives that: a program that looks at what
+/// is stored and then writes holds it for both, and a program that writes
+/// without looking takes it for the write. One then happens wholly before
+/// the other. It is a lock on a file in the data folder, which is what the
+/// two programs share; the file holds nothing.
+struct SecretsLock {
+    /// Kept open: closing the file releases the lock.
+    _file: Option<std::fs::File>,
+}
+
+fn lock_secrets(data_folder: &Path) -> SecretsLock {
+    let locked = std::fs::create_dir_all(data_folder)
+        .and_then(|()| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(data_folder.join(SECRETS_LOCK))
+        })
+        .and_then(|file| {
+            file.lock()?;
+            Ok(file)
+        });
+    match locked {
+        Ok(file) => SecretsLock { _file: Some(file) },
+        Err(error) => {
+            // A folder that cannot hold the lock cannot hold the notes
+            // either, and that is reported where it matters. Going on
+            // without the lock is what every version before this did.
+            tracing::warn!("the secrets lock could not be taken: {error}");
+            SecretsLock { _file: None }
+        }
+    }
+}
+
 /// The keys of one sign-in, as the sync engine reaches them: in secure
 /// storage, where the other program on this device may change them.
 struct SessionKeys {
     stored: Arc<dyn SecretStore>,
+    /// Where the lock on the stored secrets is.
+    data_folder: PathBuf,
     /// The sign-in the engine was made for.
     sign_in: DeviceSecrets,
     /// The session, for keeping its own copy of the keys in step. Weak,
@@ -301,21 +346,36 @@ impl KeyKeeper for SessionKeys {
         }
     }
 
-    fn keep(&self, keys: &KeyRing) -> Result<(), SyncError> {
-        // Read again and not written from memory: the other program may
-        // have signed out, and its sign-out must not be undone.
-        let mut now = match DeviceSecrets::read(&*self.stored) {
-            Ok(Some(now)) if same_sign_in(&now, &self.sign_in) => now,
-            Ok(_) => return Err(SyncError::Superseded),
-            Err(error) => return Err(SyncError::KeysNotStored(error.to_string())),
-        };
-        now.set_keys(keys);
-        now.write(&*self.stored)
-            .map_err(|error| SyncError::KeysNotStored(error.to_string()))?;
+    fn keep(&self, from: &KeyRing, to: &KeyRing) -> Result<(), SyncError> {
+        {
+            // Looked at and written under one lock. The other program may
+            // have signed out or reset the account since this engine's
+            // cycle began, and neither must be undone: after a reset, what
+            // is stored is the only copy of the account's new key.
+            let _lock = lock_secrets(&self.data_folder);
+            let mut now = match DeviceSecrets::read(&*self.stored) {
+                Ok(Some(now)) if same_sign_in(&now, &self.sign_in) => now,
+                Ok(_) => return Err(SyncError::Superseded),
+                Err(error) => return Err(SyncError::KeysNotStored(error.to_string())),
+            };
+            match now.keys() {
+                // The other program followed the same change first.
+                Some(stored) if stored.same_as(to) => {}
+                // What this engine started from: it may be replaced.
+                Some(stored) if stored.same_as(from) => {
+                    now.set_keys(to);
+                    now.write(&*self.stored)
+                        .map_err(|error| SyncError::KeysNotStored(error.to_string()))?;
+                }
+                // Anything else was put there by the other program after
+                // this engine last looked.
+                _ => return Err(SyncError::Superseded),
+            }
+        }
         if let Some(session) = self.session.upgrade() {
             if let Some(signed_in) = lock(&session.signed_in).as_mut() {
                 if same_sign_in(&signed_in.secrets, &self.sign_in) {
-                    signed_in.secrets.set_keys(keys);
+                    signed_in.secrets.set_keys(to);
                 }
             }
         }
@@ -439,6 +499,20 @@ impl Session {
             .map(|account| Arc::clone(&account.engine))
     }
 
+    /// Stores `secrets` as this device's, replacing whatever is there.
+    /// Taken under the secrets lock, so that it cannot fall between the
+    /// other program's look at what is stored and its write.
+    fn store_secrets(&self, secrets: &DeviceSecrets) -> Result<(), SecretError> {
+        let _lock = lock_secrets(&self.inner.config.data_folder);
+        secrets.write(&*self.inner.secrets)
+    }
+
+    /// Removes this device's stored secrets, under the same lock.
+    fn clear_secrets(&self) -> Result<(), SecretError> {
+        let _lock = lock_secrets(&self.inner.config.data_folder);
+        self.inner.secrets.clear()
+    }
+
     fn saved_secrets(&self) -> Option<DeviceSecrets> {
         lock(&self.inner.signed_in)
             .as_ref()
@@ -497,6 +571,7 @@ impl Session {
         // and stores there each newer key it opens.
         let keeper = SessionKeys {
             stored: Arc::clone(&self.inner.secrets),
+            data_folder: config.data_folder.clone(),
             sign_in: secrets.clone(),
             session: Arc::downgrade(&self.inner),
         };
@@ -702,7 +777,7 @@ impl Session {
         }
         // Saved before anything else: for a first device this record is
         // the only copy of the account key.
-        secrets.write(&*self.inner.secrets)?;
+        self.store_secrets(&secrets)?;
         self.activate(secrets)?;
         Ok(self.state())
     }
@@ -719,7 +794,7 @@ impl Session {
         let me = self.api().with_token(secrets.token.clone()).me().await?;
         if me.device.status == DeviceStatus::Approved {
             secrets.approved = true;
-            secrets.write(&*self.inner.secrets)?;
+            self.store_secrets(&secrets)?;
             self.activate(secrets)?;
         }
         Ok(self.state())
@@ -911,7 +986,7 @@ impl Session {
         let had_account = lock(&self.inner.signed_in)
             .take()
             .is_some_and(|signed_in| signed_in.account.is_some());
-        self.inner.secrets.clear()?;
+        self.clear_secrets()?;
         if had_account {
             let folder = account_folder(&self.inner.config.data_folder, secrets.account_id)?;
             // The mark comes first: if the folder cannot be removed now,

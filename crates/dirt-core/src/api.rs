@@ -289,9 +289,11 @@ impl ApiClient {
         Ok(copies.keys)
     }
 
-    /// Notes the server still holds under an older key.
-    pub async fn old_key_notes(&self) -> Result<OldKeyNotes, ApiError> {
-        self.get("/v1/account/key/notes".to_owned()).await
+    /// A page of the notes the server still holds under an older key:
+    /// those whose last change is numbered after `after`.
+    pub async fn old_key_notes(&self, after: i64) -> Result<OldKeyNotes, ApiError> {
+        self.get(format!("/v1/account/key/notes?after={after}"))
+            .await
     }
 
     // ---- The approval exchange ----
