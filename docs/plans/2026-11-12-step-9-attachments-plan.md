@@ -531,7 +531,10 @@ What review showed:
   with the destination being the file itself, or a link to it, there was
   nothing left to copy and the device's copy was gone. A forced save now
   writes beside the destination and then takes its name. Nothing that was
-  there is opened, and it stays whole until the new file is.
+  there is opened, and it stays whole until the new file is. What is
+  written beside it has a short name of its own: one made from the
+  destination's name would be too long where the destination's already is
+  as long as a name may be.
 - **A name was cut to 200 characters, and file systems count bytes.** A
   hundred Chinese characters are 300 bytes, more than one name may be on
   Linux, so the file could be attached and not saved. A name is now cut

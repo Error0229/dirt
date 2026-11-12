@@ -277,15 +277,15 @@ pub fn copy_to(held: &Path, target: &Path, replace: bool) -> Result<(), CliError
 
 /// A name in `target`'s folder that nothing has, to write a file under
 /// before it takes `target`'s place.
+///
+/// The name is short and owes nothing to `target`'s own. A name made
+/// from it would be longer than it, and a destination may already be as
+/// long as a name can be.
 fn beside(target: &Path) -> PathBuf {
-    let name = target
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
     let moment = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_nanos());
-    target.with_file_name(format!(".{name}.{}-{moment}.saving", std::process::id()))
+    target.with_file_name(format!(".dirt-save-{}-{moment}", std::process::id()))
 }
 
 /// Why a file could not be had, in words that say what can be done.

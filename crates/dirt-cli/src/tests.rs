@@ -650,3 +650,23 @@ fn a_forced_copy_onto_the_file_itself_leaves_it_whole() {
     assert_eq!(std::fs::read(&kept).unwrap(), b"still here");
     assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 3);
 }
+
+/// A destination whose name is as long as a name may be can still be
+/// replaced: what is written beside it on the way has a short name of its
+/// own, not a longer one made from the destination's.
+#[test]
+fn a_forced_copy_replaces_a_file_with_the_longest_of_names() {
+    use crate::commands::files::copy_to;
+
+    let folder = tempfile::tempdir().unwrap();
+    let held = folder.path().join("held");
+    std::fs::write(&held, b"the file from the note").unwrap();
+    // 255 is the most a name may be on the file systems in use.
+    let target = folder.path().join(format!("{}.txt", "n".repeat(251)));
+    std::fs::write(&target, b"an earlier copy").unwrap();
+
+    copy_to(&held, &target, true).unwrap();
+
+    assert_eq!(std::fs::read(&target).unwrap(), b"the file from the note");
+    assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 2);
+}
