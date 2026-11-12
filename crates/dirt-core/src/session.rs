@@ -798,6 +798,7 @@ impl Session {
             unsent: store.unsent_count().await?,
             failure: status.failure,
             problems: store.note_problems().await?,
+            old_key_notes: status.old_key_notes,
         })
     }
 

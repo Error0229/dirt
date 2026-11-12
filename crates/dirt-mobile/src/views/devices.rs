@@ -520,6 +520,9 @@ fn ApprovedDevice(notice: Notice) -> Element {
 
     let info = account();
     let has_phrase = info.as_ref().is_some_and(|me| me.recovery_available);
+    // What is left of a change of the account's key, as of the last sync.
+    let key_change =
+        dirt_core::sync::overview::SyncOverview::from(&(state.sync_status)()).key_change();
     let reset_at = (state.sync_status)()
         .reset_effective_at_ms
         .or_else(|| info.as_ref().and_then(|me| me.reset_effective_at_ms));
@@ -567,7 +570,7 @@ fn ApprovedDevice(notice: Notice) -> Element {
                         busy: busy(),
                         on_approve: move |device: DeviceInfo| approve(device),
                         on_remove: move |device: DeviceInfo| run(
-                            "The device was removed. It keeps what it already had; it can no longer reach the server.",
+                            "The device was removed and can no longer reach the server. It still has the account's key: change the key below so that it can read nothing written from now on.",
                             Box::new(move |session| Box::pin(async move { session.remove_device(device.id).await })),
                         ),
                     }
@@ -618,6 +621,24 @@ fn ApprovedDevice(notice: Notice) -> Element {
                         ),
                     }
                 }
+            }
+        }
+
+        div { style: "{PANEL}",
+            p { style: "{HEADING}", "The account's key" }
+            p { style: "{TEXT}",
+                "A device that was removed keeps the key it had. Changing the key means nothing written afterwards can be read with it. The recovery phrase stops working and has to be made again."
+            }
+            if let Some(text) = key_change {
+                p { style: "{TEXT}", "{text}" }
+            }
+            ConfirmedButton {
+                label: "change the account's key",
+                disabled: busy(),
+                onconfirm: move |()| run(
+                    "The account's key was changed. The recovery phrase no longer works: make a new one above.",
+                    Box::new(|session| Box::pin(async move { session.change_account_key().await.map(|_| ()) })),
+                ),
             }
         }
 

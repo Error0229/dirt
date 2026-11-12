@@ -43,6 +43,7 @@ else is on the screen.
 | D8 | Settings → Devices with another device waiting | "Let it in" shows a code. With "They match" on both, the app says the device was let in |
 | D13 | Settings → Account → Sign out, with a recovery phrase made | "Signed out", and the account's folder under `stores` in the data folder is gone while the app is still open |
 | D14 | Settings → Devices → Start the account again; Delete the account | Each asks for a second press. Afterwards the app says what happened and the server holds what the CLI's C8 and C9 expect |
+| D15 | Settings → Devices → remove a device, then Change the account's key | Removing says the device still has the key and points to the change. The change asks for a second press, says the key was changed and that a new recovery phrase is needed; the Recovery phrase row says the account has none |
 | D9 | Settings → Devices → make a recovery phrase | 24 words, shown once |
 | D10 | Settings → Data → Export JSON, then Markdown | A file dialog each time, and a file holding every note |
 | D11 | Search for a word; press a tag | The list narrows; "All" widens it again |
@@ -67,6 +68,8 @@ else is on the screen.
 | A13 | Settings → Devices on a device that is waiting: ask another device | The same code on both. With "They match" on both, the notes arrive |
 | A14 | Settings → Devices on a device that is waiting: type the recovery phrase | The device is let in and the notes arrive. A phrase with a word wrong is refused, with the reason |
 | A16 | Remove the device from another one, then sync | "This device can no longer sync", and a button to sign in again |
+| A17 | With the device offline, change the account's key on another device and write a note there; write a note here; go online and sync | Both notes are on both devices. Nothing is asked of the person |
+| A18 | Settings → Devices → Change the account's key | As D15 |
 | A15 | A sign-in on a physical device | As A2 |
 
 ## CLI
@@ -83,6 +86,8 @@ else is on the screen.
 | C8 | `dirt auth reset --yes` on an approved device | The account starts again with this device as its only one. The notes on this device are sent again under a new key; the other devices and the recovery phrase are gone |
 | C9 | `dirt auth delete-account --yes` | The account is gone from the server; the notes are still on this computer |
 | C10 | `dirt auth logout` on the only device of an account with no phrase | Refused, with the reason |
+| C11 | `dirt devices remove <ID> --change-key`, then write a note and `dirt sync --verbose` | The device is removed and the key changed. The removed device cannot sync. The other devices get the note |
+| C12 | `dirt auth change-key`, then `dirt auth status` | The key is changed, and the status says the account has no recovery phrase |
 
 ## Making a note that cannot be synced
 

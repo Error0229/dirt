@@ -74,6 +74,7 @@ pub(super) fn SyncSettingsTab() -> Element {
         .as_ref()
         .map(dirt_core::sync::worker::SyncFailure::advice);
     let problem_count = shown.problem_count();
+    let key_change = shown.key_change();
 
     rsx! {
         SettingRow {
@@ -87,6 +88,9 @@ pub(super) fn SyncSettingsTab() -> Element {
                 }
                 if let Some(text) = failure {
                     div { class: "auth-error", "{text}" }
+                }
+                if let Some(text) = key_change {
+                    div { class: "auth-hint", "{text}" }
                 }
                 if let Some(text) = problem_count {
                     div { class: "auth-error", "{text}" }

@@ -90,7 +90,8 @@ turned away, because someone may be between the two.
 
 ```bash
 dirt devices              # list the account's devices
-dirt devices remove <ID>  # remove one
+dirt devices remove <ID>  # remove one; --change-key also changes the account's key
+dirt auth change-key      # change the key, so a removed device reads nothing new
 dirt auth phrase new      # make a recovery phrase: 24 words, shown once
 dirt auth recover         # on a new device: get in with the phrase
 ```
@@ -165,7 +166,8 @@ cargo run -p dirt-api                # listens on 0.0.0.0:8080
 
 - **A removed device keeps what it had.** Removing a device stops it reaching
   the server. It keeps the notes it already had and the key that reads them.
-  Changing the account's key, which ends that, is step 8.
+  Change the account's key afterwards and that key reads nothing written
+  from then on. It cannot take back what the device already holds.
 - **The only device of an account cannot sign out without a recovery
   phrase.** Its copy of the account key would be the last.
 - **Lose every device and the phrase, lose the notes.** That is what the

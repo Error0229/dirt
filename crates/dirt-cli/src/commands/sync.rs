@@ -23,6 +23,9 @@ pub async fn run_sync(context: &Context, verbose: bool) -> Result<(), CliError> 
     }
     if verbose {
         if let Ok(mut overview) = session.sync_overview().await {
+            if let Ok(report) = &outcome {
+                overview.old_key_notes = report.old_key_notes;
+            }
             if let Err(SessionError::Sync(error)) = &outcome {
                 overview.failure = Some(SyncFailure {
                     class: error.class(),

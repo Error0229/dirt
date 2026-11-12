@@ -245,6 +245,7 @@ pub fn Settings() -> Element {
         .as_ref()
         .map(dirt_core::sync::worker::SyncFailure::advice);
     let problem_count = shown.problem_count();
+    let key_change = shown.key_change();
 
     rsx! {
         div {
@@ -381,6 +382,9 @@ pub fn Settings() -> Element {
                     }
                     if let Some(text) = sync_failure {
                         p { style: "{WARNING}", "{text}" }
+                    }
+                    if let Some(text) = key_change {
+                        p { style: "{TEXT}", "{text}" }
                     }
                     if let Some(text) = problem_count {
                         p { style: "{WARNING}", "{text}" }

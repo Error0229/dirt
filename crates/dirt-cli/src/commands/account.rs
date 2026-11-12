@@ -3,7 +3,7 @@
 use std::io::{self, BufRead, IsTerminal, Write};
 
 use dirt_core::config::AddressSource;
-use dirt_core::session::{ResetOutcome, Session, SessionState, SignOutError, Unsynced};
+use dirt_core::session::{KeyChange, ResetOutcome, Session, SessionState, SignOutError, Unsynced};
 use dirt_core::util::as_sentence;
 
 use crate::cli::{AuthCommands, PhraseCommands};
@@ -47,6 +47,7 @@ pub async fn run_auth(command: AuthCommands, context: Context) -> Result<(), Cli
         AuthCommands::Recover => recover(context.require_session()?).await,
         AuthCommands::Phrase { command } => phrase(context.require_session()?, command).await,
         AuthCommands::Reset { yes } => reset(context.require_session()?, yes).await,
+        AuthCommands::ChangeKey { yes } => change_key(context.require_session()?, yes).await,
         AuthCommands::CancelReset => {
             context
                 .require_session()?
@@ -115,6 +116,39 @@ async fn phrase(session: &Session, command: PhraseCommands) -> Result<(), CliErr
             println!("The recovery phrase was removed. It no longer opens the account.");
         }
     }
+    Ok(())
+}
+
+/// Changes the account's key and says what follows from it.
+pub async fn change_key(session: &Session, yes: bool) -> Result<(), CliError> {
+    let question = "Changing the account's key means that a device removed earlier can read \
+                    nothing written from now on. The recovery phrase stops working and has \
+                    to be made again. Change the key? [y/N] ";
+    if !yes && !confirm(question)? {
+        println!("Nothing was changed.");
+        return Ok(());
+    }
+    match session.change_account_key().await.map_err(sentence)? {
+        KeyChange::Changed { old_key_notes, .. } => {
+            println!("The account's key was changed.");
+            match old_key_notes {
+                0 => println!("Every note is under the new key."),
+                1 => println!(
+                    "1 note is still under the old key. It is sent again as your devices sync."
+                ),
+                count => println!(
+                    "{count} notes are still under the old key. They are sent again as your \
+                     devices sync."
+                ),
+            }
+        }
+        KeyChange::ChangedByAnotherDevice { .. } => {
+            println!(
+                "Another device changed the account's key just now. This device has the new key."
+            );
+        }
+    }
+    println!("The recovery phrase no longer works. `dirt auth phrase new` makes a new one.");
     Ok(())
 }
 

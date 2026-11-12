@@ -70,6 +70,8 @@ The hotkey is shown in Settings and cannot be changed there.
 | Start the account again | Settings → Devices | Settings → Devices | `dirt auth reset` |
 | Refuse a reset somebody asked for | Settings → Devices | Settings → Devices | `dirt auth cancel-reset` |
 | Delete the account | Settings → Devices | Settings → Devices | `dirt auth delete-account` |
+| Change the account's key | Settings → Devices | Settings → Devices | `dirt auth change-key`, or `dirt devices remove <ID> --change-key` |
+| How far a key change has got | Settings → Sync, Settings → Devices | Settings, Settings → Devices | `dirt sync --verbose` |
 
 The desktop app and the CLI on one computer are one device. They share the
 data folder and the keychain entry, so signing in with either signs in both.
@@ -109,7 +111,6 @@ which come from `dirt_core::sync::overview`.
 | What | Where it stands |
 |---|---|
 | Attachments | Specified in design section 10. Step 9 of the build order |
-| Changing the account's key | Step 8. Until then a removed device keeps the key it had |
 | The desktop app reaching notes beyond its 100 most recent | Step 8's limits review |
 | Bringing a deleted note back | The store can; no design document asks for a way to do it from a client. Needs a decision |
 | `dirt tui` | A stub that prints "Opening TUI..." and does nothing. No design document mentions a terminal interface. Needs a decision: remove it or plan it |
