@@ -782,6 +782,20 @@ Carried forward:
     Clerk's device-code grant, which is off by default and untested.
 - **Exit:** the enrolment tests pass, including a server that swaps a key.
 
+**Result (2026-11-12): done.** Planned and reported in
+`docs/plans/2026-11-12-step-6-more-devices-plan.md`. A second device is let
+in by comparing a code, or by the recovery phrase. An account can be reset
+and deleted, and a device can sign out once another device or a phrase holds
+the key. The desktop app and the Android emulator joined one account on
+`dirt-trial` this way. `docs/SECURITY.md` is written fresh.
+
+Carried forward:
+
+- To step 7: the recovery phrase, reset and deletion screens tried by a
+  person on real devices.
+- To step 8: a removed device keeps the account key until the key is
+  changed; how security reports are taken; the production Clerk decisions.
+
 ### Step 7: Clients reconnected
 
 - **Order:** desktop, then CLI, then Android.

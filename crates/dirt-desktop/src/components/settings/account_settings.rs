@@ -168,6 +168,8 @@ pub(super) fn AccountSettingsTab() -> Element {
     let must_sign_in_again = sync_failure
         .as_ref()
         .is_some_and(|failure| failure.class == ErrorClass::StopUntilSignedIn);
+    let pending_devices = (state.sync_status)().pending_devices;
+    let reset_pending = (state.sync_status)().reset_effective_at_ms.is_some();
 
     rsx! {
         SettingRow {
@@ -204,7 +206,7 @@ pub(super) fn AccountSettingsTab() -> Element {
                     SessionState::WaitingForApproval { account_id, .. } => rsx! {
                         div { class: "auth-status", "Account {account_id}" }
                         div { class: "auth-hint",
-                            "This device is waiting to be approved by another device of this account. Until then it cannot read the account's notes, and notes written here stay on this device."
+                            "This device is signed in but has not been let in yet: see the Devices tab. Until then it cannot read the account's notes, and notes written here stay on this device."
                         }
                         div { class: "auth-actions",
                             Button {
@@ -226,6 +228,16 @@ pub(super) fn AccountSettingsTab() -> Element {
                         if must_sign_in_again {
                             div { class: "auth-error",
                                 "This device has to sign in again before it can sync."
+                            }
+                        }
+                        if pending_devices > 0 {
+                            div { class: "auth-message",
+                                "A device is waiting to be let into this account: see the Devices tab."
+                            }
+                        }
+                        if reset_pending {
+                            div { class: "auth-error",
+                                "Someone asked to start this account again: see the Devices tab."
                             }
                         }
                         if local_waiting() > 0 {

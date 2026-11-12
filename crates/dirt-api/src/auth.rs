@@ -86,6 +86,15 @@ fn bearer_token(parts: &Parts) -> Option<&str> {
         .filter(|token| !token.is_empty())
 }
 
+/// What a removed device is told, whichever request it makes.
+#[must_use]
+pub fn removed_from_account() -> ApiError {
+    ApiError::new(
+        ErrorCode::DeviceRevoked,
+        "this device was removed from the account",
+    )
+}
+
 /// Checks the token and counts the request. Accepts pending and approved
 /// devices; refuses unknown tokens, revoked devices, tokens left unused for
 /// too long, and devices whose request to join the account has lapsed.
@@ -116,10 +125,7 @@ async fn authenticate(pool: &PgPool, parts: &Parts) -> ApiResult<Device> {
 
     let status = status_from_text(&status)?;
     if status == DeviceStatus::Revoked {
-        return Err(ApiError::new(
-            ErrorCode::DeviceRevoked,
-            "this device was removed from the account",
-        ));
+        return Err(removed_from_account());
     }
     if expired {
         return Err(ApiError::new(

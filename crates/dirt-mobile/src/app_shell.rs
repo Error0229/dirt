@@ -30,7 +30,7 @@ use crate::data::MobileNoteStore;
 use crate::services::secure_storage::EncryptedPrefs;
 use crate::state::{AppState, View};
 use crate::ui::MOBILE_UI_STYLES;
-use crate::views::{Editor, List, Settings};
+use crate::views::{Devices, Editor, List, Settings};
 
 /// Where the sign-in service sends the browser afterwards. The manifest
 /// registers the app for this address.
@@ -282,6 +282,7 @@ pub fn AppShell() -> Element {
                 View::List => rsx! { List {} },
                 View::Editor => rsx! { Editor {} },
                 View::Settings => rsx! { Settings {} },
+                View::Devices => rsx! { Devices {} },
             }
         }
     }

@@ -144,7 +144,9 @@ the exchange itself.
 Every call names the pending device. It may be made by that device or by an
 approved device of the same account. To anyone else there is no such request:
 another pending device is answered `device_pending`, another account
-`not_found`.
+`not_found`. A pending device that has been removed is answered
+`device_revoked` when it asks about its own request, also when the removal
+falls while that request is being handled.
 
 **`POST /v1/enrolments/{device_id}/messages`** adds a message of up to 1 KiB:
 

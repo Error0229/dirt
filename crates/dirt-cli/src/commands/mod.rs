@@ -4,6 +4,7 @@ pub mod common;
 pub mod completions;
 pub mod config;
 pub mod delete;
+pub mod devices;
 pub mod edit;
 pub mod export;
 pub mod list;

@@ -19,8 +19,10 @@
 //! phrase: see [`devices`].
 
 mod devices;
+mod exchange;
 
 pub use devices::{Approval, ExchangeStep, Join, MyDevice, ResetOutcome};
+pub use exchange::{Answer, Exchange, ExchangeView, Pace};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};

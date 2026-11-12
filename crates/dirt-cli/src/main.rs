@@ -77,7 +77,10 @@ async fn run() -> Result<(), CliError> {
         }
         Some(Commands::Sync) => commands::sync::run_sync(&context).await?,
         Some(Commands::Auth { command }) => {
-            commands::account::run_auth(command, &context).await?;
+            commands::account::run_auth(command, context).await?;
+        }
+        Some(Commands::Devices { command }) => {
+            commands::devices::run_devices(command, &context).await?;
         }
         Some(Commands::Completions { .. } | Commands::Config { .. } | Commands::Tui) => {
             unreachable!("handled before the store was opened")

@@ -349,6 +349,65 @@ async fn refusing_a_device_ends_its_exchange(pool: PgPool) {
     assert_eq!((messages, keys), (0, 0));
 }
 
+/// A request is checked in two steps: whose token it carries, then what it
+/// asks for. Another device can remove this one between the two. No request
+/// over HTTP can be made to fall in that gap, so this calls the second step
+/// as the first would have, with the device as it was a moment before.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_device_removed_while_its_request_is_handled_is_told_it_was_removed(pool: PgPool) {
+    use axum::extract::{Path, Query, State};
+    use dirt_api::auth::{AnyDevice, Device};
+    use dirt_proto::api::ErrorCode;
+
+    let app = app(pool.clone());
+    let (laptop, phone) = laptop_and_waiting_phone(&app).await;
+    send(&app, &phone.token, phone.device_id, b"commit", true).await;
+    let (account_id, epoch): (Uuid, i32) = sqlx::query_as(
+        "SELECT a.id, a.epoch FROM accounts a JOIN devices d ON d.account_id = a.id \
+          WHERE d.id = $1",
+    )
+    .bind(phone.device_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let as_checked = |id: Uuid, status: DeviceStatus| Device {
+        id,
+        account_id,
+        status,
+        epoch,
+    };
+    let after_zero = || Query::try_from_uri(&"/?after=0".parse().unwrap());
+
+    let path = format!("/v1/devices/{}", phone.device_id);
+    assert_eq!(
+        delete(&app, &path, &laptop.token).await.status,
+        StatusCode::OK
+    );
+
+    // The phone's token was checked while it was still waiting.
+    let refused = dirt_api::enrolments::messages(
+        State(common::state(pool.clone())),
+        AnyDevice(as_checked(phone.device_id, DeviceStatus::Pending)),
+        Ok(Path(phone.device_id)),
+        after_zero(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::DeviceRevoked);
+
+    // An approved device asking about the same request learns only that
+    // there is none.
+    let refused = dirt_api::enrolments::messages(
+        State(common::state(pool)),
+        AnyDevice(as_checked(laptop.device_id, DeviceStatus::Approved)),
+        Ok(Path(phone.device_id)),
+        after_zero(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::NotFound);
+}
+
 // ---- Requests that lapse ----
 
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]

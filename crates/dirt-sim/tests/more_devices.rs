@@ -792,3 +792,230 @@ async fn a_program_stops_syncing_when_the_other_one_replaces_the_account_key(poo
         .is_empty());
     assert_eq!(phone.notes().await[0].1, "written on the laptop");
 }
+
+/// The laptop removes the phone while the phone is in the middle of a look:
+/// it has read the laptop's answer and is about to send its own. Whichever
+/// request brings the news, the phone stops and signs out.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_device_removed_as_it_answers_stops_and_signs_out(pool: PgPool) {
+    let server = Server::with_sign_in(pool.clone()).await;
+    let laptop = laptop_with_a_note(&server).await;
+    let phone = waiting_device(&server, "Phone").await;
+    let phone_id = device_id(&phone);
+    let mut join = phone.session.begin_join().await.unwrap();
+    let target = laptop
+        .session
+        .waiting_devices()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|device| device.id == phone_id)
+        .expect("the phone is waiting");
+    let mut approval = laptop.session.begin_approval(target).unwrap();
+    assert_eq!(approval.poll().await.unwrap(), ExchangeStep::Waiting);
+
+    phone.transport.before_next(
+        "POST /v1/enrolments/",
+        move || -> dirt_core::api::BoxFuture<'static, ()> {
+            Box::pin(async move {
+                sqlx::query("UPDATE devices SET status = 'revoked' WHERE id = $1")
+                    .bind(phone_id)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            })
+        },
+    );
+
+    assert_eq!(
+        join.poll().await.unwrap(),
+        ExchangeStep::Cancelled(CancelReason::Declined)
+    );
+    assert_eq!(phone.session.state(), SessionState::SignedOut);
+    assert!(phone.secrets_are_empty());
+}
+
+// ---- The exchange as a screen runs it ----
+
+mod on_screen {
+    use std::time::Duration;
+
+    use dirt_core::session::{Answer, Exchange, ExchangeView, Pace};
+    use dirt_sim::eventually;
+
+    use super::*;
+
+    const fn quick() -> Pace {
+        Pace {
+            every: Duration::from_millis(30),
+            give_up_after: Duration::from_secs(20),
+        }
+    }
+
+    async fn both_screens(laptop: &Client, phone: &Client, pace: Pace) -> (Exchange, Exchange) {
+        let joining = Exchange::join(phone.session.begin_join().await.unwrap(), pace);
+        let target = laptop.session.waiting_devices().await.unwrap().remove(0);
+        let approving = Exchange::approve(laptop.session.begin_approval(target).unwrap(), pace);
+        (approving, joining)
+    }
+
+    fn code_on(screen: &Exchange) -> Option<String> {
+        match screen.view() {
+            ExchangeView::Step(ExchangeStep::Compare { code }) => Some(code),
+            _ => None,
+        }
+    }
+
+    #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+    async fn two_open_screens_reach_the_code_and_finish_by_themselves(pool: PgPool) {
+        let server = Server::with_sign_in(pool).await;
+        let laptop = laptop_with_a_note(&server).await;
+        let phone = waiting_device(&server, "Phone").await;
+        let (approving, joining) = both_screens(&laptop, &phone, quick()).await;
+
+        eventually("both screens show a code", || async {
+            code_on(&approving).is_some() && code_on(&joining).is_some()
+        })
+        .await;
+        assert_eq!(code_on(&approving), code_on(&joining));
+
+        approving.answer(Answer::Match);
+        joining.answer(Answer::Match);
+
+        eventually("both screens say done", || async {
+            approving.view() == ExchangeView::Step(ExchangeStep::Done)
+                && joining.view() == ExchangeView::Step(ExchangeStep::Done)
+        })
+        .await;
+        assert!(phone.session.state().is_ready());
+    }
+
+    #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+    async fn saying_the_codes_differ_ends_it_on_both_screens(pool: PgPool) {
+        let server = Server::with_sign_in(pool).await;
+        let laptop = laptop_with_a_note(&server).await;
+        let phone = waiting_device(&server, "Phone").await;
+        let (approving, joining) = both_screens(&laptop, &phone, quick()).await;
+        eventually("both screens show a code", || async {
+            code_on(&approving).is_some() && code_on(&joining).is_some()
+        })
+        .await;
+
+        approving.answer(Answer::Mismatch);
+
+        eventually("both screens say it is off", || async {
+            matches!(
+                approving.view(),
+                ExchangeView::Step(ExchangeStep::Cancelled(CancelReason::Mismatch))
+            ) && matches!(
+                joining.view(),
+                ExchangeView::Step(ExchangeStep::Cancelled(_))
+            )
+        })
+        .await;
+        assert_eq!(phone.session.state(), SessionState::SignedOut);
+        assert_eq!(
+            server
+                .device_status(target_id_of(&laptop, &server).await)
+                .await,
+            "revoked"
+        );
+    }
+
+    /// The one device of the account that is not the laptop's own.
+    async fn target_id_of(laptop: &Client, server: &Server) -> Uuid {
+        let own = device_id(laptop);
+        sqlx::query_scalar("SELECT id FROM devices WHERE id <> $1")
+            .bind(own)
+            .fetch_one(&server.pool)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+    async fn a_screen_stops_asking_when_it_is_closed_or_nothing_happens(pool: PgPool) {
+        let server = Server::with_sign_in(pool).await;
+        let laptop = laptop_with_a_note(&server).await;
+        let phone = waiting_device(&server, "Phone").await;
+
+        // Nobody opens the approving screen. The new device's screen gives
+        // up after its limit.
+        let impatient = Pace {
+            every: Duration::from_millis(30),
+            give_up_after: Duration::from_millis(250),
+        };
+        let joining = Exchange::join(phone.session.begin_join().await.unwrap(), impatient);
+        eventually("the screen gives up", || async {
+            joining.view() == ExchangeView::TimedOut
+        })
+        .await;
+        let after_giving_up = phone.transport.requests();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(phone.transport.requests(), after_giving_up);
+        // The device is still waiting, and can try again.
+        assert!(matches!(
+            phone.session.state(),
+            SessionState::WaitingForApproval { .. }
+        ));
+
+        // A screen that is closed stops at once.
+        let joining = Exchange::join(phone.session.begin_join().await.unwrap(), quick());
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(phone.transport.requests() > after_giving_up);
+        drop(joining);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let after_closing = phone.transport.requests();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(phone.transport.requests(), after_closing);
+        drop(laptop);
+    }
+
+    #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+    async fn an_answer_given_while_the_network_is_down_is_acted_on_when_it_returns(pool: PgPool) {
+        let server = Server::with_sign_in(pool).await;
+        let laptop = laptop_with_a_note(&server).await;
+        let phone = waiting_device(&server, "Phone").await;
+        let (approving, joining) = both_screens(&laptop, &phone, quick()).await;
+        eventually("both screens show a code", || async {
+            code_on(&approving).is_some() && code_on(&joining).is_some()
+        })
+        .await;
+
+        // The person presses "They match" on the laptop just as its network
+        // drops. The key cannot be left with the server.
+        laptop.transport.set_offline(true);
+        approving.answer(Answer::Match);
+        joining.answer(Answer::Match);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!phone.session.state().is_ready());
+
+        // The network returns. Nobody presses anything again.
+        laptop.transport.set_offline(false);
+
+        eventually("both screens say done", || async {
+            approving.view() == ExchangeView::Step(ExchangeStep::Done)
+                && joining.view() == ExchangeView::Step(ExchangeStep::Done)
+        })
+        .await;
+        assert!(phone.session.state().is_ready());
+    }
+
+    #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+    async fn a_screen_rides_out_a_network_that_comes_and_goes(pool: PgPool) {
+        let server = Server::with_sign_in(pool).await;
+        let laptop = laptop_with_a_note(&server).await;
+        let phone = waiting_device(&server, "Phone").await;
+        let (approving, joining) = both_screens(&laptop, &phone, quick()).await;
+
+        phone.transport.set_offline(true);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(joining.view(), ExchangeView::Step(ExchangeStep::Waiting));
+        phone.transport.set_offline(false);
+
+        eventually("both screens show a code", || async {
+            code_on(&approving).is_some() && code_on(&joining).is_some()
+        })
+        .await;
+        assert_eq!(code_on(&approving), code_on(&joining));
+    }
+}

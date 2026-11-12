@@ -2,7 +2,7 @@
 title: "Step 6: more devices"
 type: plan
 date: 2026-11-12
-status: in progress
+status: done
 parent: docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md
 tracking: "#242"
 ---
@@ -148,9 +148,70 @@ the number of waiting devices and the time a pending reset takes effect.
 
 ### 6b: the interfaces
 
-- [ ] Desktop, CLI and Android: the approval screens, the device list, the
+- [x] Desktop, CLI and Android: the approval screens, the device list, the
       recovery phrase, reset and deletion. The approval screen is the one
       place that polls, every few seconds and only while it is open.
+
+**Result (2026-11-12): done.**
+
+The desktop app has Settings → Devices and the Android app a Devices view,
+with the same contents. The CLI has `dirt devices` and, under `dirt auth`,
+`join`, `recover`, `phrase`, `reset`, `cancel-reset` and `delete-account`.
+The core's `session::Exchange` runs one side of an approval for a screen: it
+asks the server every two seconds while the screen is open, stops when the
+screen closes, and gives up after five minutes.
+
+Checked on real devices against the server on `dirt-trial`:
+
+- The CLI signed in on this computer as the account's first device and sent
+  a note.
+- The Android emulator signed in as the same person and waited. In its
+  Devices view it asked another device.
+- The desktop app, on the same computer and so the same device as the CLI,
+  showed the Android device as waiting in Settings → Devices. "Let it in"
+  brought up a code, and the Android screen showed the same one.
+- "They match" was pressed on both. The desktop app said the device was let
+  in; the Android app received the computer's note, and a note written on
+  the phone arrived on the computer.
+- `dirt auth phrase new` made a recovery phrase, and `dirt auth logout`,
+  refused on this computer in step 5, signed it out.
+
+Not checked on real devices: typing the recovery phrase on a waiting
+device, reset, and deletion. The whole-client simulation covers each
+against the real server; their screens were not pressed.
+
+What the real run showed:
+
+- **The screen that ran the exchange was gone before it could say it had
+  worked.** Being let in changes the device's state, and the waiting panel
+  goes with it. The screen that stays now gives the news.
+- **The CLI could not remove the account's files at sign-out,** because it
+  still held the store open itself. They went the next time `dirt` ran. It
+  now lets go of the store first.
+
+The test account was deleted from the trial database afterwards.
+
+What review of the interfaces showed:
+
+- **An answer given while the network is down was lost.** The person
+  pressed "They match", the request failed, and the screen went back to
+  looking without ever sending the key. The answer is now kept until a
+  request has carried it out. Found in review.
+- **The CLI asked about a code once.** If the other device began again, it
+  showed a new code that `dirt devices approve` never asked about, and the
+  command could wait for ever. It now asks about each new code and gives up
+  after five minutes without movement, whatever it was waiting for. Found
+  in review.
+- **A device removed while its own request was being handled was told
+  there was no such request.** The server checks whose token a request
+  carries and then what it asks for. A removal between the two gave the
+  new device `not_found`, which it took for a fault: it stayed signed in
+  and waiting for an exchange that was over. The test for a mismatch on two
+  screens failed about half the time once a fifth test ran beside it, which
+  is how this was found. The server now answers `device_revoked`, and the
+  joining device stops and signs out whichever of its requests brings that
+  answer.
+- Each of the three was broken by hand to confirm a test fails.
 
 ## Tests
 
@@ -185,9 +246,9 @@ Each of these is an exit condition.
 
 ## Exit
 
-- [ ] Every test above passes locally and in CI.
-- [ ] Two real devices, the desktop app and the Android emulator, join one
+- [x] Every test above passes locally and in CI.
+- [x] Two real devices, the desktop app and the Android emulator, join one
       account on `dirt-trial` by comparing the code, and a note written on
       one appears on the other.
-- [ ] The parent plan's exit: the enrolment tests pass, including a server
+- [x] The parent plan's exit: the enrolment tests pass, including a server
       that swaps a key.

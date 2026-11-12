@@ -95,6 +95,15 @@ impl Context {
         })
     }
 
+    /// The session alone, with this context's own hold on the note store
+    /// let go. For commands that remove the store's files.
+    pub fn into_session(self) -> Result<Session, CliError> {
+        self.require_session()?;
+        let Self { store, session } = self;
+        drop(store);
+        session.ok_or_else(|| CliError::Account("no server is configured".to_owned()))
+    }
+
     /// Syncs once after a command changed a note, if this device is signed
     /// in. The note is saved whatever happens here, so a failure is a
     /// warning and not an error.

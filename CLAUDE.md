@@ -8,7 +8,7 @@ The project is also a system design case study. Multi-user accounts, three clien
 
 ## Status: redesign in progress
 
-`main` is partway through an approved redesign: steps 1 to 5 of 9 are done. One device signs in through Clerk and syncs its notes, encrypted, through the new server. A second device cannot be given the account key until step 6, so it waits. Read both documents before changing architecture, sync, login or storage:
+`main` is partway through an approved redesign: steps 1 to 6 of 9 are done. Devices sign in through Clerk and sync their notes, encrypted, through the new server. A second device is let in by comparing a code with one that is already in, or by the recovery phrase. `docs/SECURITY.md` describes what is protected. Read both documents before changing architecture, sync, login or storage:
 
 - `docs/plans/2026-11-10-system-redesign-design.md` - requirements, decisions and the target design
 - `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md` - build order, trials and clean-up
@@ -36,8 +36,9 @@ What the code on `main` uses today:
 - **Login**: Clerk in the system browser (OAuth with PKCE, no Clerk SDK). The server checks the ID token once and issues a device token
 - **Sync**: encrypted note documents (XChaCha20-Poly1305), pulled, merged and pushed by `dirt-core::sync`. It runs on events (start, return to the app, a change, the sync button) and never on a timer
 - **Secrets**: the device token, device key and account key in the operating system's keychain (`keyring`) on desktop and CLI, and in Android's encrypted preferences
+- **More devices**: Matrix's short-code verification from `vodozemac` hands the account key to a new device; a 24-word `bip39` recovery phrase is the other way in
 
-What the redesign still adds: giving the account key to more devices, the recovery phrase, account reset, and attachments. See the design's build order.
+What the redesign still adds: the clients' remaining screens and feature parity, changing the account key, backups, and attachments. See the design's build order.
 
 ## Project Structure
 
@@ -146,6 +147,8 @@ Hooks run:
 ## Design Documents
 
 - `docs/DESIGN.md` - Product vision, non-goals and standing product decisions
+- `docs/SECURITY.md` - What is protected, from whom, and what is not
+- `docs/BACKEND_API.md` - The server's protocol
 - `docs/plans/` - The redesign and its implementation plan
 - `docs/brainstorms/` - Feature brainstorms
 - `docs/archive/` - Superseded documents, kept as a record
