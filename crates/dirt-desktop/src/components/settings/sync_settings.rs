@@ -9,7 +9,7 @@
 
 use dioxus::prelude::*;
 use dirt_core::session::SessionState;
-use dirt_core::store::NoteProblem;
+use dirt_core::store::{FileProblem, NoteProblem};
 use dirt_core::sync::overview::SyncOverview;
 use dirt_core::sync::worker::Trigger;
 use dirt_core::util::{as_sentence, now_ms};
@@ -74,6 +74,7 @@ pub(super) fn SyncSettingsTab() -> Element {
         .as_ref()
         .map(dirt_core::sync::worker::SyncFailure::advice);
     let problem_count = shown.problem_count();
+    let file_problem_count = shown.file_problem_count();
     let key_change = shown.key_change();
 
     rsx! {
@@ -98,6 +99,12 @@ pub(super) fn SyncSettingsTab() -> Element {
                 for problem in shown.problems {
                     ProblemNote { key: "{problem.note_id}", problem }
                 }
+                if let Some(text) = file_problem_count {
+                    div { class: "auth-error", "{text}" }
+                }
+                for problem in shown.file_problems {
+                    ProblemFile { key: "{problem.file_id}-{problem.note_id}", problem }
+                }
                 div { class: "auth-actions",
                     Button {
                         variant: ButtonVariant::Secondary,
@@ -107,6 +114,23 @@ pub(super) fn SyncSettingsTab() -> Element {
                     }
                 }
             }
+        }
+    }
+}
+
+/// One file that could not be sent: which it is, why, and what becomes of
+/// it meanwhile.
+#[component]
+fn ProblemFile(problem: FileProblem) -> Element {
+    let title = problem.title();
+    let reason = as_sentence(&problem.reason);
+    let release = problem.release();
+
+    rsx! {
+        div { class: "sync-problem",
+            div { class: "sync-problem-title", "{title}" }
+            div { class: "auth-hint", "{reason}" }
+            div { class: "auth-hint", "{release}" }
         }
     }
 }

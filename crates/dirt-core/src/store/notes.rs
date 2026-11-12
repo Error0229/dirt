@@ -148,8 +148,11 @@ pub(super) fn save(
     }
     // What the server has to be told follows what the note names. A file
     // named for the first time has a reference to confirm. A file no
-    // longer named is dated, so that the server can be told after a wait;
-    // one that is named again loses the date.
+    // longer named is dated, so that the server can be told after a wait.
+    // One that is named again loses the date, and is to be confirmed
+    // again: another device that saw it removed may have told the server
+    // so in the meantime, and the server would then delete a file that a
+    // note names.
     tx.execute(
         "INSERT OR IGNORE INTO file_links (file_id, note_id) \
          SELECT file_id, note_id FROM note_files WHERE note_id = ?1",
@@ -157,7 +160,11 @@ pub(super) fn save(
     )?;
     tx.execute(
         "UPDATE file_links \
-            SET unnamed_at = CASE \
+            SET confirmed = CASE \
+                  WHEN unnamed_at IS NOT NULL \
+                   AND file_id IN (SELECT file_id FROM note_files WHERE note_id = ?1) THEN 0 \
+                  ELSE confirmed END, \
+                unnamed_at = CASE \
                   WHEN file_id IN (SELECT file_id FROM note_files WHERE note_id = ?1) THEN NULL \
                   ELSE COALESCE(unnamed_at, ?2) END \
           WHERE note_id = ?1",

@@ -733,6 +733,15 @@ async fn a_file_the_account_has_no_room_for_waits_with_its_reason(pool: PgPool) 
         "{}",
         problems[0].reason
     );
+    // What every client shows about sync says so, by the file's name.
+    let shown = laptop.session.sync_overview().await.unwrap().lines(0);
+    assert!(
+        shown.contains(&"1 file could not be sent:".to_owned())
+            && shown
+                .iter()
+                .any(|line| line.contains("whiteboard.jpg, attached to: the whiteboard")),
+        "{shown:?}"
+    );
 
     sqlx::query("UPDATE accounts SET file_bytes = 0")
         .execute(&pool)

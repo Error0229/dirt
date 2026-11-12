@@ -410,6 +410,23 @@ a stored object with one byte changed, a release for a file the server has
 forgotten, and signing out. Eighteen more tests of the core. Each rule was
 undone in turn, 32 in all, to see a test fail.
 
+What review showed:
+
+- **A reference that came to be named again was not confirmed again.**
+  Two devices see a file removed from a note. One releases the reference
+  after its wait. If the other then merges a document that names the file
+  again, its own record still said the server had the reference, and it
+  never offered it again. The server could then delete a file that a note
+  names. Nothing in the apps names a removed file again today, since every
+  attachment gets a new ID, but the document allows it. A reference that
+  is named again is now confirmed again, whatever this device recorded
+  before.
+- **A file the server refused was shown nowhere.** It was recorded with its
+  reason and left out of what is waiting, so a device with one refused
+  file said that nothing was waiting to be sent. The overview that the
+  three clients show now lists each such file by its name and its note,
+  with the reason, and says that this device is the only place it is.
+
 Not checked on a real device: no client attaches a file yet.
 
 ### 9c: the CLI

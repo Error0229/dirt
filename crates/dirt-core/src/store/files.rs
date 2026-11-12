@@ -37,6 +37,12 @@ pub struct FileProblem {
     pub file_id: Uuid,
     pub note_id: NoteId,
     pub reason: String,
+    /// The file's name, as the note has it. For a thumbnail, the name of
+    /// the file it is the thumbnail of. `None` if the note's entry for the
+    /// file cannot be read.
+    pub name: Option<String>,
+    /// The note's text, to name the note by.
+    pub note_text: String,
 }
 
 fn to_sql_count(count: usize) -> i64 {
@@ -137,23 +143,35 @@ pub(super) fn set_problem(
 
 pub(super) fn problems(connection: &Connection) -> Result<Vec<FileProblem>> {
     let mut statement = connection.prepare(
-        "SELECT file_id, note_id, problem FROM file_links \
-          WHERE problem IS NOT NULL AND unnamed_at IS NULL ORDER BY rowid",
+        "SELECT l.file_id, l.note_id, l.problem, n.doc, n.text \
+           FROM file_links l JOIN notes n ON n.id = l.note_id \
+          WHERE l.problem IS NOT NULL AND l.unnamed_at IS NULL ORDER BY l.rowid",
     )?;
     let rows = statement.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
+            row.get::<_, Vec<u8>>(3)?,
+            row.get::<_, String>(4)?,
         ))
     })?;
     let mut problems = Vec::new();
     for row in rows {
-        let (file, note, reason) = row?;
+        let (file, note, reason, document, note_text) = row?;
+        let file = file_id(&file)?;
+        // Reading needs no client ID of its own: nothing is written.
+        let name = NoteDoc::from_bytes(0, &document)?
+            .attachments()
+            .into_iter()
+            .find(|attachment| attachment.parts().iter().any(|part| part.file_id == file))
+            .map(|attachment| attachment.name);
         problems.push(FileProblem {
-            file_id: file_id(&file)?,
+            file_id: file,
             note_id: note_id(&note)?,
             reason,
+            name,
+            note_text,
         });
     }
     Ok(problems)

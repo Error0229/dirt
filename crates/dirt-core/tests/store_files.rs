@@ -689,7 +689,11 @@ async fn a_new_epoch_offers_every_reference_again() {
         )
         .await
         .unwrap();
-    assert_eq!(store.file_problems().await.unwrap().len(), 1);
+    let problems = store.file_problems().await.unwrap();
+    assert_eq!(problems.len(), 1);
+    // Named as the person knows it: the file's name and the note's text.
+    assert_eq!(problems[0].name.as_deref(), Some("photo.jpg"));
+    assert_eq!(problems[0].note_text, "the whiteboard");
     // Refused: it is listed with its reason and not counted as waiting.
     // It is still a file that exists only here.
     assert_eq!(store.unsent_file_count().await.unwrap(), 0);
@@ -850,6 +854,12 @@ async fn a_note_from_the_server_brings_its_references() {
         .unwrap();
     assert_eq!((part.size, part.key), (40, thumbnail.key));
 
+    // The server takes both references.
+    for link in store.files_to_confirm(0, 100).await.unwrap() {
+        store.mark_file_confirmed(&link).await.unwrap();
+    }
+    assert!(to_confirm(store).await.is_empty());
+
     // The file is removed elsewhere. Both references are dated here.
     elsewhere.detach(photo.file_id, 4_000);
     store
@@ -861,9 +871,10 @@ async fn a_note_from_the_server_brings_its_references() {
     due.sort();
     assert_eq!(due, expected);
 
-    // The server is told, and before its answer is recorded the note
-    // comes to name the file again. The reference is not forgotten: it is
-    // offered again, because the server has just dropped it.
+    // The note comes to name the file again. Another device that saw it
+    // removed may have told the server so by now, which this device cannot
+    // know. The reference is offered again, though the server once took
+    // it: otherwise the server could delete a file that a note names.
     let listed = store.files_to_release(FAR_FUTURE, 100).await.unwrap();
     let plain = dirt_core::files::Attachment {
         thumbnail: None,
@@ -874,6 +885,16 @@ async fn a_note_from_the_server_brings_its_references() {
         .apply_remote_note(&note, elsewhere.encode(), 7)
         .await
         .unwrap();
+    assert_eq!(to_confirm(store).await, [(photo.file_id, note)]);
+    // The thumbnail is still gone, and still to be released.
+    assert_eq!(
+        to_release(store, FAR_FUTURE).await,
+        [(thumbnail.file_id, note)]
+    );
+
+    // And if this device was itself telling the server when it happened:
+    // the answer to a release listed earlier does not forget a reference
+    // that is named again.
     for link in &listed {
         store.mark_file_confirmed(link).await.unwrap();
         store.forget_file_link(link).await.unwrap();

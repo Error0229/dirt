@@ -907,6 +907,7 @@ impl Session {
             files_unsent: store.unsent_file_count().await?,
             failure: status.failure,
             problems: store.note_problems().await?,
+            file_problems: store.file_problems().await?,
             old_key_notes: status.old_key_notes,
         })
     }
