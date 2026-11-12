@@ -10,6 +10,7 @@
 
 use dioxus::prelude::*;
 use dirt_core::api::ErrorClass;
+use dirt_core::export::ExportFormat;
 use dirt_core::session::{SessionState, SignOutError, Unsynced};
 use dirt_core::store::NoteProblem;
 use dirt_core::sync::overview::SyncOverview;
@@ -17,6 +18,7 @@ use dirt_core::sync::worker::Trigger;
 use dirt_core::util::{as_sentence, now_ms};
 
 use crate::app_shell::REDIRECT_URI;
+use crate::services::activity::{self, SaveOutcome};
 use crate::state::{AppState, View};
 use crate::ui::{ButtonVariant, UiButton};
 
@@ -110,6 +112,7 @@ pub fn Settings() -> Element {
                         "Signing in is not available in this build or on this device. Notes are kept on this device only."
                     }
                 }
+                ExportPanel {}
             }
         };
     };
@@ -126,7 +129,7 @@ pub fn Settings() -> Element {
                 // opens: Android may stop the app while it is in front.
                 let opened = match session.begin_sign_in(REDIRECT_URI).await {
                     // A tab laid over the app, or else the browser itself.
-                    Ok(address) if crate::services::sign_in::open_sign_in_page(&address) => Ok(()),
+                    Ok(address) if activity::open_sign_in_page(&address) => Ok(()),
                     Ok(address) => webbrowser::open(&address).map_err(|error| {
                         session.cancel_sign_in();
                         format!("Could not open the browser: {error}")
@@ -392,10 +395,107 @@ pub fn Settings() -> Element {
                 }
             }
 
+            ExportPanel {}
+
             if let Some((kind, text)) = message() {
                 MessageBanner { kind, text }
             }
         }
+    }
+}
+
+/// Saves every note to one file, in a place the person chooses on
+/// Android's own screen for that.
+#[component]
+fn ExportPanel() -> Element {
+    let state = use_context::<AppState>();
+    let mut busy = use_signal(|| false);
+    let mut message: Signal<Option<(MessageKind, String)>> = use_signal(|| None);
+
+    let mut export = move |format: ExportFormat| {
+        busy.set(true);
+        message.set(None);
+        spawn(async move {
+            let said = save_export((state.store)(), format).await;
+            message.set(Some(said));
+            busy.set(false);
+        });
+    };
+
+    rsx! {
+        div { style: "{PANEL}",
+            p { style: "{HEADING}", "Export" }
+            p { style: "{TEXT}", "Save every note to a file. You choose where it goes." }
+            div { style: "display: flex; gap: 8px;",
+                UiButton {
+                    r#type: "button",
+                    block: true,
+                    variant: ButtonVariant::Secondary,
+                    disabled: busy(),
+                    onclick: move |_| export(ExportFormat::Json),
+                    "Export JSON"
+                }
+                UiButton {
+                    r#type: "button",
+                    block: true,
+                    variant: ButtonVariant::Secondary,
+                    disabled: busy(),
+                    onclick: move |_| export(ExportFormat::Markdown),
+                    "Export Markdown"
+                }
+            }
+            if let Some((kind, text)) = message() {
+                MessageBanner { kind, text }
+            }
+        }
+    }
+}
+
+/// Makes the export, hands it to Android to save, and says how it went.
+async fn save_export(
+    store: Option<std::sync::Arc<crate::data::MobileNoteStore>>,
+    format: ExportFormat,
+) -> (MessageKind, String) {
+    let Some(store) = store else {
+        return (MessageKind::Error, "The notes are not open yet.".to_owned());
+    };
+    let file = match crate::export::export_file(&store, format, now_ms()).await {
+        Ok(file) => file,
+        Err(error) => {
+            return (
+                MessageKind::Error,
+                format!("The export could not be made: {error}."),
+            )
+        }
+    };
+    if file.notes == 0 {
+        return (
+            MessageKind::Info,
+            "There are no notes to export.".to_owned(),
+        );
+    }
+    if !activity::save_file(&file.name, file.mime_type, &file.text) {
+        return (
+            MessageKind::Error,
+            "Android's screen for saving a file could not be opened.".to_owned(),
+        );
+    }
+    // The person is choosing where to save. The activity says when they
+    // have, or have backed out.
+    let outcome = loop {
+        if let Some(outcome) = activity::take_save_outcome() {
+            break outcome;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    };
+    match outcome {
+        SaveOutcome::Saved if file.notes == 1 => (MessageKind::Info, "Saved 1 note.".to_owned()),
+        SaveOutcome::Saved => (MessageKind::Info, format!("Saved {} notes.", file.notes)),
+        SaveOutcome::Cancelled => (MessageKind::Info, "Nothing was saved.".to_owned()),
+        SaveOutcome::Failed(why) => (
+            MessageKind::Error,
+            format!("The file could not be saved: {why}."),
+        ),
     }
 }
 

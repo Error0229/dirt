@@ -185,12 +185,77 @@ damaged copy on the server; 7c's run of the checklist makes one.
 
 The test account was deleted from the trial database afterwards.
 
-### 7c: the documents and the checklist
+### 7c: the documents, and what writing them found
 
-- [ ] `docs/feature-parity.md`, fresh: what each client does, feature by
+- [x] `docs/feature-parity.md`, fresh: what each client does, feature by
       feature.
-- [ ] `docs/MANUAL_CHECKLIST.md`: the hotkey, the tray, the Android glue,
+- [x] `docs/MANUAL_CHECKLIST.md`: the hotkey, the tray, the Android glue,
       and the account screens that only a real device shows.
+- [x] The Android app's search, tag filter, export, share and widget, which
+      listing its features found missing.
+
+**Result (2026-11-12): done.**
+
+**Writing the feature-parity document found five things the Android app
+did not do.** It had no search, no tag filter and no export, and it ignored
+text shared to it and the home-screen widget, though its manifest offered
+both. All five had worked before the app's shell was rewritten in May 2026.
+The rewrite kept their helper modules, each marked as unused, and left a
+note that they would follow. The design asks for search on all three
+clients, and its tests section names a checklist for "the Android glue", so
+they belong to this step and were built in it:
+
+- **Search and the tag row** ask the store, through the new
+  `Store::find_notes`, which matches every word typed and a tag together.
+  The list holds the 100 most recently edited notes; searching reaches the
+  rest. A note found that way is added to the list's notes when it is
+  opened, because the editor opens a note from them.
+- **Text shared from another app** becomes a note at once, with no press
+  needed: capture does not wait for the person. A shared page keeps its
+  title as the first line. **The widget** opens a blank note. Neither
+  takes the person out of a note they are writing.
+- **Export** hands the file to Android's own screen for choosing where to
+  save it. The app needs no storage permission, and the file is where the
+  person put it. The code from before the rewrite wrote into the app's
+  private folder, which a person cannot open.
+- All three go through `services::activity`, the JNI module step 7b made
+  for the sign-in redirect, which replaces passing text through environment
+  variables. `filters.rs` and `launch.rs` are deleted: the store's search
+  and the activity do their work.
+
+What trying them on the emulator showed:
+
+- **A share that arrived while the app was in front was not noticed.** The
+  interface asked the activity when its page became visible again, and a
+  page that never stopped being visible gets no such event. That happens
+  when the app shares the screen with the one sharing, or sits under a
+  chooser that does not cover it. The activity now tells the page when an
+  intent arrives.
+- **A second share before the first was taken replaced it.** The activity
+  kept one. It keeps a queue.
+
+Checked on the emulator: a share with the app not running, in front and in
+the background; a shared page with a title; the widget's request; search
+by the start of a word and for no match; the tag row; opening and changing
+a note found by searching; an export saved to Downloads and read back, and
+one backed out of.
+
+Not checked: the widget placed on a home screen and pressed. Its intent
+was sent with `adb`, which is what pressing it sends.
+
+**The desktop app's list and search reach only its 100 most recent
+notes.** It filters the notes it has loaded. Changing that means changing
+how it loads notes, and how many it can show at once has to be measured
+first. It is recorded in the parity document and placed in step 8's limits
+review.
+
+**No client can bring a deleted note back,** though a deleted note keeps
+its document and the store has the operation. No design document asks for
+a way to do it. It is recorded in the parity document and reported for a
+decision, as `dirt tui` is.
+
+### 7d: the checklist, run
+
 - [ ] The checklist run on the three clients against `dirt-trial`,
       including what step 6 carried forward: the recovery phrase typed on a
       waiting device, a reset, a deletion, and the desktop "Sign in"

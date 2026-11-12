@@ -248,6 +248,22 @@ impl Store {
             .await
     }
 
+    /// Notes that contain every word of `query` and carry `tag`. Either
+    /// may be left out. This is what a list with a search box and tag
+    /// filter shows: it looks through every note, not only those a client
+    /// has loaded.
+    pub async fn find_notes(
+        &self,
+        query: &str,
+        tag: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Note>> {
+        let query = query.to_owned();
+        let tag = tag.map(str::to_owned);
+        self.read(move |c| notes::find(c, &query, tag.as_deref(), limit))
+            .await
+    }
+
     /// Every tag in use, with how many notes carry it.
     pub async fn list_tags(&self) -> Result<Vec<(String, usize)>> {
         self.read(|c| notes::list_tags(c)).await

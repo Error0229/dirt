@@ -2,10 +2,11 @@
 //!
 //! List of the notes in the store in use, most recently edited first,
 //! with a line at the top saying how sync is going, a "New note" button,
-//! and tap-to-edit on each card.
-//! Search and tag filtering land in the M4 follow-up; this view stays
-//! deliberately minimal so the shell rewrite can ship without dragging
-//! every old feature back at once.
+//! a search box, a row of tags, and tap-to-edit on each card.
+//!
+//! The list holds the most recently edited notes. Searching and narrowing
+//! to a tag ask the store, which looks through every note, so an old note
+//! is found though the list does not hold it.
 
 use dioxus::prelude::*;
 use dirt_core::models::Note;
@@ -13,7 +14,7 @@ use dirt_core::models::Note;
 use dirt_core::session::SessionState;
 
 use crate::state::{AppState, View};
-use crate::ui::{ButtonVariant, UiButton};
+use crate::ui::{ButtonVariant, UiButton, UiInput};
 
 const PREVIEW_MAX_CHARS: usize = 140;
 
@@ -22,6 +23,40 @@ pub fn List() -> Element {
     let mut state = use_context::<AppState>();
     let notes = (state.notes)();
     let issue = (state.startup_issue)();
+    let query = (state.search_query)();
+    let active_tag = (state.tag_filter)();
+    let narrowed = !query.trim().is_empty() || active_tag.is_some();
+
+    // Both come from the store, and are read again when the notes change.
+    let tags = use_resource(move || {
+        let store = (state.store)();
+        let _ = (state.notes)();
+        async move {
+            match store {
+                Some(store) => store.list_tags().await.unwrap_or_default(),
+                None => Vec::new(),
+            }
+        }
+    });
+    let found = use_resource(move || {
+        let store = (state.store)();
+        let query = (state.search_query)();
+        let tag = (state.tag_filter)();
+        let _ = (state.notes)();
+        async move {
+            if query.trim().is_empty() && tag.is_none() {
+                return None;
+            }
+            store?.find_notes(&query, tag.as_deref()).await.ok()
+        }
+    });
+    let tags = tags().unwrap_or_default();
+    // `None` while the store has not answered yet.
+    let shown: Option<Vec<Note>> = if narrowed {
+        found().flatten()
+    } else {
+        Some(notes.clone())
+    };
 
     rsx! {
         div {
@@ -63,17 +98,45 @@ pub fn List() -> Element {
                     "Settings"
                 }
             }
+
+            if !notes.is_empty() || narrowed {
+                UiInput {
+                    r#type: "search",
+                    placeholder: "Search notes",
+                    value: "{query}",
+                    oninput: move |event: FormEvent| state.search_query.set(event.value()),
+                }
+            }
+
+            if !tags.is_empty() {
+                div {
+                    style: "display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px;",
+                    TagChip { label: "All".to_owned(), tag: None }
+                    for (tag, count) in tags {
+                        TagChip {
+                            key: "{tag}",
+                            label: format!("#{tag} {count}"),
+                            tag: Some(tag),
+                        }
+                    }
+                }
+            }
         }
 
         div {
             style: "flex: 1; overflow-y: auto; padding: 0 12px 16px 12px;",
 
-            if notes.is_empty() {
-                EmptyState {}
-            } else {
-                for note in notes.iter() {
-                    NoteCard { key: "{note.id}", note: note.clone() }
-                }
+            match shown {
+                Some(shown) if shown.is_empty() && narrowed => rsx! {
+                    Notice { text: "No notes match." }
+                },
+                Some(shown) if shown.is_empty() => rsx! { EmptyState {} },
+                Some(shown) => rsx! {
+                    for note in shown {
+                        NoteCard { key: "{note.id}", note }
+                    }
+                },
+                None => rsx! {},
             }
         }
     }
@@ -118,6 +181,14 @@ fn SyncBanner() -> Element {
 #[component]
 fn EmptyState() -> Element {
     rsx! {
+        Notice { text: "No notes yet. Tap \"New note\" to capture one." }
+    }
+}
+
+/// A line that stands where the notes would be.
+#[component]
+fn Notice(text: String) -> Element {
+    rsx! {
         div {
             style: "
                 margin-top: 32px;
@@ -128,7 +199,40 @@ fn EmptyState() -> Element {
                 text-align: center;
                 color: #6b7280;
             ",
-            "No notes yet. Tap \"New note\" to capture one."
+            "{text}"
+        }
+    }
+}
+
+/// One tag in the row above the list. Pressing it narrows the list to that
+/// tag; pressing "All", or the tag again, shows every note.
+#[component]
+fn TagChip(label: String, tag: Option<String>) -> Element {
+    let mut state = use_context::<AppState>();
+    let active = (state.tag_filter)() == tag;
+    let (background, colour, border) = if active {
+        ("#111827", "#ffffff", "#111827")
+    } else {
+        ("#ffffff", "#374151", "#d1d5db")
+    };
+    rsx! {
+        button {
+            r#type: "button",
+            style: "
+                flex-shrink: 0;
+                padding: 6px 10px;
+                border: 1px solid {border};
+                border-radius: 999px;
+                background: {background};
+                color: {colour};
+                font-size: 13px;
+                white-space: nowrap;
+            ",
+            onclick: move |_| {
+                let next = if active { None } else { tag.clone() };
+                state.tag_filter.set(next);
+            },
+            "{label}"
         }
     }
 }
@@ -139,6 +243,9 @@ fn NoteCard(note: Note) -> Element {
     let id = note.id;
     let title = note_title(&note);
     let preview = note_preview(&note);
+    // The editor opens a note from the list's notes. A note that was found
+    // by searching may not be among them, so it is added when it is opened.
+    let found = note;
 
     rsx! {
         button {
@@ -155,6 +262,10 @@ fn NoteCard(note: Note) -> Element {
                 cursor: pointer;
             ",
             onclick: move |_| {
+                let listed = state.notes.peek().iter().any(|note| note.id == id);
+                if !listed {
+                    state.notes.write().push(found.clone());
+                }
                 state.selected_note_id.set(Some(id));
                 state.view.set(View::Editor);
             },

@@ -6,6 +6,7 @@ use dirt_core::models::{Note, NoteId};
 use dirt_core::{Error, Result, Store};
 
 const DEFAULT_NOTES_LIMIT: usize = 100;
+const FOUND_NOTES_LIMIT: usize = 100;
 const EXPORT_NOTES_PAGE_SIZE: usize = 500;
 
 /// Thin wrapper around the shared core [`Store`] that adds the mobile
@@ -42,6 +43,20 @@ impl MobileNoteStore {
     /// List notes, most recently edited first.
     pub async fn list_notes(&self) -> Result<Vec<Note>> {
         self.db.list_notes(DEFAULT_NOTES_LIMIT, 0).await
+    }
+
+    /// Notes that contain every word of `query` and carry `tag`, either of
+    /// which may be left out. The store looks through every note, not only
+    /// the ones the list has loaded.
+    pub async fn find_notes(&self, query: &str, tag: Option<&str>) -> Result<Vec<Note>> {
+        self.db.find_notes(query, tag, FOUND_NOTES_LIMIT).await
+    }
+
+    /// Every tag in use, with how many notes carry it, most used first.
+    pub async fn list_tags(&self) -> Result<Vec<(String, usize)>> {
+        let mut tags = self.db.list_tags().await?;
+        tags.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        Ok(tags)
     }
 
     /// List all notes for full export operations.
@@ -123,6 +138,40 @@ mod tests {
             Error::InvalidInput(msg) => assert!(msg.contains("cannot be empty")),
             other => panic!("expected invalid input error, got {other:?}"),
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn finding_reaches_notes_the_list_has_not_loaded() {
+        let (_folder, store) = MobileNoteStore::open_temporary();
+        let oldest = store.create_note("call the plumber #home").await.unwrap();
+        for number in 0..DEFAULT_NOTES_LIMIT {
+            store
+                .create_note(&format!("filler {number} #work"))
+                .await
+                .unwrap();
+        }
+        let listed = store.list_notes().await.unwrap();
+        assert!(listed.iter().all(|note| note.id != oldest.id));
+
+        let by_word = store.find_notes("plumb", None).await.unwrap();
+        assert_eq!(by_word.len(), 1);
+        assert_eq!(by_word[0].id, oldest.id);
+        let by_tag = store.find_notes("", Some("home")).await.unwrap();
+        assert_eq!(by_tag.len(), 1);
+        assert!(store
+            .find_notes("plumb", Some("work"))
+            .await
+            .unwrap()
+            .is_empty());
+
+        // Most used first, then by name.
+        assert_eq!(
+            store.list_tags().await.unwrap(),
+            [
+                ("work".to_owned(), DEFAULT_NOTES_LIMIT),
+                ("home".to_owned(), 1)
+            ]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

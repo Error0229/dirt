@@ -32,6 +32,10 @@ pub struct AppState {
     pub notes: Signal<Vec<Note>>,
     pub selected_note_id: Signal<Option<NoteId>>,
     pub view: Signal<View>,
+    /// What is typed in the list's search box.
+    pub search_query: Signal<String>,
+    /// The tag the list is narrowed to, if any.
+    pub tag_filter: Signal<Option<String>>,
     /// A failure from startup that the list view shows: the local
     /// database could not be opened, or the device's secure storage could
     /// not be used.

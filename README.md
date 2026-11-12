@@ -192,6 +192,10 @@ processes, so they run wherever `cargo test` does.
 - [docs/DESIGN.md](docs/DESIGN.md): product vision and standing decisions.
 - [docs/SECURITY.md](docs/SECURITY.md): what is protected, from whom, and
   what is not.
+- [docs/feature-parity.md](docs/feature-parity.md): what each of the three
+  clients does, feature by feature.
+- [docs/MANUAL_CHECKLIST.md](docs/MANUAL_CHECKLIST.md): what to try by hand
+  on real devices before a release.
 - [docs/plans/](docs/plans/): the redesign and its implementation plan.
 - [docs/mobile-ui-conventions.md](docs/mobile-ui-conventions.md): conventions
   for the Android interface.
