@@ -126,7 +126,7 @@ pub async fn reset(
     let (epoch,): (i32,) = sqlx::query_as(
         "UPDATE accounts \
             SET epoch = epoch + 1, change_counter = 0, note_count = 0, bytes_used = 0, \
-                key_version = 1, old_key_notes = 0, \
+                purged_count = 0, key_version = 1, old_key_notes = 0, \
                 key_established = true, reset_requested_at = NULL, reset_requested_by = NULL \
           WHERE id = $1 \
       RETURNING epoch",

@@ -8,7 +8,7 @@ The project is also a system design case study. Multi-user accounts, three clien
 
 ## Status: redesign in progress
 
-`main` is partway through an approved redesign: steps 1 to 7 of 9 are built. Some of step 7's manual checklist is left for a person (`docs/MANUAL_CHECKLIST.md`, #243). Devices sign in through Clerk and sync their notes, encrypted, through the new server. A second device is let in by comparing a code with one that is already in, or by the recovery phrase. `docs/SECURITY.md` describes what is protected. Read both documents before changing architecture, sync, login or storage:
+`main` is partway through an approved redesign: steps 1 to 8 of 9 are built. Some of step 7's manual checklist is left for a person (`docs/MANUAL_CHECKLIST.md`, #243), and step 8 leaves five decisions to the owner (`docs/OWNER_DECISIONS.md`). Devices sign in through Clerk and sync their notes, encrypted, through the new server. A second device is let in by comparing a code with one that is already in, or by the recovery phrase. `docs/SECURITY.md` describes what is protected. Read both documents before changing architecture, sync, login or storage:
 
 - `docs/plans/2026-11-10-system-redesign-design.md` - requirements, decisions and the target design
 - `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md` - build order, trials and clean-up
@@ -40,7 +40,7 @@ What the code on `main` uses today:
 - **Secrets**: the device token, device key and account key in the operating system's keychain (`keyring`) on desktop and CLI, and in Android's encrypted preferences
 - **More devices**: Matrix's short-code verification from `vodozemac` hands the account key to a new device; a 24-word `bip39` recovery phrase is the other way in
 
-What the redesign still adds: purging deleted notes, and attachments. See the design's build order.
+What the redesign still adds: attachments. See the design's build order.
 
 ## Project Structure
 
@@ -118,7 +118,7 @@ Android builds run Gradle, which may need a different JDK from the machine's def
 - Timestamps stored as Unix milliseconds (i64)
 - A note's creation time is read from its ID and is not stored
 - A note's row holds its CRDT document plus values derived from it (text, edit time, deleted flag); tags and the search index are derived too. Every write updates all of them in one `BEGIN IMMEDIATE` transaction
-- A deleted note keeps its row and document, marked deleted, so the delete can sync and be undone
+- A deleted note keeps its row and document, marked deleted, so the delete can sync and be undone. Thirty days after a device saw it deleted, the device asks the server to purge it, and the row goes from every device (`dirt-core::sync`, design section 6.2)
 - Tests that need a store open one on a temporary file; in-memory databases do not support the store's connection model
 - FTS5 for full-text search
 

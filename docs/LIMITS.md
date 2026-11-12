@@ -105,15 +105,25 @@ about 360 bytes a note, twice the blob.
 | One note's blob | 1 MiB | A note is plain text, and a million characters of it fit. Three such notes fit in one batch. A note is sent whole each time it changes (design section 11), so a larger one would cost its size on every edit |
 | Blobs in one push or one pull page | 3 MB | The hosting platform refuses a request body over 4.5 MB: 4,493,163 bytes were accepted and 4,494,140 refused (trial 4). Blobs travel as base64, which makes 3 MB into 4 MB, and 500 notes add about 60 KB of JSON around them. The server's own limit on a body is 4.5 MB |
 | Notes in one push | 500 | An account at its note limit is sent in 40 pushes. One push is one transaction on the account's row |
-| Notes per account | 20,000 | Everything that touches the whole account stays well inside the request limit and takes a minute or so: see the table above. The local store answers in milliseconds at this size. At ten notes a day it is five and a half years of writing |
+| Notes per account | 20,000 | Everything that touches the whole account stays well inside the request limit and takes a minute or so: see the table above. The local store answers in milliseconds at this size. A deleted note stops counting when it is purged, so this is a limit on notes kept, not on notes ever written |
+| A deleted note is purged | after 30 days | Long enough for a device that was away to come back and for its edits to merge, which brings the note back. Each device counts from when it saw the note deleted, so no two clocks are compared |
+| Purged notes per account | 100,000 | A purged note leaves a marker, so that every device learns of the purge, and markers are never removed. One costs the database 181 bytes with its indexes, so the most an account can leave is 18 MB. Someone who deletes five notes a day reaches it in 55 years |
 | Blobs per account | 50 MiB | 20,000 one-line notes are 3.6 MB. If every one were 280 characters edited 20 times they would be 12.7 MB. 50 MiB leaves four times that for long and much-edited notes. For notes averaging under 2,621 bytes the note limit is reached first |
 | Growth a full account still takes | 1 KiB a push, up to 105% | The server cannot tell a delete from an edit, and a full account must still take deletes. A delete adds 18 to 104 bytes |
 
-The note limit counts deleted notes, because a deleted note keeps its row so
-that the delete can sync. Nothing removes that row yet. An account that has
-ever written 20,000 notes is full for good, however many it deleted. Purging
-deleted notes is part 8e of the step 8 plan, and has to be built before
-anyone can get near the limit.
+A deleted note keeps its document so that the delete can sync, and so that
+an edit made on another device without knowing of the delete can bring the
+note back. It counts against the note limit until it is purged, thirty days
+after a device saw it deleted. The review found that nothing purged them:
+an account that had ever written 20,000 notes was full for good. Part 8e of
+the step 8 plan built the purge.
+
+**Why markers are kept for ever.** A marker could be dropped once every
+device had seen it. The server would have to track how far each device has
+pulled, and a device that came back after its marker was dropped would
+bring the note back from its own copy, deleted notes reappearing months
+later. Keeping the markers costs 181 bytes each and has neither problem.
+The limit of 100,000 is what bounds it.
 
 ### Requests
 

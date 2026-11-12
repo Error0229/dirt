@@ -34,9 +34,10 @@ MIGRATE_DATABASE_URL="$server/$source_db" cargo run --quiet -p dirt-api -- migra
 
 psql --no-psqlrc --quiet --set ON_ERROR_STOP=1 --dbname="$server/$source_db" <<'SQL'
 INSERT INTO accounts (id, clerk_issuer, clerk_user_id, email, change_counter, epoch,
-                      key_version, key_established, note_count, bytes_used, old_key_notes)
+                      key_version, key_established, note_count, bytes_used, old_key_notes,
+                      purged_count)
 VALUES ('01932aaa-0000-7000-8000-000000000001', 'https://issuer.example', 'user_1',
-        'someone@example.com', 3, 2, 2, true, 3, 300007, 1);
+        'someone@example.com', 4, 2, 2, true, 3, 300007, 1, 1);
 INSERT INTO devices (id, account_id, name, public_key, token_hash, status, revoked_at)
 VALUES ('01932aaa-0000-7000-8000-000000000011', '01932aaa-0000-7000-8000-000000000001',
         'Laptop', decode(repeat('07', 32), 'hex'), '\x01', 'approved', NULL),
@@ -49,7 +50,9 @@ INSERT INTO notes (account_id, note_id, change_number, key_version, format_versi
 VALUES ('01932aaa-0000-7000-8000-000000000001', '01932aaa-0000-7000-8000-000000000021', 1, 1, 1, '\x00010203'),
        ('01932aaa-0000-7000-8000-000000000001', '01932aaa-0000-7000-8000-000000000022', 2, 2, 1,
         decode(repeat('ab', 300000), 'hex')),
-       ('01932aaa-0000-7000-8000-000000000001', '01932aaa-0000-7000-8000-000000000023', 3, 2, 1, '\x0a0b0c');
+       ('01932aaa-0000-7000-8000-000000000001', '01932aaa-0000-7000-8000-000000000023', 3, 2, 1, '\x0a0b0c'),
+       -- A purged note: its row, with no blob.
+       ('01932aaa-0000-7000-8000-000000000001', '01932aaa-0000-7000-8000-000000000024', 4, 2, 1, NULL);
 INSERT INTO device_keys (device_id, key_version, wrapped)
 VALUES ('01932aaa-0000-7000-8000-000000000011', 2, '\x1122');
 INSERT INTO enrolment_messages (device_id, seq, sender_id, body)
@@ -94,7 +97,7 @@ RESTORE_DATABASE_URL="$server/$target_db" BACKUP_AGE_IDENTITY="$work/key.txt" \
 # that are not carried.
 contents="
   SELECT 'accounts', md5(string_agg(md5(row(id, clerk_issuer, clerk_user_id, email, change_counter,
-           key_version, key_established, note_count, bytes_used, old_key_notes,
+           key_version, key_established, note_count, bytes_used, old_key_notes, purged_count,
            reset_requested_at, reset_requested_by, created_at)::text), '' ORDER BY id)) FROM accounts
   UNION ALL SELECT 'devices', md5(string_agg(md5(d::text), '' ORDER BY id)) FROM devices d
   UNION ALL SELECT 'notes', md5(string_agg(md5(n::text), '' ORDER BY note_id)) FROM notes n

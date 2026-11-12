@@ -15,7 +15,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use dirt_proto::api::ErrorClass;
+use dirt_proto::api::{limits, ErrorClass};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -90,6 +90,15 @@ pub struct Timing {
     pub first_retry: Duration,
     /// The longest pause between retries.
     pub longest_retry: Duration,
+    /// How long a note stays deleted on this device before the device asks
+    /// the server to purge it.
+    pub purge_after: Duration,
+}
+
+/// [`limits::PURGE_AFTER_DAYS`], as a length of time.
+#[must_use]
+pub const fn default_purge_after() -> Duration {
+    Duration::from_secs(limits::PURGE_AFTER_DAYS.unsigned_abs() * 24 * 60 * 60)
 }
 
 impl Default for Timing {
@@ -100,6 +109,7 @@ impl Default for Timing {
             return_gap: Duration::from_secs(30),
             first_retry: Duration::from_secs(5),
             longest_retry: Duration::from_secs(300),
+            purge_after: default_purge_after(),
         }
     }
 }

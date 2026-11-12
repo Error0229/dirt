@@ -32,7 +32,7 @@ pub(super) const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const OPEN_PATIENCE: Duration = Duration::from_secs(20);
 
 /// The version of the tables below, kept in SQLite's `user_version`.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE meta (
@@ -147,6 +147,16 @@ pub(super) fn write_transaction(connection: &mut Connection) -> Result<Transacti
 /// the same database exactly when they read the same identifier, whatever
 /// path each was opened through.
 ///
+/// Version 3: when this device first saw a note as deleted, in milliseconds,
+/// and nothing for a note that is not deleted. A device asks the server to
+/// purge a note only when it has itself seen it deleted for long enough, so
+/// no two devices' clocks are ever compared. Notes already deleted when the
+/// column is added count as deleted from that moment.
+const SCHEMA_V3: &str = "
+ALTER TABLE notes ADD COLUMN deleted_at INTEGER;
+UPDATE notes SET deleted_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000 WHERE deleted = 1;
+";
+
 /// The version is read inside the write transaction, so two processes that
 /// start together cannot both run the set-up.
 pub(super) fn set_up(connection: &mut Connection) -> Result<String> {
@@ -163,6 +173,9 @@ pub(super) fn set_up(connection: &mut Connection) -> Result<String> {
     }
     if version < 2 {
         tx.execute_batch(SCHEMA_V2)?;
+    }
+    if version < 3 {
+        tx.execute_batch(SCHEMA_V3)?;
     }
     if version < SCHEMA_VERSION {
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -307,6 +320,49 @@ mod tests {
         let id_a = client_id(&write_transaction(&mut a).unwrap()).unwrap();
         let id_b = client_id(&write_transaction(&mut b).unwrap()).unwrap();
         assert_ne!(id_a, id_b);
+    }
+
+    /// A database written before notes recorded when they were deleted.
+    /// Its deleted notes count as deleted from the moment it is upgraded:
+    /// this device cannot know how long ago they were, and waiting the
+    /// whole time again loses nothing.
+    #[test]
+    fn a_database_from_before_purging_counts_its_deleted_notes_from_now() {
+        let (_folder, path) = fresh();
+        {
+            let connection = open_connection(&path).unwrap();
+            connection.execute_batch(SCHEMA_V1).unwrap();
+            connection.execute_batch(SCHEMA_V2).unwrap();
+            connection.pragma_update(None, "user_version", 2).unwrap();
+            connection
+                .execute_batch(
+                    "INSERT INTO notes (id, doc, text, edited_at, deleted, revision) \
+                     VALUES ('live', x'00', 'live', 1, 0, 1), ('gone', x'00', '', 1, 1, 1)",
+                )
+                .unwrap();
+        }
+        let before = crate::util::now_ms() - 2_000;
+
+        let mut connection = open_connection(&path).unwrap();
+        set_up(&mut connection).unwrap();
+
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        let deleted_at = |id: &str| -> Option<i64> {
+            connection
+                .query_row("SELECT deleted_at FROM notes WHERE id = ?1", [id], |row| {
+                    row.get(0)
+                })
+                .unwrap()
+        };
+        assert_eq!(deleted_at("live"), None);
+        let gone = deleted_at("gone").expect("a deleted note has a time");
+        assert!(
+            gone >= before && gone <= crate::util::now_ms() + 2_000,
+            "{gone}"
+        );
     }
 
     #[test]

@@ -23,7 +23,9 @@ use rusqlite::Connection;
 use tokio::sync::oneshot;
 
 pub use location::{store_path, StoreName};
-pub use sync_state::{NoteProblem, ProblemKind, SyncProgress, UnsentNote};
+pub use sync_state::{
+    NoteProblem, ProblemKind, PurgeApplied, PurgeCandidate, SyncProgress, UnsentNote,
+};
 
 use crate::models::{Note, NoteId, Settings};
 use crate::{Error, Result};
@@ -433,6 +435,35 @@ impl Store {
         let id = *id;
         self.write(move |c| sync_state::apply_remote(c, &id, &document, change))
             .await
+    }
+
+    /// Deleted notes this device may ask the server to purge: seen deleted
+    /// here since before `deleted_before_ms`, with nothing unsent. Up to
+    /// `max`.
+    pub async fn purge_candidates(
+        &self,
+        deleted_before_ms: i64,
+        max: usize,
+    ) -> Result<Vec<PurgeCandidate>> {
+        self.read(move |c| sync_state::purge_candidates(c, deleted_before_ms, max))
+            .await
+    }
+
+    /// Removes a note the server purged at this device's request, unless
+    /// the note changed after it was listed at `revision`. Returns whether
+    /// it was removed.
+    pub async fn drop_purged_note(&self, id: &NoteId, revision: i64) -> Result<bool> {
+        let id = *id;
+        self.write(move |c| sync_state::drop_purged(c, &id, revision))
+            .await
+    }
+
+    /// Takes the news that the server has purged a note: this device's
+    /// copy goes, and an unsent edit to a note that is not deleted here is
+    /// kept as a new note.
+    pub async fn apply_note_purge(&self, id: &NoteId) -> Result<PurgeApplied> {
+        let id = *id;
+        self.write(move |c| sync_state::apply_purge(c, &id)).await
     }
 
     /// The last change number seen for a note, or `None` if the store has

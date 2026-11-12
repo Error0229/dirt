@@ -482,14 +482,61 @@ too, since an attachment's file is to expire with its note's purge.
 - **Settled in step 4:** a purged note keeps its row, with no blob and a new
   change number, so that every device learns of the purge by pulling. Edits
   a device still holds for a purged note become a new note.
-- [ ] Server: the purge request. The account's note count and bytes fall.
-- [ ] Core: asking for purges during a sync, and taking a purge that
+- [x] Server: the purge request. The account's note count and bytes fall.
+- [x] Core: asking for purges during a sync, and taking a purge that
       arrives: the local note goes, unless it holds edits the purge did not
       cover.
-- [ ] A long-offline device that comes back with an edit to a purged note
+- [x] A long-offline device that comes back with an edit to a purged note
       keeps the edit, as a new note. Tested in `dirt-sim`.
-- [ ] `docs/LIMITS.md` and `docs/BACKEND_API.md` say what the note limit
+- [x] `docs/LIMITS.md` and `docs/BACKEND_API.md` say what the note limit
       counts once purging exists.
+
+**Result (2026-11-12): done.** The defaults above were taken. Design
+section 6.2 has the rules.
+
+- **When.** Each device records when it first saw a note as deleted, in a
+  new column of the local store (schema version 3). Thirty days on, with
+  nothing unsent for the note, it asks. A note that comes back and is
+  deleted again waits again; a note that first reaches a device already
+  deleted waits from its arrival; notes already deleted when the app is
+  updated wait from the update.
+- **The server** has `POST /v1/notes/purge`. It purges a note only if it
+  still holds the version named, leaves the row with no blob and a new
+  change number, and takes the note off the account's count and bytes.
+  Nothing is ever stored in a purged note's place: a push onto one is
+  answered `stale`, with the marker. Migration `0005` counts purged notes.
+- **A device told of a purge** removes its copy. If the copy holds an
+  unsent edit and the note is not deleted there, the text is kept as a new
+  note.
+- **Markers are kept for ever,** and an account may have 100,000. One costs
+  the database 181 bytes, measured. Dropping them was considered and
+  rejected: the design says why.
+- **Not purged:** notes on a device with nobody signed in. They count
+  against no limit.
+
+Tests: ten against the server, six of the local store's rules and one of
+upgrading an existing store, and six with whole devices syncing through
+the real server. Those six are the cases where a thought could be lost:
+
+| The other device | What happens to the note |
+|---|---|
+| Saw the delete | Its copy goes |
+| Was away, and changed nothing | Its copy goes |
+| Was away, and deleted the note too | Its copy goes |
+| Was away, and edited the note | The edit is kept as a new note, on every device |
+| Edits the note in the moment the purge is asked for | Nothing is purged; the note is live again with the edit |
+| Pushes its edit before it has heard of the purge | The server hands back the marker; the edit is kept as a new note |
+
+Each rule was undone in turn, 21 in all, to see a test fail. Twenty did at
+once. The twenty-first showed a case with no test, a note that reaches a
+device already deleted, and has one now.
+
+Not checked on a device. The wait is thirty days and the apps have no way
+to shorten it, which is as it should be. The whole-device tests run the
+real client core against the real server with the wait set to nothing.
+
+What a restore does to a purged note is in `docs/DEPLOY.md`: a device that
+still holds the note sends it again.
 
 ## Exit
 
@@ -503,4 +550,4 @@ too, since an attachment's file is to expire with its note's purge.
       synced against it.
 - [x] The owner has the four decisions in front of them:
       `docs/OWNER_DECISIONS.md`.
-- [ ] Deleted notes are purged (8e).
+- [x] Deleted notes are purged (8e).

@@ -91,21 +91,35 @@ pub(super) fn save(
     let bytes = doc.encode();
 
     let local = origin == Origin::Local;
+    // When this device first saw the note as deleted: kept while it stays
+    // deleted, and forgotten if it comes back.
+    let now = crate::util::now_ms();
     let row = if let Some(row) = existing_row {
         tx.execute(
             "UPDATE notes SET doc = ?1, text = ?2, edited_at = ?3, deleted = ?4, \
-                    revision = revision + ?6 \
+                    revision = revision + ?6, \
+                    deleted_at = CASE WHEN ?4 THEN COALESCE(deleted_at, ?7) END \
               WHERE rowid = ?5",
-            params![bytes, text, edited_at, deleted, row, i64::from(local)],
+            params![bytes, text, edited_at, deleted, row, i64::from(local), now],
         )?;
         row
     } else {
         // A note that arrives from the server starts out as sent.
         let pushed_revision = if local { None } else { Some(1) };
+        let deleted_at = deleted.then_some(now);
         tx.execute(
-            "INSERT INTO notes (id, doc, text, edited_at, deleted, revision, pushed_revision) \
-             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)",
-            params![key, bytes, text, edited_at, deleted, pushed_revision],
+            "INSERT INTO notes (id, doc, text, edited_at, deleted, revision, pushed_revision, \
+                                deleted_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7)",
+            params![
+                key,
+                bytes,
+                text,
+                edited_at,
+                deleted,
+                pushed_revision,
+                deleted_at
+            ],
         )?;
         tx.last_insert_rowid()
     };

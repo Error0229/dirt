@@ -330,6 +330,29 @@ Two details matter:
 "Delete always wins" would be simpler but can drop an edit, which breaks the
 promise of never losing a thought.
 
+**Purging.** A deleted note keeps its document, so deleted notes would pile
+up for ever. They are purged like this (built in step 8):
+
+- Each device records when it first saw a note as deleted. Thirty days
+  later, if it holds nothing unsent for the note, it asks the server to
+  purge it, naming the version it holds. No two devices' clocks are
+  compared.
+- The server purges only if it still holds exactly that version. An edit
+  that arrived in the meantime, from a device that did not know of the
+  delete, has brought the note back, and it stays.
+- A purged note keeps its row on the server, with no blob and a new change
+  number. Every device learns of the purge by pulling, and removes its copy.
+- A device whose copy holds an unsent edit, and on which the note is not
+  deleted, keeps the text as a new note. The delete never covered that
+  edit, and with the note purged there is nothing left to merge it into.
+- The markers are never removed. Dropping one would need the server to know
+  that every device had seen it, and a device that came back afterwards
+  would bring the note back from its own copy. An account may have 100,000
+  of them (`docs/LIMITS.md`).
+- Only an account's notes are purged. Notes kept on a device alone, with
+  nobody signed in, count against no limit, and their deleted documents
+  stay.
+
 ### 6.3 What the server stores per note
 
 | Field | Purpose |
@@ -743,12 +766,6 @@ was written.
 
 ### Details not yet decided
 
-- Purging deleted notes: when a deleted note's blob is finally removed.
-  Until it is built, the note quota counts every note an account ever
-  wrote. It is part 8e of step 8, with its defaults in
-  `docs/plans/2026-11-12-step-8-hardening-plan.md`. What a device does with
-  unseen edits to a purged note was settled in step 4: they become a new
-  note.
 - Whether to pad blobs so their sizes reveal less.
 - The flows a gap check found unspecified, such as what a pending device may
   do and how key rotation treats offline devices. The implementation plan

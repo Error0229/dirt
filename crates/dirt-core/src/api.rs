@@ -13,9 +13,9 @@ use std::time::Duration;
 
 use dirt_proto::api::{
     ChangeKey, DeviceKeys, DeviceList, EnrolmentMessage, EnrolmentMessages, ErrorBody, KeyChanged,
-    MyDevice, NonceResponse, OldKeyNotes, PostEnrolmentMessage, PullResponse, PushRequest,
-    PushResponse, PutRecovery, RecoveryClaim, RegisterDeviceRequest, RegisterDeviceResponse,
-    ResetResponse, WrappedKey, PROTOCOL_HEADER, PROTOCOL_VERSION,
+    MyDevice, NonceResponse, OldKeyNotes, PostEnrolmentMessage, PullResponse, PurgeRequest,
+    PurgeResponse, PushRequest, PushResponse, PutRecovery, RecoveryClaim, RegisterDeviceRequest,
+    RegisterDeviceResponse, ResetResponse, WrappedKey, PROTOCOL_HEADER, PROTOCOL_VERSION,
 };
 // What a client needs in order to act on a failure, re-exported so that the
 // interface crates do not depend on the protocol crate for it.
@@ -265,6 +265,13 @@ impl ApiClient {
 
     pub async fn push(&self, request: &PushRequest) -> Result<PushResponse, ApiError> {
         self.call("POST", "/v1/notes/push".to_owned(), Some(request))
+            .await
+    }
+
+    /// Asks the server to purge deleted notes. Each is purged only if the
+    /// server still holds the version named for it.
+    pub async fn purge(&self, request: &PurgeRequest) -> Result<PurgeResponse, ApiError> {
+        self.call("POST", "/v1/notes/purge".to_owned(), Some(request))
             .await
     }
 
