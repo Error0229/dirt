@@ -287,21 +287,51 @@ Not tried: Cloudflare R2 itself. Everything above ran against the gateway.
 
 ### 9b: the core
 
-- [ ] The note document holds its attachments: for each, the file's ID,
+- [x] The note document holds its attachments: for each, the file's ID,
       name, type, size and key, and its thumbnail's. Two devices adding
       files to one note merge.
-- [ ] Encrypting and decrypting a file in pieces (review item 4).
+- [x] Encrypting and decrypting a file in pieces (review item 4).
 - [ ] A queue in the local store: files to upload, to confirm and to
       release. It runs in the sync cycle, after notes.
 - [ ] Fetching a file on demand and keeping it. A file the server does not
       know is uploaded again by a device that holds it (review item 6).
 - [ ] A purged note's files go from the device. A note kept as new after a
       purge keeps its files and confirms them (review item 1).
+- [ ] Making a thumbnail of an image when it is attached. The document
+      has the place for one.
 - [ ] `dirt-sim`: two devices, a file added on one and read on the other;
       offline; the purge cases of step 8e with files; a restore. And three
       devices: two were away with edits when the third purged the note,
       each keeps its own new note, both show the file, and purging one of
       the new notes leaves the other's file readable.
+
+**Result so far (2026-11-12): the first two items, in a pull request of
+their own.** Nothing is sent yet: this half needs no server.
+
+- **The document** has a fourth map, of files, beside the text, the edit
+  counts and the deletion markers. An entry is a file's name, type, size
+  and key under its ID, written once and at most removed.
+- **Attaching a file and removing one are edits.** Each raises the
+  device's count, as a change to the text does. So a device that deletes
+  the note without having seen a file attached has not deleted that, and
+  the note comes back with the file. A photograph taken on the phone does
+  not vanish because the laptop deleted the note it was added to.
+- **A file is encrypted in pieces of 64 KiB** with XChaCha20-Poly1305,
+  chained by the STREAM construction as the `aead` crate implements it.
+  The account and the file's ID are bound into every piece. Tests move,
+  drop, repeat and truncate pieces, and none of it opens.
+- **The local store** copies an attached file onto a shelf beside its
+  database, and knows which files its notes name without opening every
+  document. A deleted note still names its files. A note kept as new after
+  a purge keeps them.
+- **Local schema version 4** adds the table of which note names which
+  file.
+
+Twenty-nine tests. Each rule was undone in turn, 16 in all, to see a test
+fail, and each did.
+
+Not in this half, and still to do in 9b: sending and fetching files,
+removing a file from the device once nothing names it, and thumbnails.
 
 ### 9c: the CLI
 

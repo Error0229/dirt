@@ -32,7 +32,7 @@ pub(super) const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const OPEN_PATIENCE: Duration = Duration::from_secs(20);
 
 /// The version of the tables below, kept in SQLite's `user_version`.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE meta (
@@ -157,6 +157,18 @@ ALTER TABLE notes ADD COLUMN deleted_at INTEGER;
 UPDATE notes SET deleted_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000 WHERE deleted = 1;
 ";
 
+/// Version 4: which files each note names, derived from its document as the
+/// tags are. A deleted note keeps its rows: its document still names the
+/// files, and they are wanted for as long as the note can come back.
+const SCHEMA_V4: &str = "
+CREATE TABLE note_files (
+    note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    file_id TEXT NOT NULL,
+    PRIMARY KEY (note_id, file_id)
+) WITHOUT ROWID;
+CREATE INDEX note_files_by_file ON note_files (file_id);
+";
+
 /// The version is read inside the write transaction, so two processes that
 /// start together cannot both run the set-up.
 pub(super) fn set_up(connection: &mut Connection) -> Result<String> {
@@ -176,6 +188,9 @@ pub(super) fn set_up(connection: &mut Connection) -> Result<String> {
     }
     if version < 3 {
         tx.execute_batch(SCHEMA_V3)?;
+    }
+    if version < 4 {
+        tx.execute_batch(SCHEMA_V4)?;
     }
     if version < SCHEMA_VERSION {
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;

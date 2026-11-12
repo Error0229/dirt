@@ -8,6 +8,15 @@
 //!   a version vector for the note's content.
 //! - `deletions`: a map from device to the version vector that device had seen
 //!   when it deleted the note.
+//! - `files`: a map from a file's ID to the file as this note names it: its
+//!   name, type, size and key (`crate::files::Attachment`). A file never
+//!   changes, so an entry is written once and at most removed. Two devices
+//!   that each attach a file write two entries, and both are kept.
+//!
+//! Attaching a file and removing one are edits, like a change to the text:
+//! each raises the device's count. A device that deleted the note without
+//! having seen a file attached has not deleted that, and the note comes
+//! back with the file.
 //!
 //! The note counts as deleted while at least one deletion marker covers the
 //! whole current version vector. An edit the deleter had not seen raises a
@@ -27,6 +36,7 @@ use yrs::{
 };
 
 use super::diff::{diff, Op};
+use crate::files::Attachment;
 
 /// Edit counts per device.
 pub type VersionVector = BTreeMap<u64, u64>;
@@ -48,6 +58,7 @@ pub struct NoteDoc {
     body: TextRef,
     edits: MapRef,
     deletions: MapRef,
+    files: MapRef,
     client_id: u64,
 }
 
@@ -62,11 +73,13 @@ impl NoteDoc {
         let body = doc.get_or_insert_text("body");
         let edits = doc.get_or_insert_map("edits");
         let deletions = doc.get_or_insert_map("deletions");
+        let files = doc.get_or_insert_map("files");
         Self {
             doc,
             body,
             edits,
             deletions,
+            files,
             client_id,
         }
     }
@@ -110,6 +123,49 @@ impl NoteDoc {
                     pos += u32::try_from(s.len()).expect("note text fits in u32");
                 }
             }
+        }
+        self.record_edit(&mut txn, now_ms);
+        true
+    }
+
+    /// The files attached to the note, in the order they were attached.
+    ///
+    /// An entry that this version cannot read is left out. It stays in the
+    /// document, for a version that can.
+    #[must_use]
+    pub fn attachments(&self) -> Vec<Attachment> {
+        let txn = self.doc.transact();
+        let mut attachments: Vec<Attachment> = self
+            .files
+            .iter(&txn)
+            .filter_map(|(file_id, value)| Attachment::from_entry(file_id, out_as_str(&value)?))
+            .collect();
+        attachments.sort_by_key(|a| (a.added_at_ms, a.file_id));
+        attachments
+    }
+
+    /// Attaches a file to the note. This is an edit.
+    ///
+    /// Returns `false`, and writes nothing, if the note already names a
+    /// file with this ID: a file never changes.
+    pub fn attach(&self, attachment: &Attachment, now_ms: i64) -> bool {
+        let key = attachment.file_id.to_string();
+        let mut txn = self.doc.transact_mut();
+        if self.files.get(&txn, &key).is_some() {
+            return false;
+        }
+        self.files.insert(&mut txn, key, attachment.to_entry());
+        self.record_edit(&mut txn, now_ms);
+        true
+    }
+
+    /// Removes a file from the note. This is an edit.
+    ///
+    /// Returns `false`, and writes nothing, if the note names no such file.
+    pub fn detach(&self, file_id: uuid::Uuid, now_ms: i64) -> bool {
+        let mut txn = self.doc.transact_mut();
+        if self.files.remove(&mut txn, &file_id.to_string()).is_none() {
+            return false;
         }
         self.record_edit(&mut txn, now_ms);
         true

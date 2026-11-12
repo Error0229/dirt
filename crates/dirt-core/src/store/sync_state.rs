@@ -398,6 +398,11 @@ pub(super) fn apply_purge(connection: &mut Connection, id: &NoteId) -> Result<Pu
             // As for any new note with no text: this gives it an edit time.
             fresh.restore(edited_at);
         }
+        // The new note names the files the old one did, under the same IDs
+        // and keys. They are the same files, and are not sent again.
+        for attachment in old.attachments() {
+            fresh.attach(&attachment, edited_at);
+        }
         save(&tx, &kept, &fresh, None, Origin::Local)?;
         PurgeApplied::KeptAsNew(kept)
     } else {

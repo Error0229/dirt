@@ -9,7 +9,10 @@
 
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 
+use dirt_proto::api::limits;
+
 use super::schema::{client_id, write_transaction};
+use crate::files::Attachment;
 use crate::models::{extract_tags, Note, NoteId};
 use crate::notes::NoteDoc;
 use crate::{Error, Result};
@@ -133,6 +136,16 @@ pub(super) fn save(
         )?;
     }
 
+    // The files the note names, deleted or not: a deleted note can come
+    // back, and its files with it.
+    tx.execute("DELETE FROM note_files WHERE note_id = ?1", [&key])?;
+    for attachment in doc.attachments() {
+        tx.execute(
+            "INSERT OR IGNORE INTO note_files (note_id, file_id) VALUES (?1, ?2)",
+            params![key, attachment.file_id.to_string()],
+        )?;
+    }
+
     // The search index and the tags hold live notes only.
     tx.execute("DELETE FROM notes_fts WHERE rowid = ?1", [row])?;
     tx.execute("DELETE FROM note_tags WHERE note_id = ?1", [&key])?;
@@ -203,6 +216,90 @@ pub(super) fn update(
     let note = save(&tx, id, &doc, Some(row), Origin::Local)?.ok_or_else(|| not_found(id))?;
     tx.commit()?;
     Ok(note)
+}
+
+/// The files attached to a note, in the order they were attached. A
+/// deleted note has them still.
+pub(super) fn attachments(connection: &Connection, id: &NoteId) -> Result<Vec<Attachment>> {
+    let document: Option<Vec<u8>> = connection
+        .query_row(
+            "SELECT doc FROM notes WHERE id = ?1",
+            [id.as_str()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let document = document.ok_or_else(|| not_found(id))?;
+    // Reading needs no client ID of its own: nothing is written.
+    Ok(NoteDoc::from_bytes(0, &document)?.attachments())
+}
+
+/// Every file that some note names, a deleted note included. A file on the
+/// shelf that is not among these is needed by nothing on this device.
+pub(super) fn files_in_use(connection: &Connection) -> Result<Vec<uuid::Uuid>> {
+    let mut statement =
+        connection.prepare("SELECT DISTINCT file_id FROM note_files ORDER BY file_id")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    let mut files = Vec::new();
+    for row in rows {
+        let id = row?;
+        files.push(
+            id.parse().map_err(|_| {
+                Error::Database(format!("the store holds an invalid file ID: {id}"))
+            })?,
+        );
+    }
+    Ok(files)
+}
+
+/// Names a file in a note's document. The file itself is on the shelf.
+pub(super) fn attach(
+    connection: &mut Connection,
+    id: &NoteId,
+    attachment: &Attachment,
+    now_ms: i64,
+) -> Result<()> {
+    let tx = write_transaction(connection)?;
+    let (row, bytes) = load(&tx, id)?.ok_or_else(|| not_found(id))?;
+    let doc = NoteDoc::from_bytes(client_id(&tx)?, &bytes)?;
+    if doc.is_deleted() {
+        return Err(not_found(id));
+    }
+    let most = usize::try_from(limits::MAX_FILES_PER_NOTE).unwrap_or(usize::MAX);
+    if doc.attachments().len() >= most {
+        return Err(Error::InvalidInput(format!(
+            "a note may have at most {most} files"
+        )));
+    }
+    if !doc.attach(attachment, now_ms) {
+        return Err(Error::InvalidInput(
+            "the note already has this file".to_owned(),
+        ));
+    }
+    save(&tx, id, &doc, Some(row), Origin::Local)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Removes a file from a note's document. Returns whether the note named
+/// it. The file itself stays on the shelf until nothing needs it.
+pub(super) fn detach(
+    connection: &mut Connection,
+    id: &NoteId,
+    file_id: uuid::Uuid,
+    now_ms: i64,
+) -> Result<bool> {
+    let tx = write_transaction(connection)?;
+    let (row, bytes) = load(&tx, id)?.ok_or_else(|| not_found(id))?;
+    let doc = NoteDoc::from_bytes(client_id(&tx)?, &bytes)?;
+    if doc.is_deleted() {
+        return Err(not_found(id));
+    }
+    if !doc.detach(file_id, now_ms) {
+        return Ok(false);
+    }
+    save(&tx, id, &doc, Some(row), Origin::Local)?;
+    tx.commit()?;
+    Ok(true)
 }
 
 pub(super) fn delete(connection: &mut Connection, id: &NoteId) -> Result<()> {

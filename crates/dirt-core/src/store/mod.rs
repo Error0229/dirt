@@ -27,6 +27,10 @@ pub use sync_state::{
     NoteProblem, ProblemKind, PurgeApplied, PurgeCandidate, SyncProgress, UnsentNote,
 };
 
+use dirt_proto::api::limits;
+
+use crate::files::shelf::Shelf;
+use crate::files::{seal, Attachment, FileKey};
 use crate::models::{Note, NoteId, Settings};
 use crate::{Error, Result};
 
@@ -195,6 +199,86 @@ impl Store {
         let content = content.to_owned();
         self.write(move |c| notes::create(c, NoteId::new(), &content, now_ms()))
             .await
+    }
+
+    /// Where this store keeps the files attached to its notes.
+    #[must_use]
+    pub fn shelf(&self) -> Shelf {
+        Shelf::beside(self.path())
+    }
+
+    /// Attaches the file at `source` to a note, under `name`.
+    ///
+    /// The file is copied onto the store's shelf, given a key of its own,
+    /// and named in the note's document. The copy is what the note has
+    /// from now on: the file at `source` is not touched again, and changing
+    /// it changes nothing here.
+    pub async fn attach_file(
+        &self,
+        note: &NoteId,
+        source: &Path,
+        name: &str,
+        media_type: &str,
+    ) -> Result<Attachment> {
+        let (note, source) = (*note, source.to_path_buf());
+        let (name, media_type) = (name.to_owned(), media_type.to_owned());
+        let shelf = self.shelf();
+        self.write(move |c| {
+            let size = std::fs::metadata(&source)?.len();
+            let most = u64::try_from(limits::MAX_FILE_BYTES).unwrap_or(u64::MAX);
+            if seal::sealed_size(size) > most {
+                return Err(Error::InvalidInput(format!(
+                    "the file is too large to attach: {size} bytes"
+                )));
+            }
+            let attachment = Attachment {
+                file_id: uuid::Uuid::now_v7(),
+                name,
+                media_type,
+                size,
+                key: FileKey::generate(),
+                added_at_ms: now_ms(),
+                thumbnail: None,
+            };
+            let copied = shelf.add(attachment.file_id, &source)?;
+            let named = if copied == size {
+                notes::attach(c, &note, &attachment, attachment.added_at_ms)
+            } else {
+                // The file changed while it was being copied.
+                Err(Error::InvalidInput(
+                    "the file changed while it was being attached".to_owned(),
+                ))
+            };
+            if let Err(error) = named {
+                // Not attached after all: the copy is of no use.
+                let _ = shelf.remove(attachment.file_id);
+                return Err(error);
+            }
+            Ok(attachment)
+        })
+        .await
+    }
+
+    /// Removes a file from a note. Returns whether the note had it.
+    ///
+    /// The file stays on the device and on the server for a while: another
+    /// device may not have fetched it yet, and the removal has to sync.
+    pub async fn detach_file(&self, note: &NoteId, file_id: uuid::Uuid) -> Result<bool> {
+        let note = *note;
+        self.write(move |c| notes::detach(c, &note, file_id, now_ms()))
+            .await
+    }
+
+    /// Every file that some note in this store names, a deleted note
+    /// included: a deleted note can come back, and its files with it.
+    pub async fn files_in_use(&self) -> Result<Vec<uuid::Uuid>> {
+        self.read(|c| notes::files_in_use(c)).await
+    }
+
+    /// The files attached to a note, in the order they were attached.
+    pub async fn note_attachments(&self, note: &NoteId) -> Result<Vec<Attachment>> {
+        let note = *note;
+        self.read(move |c| notes::attachments(c, &note)).await
     }
 
     /// Replaces a note's text. Only the parts that changed are recorded, so
