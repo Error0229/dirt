@@ -2,7 +2,7 @@
 title: "Step 8: hardening"
 type: plan
 date: 2026-11-12
-status: in progress
+status: built; five decisions are with the owner
 parent: docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md
 tracking: "#244"
 ---
@@ -549,7 +549,7 @@ still holds the note sends it again.
 
 ## Exit
 
-- [ ] Every test above passes locally and in CI.
+- [x] Every test above passes locally and in CI.
 - [x] A device removed from an account on `dirt-trial` cannot read a note
       written after the key was changed. On `dirt-trial` the removed phone
       was refused by the server and every note was under a key made after
