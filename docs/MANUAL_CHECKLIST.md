@@ -27,6 +27,10 @@ Afterwards, delete the test account, the keychain entry and the app's data.
 
 ## Desktop app
 
+D2, D3 and D4 need a person at the keyboard: a global hotkey, the tray, and
+the system browser cannot be driven from a script without acting on whatever
+else is on the screen.
+
 | # | Do | Expect |
 |---|---|---|
 | D1 | Start the app with no account | The list, and "Not signed in" in Settings → Account |
@@ -37,6 +41,8 @@ Afterwards, delete the test account, the keychain entry and the app's data.
 | D6 | Change a note on another device, then click on the app's window | The change appears without pressing anything |
 | D7 | Settings → Sync with a note that cannot be synced (see "Making a note that cannot be synced") | The note by name, the reason, and what releases it. Pressing the name opens the note |
 | D8 | Settings → Devices with another device waiting | "Let it in" shows a code. With "They match" on both, the app says the device was let in |
+| D13 | Settings → Account → Sign out, with a recovery phrase made | "Signed out", and the account's folder under `stores` in the data folder is gone while the app is still open |
+| D14 | Settings → Devices → Start the account again; Delete the account | Each asks for a second press. Afterwards the app says what happened and the server holds what the CLI's C8 and C9 expect |
 | D9 | Settings → Devices → make a recovery phrase | 24 words, shown once |
 | D10 | Settings → Data → Export JSON, then Markdown | A file dialog each time, and a file holding every note |
 | D11 | Search for a word; press a tag | The list narrows; "All" widens it again |
@@ -59,7 +65,8 @@ Afterwards, delete the test account, the keychain entry and the app's data.
 | A11 | Change a note on another device. Leave Dirt and come back | The change appears |
 | A12 | Settings with a note that cannot be synced | The note by name, the reason, and what releases it. Pressing it opens the note if the device holds it |
 | A13 | Settings → Devices on a device that is waiting: ask another device | The same code on both. With "They match" on both, the notes arrive |
-| A14 | Settings → Devices on a device that is waiting: type the recovery phrase | The device is let in and the notes arrive |
+| A14 | Settings → Devices on a device that is waiting: type the recovery phrase | The device is let in and the notes arrive. A phrase with a word wrong is refused, with the reason |
+| A16 | Remove the device from another one, then sync | "This device can no longer sync", and a button to sign in again |
 | A15 | A sign-in on a physical device | As A2 |
 
 ## CLI
@@ -73,7 +80,7 @@ Afterwards, delete the test account, the keychain entry and the app's data.
 | C5 | `dirt auth join` on a waiting device, `dirt devices approve` on another | The same code on both. With `y` on both, the new device is let in |
 | C6 | `dirt auth phrase new`, then `dirt auth recover` on a waiting device | 24 words; typing them lets the device in |
 | C7 | `dirt devices`, `dirt devices remove <ID>` | The list; the removed device can no longer sync |
-| C8 | `dirt auth reset --yes` on an approved device | The account starts again, empty, with this device in it |
+| C8 | `dirt auth reset --yes` on an approved device | The account starts again with this device as its only one. The notes on this device are sent again under a new key; the other devices and the recovery phrase are gone |
 | C9 | `dirt auth delete-account --yes` | The account is gone from the server; the notes are still on this computer |
 | C10 | `dirt auth logout` on the only device of an account with no phrase | Refused, with the reason |
 
@@ -89,7 +96,19 @@ account, A and B:
 4. Sync B. It lists the note as one it cannot read, and keeps its own copy.
 5. Change the note on A again and sync both. B's list is empty again.
 
+## Notes for whoever runs it
+
+- On an emulator, `adb shell input text` drops letters from long text. Type
+  a recovery phrase one word at a time.
+- A phone's keyboard gives the first word of a phrase a capital letter. The
+  phrase is accepted with it.
+- Returning to an app syncs only if the last sync was more than 30 seconds
+  ago. Wait that long before A11 and D6.
+- The desktop app shows nothing to Windows UI Automation while its window
+  is minimised.
+
 ## Runs
 
 | Date | Server | Desktop | Android | CLI | Not run |
 |---|---|---|---|---|---|
+| 2026-11-12 | `dirt-trial` | D5, D6, D7, D13 passed. D11: the tag row only. D8 passed in step 6, not run again | Emulator. A1 to A6 and A8 to A14 passed. A8 without a note beyond the first 100, which the tests cover. A16: the phone said it had to sign in again; its first line was reworded afterwards and the new words have not been seen on a device | C1 to C10 passed. C2 with `--no-browser`. C6's `dirt auth recover` not run; the phrase was typed on Android instead | D1 to D4, D9, D10, D11's search, D12, D14: they need a person at the keyboard, or the window could not be driven. A7 with a widget placed on a home screen; its intent was sent instead. A15: no physical device |

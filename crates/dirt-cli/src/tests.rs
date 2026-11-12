@@ -206,6 +206,41 @@ async fn the_account_status_says_when_notes_stay_on_this_device() {
     );
 }
 
+/// `EDITOR` may be a program with arguments. The command here does nothing
+/// and succeeds, whatever file it is given.
+#[test]
+fn an_editor_command_with_arguments_is_run() {
+    let (_folder, file) = temp_db();
+    std::fs::write(&file, "text").unwrap();
+    let command = if cfg!(windows) {
+        "cmd /C rem"
+    } else {
+        "sh -c true"
+    };
+    crate::commands::common::launch_editor(command, &file).unwrap();
+}
+
+/// On Windows a command with a drive's colon after an argument cannot be
+/// the name of a program, and the failure is not "not found". It still has
+/// to be read as a program with arguments.
+#[cfg(windows)]
+#[test]
+fn an_editor_command_holding_a_path_is_run_on_windows() {
+    let (_folder, file) = temp_db();
+    std::fs::write(&file, "text").unwrap();
+    crate::commands::common::launch_editor("cmd /C rem C:\\anywhere", &file).unwrap();
+}
+
+#[test]
+fn an_editor_that_does_not_exist_is_an_error() {
+    let (_folder, file) = temp_db();
+    std::fs::write(&file, "text").unwrap();
+    assert!(crate::commands::common::launch_editor("no-such-editor-anywhere", &file).is_err());
+    assert!(
+        crate::commands::common::launch_editor("no-such-editor-anywhere --wait", &file).is_err()
+    );
+}
+
 #[test]
 fn note_to_export_item_sorts_tags() {
     let note = Note::new("#zeta test #alpha #beta");

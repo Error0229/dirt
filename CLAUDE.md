@@ -8,7 +8,7 @@ The project is also a system design case study. Multi-user accounts, three clien
 
 ## Status: redesign in progress
 
-`main` is partway through an approved redesign: steps 1 to 6 of 9 are done. Devices sign in through Clerk and sync their notes, encrypted, through the new server. A second device is let in by comparing a code with one that is already in, or by the recovery phrase. `docs/SECURITY.md` describes what is protected. Read both documents before changing architecture, sync, login or storage:
+`main` is partway through an approved redesign: steps 1 to 7 of 9 are built. Some of step 7's manual checklist is left for a person (`docs/MANUAL_CHECKLIST.md`, #243). Devices sign in through Clerk and sync their notes, encrypted, through the new server. A second device is let in by comparing a code with one that is already in, or by the recovery phrase. `docs/SECURITY.md` describes what is protected. Read both documents before changing architecture, sync, login or storage:
 
 - `docs/plans/2026-11-10-system-redesign-design.md` - requirements, decisions and the target design
 - `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md` - build order, trials and clean-up
@@ -40,7 +40,7 @@ What the code on `main` uses today:
 - **Secrets**: the device token, device key and account key in the operating system's keychain (`keyring`) on desktop and CLI, and in Android's encrypted preferences
 - **More devices**: Matrix's short-code verification from `vodozemac` hands the account key to a new device; a 24-word `bip39` recovery phrase is the other way in
 
-What the redesign still adds: the clients' remaining screens and feature parity, changing the account key, backups, and attachments. See the design's build order.
+What the redesign still adds: changing the account key, backups, a limits review, and attachments. See the design's build order.
 
 ## Project Structure
 

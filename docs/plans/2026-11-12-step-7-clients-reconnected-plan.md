@@ -2,7 +2,7 @@
 title: "Step 7: clients reconnected"
 type: plan
 date: 2026-11-12
-status: in progress
+status: done, except for the checklist items that need a person
 parent: docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md
 tracking: "#243"
 ---
@@ -256,15 +256,88 @@ decision, as `dirt tui` is.
 
 ### 7d: the checklist, run
 
-- [ ] The checklist run on the three clients against `dirt-trial`,
+- [x] The checklist run on the three clients against `dirt-trial`,
       including what step 6 carried forward: the recovery phrase typed on a
-      waiting device, a reset, a deletion, and the desktop "Sign in"
-      button.
-- [ ] #217 closed with what was seen.
+      waiting device, a reset and a deletion. The desktop "Sign in" button
+      was not pressed: see below.
+- [x] #217 closed with what was seen.
+
+**Result (2026-11-12): every item that was run passed. Some were not run.**
+The run is recorded in `docs/MANUAL_CHECKLIST.md`.
+
+What was run, on the CLI, the desktop app and the Android emulator against
+the server on `dirt-trial`:
+
+- The CLI as an account's first device; a recovery phrase made; the Android
+  app signed in as a second device and let in by **typing the phrase**.
+- Notes in both directions, and arriving on return to the Android app
+  without anything pressed.
+- A note the phone could not read, listed in its Settings; one the computer
+  could not read, in `dirt sync --verbose`, `dirt auth status` and the
+  desktop app's Settings → Sync. An edit on the device that could read the
+  note released it.
+- The phone removed with `dirt devices remove`, after which it said it could
+  no longer sync.
+- **A reset** from the CLI: the account began again with that device only,
+  its notes sent again under a new key. The phone signed in afresh and was
+  let in by comparing a code, approved from the CLI.
+- **A deletion** from the CLI: the server held nothing, the keychain entry
+  was gone, and the notes were still on the computer. They were moved into
+  the next account with `dirt auth login --move-local-notes`.
+- The phone as an account's first device, letting the computer in.
+- **#217:** a note written without syncing showed as "1 note is waiting to
+  be sent" in the desktop app's Settings → Sync, and "Sync now" cleared it.
+
+What was not run:
+
+- **On the desktop app:** the global hotkey, the tray menu and the "Sign
+  in" button, which open or act on the person's own keyboard and browser;
+  and the export dialog, the search box, the theme settings, and the
+  recovery-phrase, reset and deletion screens. The window minimised itself
+  each time it was restored for the second half of the run and could not
+  be driven. The reset and the deletion were done from the CLI, and the
+  phrase on Android; their desktop screens have still not been pressed.
+- **On Android:** the widget placed on a home screen, and a physical
+  device.
+- **On the CLI:** `dirt auth recover`.
+
+What the run found, each fixed in this step:
+
+- **`dirt edit` failed on Windows when `EDITOR` was a command holding a
+  path.** The CLI tries the whole of `EDITOR` as a program's name and, if
+  that is "not found", as a program with arguments. Windows calls a name
+  with a drive's colon after an argument invalid, not missing, so the
+  second attempt was never made. It is made now after any failure. A test
+  for Windows fails without the change.
+- **A note the device never held was said to be kept.** What releases a
+  held note read "this device keeps its own copy and does not send it",
+  which is true only of a note the device has. For one it never had, the
+  view now says the note will arrive when a device that can read it edits
+  it.
+- **The desktop app kept a signed-out account's files open.** Its note
+  list is loaded through a query library that keeps a query for a while
+  after its last use, and the query held the store. The files could not be
+  removed until the app closed, though signing out promises to remove
+  them. The query now names the store by its file and is given the store
+  when it runs. Checked on the running app: after "Sign out" the account's
+  folder was gone with the app still open.
+- **A removed phone said its notes were syncing.** "Signed in. Your notes
+  sync with your other devices" stood above "This device has to sign in
+  again". It now says the device can no longer sync. The new line was
+  written after the run and has not been seen on a device.
+- **The emulator's text entry dropped letters from the phrase,** which the
+  app refused with "That is not a recovery phrase: check each word and
+  their order." Typed a word at a time it was accepted, with the capital
+  letter the keyboard gave its first word.
+
+The test accounts were deleted from the trial database afterwards.
 
 ## Exit
 
 - [ ] The manual checklist passes on all three clients, with the two items
-      under "Needs a person" reported as not done.
-- [ ] #217 is closed.
-- [ ] No client holds code the design lists for deletion.
+      under "Needs a person" reported as not done. **Not met in full:**
+      every item run passed, and more than two were not run. They are
+      listed under 7d and in the checklist's record of the run, and are
+      for a person to do. #243 stays open for them.
+- [x] #217 is closed.
+- [x] No client holds code the design lists for deletion.

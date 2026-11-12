@@ -115,7 +115,7 @@ fn ProblemNote(problem: NoteProblem) -> Element {
     let id = problem.note_id;
     let title = problem.title();
     let reason = as_sentence(&problem.reason);
-    let release = problem.kind.release();
+    let release = problem.release();
     // Only a note in the list can be opened: not one this device never
     // held, and not a deleted one.
     let on_this_device = (state.notes)().iter().any(|note| note.id == id);
