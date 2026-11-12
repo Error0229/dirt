@@ -485,6 +485,12 @@ fn ApprovedDevice(notice: Notice) -> Element {
 
     let info = account();
     let has_phrase = info.as_ref().is_some_and(|me| me.recovery_available);
+    // The phrase stops working only if there was one.
+    let key_changed_words = if has_phrase {
+        "The account's key was changed. The recovery phrase no longer works: make a new one."
+    } else {
+        "The account's key was changed."
+    };
     // What is left of a change of the account's key, as of the last sync.
     let key_change =
         dirt_core::sync::overview::SyncOverview::from(&(state.sync_status)()).key_change();
@@ -609,7 +615,7 @@ fn ApprovedDevice(notice: Notice) -> Element {
                         label: "change the account's key",
                         disabled: busy(),
                         onconfirm: move |()| run(
-                            "The account's key was changed. The recovery phrase no longer works: make a new one above.",
+                            key_changed_words,
                             Box::new(|session| Box::pin(async move { session.change_account_key().await.map(|_| ()) })),
                         ),
                     }

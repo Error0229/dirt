@@ -87,7 +87,7 @@ else is on the screen.
 | C9 | `dirt auth delete-account --yes` | The account is gone from the server; the notes are still on this computer |
 | C10 | `dirt auth logout` on the only device of an account with no phrase | Refused, with the reason |
 | C11 | `dirt devices remove <ID> --change-key`, then write a note and `dirt sync --verbose` | The device is removed and the key changed. The removed device cannot sync. The other devices get the note |
-| C12 | `dirt auth change-key`, then `dirt auth status` | The key is changed, and the status says the account has no recovery phrase |
+| C12 | `dirt auth change-key` on an account with a recovery phrase | The key is changed, and the command says the phrase no longer works and how to make a new one. `dirt auth recover` with the old phrase on a waiting device is refused |
 
 ## Making a note that cannot be synced
 
@@ -116,4 +116,5 @@ account, A and B:
 
 | Date | Server | Desktop | Android | CLI | Not run |
 |---|---|---|---|---|---|
+| 2026-11-12, for step 8b | `dirt-trial` | Not run: D15 | Emulator. A16, A17 and A18 passed | C11 passed. C12 on an account with no phrase: the key was changed | D15: the desktop window could not be driven in the earlier run and was not tried again. C12's phrase: the account in the run had none |
 | 2026-11-12 | `dirt-trial` | D5, D6, D7, D13 passed. D11: the tag row only. D8 passed in step 6, not run again | Emulator. A1 to A6 and A8 to A14 passed. A8 without a note beyond the first 100, which the tests cover. A16: the phone said it had to sign in again; its first line was reworded afterwards and the new words have not been seen on a device | C1 to C10 passed. C2 with `--no-browser`. C6's `dirt auth recover` not run; the phrase was typed on Android instead | D1 to D4, D9, D10, D11's search, D12, D14: they need a person at the keyboard, or the window could not be driven. A7 with a widget placed on a home screen; its intent was sent instead. A15: no physical device |

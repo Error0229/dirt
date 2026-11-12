@@ -128,6 +128,11 @@ pub async fn change_key(session: &Session, yes: bool) -> Result<(), CliError> {
         println!("Nothing was changed.");
         return Ok(());
     }
+    // Asked before the change: afterwards there is none either way.
+    let had_phrase = session
+        .my_device()
+        .await
+        .is_ok_and(|me| me.recovery_available);
     match session.change_account_key().await.map_err(sentence)? {
         KeyChange::Changed { old_key_notes, .. } => {
             println!("The account's key was changed.");
@@ -148,7 +153,9 @@ pub async fn change_key(session: &Session, yes: bool) -> Result<(), CliError> {
             );
         }
     }
-    println!("The recovery phrase no longer works. `dirt auth phrase new` makes a new one.");
+    if had_phrase {
+        println!("The recovery phrase no longer works. `dirt auth phrase new` makes a new one.");
+    }
     Ok(())
 }
 
