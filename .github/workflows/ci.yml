@@ -117,6 +117,18 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
+      # Object storage for files, speaking the S3 protocol as Cloudflare R2
+      # does in production. The same image and settings as compose.yaml;
+      # the tests look for it at 127.0.0.1:59000.
+      files:
+        image: versity/versitygw@sha256:8319a530d08d537426e2f855bae5280709795dc73a3f0c347973ef915d6343c5
+        env:
+          ROOT_ACCESS_KEY: dirt
+          ROOT_SECRET_KEY: dirt-local-files
+          VGW_BACKEND: posix
+          VGW_BACKEND_ARG: /tmp
+        ports:
+          - 59000:7070
     env:
       # Each test creates its own throwaway database on this server.
       DATABASE_URL: postgres://postgres:dirt@127.0.0.1:5432/postgres

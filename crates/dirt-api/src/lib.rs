@@ -17,9 +17,11 @@ pub mod config;
 pub mod devices;
 pub mod enrolments;
 pub mod error;
+pub mod files;
 pub mod keys;
 pub mod notes;
 pub mod recovery;
+pub mod storage;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,8 +40,9 @@ use sqlx::PgPool;
 use tower_http::trace::TraceLayer;
 
 pub use clerk::Keys;
-pub use config::Config;
+pub use config::{Config, FilesConfig};
 pub use error::{ApiError, ApiResult};
+pub use storage::FileStore;
 
 /// The schema, applied by `dirt-api migrate` and by the tests.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
@@ -53,16 +56,23 @@ pub struct AppState {
     pub pool: PgPool,
     pub config: Arc<Config>,
     pub keys: Arc<Keys>,
+    /// The storage for files, if this server has any.
+    pub files: Option<Arc<FileStore>>,
 }
 
 impl AppState {
     /// The state for a real server: a pool that connects on first use, and
     /// signing keys fetched from the identity provider on first use.
     pub fn from_config(config: Config) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let files = match &config.files {
+            Some(files) => Some(Arc::new(FileStore::new(files)?)),
+            None => None,
+        };
         Ok(Self {
             pool: lazy_pool(&config.database_url)?,
             keys: Arc::new(Keys::remote(&config.clerk_issuer)?),
             config: Arc::new(config),
+            files,
         })
     }
 }
@@ -119,6 +129,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/account/key/notes", get(keys::old_notes))
         .route("/v1/notes/push", post(notes::push))
         .route("/v1/notes/purge", post(notes::purge))
+        .route("/v1/files", post(files::upload))
+        .route("/v1/files/confirm", post(files::confirm))
+        .route("/v1/files/release", post(files::release))
+        .route("/v1/files/{id}", get(files::download))
+        .route("/v1/maintenance/sweep", get(files::sweep_all))
         .route("/v1/notes/pull", get(notes::pull))
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(BODY_LIMIT))

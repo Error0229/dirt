@@ -30,12 +30,17 @@ pub async fn delete(
     State(state): State<AppState>,
     Approved(device): Approved,
 ) -> ApiResult<Response> {
+    let mut tx = state.pool.begin().await?;
+    // The files' objects are queued to be deleted. Their rows go with the
+    // account, so nothing else would remember them.
+    crate::files::orphan_account(&mut tx, device.account_id).await?;
     // Devices, notes, the recovery copy and everything else go with the
     // account row.
     sqlx::query("DELETE FROM accounts WHERE id = $1")
         .bind(device.account_id)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(device.respond(serde_json::json!({ "deleted": true })))
 }
 
@@ -94,6 +99,9 @@ pub async fn reset(
         .bind(device.account_id)
         .execute(&mut *tx)
         .await?;
+    // The notes' files go too. The device that remains sends again the
+    // files it holds, as it sends its notes.
+    crate::files::orphan_account(&mut tx, device.account_id).await?;
     sqlx::query("DELETE FROM recovery_keys WHERE account_id = $1")
         .bind(device.account_id)
         .execute(&mut *tx)

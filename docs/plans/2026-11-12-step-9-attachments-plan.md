@@ -194,19 +194,96 @@ account.
 
 ### 9a: the server
 
-- [ ] `compose.yaml` gains an S3-compatible store for tests. CI gets the
+- [x] `compose.yaml` gains an S3-compatible store for tests. CI gets the
       same.
-- [ ] Tables for files: the account, the file, its size, whether it is
+- [x] Tables for files: the account, the file, its size, whether it is
       confirmed, and when it is to be deleted; and for references, a file
       and a note each. A file with no reference left is marked.
-- [ ] `POST /v1/files`: an upload link for a file of a stated size, counted
+- [x] `POST /v1/files`: an upload link for a file of a stated size, counted
       against the account. `GET /v1/files/{id}`: a download link.
-- [ ] `POST /v1/files/confirm` and `POST /v1/files/release`: review item 1.
-- [ ] A purge removes the note's references. Deleting or resetting an
+- [x] `POST /v1/files/confirm` and `POST /v1/files/release`: review item 1.
+- [x] A purge removes the note's references. Deleting or resetting an
       account deletes its files.
-- [ ] Deleting what is due: when the account next asks for a link, and once
+- [x] Deleting what is due: when the account next asks for a link, and once
       a day for every account by a scheduled request.
-- [ ] `docs/DEPLOY.md` gains the storage's set-up.
+- [x] `docs/DEPLOY.md` gains the storage's set-up.
+
+**Result (2026-11-12): done.** `docs/BACKEND_API.md`, "Files", is the
+protocol.
+
+- **The store for tests** is the Versity S3 gateway, in `compose.yaml` and
+  in CI, pinned to one build. The server's tests upload and download
+  through the links they are given and look in the store to see what is
+  there.
+- **The size is enforced twice.** The length is part of what an upload
+  link's signature covers, and the test store refuses a body of another
+  length. The server also asks the storage for the object's size before it
+  counts a file as present. The first has not been seen on Cloudflare R2,
+  which nobody has an account for yet; the second does not depend on it.
+- **Nothing is deleted in the request that decides it.** A file due to go
+  has a date. When it comes, the row is removed and the object queued in
+  one transaction, and the object is deleted from the storage as a second
+  step that is tried until it works. An account's objects are queued the
+  same way when it is deleted or reset. A test cuts the store off and sees
+  the object wait in the queue.
+- **The daily request** is `GET /v1/maintenance/sweep`, asked for by
+  `vercel.json` and open only to whoever holds `CRON_SECRET`.
+- **A server with no storage** answers `files_unavailable` to file
+  requests and is otherwise unchanged. The trial server is one, until the
+  owner opens the storage account.
+- **Two new codes:** `files_unavailable` and `file_too_large`.
+- **The backup check** carries the three new tables. A dump holds the
+  files' rows and not the files.
+
+Seventeen tests, against Postgres and the store, after the changes that
+review asked for. Each rule was undone in
+turn, 25 in all, to see a test fail:
+
+- 22 failed a test at once.
+- One showed a case with no test: an object in the store at another size
+  than was asked for. The store refuses to take one through an upload
+  link, so the server's own look at the size was never reached. A test now
+  puts one there with the store's own key, and the server refuses to
+  confirm it.
+- Two are a pair. A file is checked to be due when the list of due files
+  is read and again when its row is taken, so that a file confirmed in
+  between is left alone. Either check alone does the work the tests can
+  see; with both removed, three tests fail.
+
+What review showed:
+
+- **A file sent again after a reset could be deleted as the old one.** A
+  file's ID is its place in the storage. After a reset the device that
+  remains sends its files again under the same IDs, to the places whose
+  old objects were queued for deletion, and the queue would have deleted
+  the new upload. Asking to upload a file now takes its object out of the
+  queue, under the account's lock. Found in review.
+- **A sweep and a confirmation could wait on each other,** because one
+  locked the file and then the account and the other the reverse. And a
+  sweep that failed after deleting an object left a row saying the file
+  was there. Every request that touches an account's files now takes the
+  account's lock first, and a file's row is removed before its object is
+  deleted, not after. Confirming also asks the storage inside the lock, so
+  what it learns cannot be out of date. A test confirms a file in the
+  moment it falls due, twelve times with each side given the first move in
+  turn: either the file is kept, with its object, or it is gone, with its
+  object; never a row without one. Found in review.
+
+- **An upload could arrive after its file had been swept,** and leave an
+  object that nothing remembered. A link works for fifteen minutes and the
+  storage knows nothing of the server's rows. With the locking above, a
+  sweep could still take a file's row and its place in the queue while a
+  link for it was good. An object now waits an hour in the queue before it
+  is deleted, which is four times the life of a link. A test issues links,
+  resets the account, sweeps, and then uploads: the objects are still
+  queued, and go when the hour is over. Found in the second review.
+- **The hour was checked when the queue was listed and not again when a
+  key was taken from it.** In between, a file could be asked for again and
+  the account reset, leaving a new entry under the key the sweep held. The
+  wait is now asked about again under the account's lock. Found in the
+  third review.
+
+Not tried: Cloudflare R2 itself. Everything above ran against the gateway.
 
 ### 9b: the core
 
