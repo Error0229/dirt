@@ -85,8 +85,13 @@ fn SyncBanner() -> Element {
     let state = use_context::<AppState>();
     let status = (state.sync_status)();
     let text = match (state.session_state)() {
-        SessionState::Ready { .. } => crate::views::settings::sync_failure(&status)
-            .unwrap_or_else(|| crate::views::settings::sync_summary(&status)),
+        SessionState::Ready { .. } => {
+            let overview = dirt_core::sync::overview::SyncOverview::from(&status);
+            overview.failure.as_ref().map_or_else(
+                || overview.last_synced(dirt_core::util::now_ms()),
+                dirt_core::sync::worker::SyncFailure::advice,
+            )
+        }
         SessionState::WaitingForApproval { .. } => {
             "This device is waiting for approval. Notes written here stay on this device."
                 .to_owned()

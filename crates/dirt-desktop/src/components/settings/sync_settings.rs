@@ -66,24 +66,14 @@ pub(super) fn SyncSettingsTab() -> Element {
 
     // Until the store has been read, the worker's own figures stand in.
     let status = (state.sync_status)();
-    let shown = overview().unwrap_or_else(|| SyncOverview {
-        syncing: status.syncing,
-        last_synced_ms: status.last_synced_ms,
-        unsent: status.unsent,
-        failure: status.failure.clone(),
-        problems: Vec::new(),
-    });
+    let shown = overview().unwrap_or_else(|| SyncOverview::from(&status));
     let last_synced = shown.last_synced(now_ms());
     let waiting = shown.waiting();
     let failure = shown
         .failure
         .as_ref()
         .map(dirt_core::sync::worker::SyncFailure::advice);
-    let problem_count = match shown.problems.len() {
-        0 => None,
-        1 => Some("1 note could not be synced:".to_owned()),
-        count => Some(format!("{count} notes could not be synced:")),
-    };
+    let problem_count = shown.problem_count();
 
     rsx! {
         SettingRow {

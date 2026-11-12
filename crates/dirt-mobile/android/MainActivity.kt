@@ -5,10 +5,13 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.system.Os
 import android.widget.RemoteViews
-import java.io.File
+import androidx.annotation.Keep
+import androidx.browser.customtabs.CustomTabsIntent
+import java.lang.ref.WeakReference
 
 private const val ACTION_QUICK_CAPTURE = "dev.dioxus.main.action.QUICK_CAPTURE"
 private const val EXTRA_QUICK_CAPTURE_CONTENT = "dev.dioxus.main.extra.QUICK_CAPTURE_CONTENT"
@@ -36,10 +39,55 @@ object BuildConfig {
 }
 
 class MainActivity : WryActivity() {
+    // What the Rust side calls through JNI (`services::sign_in`). The
+    // methods are found by name at run time, so they are kept through code
+    // shrinking.
+    companion object {
+        // The sign-in redirect, until the Rust side takes it. It carries the
+        // authorization code, so it is held in memory and given up once.
+        private var signInRedirect: String? = null
+
+        // The activity on screen, for opening the sign-in page over it.
+        private var current = WeakReference<MainActivity>(null)
+
+        @Synchronized
+        private fun keepSignInRedirect(address: String) {
+            signInRedirect = address
+        }
+
+        @Keep
+        @JvmStatic
+        @Synchronized
+        fun takeSignInRedirect(): String? {
+            val address = signInRedirect
+            signInRedirect = null
+            return address
+        }
+
+        // Opens the sign-in page in a custom tab: a browser tab laid over
+        // the app, which closes when the redirect brings the app forward. A
+        // browser without custom tabs opens the page as an ordinary tab.
+        // Returns false when no browser could be opened this way.
+        @Keep
+        @JvmStatic
+        fun openSignInPage(address: String): Boolean {
+            val activity = current.get() ?: return false
+            return runCatching {
+                CustomTabsIntent.Builder().build().launchUrl(activity, Uri.parse(address))
+            }.isSuccess
+        }
+    }
+
     // A cold start. If it is the sign-in redirect, the app was stopped while
     // the browser was in front.
     override fun onCreate(savedInstanceState: Bundle?) {
-        saveSignInRedirect(intent)
+        current = WeakReference(this)
+        // Android hands a restored activity the intent it was first started
+        // with. A redirect in it was dealt with before the activity went
+        // away, and its code is spent.
+        if (savedInstanceState == null) {
+            saveSignInRedirect(intent)
+        }
         applyLaunchIntentToEnvironment(intent)
         super.onCreate(savedInstanceState)
     }
@@ -52,16 +100,11 @@ class MainActivity : WryActivity() {
         applyLaunchIntentToEnvironment(intent)
     }
 
-    // Hands the sign-in redirect to the Rust side by writing its address to a
-    // file that side looks for. The rename makes the file appear all at once.
+    // Keeps the sign-in redirect for the Rust side, which asks for it.
     private fun saveSignInRedirect(intent: Intent?) {
         val address = intent?.data ?: return
         if (intent.action != Intent.ACTION_VIEW || address.scheme != SIGN_IN_REDIRECT_SCHEME) return
-        runCatching {
-            val partial = File(filesDir, "redirect.partial")
-            partial.writeText(address.toString())
-            partial.renameTo(File(filesDir, "redirect.txt"))
-        }
+        keepSignInRedirect(address.toString())
     }
 
     private fun applyLaunchIntentToEnvironment(intent: Intent?) {

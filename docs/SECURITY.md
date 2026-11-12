@@ -73,6 +73,16 @@ nonce the server itself issued for this one sign-in, then registers the
 device and gives it a device token. After that the sign-in service is not
 involved.
 
+The browser comes back to the app with an address that carries the
+authorization code. On a computer that is a request to a port the app
+listens on, on this machine only. On Android it is the custom address
+`dev.dirt.app://callback`, which any app may claim; PKCE is what makes the
+code useless to an app that takes it. The Android app opens the page in a
+custom tab, which is the browser's own tab laid over the app: the page and
+what is typed into it stay in the browser, out of the app's reach. The app
+holds the returned address in memory until the sign-in is finished and
+writes it to no file.
+
 The first device of an account is approved at once and makes the account
 key. Every later device waits.
 

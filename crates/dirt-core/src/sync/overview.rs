@@ -9,7 +9,7 @@
 
 use dirt_proto::api::ErrorClass;
 
-use super::worker::SyncFailure;
+use super::worker::{SyncFailure, SyncStatus};
 use crate::store::{NoteProblem, ProblemKind};
 use crate::util::as_sentence;
 
@@ -31,6 +31,20 @@ pub struct SyncOverview {
     pub problems: Vec<NoteProblem>,
 }
 
+impl From<&SyncStatus> for SyncOverview {
+    /// The worker's own figures, without the list of notes. For an
+    /// interface that has not read the store yet, or shows one line.
+    fn from(status: &SyncStatus) -> Self {
+        Self {
+            syncing: status.syncing,
+            last_synced_ms: status.last_synced_ms,
+            unsent: status.unsent,
+            failure: status.failure.clone(),
+            problems: Vec::new(),
+        }
+    }
+}
+
 impl SyncOverview {
     /// When the last sync was, in words.
     #[must_use]
@@ -47,6 +61,17 @@ impl SyncOverview {
             1..=59 => format!("Synced {minutes}m ago"),
             60..=1439 => format!("Synced {}h ago", minutes / 60),
             _ => format!("Synced {}d ago", minutes / 1440),
+        }
+    }
+
+    /// How many notes could not be synced, in words that lead into the
+    /// list of them, or nothing when none.
+    #[must_use]
+    pub fn problem_count(&self) -> Option<String> {
+        match self.problems.len() {
+            0 => None,
+            1 => Some("1 note could not be synced:".to_owned()),
+            count => Some(format!("{count} notes could not be synced:")),
         }
     }
 
@@ -72,11 +97,7 @@ impl SyncOverview {
         if let Some(failure) = &self.failure {
             lines.push(format!("The last sync failed: {}", failure.advice()));
         }
-        match self.problems.len() {
-            0 => {}
-            1 => lines.push("1 note could not be synced:".to_owned()),
-            count => lines.push(format!("{count} notes could not be synced:")),
-        }
+        lines.extend(self.problem_count());
         for problem in &self.problems {
             lines.push(format!("  {} ({})", problem.title(), problem.note_id));
             lines.push(format!("    {}", as_sentence(&problem.reason)));

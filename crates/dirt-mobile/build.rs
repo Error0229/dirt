@@ -77,14 +77,11 @@ fn write_mobile_bootstrap_config() -> io::Result<()> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "OUT_DIR is not set"))?;
     fs::create_dir_all(&out_dir)?;
 
+    // The address is written down as it was given. The app turns this
+    // computer's names for itself into the emulator's name for it when it
+    // starts (`dirt_core::config::ServerAddress::on_android`).
     let dirt_api_base_url = env_var_trimmed("DIRT_MOBILE_API_BASE_URL")
-        .as_deref()
-        .map(normalize_android_emulator_base_url)
-        .or_else(|| {
-            env_var_trimmed("DIRT_API_BASE_URL")
-                .as_deref()
-                .map(normalize_android_emulator_base_url)
-        });
+        .or_else(|| env_var_trimmed("DIRT_API_BASE_URL"));
 
     let config = MobileBootstrapConfig { dirt_api_base_url };
 
@@ -115,11 +112,4 @@ fn env_var_trimmed(name: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
-}
-
-fn normalize_android_emulator_base_url(raw: &str) -> String {
-    raw.trim()
-        .trim_end_matches('/')
-        .replace("://127.0.0.1", "://10.0.2.2")
-        .replace("://localhost", "://10.0.2.2")
 }
