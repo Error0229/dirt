@@ -68,6 +68,21 @@ pub fn Settings() -> Element {
         });
     });
 
+    // The counts and the notes that could not be synced are in the store;
+    // read them again whenever sync reports something new.
+    use_effect(move || {
+        let current = (state.session)();
+        let _ = (state.session_state)();
+        let _ = (state.sync_status)();
+        spawn(async move {
+            let read = match current {
+                Some(session) => session.sync_overview().await.ok(),
+                None => None,
+            };
+            overview.set(read);
+        });
+    });
+
     let header = rsx! {
         div {
             style: "display: flex; align-items: center; gap: 8px;",
@@ -98,21 +113,6 @@ pub fn Settings() -> Element {
             }
         };
     };
-
-    // The counts and the notes that could not be synced are in the store;
-    // read them again whenever sync reports something new.
-    use_effect(move || {
-        let current = (state.session)();
-        let _ = (state.session_state)();
-        let _ = (state.sync_status)();
-        spawn(async move {
-            let read = match current {
-                Some(session) => session.sync_overview().await.ok(),
-                None => None,
-            };
-            overview.set(read);
-        });
-    });
 
     let sign_in = {
         let session = session.clone();
