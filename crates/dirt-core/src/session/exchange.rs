@@ -168,23 +168,35 @@ async fn drive(
     let mut shown = ExchangeView::Step(ExchangeStep::Waiting);
     // The first look comes straight away; later ones after a pause.
     let mut pause = Duration::ZERO;
+    // What the person said, until it has been acted on. If the request it
+    // leads to fails for want of a network, it is made again at the next
+    // look: the person pressed the button once and is not asked twice.
+    let mut unanswered: Option<Answer> = None;
     loop {
-        let outcome = tokio::select! {
+        tokio::select! {
             answer = inbox.recv() => match answer {
-                Some(Answer::Match) => side.confirm().await,
-                Some(Answer::Mismatch) => side.reject(CancelReason::Mismatch).await,
-                Some(Answer::Decline) => side.reject(CancelReason::Declined).await,
+                Some(answer) => unanswered = Some(answer),
                 // The screen is gone.
                 None => return,
             },
-            () = tokio::time::sleep(pause) => side.poll().await,
-        };
+            () = tokio::time::sleep(pause) => {}
+        }
         pause = pace.every;
 
+        let outcome = match unanswered {
+            Some(Answer::Match) => side.confirm().await,
+            Some(Answer::Mismatch) => side.reject(CancelReason::Mismatch).await,
+            Some(Answer::Decline) => side.reject(CancelReason::Declined).await,
+            None => side.poll().await,
+        };
         let view = match outcome {
-            Ok(step) => ExchangeView::Step(step),
+            Ok(step) => {
+                unanswered = None;
+                ExchangeView::Step(step)
+            }
             // A request that failed for want of a network is tried again at
-            // the next look. Anything else ends the exchange.
+            // the next look, the person's answer included. Anything else
+            // ends the exchange.
             Err(SessionError::Server(error))
                 if error.class() == crate::api::ErrorClass::TryAgainLater =>
             {

@@ -793,6 +793,48 @@ async fn a_program_stops_syncing_when_the_other_one_replaces_the_account_key(poo
     assert_eq!(phone.notes().await[0].1, "written on the laptop");
 }
 
+/// The laptop removes the phone while the phone is in the middle of a look:
+/// it has read the laptop's answer and is about to send its own. Whichever
+/// request brings the news, the phone stops and signs out.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_device_removed_as_it_answers_stops_and_signs_out(pool: PgPool) {
+    let server = Server::with_sign_in(pool.clone()).await;
+    let laptop = laptop_with_a_note(&server).await;
+    let phone = waiting_device(&server, "Phone").await;
+    let phone_id = device_id(&phone);
+    let mut join = phone.session.begin_join().await.unwrap();
+    let target = laptop
+        .session
+        .waiting_devices()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|device| device.id == phone_id)
+        .expect("the phone is waiting");
+    let mut approval = laptop.session.begin_approval(target).unwrap();
+    assert_eq!(approval.poll().await.unwrap(), ExchangeStep::Waiting);
+
+    phone.transport.before_next(
+        "POST /v1/enrolments/",
+        move || -> dirt_core::api::BoxFuture<'static, ()> {
+            Box::pin(async move {
+                sqlx::query("UPDATE devices SET status = 'revoked' WHERE id = $1")
+                    .bind(phone_id)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            })
+        },
+    );
+
+    assert_eq!(
+        join.poll().await.unwrap(),
+        ExchangeStep::Cancelled(CancelReason::Declined)
+    );
+    assert_eq!(phone.session.state(), SessionState::SignedOut);
+    assert!(phone.secrets_are_empty());
+}
+
 // ---- The exchange as a screen runs it ----
 
 mod on_screen {
@@ -926,6 +968,36 @@ mod on_screen {
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert_eq!(phone.transport.requests(), after_closing);
         drop(laptop);
+    }
+
+    #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+    async fn an_answer_given_while_the_network_is_down_is_acted_on_when_it_returns(pool: PgPool) {
+        let server = Server::with_sign_in(pool).await;
+        let laptop = laptop_with_a_note(&server).await;
+        let phone = waiting_device(&server, "Phone").await;
+        let (approving, joining) = both_screens(&laptop, &phone, quick()).await;
+        eventually("both screens show a code", || async {
+            code_on(&approving).is_some() && code_on(&joining).is_some()
+        })
+        .await;
+
+        // The person presses "They match" on the laptop just as its network
+        // drops. The key cannot be left with the server.
+        laptop.transport.set_offline(true);
+        approving.answer(Answer::Match);
+        joining.answer(Answer::Match);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!phone.session.state().is_ready());
+
+        // The network returns. Nobody presses anything again.
+        laptop.transport.set_offline(false);
+
+        eventually("both screens say done", || async {
+            approving.view() == ExchangeView::Step(ExchangeStep::Done)
+                && joining.view() == ExchangeView::Step(ExchangeStep::Done)
+        })
+        .await;
+        assert!(phone.session.state().is_ready());
     }
 
     #[sqlx::test(migrator = "dirt_api::MIGRATOR")]

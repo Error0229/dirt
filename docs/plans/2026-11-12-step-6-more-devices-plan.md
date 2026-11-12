@@ -191,6 +191,28 @@ What the real run showed:
 
 The test account was deleted from the trial database afterwards.
 
+What review of the interfaces showed:
+
+- **An answer given while the network is down was lost.** The person
+  pressed "They match", the request failed, and the screen went back to
+  looking without ever sending the key. The answer is now kept until a
+  request has carried it out. Found in review.
+- **The CLI asked about a code once.** If the other device began again, it
+  showed a new code that `dirt devices approve` never asked about, and the
+  command could wait for ever. It now asks about each new code and gives up
+  after five minutes without movement, whatever it was waiting for. Found
+  in review.
+- **A device removed while its own request was being handled was told
+  there was no such request.** The server checks whose token a request
+  carries and then what it asks for. A removal between the two gave the
+  new device `not_found`, which it took for a fault: it stayed signed in
+  and waiting for an exchange that was over. The test for a mismatch on two
+  screens failed about half the time once a fifth test ran beside it, which
+  is how this was found. The server now answers `device_revoked`, and the
+  joining device stops and signs out whichever of its requests brings that
+  answer.
+- Each of the three was broken by hand to confirm a test fails.
+
 ## Tests
 
 Each of these is an exit condition.

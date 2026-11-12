@@ -131,6 +131,21 @@ impl Join {
     /// Looks for what the other device has sent and moves the exchange on.
     /// The interface calls this every few seconds while the screen is open.
     pub async fn poll(&mut self) -> Result<ExchangeStep, SessionError> {
+        match self.look().await {
+            // An approving device removed this one. Its message saying why
+            // went with the request, so the reason is not known here; the
+            // approving device shows it. Any of this device's requests can
+            // be the one that brings the news.
+            Err(SessionError::Server(error))
+                if error.code() == Some(crate::api::ErrorCode::DeviceRevoked) =>
+            {
+                self.called_off(CancelReason::Declined)
+            }
+            other => other,
+        }
+    }
+
+    async fn look(&mut self) -> Result<ExchangeStep, SessionError> {
         if matches!(self.phase, JoinPhase::Done) {
             return Ok(ExchangeStep::Done);
         }
@@ -139,18 +154,7 @@ impl Join {
         }
         self.send_reveal().await?;
 
-        let messages = match self.new_messages().await {
-            Ok(messages) => messages,
-            // An approving device removed this one. Its message saying why
-            // went with the request, so the reason is not known here; the
-            // approving device shows it.
-            Err(SessionError::Server(error))
-                if error.code() == Some(crate::api::ErrorCode::DeviceRevoked) =>
-            {
-                return self.called_off(CancelReason::Declined);
-            }
-            Err(error) => return Err(error),
-        };
+        let messages = self.new_messages().await?;
         for (relayed, message) in messages {
             let from_other = relayed.sender != self.secrets.device_id;
             match message {

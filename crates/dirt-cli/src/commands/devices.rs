@@ -151,20 +151,18 @@ async fn approve(session: &Session, prefix: Option<&str>) -> Result<(), CliError
     );
 
     let mut approval = session.begin_approval(device).map_err(failed)?;
-    let started = std::time::Instant::now();
-    let mut asked = false;
+    // When the exchange last moved. With no movement for long enough, the
+    // command gives up, whatever it was waiting for.
+    let mut last_progress = std::time::Instant::now();
+    // The code the person has answered for. The other device may begin
+    // again, which gives a new code that has to be compared afresh.
+    let mut answered_for: Option<String> = None;
     loop {
         match approval.poll().await.map_err(failed)? {
-            ExchangeStep::Waiting | ExchangeStep::Finishing => {
-                if started.elapsed() > GIVE_UP_AFTER {
-                    return Err(CliError::Account(
-                        "The other device did not answer. Nothing was changed; try again."
-                            .to_owned(),
-                    ));
+            ExchangeStep::Compare { code } if answered_for.as_deref() != Some(code.as_str()) => {
+                if answered_for.is_some() {
+                    println!("The other device began again. There is a new code.");
                 }
-            }
-            ExchangeStep::Compare { code } if !asked => {
-                asked = true;
                 println!("Code: {code}");
                 if ask("Does the other device show the same code? [y/N] ")? {
                     approval.confirm().await.map_err(failed)?;
@@ -173,9 +171,18 @@ async fn approve(session: &Session, prefix: Option<&str>) -> Result<(), CliError
                     approval.reject(CancelReason::Mismatch).await;
                     return Err(CliError::Account(MISMATCH_WARNING.to_owned()));
                 }
+                answered_for = Some(code);
+                last_progress = std::time::Instant::now();
                 continue;
             }
-            ExchangeStep::Compare { .. } => {}
+            ExchangeStep::Waiting | ExchangeStep::Finishing | ExchangeStep::Compare { .. } => {
+                if last_progress.elapsed() > GIVE_UP_AFTER {
+                    return Err(CliError::Account(
+                        "The other device did not answer. The device was not let in; try again."
+                            .to_owned(),
+                    ));
+                }
+            }
             ExchangeStep::Done => {
                 println!("Approved. That device can now read and write the account's notes.");
                 return Ok(());
@@ -205,19 +212,11 @@ pub async fn join(session: &Session) -> Result<(), CliError> {
         "On a device that is already signed in, open Dirt and approve this device, \
          or run `dirt devices approve` there."
     );
-    let started = std::time::Instant::now();
-    let mut asked = false;
+    let mut last_progress = std::time::Instant::now();
+    let mut answered_for: Option<String> = None;
     loop {
         match join.poll().await.map_err(failed)? {
-            ExchangeStep::Waiting | ExchangeStep::Finishing | ExchangeStep::HandledElsewhere => {
-                if started.elapsed() > GIVE_UP_AFTER {
-                    return Err(CliError::Account(
-                        "No device answered. This device is still waiting; try again.".to_owned(),
-                    ));
-                }
-            }
-            ExchangeStep::Compare { code } if !asked => {
-                asked = true;
+            ExchangeStep::Compare { code } if answered_for.as_deref() != Some(code.as_str()) => {
                 println!("Code: {code}");
                 if ask("Does the other device show the same code? [y/N] ")? {
                     join.confirm().await.map_err(failed)?;
@@ -226,9 +225,20 @@ pub async fn join(session: &Session) -> Result<(), CliError> {
                     join.reject(CancelReason::Mismatch).await.map_err(failed)?;
                     return Err(CliError::Account(MISMATCH_WARNING.to_owned()));
                 }
+                answered_for = Some(code);
+                last_progress = std::time::Instant::now();
                 continue;
             }
-            ExchangeStep::Compare { .. } => {}
+            ExchangeStep::Waiting
+            | ExchangeStep::Finishing
+            | ExchangeStep::HandledElsewhere
+            | ExchangeStep::Compare { .. } => {
+                if last_progress.elapsed() > GIVE_UP_AFTER {
+                    return Err(CliError::Account(
+                        "No device answered. This device is still waiting; try again.".to_owned(),
+                    ));
+                }
+            }
             ExchangeStep::Done => {
                 println!("This device was approved. Run `dirt sync` to fetch the notes.");
                 return Ok(());

@@ -63,9 +63,10 @@ fn issuer() -> &'static Issuer {
     ISSUER_KEYS.get_or_init(make_issuer)
 }
 
-/// The server, on the database `#[sqlx::test]` made for this test.
-pub fn app(pool: PgPool) -> Router {
-    build_router(AppState {
+/// What the server's handlers work with, on the database `#[sqlx::test]`
+/// made for this test.
+pub fn state(pool: PgPool) -> AppState {
+    AppState {
         pool,
         config: Arc::new(Config {
             database_url: String::new(),
@@ -74,7 +75,12 @@ pub fn app(pool: PgPool) -> Router {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
         }),
         keys: Arc::new(Keys::Fixed(issuer().published.clone())),
-    })
+    }
+}
+
+/// The server, on the database `#[sqlx::test]` made for this test.
+pub fn app(pool: PgPool) -> Router {
+    build_router(state(pool))
 }
 
 fn now() -> u64 {

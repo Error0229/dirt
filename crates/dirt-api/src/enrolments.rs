@@ -20,7 +20,7 @@ use dirt_proto::api::{
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::auth::{AnyDevice, Approved, Device};
+use crate::auth::{removed_from_account, status_from_text, AnyDevice, Approved, Device};
 use crate::error::{ApiError, ApiResult};
 use crate::{ApiJson, AppState};
 
@@ -48,20 +48,28 @@ async fn waiting_device(
     }
     // The account is part of the condition, so no account can reach into
     // another's exchange, whatever ID it sends.
-    let waiting: Option<(bool,)> = sqlx::query_as(
-        "SELECT created_at < now() - make_interval(days => $3) \
+    let found: Option<(String, bool)> = sqlx::query_as(
+        "SELECT status, created_at < now() - make_interval(days => $3) \
            FROM devices \
-          WHERE id = $1 AND account_id = $2 AND status = 'pending'",
+          WHERE id = $1 AND account_id = $2",
     )
     .bind(target)
     .bind(caller.account_id)
     .bind(i32::try_from(limits::PENDING_DEVICE_DAYS).unwrap_or(i32::MAX))
     .fetch_optional(&state.pool)
     .await?;
-    match waiting {
-        Some((false,)) => Ok(target),
+    let Some((status, lapsed)) = found else {
+        return Err(no_such_request());
+    };
+    match status_from_text(&status)? {
+        DeviceStatus::Pending if !lapsed => Ok(target),
+        // The device was removed after its token was checked and before
+        // this look. It gets the answer its next request would get. "No
+        // such request" would leave it waiting for an exchange that is
+        // over.
+        DeviceStatus::Revoked if caller.id == target => Err(removed_from_account()),
         // A lapsed request is as good as none.
-        Some((true,)) | None => Err(no_such_request()),
+        _ => Err(no_such_request()),
     }
 }
 

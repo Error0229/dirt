@@ -253,6 +253,15 @@ impl InProcess {
     {
         self.add_fault(path_prefix, Fault::Rewrite(Box::new(rewrite)));
     }
+
+    /// Runs `action` just before the next request whose path starts with
+    /// `path_prefix` reaches the server.
+    pub fn before_next<F>(&self, path_prefix: &str, action: F)
+    where
+        F: FnOnce() -> BoxFuture<'static, ()> + Send + 'static,
+    {
+        self.add_fault(path_prefix, Fault::Before(Box::new(action)));
+    }
 }
 
 impl Transport for InProcess {
