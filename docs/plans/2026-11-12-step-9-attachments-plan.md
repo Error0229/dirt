@@ -526,6 +526,12 @@ What review showed:
   A file that came to be there while it fetched was replaced without
   `--force`. The copy is now refused by the file system at the moment it
   is written, and a copy that fails half-way leaves nothing behind.
+- **`dirt save --force` onto the device's own copy of a file emptied it.**
+  Replacing a file opened it and emptied it before anything was read, so
+  with the destination being the file itself, or a link to it, there was
+  nothing left to copy and the device's copy was gone. A forced save now
+  writes beside the destination and then takes its name. Nothing that was
+  there is opened, and it stays whole until the new file is.
 - **A name was cut to 200 characters, and file systems count bytes.** A
   hundred Chinese characters are 300 bytes, more than one name may be on
   Linux, so the file could be attached and not saved. A name is now cut

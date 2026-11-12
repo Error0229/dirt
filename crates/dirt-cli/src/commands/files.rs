@@ -233,30 +233,59 @@ fn already_there(target: &Path) -> CliError {
 /// would not do: fetching a file takes a while, and something may have
 /// come to be there meanwhile, put by another program or by another
 /// `dirt save`.
+///
+/// With `replace`, the copy is written beside `target` and then given its
+/// name. What was at `target` is never opened, so it is never emptied:
+/// were `target` the device's own copy of the file, or a link to it,
+/// emptying it first would leave nothing to copy and destroy the file.
+/// And the old file is there whole until the new one is.
 pub fn copy_to(held: &Path, target: &Path, replace: bool) -> Result<(), CliError> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true);
-    if replace {
-        options.create(true).truncate(true);
+    let written = if replace {
+        beside(target)
     } else {
-        options.create_new(true);
-    }
-    let mut to = options.open(target).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::AlreadyExists {
-            already_there(target)
-        } else {
-            CliError::Io(error)
-        }
-    })?;
-    let copied = std::fs::File::open(held).and_then(|mut from| std::io::copy(&mut from, &mut to));
+        target.to_path_buf()
+    };
+    let mut to = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&written)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists && !replace {
+                already_there(target)
+            } else {
+                CliError::Io(error)
+            }
+        })?;
+    let copied = std::fs::File::open(held)
+        .and_then(|mut from| std::io::copy(&mut from, &mut to))
+        .and_then(|_| {
+            drop(to);
+            if replace {
+                std::fs::rename(&written, target)
+            } else {
+                Ok(())
+            }
+        });
     if let Err(error) = copied {
         // Half a file under the name of the whole is worse than none.
-        // It is this command's own: it was made, or emptied, just now.
-        drop(to);
-        let _ = std::fs::remove_file(target);
+        // What is removed is this command's own: it was made just now.
+        let _ = std::fs::remove_file(&written);
         return Err(error.into());
     }
     Ok(())
+}
+
+/// A name in `target`'s folder that nothing has, to write a file under
+/// before it takes `target`'s place.
+fn beside(target: &Path) -> PathBuf {
+    let name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let moment = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos());
+    target.with_file_name(format!(".{name}.{}-{moment}.saving", std::process::id()))
 }
 
 /// Why a file could not be had, in words that say what can be done.
