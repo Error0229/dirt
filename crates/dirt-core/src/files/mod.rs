@@ -8,10 +8,12 @@
 //! it leaves the device (design section 10).
 //!
 //! This module holds what a file is ([`Attachment`]), how its bytes are
-//! encrypted ([`seal`]) and where a device keeps them ([`shelf`]).
+//! encrypted ([`seal`]), where a device keeps them ([`shelf`]) and how a
+//! picture gets its small preview ([`thumbnail`]).
 
 pub mod seal;
 pub mod shelf;
+pub mod thumbnail;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;

@@ -98,6 +98,18 @@ impl Shelf {
         Ok(removed)
     }
 
+    /// Puts a file made on this device, from its bytes, on the shelf.
+    pub fn put(&self, file: Uuid, contents: &[u8]) -> io::Result<()> {
+        let unfinished = self.unfinished(file)?;
+        match fs::write(&unfinished, contents) {
+            Ok(()) => self.keep(file),
+            Err(error) => {
+                let _ = fs::remove_file(&unfinished);
+                Err(error)
+            }
+        }
+    }
+
     /// Copies a file from elsewhere on the device onto the shelf. Returns
     /// its size.
     pub fn add(&self, file: Uuid, source: &Path) -> io::Result<u64> {

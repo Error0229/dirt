@@ -277,12 +277,17 @@ pub(super) fn files_in_use(connection: &Connection) -> Result<Vec<uuid::Uuid>> {
 }
 
 /// Names a file in a note's document. The file itself is on the shelf.
+/// Returns the attachment as the note has it: without its thumbnail, if
+/// the note had room for the file and not for both.
+///
+/// A note's files are counted as the server counts them: every file the
+/// note names, a thumbnail being one.
 pub(super) fn attach(
     connection: &mut Connection,
     id: &NoteId,
-    attachment: &Attachment,
+    mut attachment: Attachment,
     now_ms: i64,
-) -> Result<()> {
+) -> Result<Attachment> {
     let tx = write_transaction(connection)?;
     let (row, bytes) = load(&tx, id)?.ok_or_else(|| not_found(id))?;
     let doc = NoteDoc::from_bytes(client_id(&tx)?, &bytes)?;
@@ -290,19 +295,23 @@ pub(super) fn attach(
         return Err(not_found(id));
     }
     let most = usize::try_from(limits::MAX_FILES_PER_NOTE).unwrap_or(usize::MAX);
-    if doc.attachments().len() >= most {
+    let room = most.saturating_sub(doc.named_files().len());
+    if room == 0 {
         return Err(Error::InvalidInput(format!(
-            "a note may have at most {most} files"
+            "a note may have at most {most} files, and a picture's preview counts as one"
         )));
     }
-    if !doc.attach(attachment, now_ms) {
+    if room == 1 {
+        attachment.thumbnail = None;
+    }
+    if !doc.attach(&attachment, now_ms) {
         return Err(Error::InvalidInput(
             "the note already has this file".to_owned(),
         ));
     }
     save(&tx, id, &doc, Some(row), Origin::Local)?;
     tx.commit()?;
-    Ok(())
+    Ok(attachment)
 }
 
 /// Removes a file from a note's document. Returns whether the note named

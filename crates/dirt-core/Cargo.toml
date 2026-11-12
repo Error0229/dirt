@@ -50,6 +50,9 @@ vodozemac = { version = "0.11", default-features = false }
 bip39 = { version = "2", default-features = false, features = ["std"] }
 # Derives the two keys a recovery phrase stands for.
 hkdf = "0.12"
+# Reads a picture to make its thumbnail. Only the formats a phone or a
+# screenshot produces; nothing here writes any but JPEG.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 
 # The operating system's keychain, for `secrets::KeyringSecrets`: Keychain
 # on macOS, Credential Manager on Windows, the Secret Service over DBus on

@@ -941,3 +941,66 @@ async fn a_file_refused_after_it_was_sent_is_listed_with_its_reason(pool: PgPool
         1
     );
 }
+
+/// A picture's thumbnail is a file of its own. It is sent with the picture
+/// and the other device can show it without fetching the picture.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_pictures_thumbnail_is_read_without_the_picture(pool: PgPool) {
+    file_bucket().await;
+    let server = Server::with_sign_in(pool.clone()).await;
+    let (laptop, phone) = two_devices(&server).await;
+    let store = laptop.session.store();
+    let note = store.create_note("the whiteboard").await.unwrap().id;
+    let source = laptop.folder().join("whiteboard.png");
+    image::RgbImage::from_pixel(1_600, 1_200, image::Rgb([30, 90, 200]))
+        .save_with_format(&source, image::ImageFormat::Png)
+        .unwrap();
+    let attachment = store
+        .attach_file(&note, &source, "whiteboard.png", "image/png")
+        .await
+        .unwrap();
+    let thumbnail = attachment.thumbnail.clone().expect("a thumbnail");
+
+    let report = sync(&laptop).await;
+
+    assert_eq!((report.files_sent, report.files_unsent), (2, 0));
+    // The server knows two files, and that the note refers to both. It
+    // cannot tell which is the thumbnail of which.
+    assert_eq!(on_the_server(&pool).await.1, 2);
+    assert_eq!(
+        referring_notes(&pool, thumbnail.file_id).await,
+        [note.as_uuid()]
+    );
+
+    sync(&phone).await;
+    assert_eq!(
+        attached(&phone, &note).await,
+        std::slice::from_ref(&attachment)
+    );
+    let small = read(&phone, &note, thumbnail.file_id).await;
+    assert_eq!(small.len() as u64, thumbnail.size);
+    let opened = image::load_from_memory(&small).unwrap();
+    assert_eq!((opened.width(), opened.height()), (256, 192));
+    assert!(holds(&phone, thumbnail.file_id));
+    assert!(
+        !holds(&phone, attachment.file_id),
+        "the picture was not fetched"
+    );
+
+    // Removed from the note, both go from the devices after the wait.
+    laptop
+        .session
+        .store()
+        .detach_file(&note, attachment.file_id)
+        .await
+        .unwrap();
+    sync(&laptop).await;
+    let laptop = impatient(laptop);
+    sync(&laptop).await;
+    assert!(!holds(&laptop, attachment.file_id) && !holds(&laptop, thumbnail.file_id));
+    assert_eq!(on_the_server(&pool).await.1, 0);
+    let phone = impatient(phone);
+    sync(&phone).await;
+    sync(&phone).await;
+    assert!(!holds(&phone, thumbnail.file_id));
+}

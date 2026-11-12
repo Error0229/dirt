@@ -297,7 +297,7 @@ Not tried: Cloudflare R2 itself. Everything above ran against the gateway.
       know is uploaded again by a device that holds it (review item 6).
 - [x] A purged note's files go from the device. A note kept as new after a
       purge keeps its files and confirms them (review item 1).
-- [ ] Making a thumbnail of an image when it is attached. The document
+- [x] Making a thumbnail of an image when it is attached. The document
       has the place for one, and sync already sends and fetches one as a
       file of its own. A thumbnail counts as one of a note's twenty files
       on the server, so attaching has to count it too.
@@ -342,8 +342,8 @@ What review showed:
   good. The move now copies each file the store holds before it copies the
   note. Found in review.
 
-**Result of the second half (2026-11-12): files sync.** Still to do in 9b:
-thumbnails.
+**Result of the second half (2026-11-12): files sync.** Thumbnails
+followed in a pull request of their own; see the end of this section.
 
 How a device deals with files, after the notes have synced in a cycle:
 
@@ -440,6 +440,34 @@ What review showed:
   note still counts on the server until its reference is released.
 
 Not checked on a real device: no client attaches a file yet.
+
+**Thumbnails (2026-11-12). 9b is done.**
+
+- **A picture gets a thumbnail when it is attached:** a JPEG within 256
+  pixels a side, made by the device, kept as a second file with a key of
+  its own. Whether a file is a picture is read from the file, not from
+  what it is called. JPEG, PNG, GIF and WebP are read. Anything else, and
+  a picture that cannot be read, is attached without one.
+- **It is upright.** A camera stores a photograph as its sensor lay and
+  notes which way up it was held. The note is followed, and not copied:
+  the thumbnail carries nothing of the original but its pixels.
+- **What is see-through is shown on white.** A JPEG has no transparency.
+- **A small picture is not made larger.**
+- **Opening a picture is bounded.** It may take 128 MiB, which is a
+  photograph of about forty million pixels, and no side may be longer than
+  20,000. A larger picture has no thumbnail. The library's own limit turned
+  out not to cover the opened picture itself on the path that also reads
+  which way up it is, so the size the file claims is checked before
+  anything is set aside for it. A test turned the limit down to find that
+  out; the first version would have set aside 1.4 GB for a file of a few
+  hundred bytes.
+- **A thumbnail counts as one of a note's twenty files,** as the server
+  counts it. So a note holds ten pictures. A picture that fits only without
+  its thumbnail is attached without.
+- **The work is done away from the thread that writes,** so that making a
+  large photograph small does not hold up a note being saved.
+- The `image` crate was already in the workspace's lock file, for the
+  desktop app. `dirt-core` uses it with four formats and nothing else.
 
 ### 9c: the CLI
 

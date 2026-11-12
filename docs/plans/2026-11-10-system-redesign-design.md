@@ -682,7 +682,11 @@ integration uses a Postgres service container.
   that the server does not have it. So a file lost to a restore is sent
   again by the same rule that sends it the first time.
 - **Thumbnails:** a small encrypted thumbnail is uploaded alongside, because
-  the server cannot generate one.
+  the server cannot generate one. The device that attaches a picture makes
+  it: a JPEG within 256 pixels a side, upright, holding nothing of the
+  original but its pixels. It is a file of its own with its own key, so the
+  server sees two files and cannot tell which is the thumbnail of which. A
+  picture too large to open in 128 MiB of memory has none.
 - **Clean-up:** the server cannot tell which files are referenced, so clients
   tell it. A file is confirmed once its note has synced, and deleted 30 days
   after its removal has settled. Uploads never confirmed are discarded after a
