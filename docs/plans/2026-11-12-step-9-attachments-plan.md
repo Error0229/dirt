@@ -487,6 +487,13 @@ Not checked on a real device: no client attaches a file yet.
 
 - [ ] Attach from Android's file chooser. A shared image becomes a note
       with the image attached. Open with another app, save, remove.
+- [ ] Measure on the phone how long a twelve-megapixel photograph takes to
+      attach, most of which is making its thumbnail, and write it into
+      `docs/LIMITS.md`. If it is long enough to notice, the app says that
+      it is attaching.
+- [ ] A photograph saved as HEIC is attached without a thumbnail, because
+      the core does not read HEIC. See what the emulator's and a real
+      phone's camera save, and say so in `docs/feature-parity.md`.
 
 ### 9f: export, limits and the documents
 
