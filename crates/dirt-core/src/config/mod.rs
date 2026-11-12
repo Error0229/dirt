@@ -106,12 +106,33 @@ impl ServerAddress {
 /// client, and may name the computer the way the Android emulator does
 /// (`10.0.2.2`) or as `localhost`. Both become `127.0.0.1`, so that the
 /// desktop app and the CLI name the server alike whichever was written.
+///
+/// Only a host that is exactly one of those names is changed. `10.0.2.20`
+/// and `localhost.example` are other machines, and everything else in the
+/// address is kept as it was written.
 fn on_a_computer(address: &str) -> String {
-    address
-        .trim()
-        .trim_end_matches('/')
-        .replace("://10.0.2.2", "://127.0.0.1")
-        .replace("://localhost", "://127.0.0.1")
+    let address = address.trim().trim_end_matches('/');
+    let Some((scheme, rest)) = address.split_once("://") else {
+        return address.to_owned();
+    };
+    // The host sits between any "user@" and the port, path, query or
+    // fragment, whichever comes first.
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(authority_end);
+    let (user, host_and_port) = authority
+        .rfind('@')
+        .map_or(("", authority), |at| authority.split_at(at + 1));
+    // An IPv6 address is written in brackets and is neither name.
+    if host_and_port.starts_with('[') {
+        return address.to_owned();
+    }
+    let host_end = host_and_port.find(':').unwrap_or(host_and_port.len());
+    let (host, port) = host_and_port.split_at(host_end);
+    if host == "10.0.2.2" || host.eq_ignore_ascii_case("localhost") {
+        format!("{scheme}://{user}127.0.0.1{port}{tail}")
+    } else {
+        address.to_owned()
+    }
 }
 
 #[cfg(test)]
@@ -153,6 +174,36 @@ mod tests {
                 .unwrap();
             assert_eq!(from_build.url, "http://127.0.0.1:8080");
             assert_eq!(from_environment.url, "http://127.0.0.1:8080");
+        }
+    }
+
+    #[test]
+    fn only_a_whole_host_name_is_taken_for_the_computer_itself() {
+        let unchanged = [
+            // Other machines whose names begin the same way.
+            "http://10.0.2.20:8080",
+            "http://10.0.2.2.example:8080",
+            "https://localhost.example",
+            "https://localhostess",
+            // The names somewhere other than the host.
+            "https://sync.example/localhost",
+            "https://sync.example/?next=http://localhost",
+            "https://localhost@sync.example",
+            "http://[::1]:8080",
+        ];
+        for written in unchanged {
+            assert_eq!(on_a_computer(written), written);
+        }
+        let changed = [
+            ("http://localhost", "http://127.0.0.1"),
+            ("http://LocalHost:8080/", "http://127.0.0.1:8080"),
+            ("http://10.0.2.2", "http://127.0.0.1"),
+            ("http://10.0.2.2:8080/api", "http://127.0.0.1:8080/api"),
+            ("http://me@localhost:8080", "http://me@127.0.0.1:8080"),
+            ("http://localhost?x=1", "http://127.0.0.1?x=1"),
+        ];
+        for (written, reached) in changed {
+            assert_eq!(on_a_computer(written), reached);
         }
     }
 

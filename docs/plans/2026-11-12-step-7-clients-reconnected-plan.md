@@ -123,6 +123,14 @@ What building it showed:
   gives the right text. A note of ordinary size is done in far less and is
   not affected. A test replaces 1 MiB of text three ways and fails if any
   takes ten seconds or gives the wrong text.
+- **The rewrite of this computer's names matched the start of a host.**
+  `10.0.2.20` became `127.0.0.10` and `localhost.example` became
+  `127.0.0.1.example`: another machine was taken for this one. The desktop
+  app had done this since before the redesign, in two places; step 7a
+  carried it into the core and so to the CLI's environment. Only a whole
+  host name is rewritten now, the core's is the one copy for the desktop
+  app and the CLI, and the Android build's copy, which rewrites the other
+  way with the same fault, is on 7b's list. Found in review.
 - **A stub was found in the CLI.** `dirt tui` prints "Opening TUI..." and
   does nothing. Neither the product design nor the redesign mentions a
   terminal interface, and no step builds one. It is outside what this plan
@@ -131,6 +139,8 @@ What building it showed:
 ### 7b: the Android app
 
 - [ ] The redirect handed over by a JNI call.
+- [ ] The Android build's rewrite of `127.0.0.1` and `localhost` to the
+      emulator's name for the computer changed to match a whole host name.
 - [ ] The custom tab, tried.
 - [ ] The status view lists the notes.
 - [ ] Checked on the emulator: sign-in, the return, and a sign-in finished

@@ -1,51 +1,15 @@
-//! Desktop bootstrap configuration loaded from build-time generated JSON.
+//! The server address the desktop app was built with.
 //!
-//! Re-exports the shared `BootstrapConfig` from dirt-core and provides
-//! the desktop-specific `load_bootstrap_config` function that reads the
-//! embedded build-time JSON. After the Phase-1 Supabase-removal
-//! rewrite there is no runtime manifest fetch — `build.rs` writes the
-//! `DIRT_API_BASE_URL` directly into `desktop-bootstrap.json` and we
-//! `include_str!` it here.
+//! `build.rs` writes `DIRT_API_BASE_URL` from `.env.client` into
+//! `desktop-bootstrap.json`, which is included here. The app passes it to
+//! `dirt_core::config::ServerAddress`, which lets the environment come
+//! first and gives this computer one name.
 
 pub use dirt_core::config::BootstrapConfig;
 
 /// Loads the generated desktop bootstrap JSON from `OUT_DIR`.
 pub fn load_bootstrap_config() -> BootstrapConfig {
     let raw = include_str!(concat!(env!("OUT_DIR"), "/desktop-bootstrap.json"));
-    let parsed: BootstrapConfig = serde_json::from_str(raw)
-        .unwrap_or_else(|error| panic!("Failed to parse desktop bootstrap config: {error}"));
-    normalize_desktop_bootstrap(parsed)
-}
-
-fn normalize_desktop_bootstrap(mut config: BootstrapConfig) -> BootstrapConfig {
-    config.dirt_api_base_url = config
-        .dirt_api_base_url
-        .as_deref()
-        .map(normalize_desktop_url);
-    config
-}
-
-fn normalize_desktop_url(raw: &str) -> String {
-    raw.trim()
-        .trim_end_matches('/')
-        .replace("://10.0.2.2", "://127.0.0.1")
-        .replace("://localhost", "://127.0.0.1")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalize_desktop_bootstrap_rewrites_emulator_hosts() {
-        let config = BootstrapConfig {
-            dirt_api_base_url: Some("http://10.0.2.2:8080".to_string()),
-        };
-
-        let normalized = normalize_desktop_bootstrap(config);
-        assert_eq!(
-            normalized.dirt_api_base_url.as_deref(),
-            Some("http://127.0.0.1:8080")
-        );
-    }
+    serde_json::from_str(raw)
+        .unwrap_or_else(|error| panic!("Failed to parse desktop bootstrap config: {error}"))
 }
