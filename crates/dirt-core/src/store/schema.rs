@@ -20,7 +20,7 @@ use crate::Result;
 pub(super) const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The version of the tables below, kept in SQLite's `user_version`.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE meta (
@@ -53,6 +53,17 @@ CREATE VIRTUAL TABLE notes_fts USING fts5(text);
 CREATE TABLE settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
+) WITHOUT ROWID;
+";
+
+/// Version 2: notes that could not be synced, and why. A note listed here
+/// is not pushed. The note need not exist locally: a blob that could not
+/// be read may belong to a note this device has never held.
+const SCHEMA_V2: &str = "
+CREATE TABLE sync_problems (
+    note_id          TEXT PRIMARY KEY,
+    reason           TEXT NOT NULL,
+    retry_after_edit INTEGER NOT NULL
 ) WITHOUT ROWID;
 ";
 
@@ -118,8 +129,13 @@ pub(super) fn set_up(connection: &mut Connection) -> Result<String> {
              (schema {version}, this build understands {SCHEMA_VERSION})"
         )));
     }
-    if version == 0 {
+    if version < 1 {
         tx.execute_batch(SCHEMA_V1)?;
+    }
+    if version < 2 {
+        tx.execute_batch(SCHEMA_V2)?;
+    }
+    if version < SCHEMA_VERSION {
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     if read_client_id(&tx)?.is_none() {
@@ -169,6 +185,31 @@ fn write_client_id(tx: &Transaction<'_>, id: u64) -> Result<()> {
     tx.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('client_id', ?1)",
         [id.to_string()],
+    )?;
+    Ok(())
+}
+
+/// Gives this install a new CRDT client ID and returns it. Used when the
+/// install finds it has lost edits it once made: writing more under the
+/// old ID would reuse edit numbers.
+pub(super) fn rotate_client_id(tx: &Transaction<'_>) -> Result<u64> {
+    let id = new_client_id();
+    write_client_id(tx, id)?;
+    Ok(id)
+}
+
+pub(super) fn meta_get(connection: &Connection, key: &str) -> Result<Option<String>> {
+    Ok(connection
+        .query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
+            row.get(0)
+        })
+        .optional()?)
+}
+
+pub(super) fn meta_set(tx: &Transaction<'_>, key: &str, value: &str) -> Result<()> {
+    tx.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+        [key, value],
     )?;
     Ok(())
 }

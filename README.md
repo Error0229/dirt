@@ -12,21 +12,24 @@ A redesign is in progress, and `main` is partway through it.
 - **Build order:**
   [docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md](docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md)
 
-**Where it stands: step 4 of 9.** The desktop app, the CLI and the Android app
-run on the new local core, and the new server is built. **Sync is off:** no
-client talks to the new server yet. Notes stay on the device they were
-written on until step 5 connects the two.
+**Where it stands: step 5 of 9, half done.** The desktop app, the CLI and the
+Android app run on the new local core, the new server is built, and the sync
+core (note encryption, the sync cycle and the server client) is built and
+tested against the real server. **Sync is still off:** no client calls it
+yet. Notes stay on the device they were written on until the second half of
+step 5 adds sign-in and connects the clients.
 
 ## Workspace layout
 
 | Crate | Purpose |
 |---|---|
 | `dirt-proto` | Types shared by the server and the clients. |
-| `dirt-core` | Everything the clients share: notes as mergeable documents, the local store (notes, tags, search, settings), export, and the old sign-in client. |
+| `dirt-core` | Everything the clients share: notes as mergeable documents, the local store (notes, tags, search, settings), note encryption, the sync cycle, export, and the old sign-in client. |
 | `dirt-desktop` | Dioxus desktop app. |
 | `dirt-mobile` | Dioxus Android app. |
 | `dirt-cli` | `dirt add`, `dirt list`, `dirt search`, `dirt export` and more. |
 | `dirt-api` | The server, on axum and Postgres: it checks a Clerk sign-in, keeps the device registry, and stores encrypted note blobs it cannot read. See [docs/BACKEND_API.md](docs/BACKEND_API.md). |
+| `dirt-sim` | Tests only: two or three real client cores syncing through the real server in one process, with lost answers, tampered blobs, replays and restored backups. |
 | `dirt-vercel` | Workspace-root package that hosts the Vercel serverless entry point at `api/axum.rs`. |
 
 ## Quick start
@@ -91,7 +94,7 @@ cargo run -p dirt-api                # listens on 0.0.0.0:8080
 
 ### Known limitations
 
-- **No sync** until step 5.
+- **No sync** until the second half of step 5.
 - **The desktop app does not watch the file.** It shows a note written by the
   CLI only when it next reloads its list, for example on restart. If the CLI
   changes a note that is open in the desktop editor, the desktop app's next
@@ -105,7 +108,7 @@ cargo run -p dirt-api                # listens on 0.0.0.0:8080
 ## Testing
 
 ```bash
-docker compose up -d   # the server's tests need Postgres
+docker compose up -d   # the server's tests and the sync simulation need Postgres
 export DATABASE_URL=postgres://postgres:dirt@127.0.0.1:55432/postgres
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings

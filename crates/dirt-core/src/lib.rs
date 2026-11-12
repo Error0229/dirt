@@ -10,8 +10,10 @@
 //! The desktop app, the Android app and the CLI hold interface and platform
 //! code only. No SQL lives outside [`store`].
 
+pub mod api;
 pub mod auth;
 pub mod config;
+pub mod crypto;
 pub mod error;
 pub mod export;
 pub mod models;

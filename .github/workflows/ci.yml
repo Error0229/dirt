@@ -84,24 +84,25 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # The server's integration tests need Postgres, which only the Linux
-      # job below provides. Its unit tests need nothing and run everywhere.
+      # The server's integration tests and the sync simulation need Postgres,
+      # which only the Linux job below provides. The server's unit tests need
+      # nothing and run everywhere.
       - name: Run tests
         if: runner.os != 'Windows'
         run: |
-          cargo test --workspace --exclude dirt-api --verbose
+          cargo test --workspace --exclude dirt-api --exclude dirt-sim --verbose
           cargo test -p dirt-api --lib --verbose
 
       - name: Run tests (Windows serialized)
         if: runner.os == 'Windows'
         run: |
           $env:RUST_TEST_THREADS = "1"
-          cargo test --workspace --exclude dirt-api --verbose
+          cargo test --workspace --exclude dirt-api --exclude dirt-sim --verbose
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test -p dirt-api --lib --verbose
 
   server-test:
-    name: Server tests (Postgres)
+    name: Server and sync simulation tests (Postgres)
     runs-on: ubuntu-latest
     services:
       # Version 18 matches the Neon project.
@@ -138,6 +139,10 @@ jobs:
 
       - name: Run the server's tests
         run: cargo test -p dirt-api --verbose
+
+      # Real client cores syncing through the real server, in one process.
+      - name: Run the sync simulation
+        run: cargo test -p dirt-sim --verbose
 
   clippy:
     name: Clippy

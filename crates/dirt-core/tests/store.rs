@@ -631,3 +631,28 @@ async fn two_stores_never_see_each_others_notes() {
     assert!(bob.list_notes(10, 0).await.unwrap().is_empty());
     assert!(bob.search_notes("alice", 10).await.unwrap().is_empty());
 }
+
+// ---- Closing ----
+
+#[tokio::test]
+async fn closing_the_store_leaves_one_complete_file() {
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("notes.db");
+    {
+        let store = Store::open(&path).unwrap();
+        store.create_note("kept in the main file").await.unwrap();
+        // While the store is open, recent writes sit in the log.
+        assert!(folder.path().join("notes.db-wal").exists());
+    }
+
+    // No log is left beside the file, so a copy of the file alone is a
+    // complete backup.
+    assert!(!folder.path().join("notes.db-wal").exists());
+    let copy = folder.path().join("copy.db");
+    std::fs::copy(&path, &copy).unwrap();
+    let restored = Store::open(&copy).unwrap();
+    assert_eq!(
+        restored.list_notes(10, 0).await.unwrap()[0].content,
+        "kept in the main file"
+    );
+}

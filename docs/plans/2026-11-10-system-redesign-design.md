@@ -206,6 +206,9 @@ and when they change.
   local database.
 - Each device has one long-lived token, stored hashed on the server and
   revocable. It expires after 90 days without use.
+- A device whose token expired signs in again and remains the same device,
+  with no new approval: it presents the expired token together with its
+  public key. A revoked device starts over and must be approved.
 - The current refresh-and-rotate machinery is removed. A stolen token now
   yields only ciphertext, so rotation no longer earns its complexity.
 
@@ -595,8 +598,9 @@ integration uses a Postgres service container.
 
 - **Server:** one structured log line per request with account, endpoint,
   outcome and duration. Bodies and tokens are never logged.
-- **Clients:** a sync status view showing last success, notes waiting, and the
-  last error class. The CLI gets a verbose flag that prints the same.
+- **Clients:** a sync status view showing last success, notes waiting, the
+  last error class, and each note that could not be synced with its reason.
+  The CLI gets a verbose flag that prints the same.
 
 ## 10. Attachments (specified now, built last)
 

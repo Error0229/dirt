@@ -8,7 +8,15 @@ const WEEK_MS: i64 = 7 * DAY_MS;
 /// Format a timestamp as a short relative label (e.g. "now", "5m", "3h", "2d", "1w").
 #[must_use]
 pub fn format_short_time(timestamp_ms: i64) -> String {
-    let delta = delta_ms(timestamp_ms);
+    format_short_time_at(timestamp_ms, chrono::Utc::now().timestamp_millis())
+}
+
+/// The label for `timestamp_ms` as seen at `now_ms`. Taking the current time
+/// as a value keeps the boundaries testable: a test that read the clock
+/// itself would disagree with this function whenever a millisecond passed
+/// between the two readings.
+fn format_short_time_at(timestamp_ms: i64, now_ms: i64) -> String {
+    let delta = (now_ms - timestamp_ms).max(0);
 
     if delta < MINUTE_MS {
         return "now".to_string();
@@ -25,57 +33,53 @@ pub fn format_short_time(timestamp_ms: i64) -> String {
     format!("{}w", delta / WEEK_MS)
 }
 
-fn delta_ms(timestamp_ms: i64) -> i64 {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    (now_ms - timestamp_ms).max(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn now_ms() -> i64 {
-        chrono::Utc::now().timestamp_millis()
+    /// A fixed "now", so that no test depends on the clock.
+    const NOW_MS: i64 = 1_800_000_000_000;
+
+    fn label(age_ms: i64) -> String {
+        format_short_time_at(NOW_MS - age_ms, NOW_MS)
     }
 
     #[test]
     fn short_time_just_now() {
-        assert_eq!(format_short_time(now_ms()), "now");
+        assert_eq!(label(0), "now");
+        assert_eq!(
+            format_short_time(chrono::Utc::now().timestamp_millis()),
+            "now"
+        );
     }
 
     #[test]
     fn short_time_boundary_under_one_minute() {
-        let ts = now_ms() - (MINUTE_MS - 1);
-        assert_eq!(format_short_time(ts), "now");
+        assert_eq!(label(MINUTE_MS - 1), "now");
     }
 
     #[test]
     fn short_time_exactly_one_minute() {
-        let ts = now_ms() - MINUTE_MS;
-        assert_eq!(format_short_time(ts), "1m");
+        assert_eq!(label(MINUTE_MS), "1m");
     }
 
     #[test]
     fn short_time_hours() {
-        let ts = now_ms() - (3 * HOUR_MS);
-        assert_eq!(format_short_time(ts), "3h");
+        assert_eq!(label(3 * HOUR_MS), "3h");
     }
 
     #[test]
     fn short_time_days() {
-        let ts = now_ms() - (2 * DAY_MS);
-        assert_eq!(format_short_time(ts), "2d");
+        assert_eq!(label(2 * DAY_MS), "2d");
     }
 
     #[test]
     fn short_time_weeks() {
-        let ts = now_ms() - (3 * WEEK_MS);
-        assert_eq!(format_short_time(ts), "3w");
+        assert_eq!(label(3 * WEEK_MS), "3w");
     }
 
     #[test]
     fn short_time_future_timestamp_clamps_to_now() {
-        let ts = now_ms() + 60_000;
-        assert_eq!(format_short_time(ts), "now");
+        assert_eq!(label(-60_000), "now");
     }
 }

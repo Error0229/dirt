@@ -9,14 +9,12 @@ description = "Core library for Dirt - models, database, and business logic"
 [features]
 # Default ON for desktop / CLI / mobile consumers (the mobile module
 # itself is target-gated to non-Android, so this is a no-op on Android
-# builds). `dirt-api` opts out via `default-features = false` so the
-# Vercel / headless Linux server build doesn't pull libdbus.
+# builds). `dirt-sim` opts out via `default-features = false` so that its
+# tests build on a Linux image without libdbus.
 default = ["keyring-store"]
 
 # Enables `auth::KeyringTokenStore` and the underlying `keyring` crate.
-# Off in `dirt-api` because the server never persists a user's session
-# token to the OS secret store, and `sync-secret-service` would otherwise
-# require `libdbus-1-dev` on every Linux server image.
+# `sync-secret-service` requires `libdbus-1-dev` on Linux.
 keyring-store = ["dep:keyring"]
 
 [dependencies]
@@ -37,6 +35,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # allocations on drop. Already a transitive dep through `keyring`, so
 # promoting it to direct costs nothing in the lockfile.
 zeroize = { version = "1.8", features = ["derive"] }
+# Note encryption and device keys. Audited implementations; nothing in this
+# crate implements a cipher itself.
+chacha20poly1305 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 
 # Platform-native secret store for `auth::KeyringTokenStore`.
 # Target-gated to non-Android because the `keyring` crate has no
@@ -46,8 +48,8 @@ zeroize = { version = "1.8", features = ["derive"] }
 # Secret Service / DBus on Linux.
 #
 # Marked optional so the `keyring-store` Cargo feature can flip it
-# off entirely — necessary for `dirt-api` on Linux where libdbus
-# headers are absent (Vercel server image, minimal CI images, etc.).
+# off entirely, which `dirt-sim` needs on Linux images where the libdbus
+# headers are absent.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"], optional = true }
 

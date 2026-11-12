@@ -8,16 +8,16 @@ The project is also a system design case study. Multi-user accounts, three clien
 
 ## Status: redesign in progress
 
-`main` is partway through an approved redesign: steps 1 to 4 of 9 are done. The clients run on the new local core and the new server is built, but no client talks to it yet: sync is off until step 5. Read both documents before changing architecture, sync, login or storage:
+`main` is partway through an approved redesign: steps 1 to 4 of 9 are done, and the first half of step 5 (the sync core and its simulation tests). The clients run on the new local core and the new server is built, but no client talks to it yet: sync is off until the second half of step 5. Read both documents before changing architecture, sync, login or storage:
 
 - `docs/plans/2026-11-10-system-redesign-design.md` - requirements, decisions and the target design
 - `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md` - build order, trials and clean-up
 
 Rules while the redesign is under way:
 
-- Do not extend code the design lists for deletion (section 14): what is left of `dirt-core/src/sync/` (the old HTTP clients) and the old login client in `dirt-core/src/auth/`. Step 5 replaces both.
+- Do not extend code the design lists for deletion (section 14): the old HTTP clients `dirt-core/src/sync/api_client.rs` and `session_client.rs`, and the old login client in `dirt-core/src/auth/`. Step 5 replaces both. The new sync cycle is `dirt-core/src/sync/engine.rs`.
 - No SQL, HTTP or cryptography in a client crate. They belong in `dirt-core`.
-- `dirt-api` must not depend on `dirt-core`. The two share only `dirt-proto`.
+- `dirt-api` must not depend on `dirt-core`. The two share only `dirt-proto`. `dirt-sim`, the test harness, is the one crate that depends on both.
 - `rusqlite` is held at 0.39 by `sqlx` 0.9: see the comment in the root `Cargo.toml` before raising either.
 - The server's SQL is written with `sqlx::query` and `sqlx::query_as` on string literals, never the compile-time `query!` macros, so building needs no database.
 - Anything planned for later belongs in the design document now, with its place in the build order.
@@ -34,7 +34,7 @@ What the code on `main` uses today:
 - **Server**: `dirt-api`, axum on Vercel's serverless Rust runtime
 - **Server database**: Postgres 18 through `sqlx`; Neon in production, Docker locally
 - **Login**: the server accepts a Clerk ID token and issues a device token. The clients still hold the old email-code sign-in until step 5
-- **Sync**: none at present. The old engine was removed with the old local database
+- **Sync**: none in the clients at present. The sync cycle, note encryption (XChaCha20-Poly1305) and the server client exist in `dirt-core` and are exercised by `dirt-sim`; nothing calls them from a client yet
 
 What the redesign still moves to: Clerk sign-in in the clients, event-driven sync of encrypted documents, and end-to-end encryption. See the design's decision table.
 
@@ -44,8 +44,9 @@ What the redesign still moves to: Clerk sign-in in the clients, event-driven syn
 api/axum.rs        # Vercel serverless entry point (root package `dirt-vercel`)
 crates/
 ├── dirt-proto/    # Types shared by the server and the clients
-├── dirt-core/     # Notes as CRDT documents, the local store, export, old login client
+├── dirt-core/     # Notes as CRDT documents, the local store, encryption, the sync cycle, export, old login client
 ├── dirt-api/      # The server: device registry and encrypted note blobs on Postgres
+├── dirt-sim/      # Tests only: real client cores syncing through the real server in one process
 ├── dirt-desktop/  # Dioxus desktop application
 ├── dirt-mobile/   # Dioxus Android application
 └── dirt-cli/      # Command-line interface (`dirt`)
@@ -72,7 +73,8 @@ cargo run -p dirt-cli
 # Run the API server (needs .env.server; see .env.server.example)
 cargo run -p dirt-api
 
-# Run tests
+# Run tests (dirt-api's and dirt-sim's need Postgres: `docker compose up -d`
+# and DATABASE_URL as compose.yaml shows)
 cargo test --all
 
 # Format code
