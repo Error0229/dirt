@@ -5,6 +5,10 @@
 //! than the list reaches is found. The tags and their counts come from the
 //! store too, for the same reason. The Android app and the CLI find notes
 //! the same way.
+//!
+//! The list shows a hundred notes at first. A button under the last one
+//! shows a hundred more, so every note can be reached by reading down the
+//! list as well as by searching.
 
 use std::time::Duration;
 
@@ -49,15 +53,13 @@ pub fn NoteList() -> Element {
         let store = state.db_service.read().clone();
         let query = (state.search_query)();
         let tag = (state.active_tag_filter)();
+        let limit = (state.listed_notes)();
         let _ = (state.notes)();
         async move {
             if query.trim().is_empty() && tag.is_none() {
                 return None;
             }
-            store?
-                .find_notes(&query, tag.as_deref(), LISTED_NOTES)
-                .await
-                .ok()
+            store?.find_notes(&query, tag.as_deref(), limit).await.ok()
         }
     });
 
@@ -71,6 +73,7 @@ pub fn NoteList() -> Element {
     let active_tag = (state.active_tag_filter)();
     let query = (state.search_query)();
     let narrowed = !query.trim().is_empty() || active_tag.is_some();
+    let listed = (state.listed_notes)();
 
     let all_notes = (state.notes)();
     let (sorted_tags, total_notes) = tags().flatten().unwrap_or_default();
@@ -80,7 +83,20 @@ pub fn NoteList() -> Element {
     } else {
         // The open note may be in what the app holds without being among
         // the most recent. The list shows the most recent.
-        all_notes.iter().take(LISTED_NOTES).cloned().collect()
+        all_notes.iter().take(listed).cloned().collect()
+    };
+    // Whether there is more to show. The store says how many notes there
+    // are. It does not say how many a search matches, so a search that
+    // found as many as it was allowed is taken to have more.
+    let more = if narrowed {
+        filtered_notes.len() >= listed
+    } else {
+        total_notes > filtered_notes.len()
+    };
+    let more_label = if narrowed {
+        "Show more notes"
+    } else {
+        "Show older notes"
     };
 
     rsx! {
@@ -205,6 +221,27 @@ pub fn NoteList() -> Element {
                                     },
                                 }
                             }
+                        }
+                    }
+                    if more {
+                        button {
+                            class: "show-more-notes",
+                            style: "
+                                display: block;
+                                width: 100%;
+                                padding: 10px 12px;
+                                border: none;
+                                border-top: 1px solid {colors.border};
+                                background: transparent;
+                                color: {colors.text_muted};
+                                font-size: 12px;
+                                cursor: pointer;
+                            ",
+                            onclick: move |_| {
+                                let shown = *state.listed_notes.peek();
+                                state.listed_notes.set(shown + LISTED_NOTES);
+                            },
+                            "{more_label}"
                         }
                     }
                 }

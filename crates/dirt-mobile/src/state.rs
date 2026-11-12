@@ -36,6 +36,9 @@ pub struct AppState {
     pub search_query: Signal<String>,
     /// The tag the list is narrowed to, if any.
     pub tag_filter: Signal<Option<String>>,
+    /// How many notes the list shows, and how many a search may find. It
+    /// grows when the person asks for more.
+    pub listed_notes: Signal<usize>,
     /// A failure from startup that the list view shows: the local
     /// database could not be opened, or the device's secure storage could
     /// not be used.

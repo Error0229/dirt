@@ -31,7 +31,7 @@ use dirt_core::Store;
 
 use crate::bootstrap_config::load_bootstrap_config;
 use crate::config::default_mobile_data_directory;
-use crate::data::MobileNoteStore;
+use crate::data::{MobileNoteStore, NOTES_PAGE};
 use crate::services::activity::{take_capture, take_redirect, Capture};
 use crate::services::secure_storage::EncryptedPrefs;
 use crate::state::{AppState, View};
@@ -92,6 +92,7 @@ async fn receive_capture(
     store: Signal<Option<Arc<MobileNoteStore>>>,
     session: Signal<Option<Session>>,
     mut notes: Signal<Vec<Note>>,
+    listed_notes: Signal<usize>,
     mut selected_note_id: Signal<Option<NoteId>>,
     mut view: Signal<View>,
     mut startup_issue: Signal<Option<String>>,
@@ -118,7 +119,8 @@ async fn receive_capture(
                         if let Some(current) = session.peek().as_ref() {
                             current.notify(Trigger::Changed);
                         }
-                        match note_store.list_notes().await {
+                        let listed = *listed_notes.peek();
+                        match note_store.list_notes(listed).await {
                             Ok(refreshed) => notes.set(refreshed),
                             Err(error) => tracing::warn!("Listing after a share failed: {error}"),
                         }
@@ -153,6 +155,7 @@ pub fn AppShell() -> Element {
     let mut view = use_signal(|| View::List);
     let search_query = use_signal(String::new);
     let tag_filter = use_signal(|| None::<String>);
+    let listed_notes = use_signal(|| NOTES_PAGE);
     let mut startup_issue = use_signal(|| None::<String>);
     let mut store: Signal<Option<Arc<MobileNoteStore>>> = use_signal(|| None);
     let mut session: Signal<Option<Session>> = use_signal(|| None);
@@ -165,6 +168,7 @@ pub fn AppShell() -> Element {
         view,
         search_query,
         tag_filter,
+        listed_notes,
         startup_issue,
         store,
         session,
@@ -207,7 +211,8 @@ pub fn AppShell() -> Element {
                     return;
                 }
             };
-            match note_store.list_notes().await {
+            let listed = *listed_notes.peek();
+            match note_store.list_notes(listed).await {
                 Ok(initial) => notes.set(initial),
                 Err(error) => tracing::warn!("Initial note listing failed: {error}"),
             }
@@ -228,7 +233,16 @@ pub fn AppShell() -> Element {
             }
 
             // The app may have been started by a share or by the widget.
-            receive_capture(store, session, notes, selected_note_id, view, startup_issue).await;
+            receive_capture(
+                store,
+                session,
+                notes,
+                listed_notes,
+                selected_note_id,
+                view,
+                startup_issue,
+            )
+            .await;
         }
     });
 
@@ -253,7 +267,8 @@ pub fn AppShell() -> Element {
                     if *view.peek() == View::Editor {
                         view.set(View::List);
                     }
-                    notes.set(next.list_notes().await.unwrap_or_default());
+                    let listed = *listed_notes.peek();
+                    notes.set(next.list_notes(listed).await.unwrap_or_default());
                     store.set(Some(next));
                 }
                 if state == SessionState::SignedOut {
@@ -277,7 +292,8 @@ pub fn AppShell() -> Element {
                     pulled = status.pulled;
                     let open = store.peek().clone();
                     if let Some(open) = open {
-                        if let Ok(latest) = open.list_notes().await {
+                        let listed = *listed_notes.peek();
+                        if let Ok(latest) = open.list_notes(listed).await {
                             notes.set(latest);
                         }
                     }
@@ -333,7 +349,16 @@ pub fn AppShell() -> Element {
                 current.notify(Trigger::Returned);
             }
             // A share or the widget may be what brought the app forward.
-            receive_capture(store, session, notes, selected_note_id, view, startup_issue).await;
+            receive_capture(
+                store,
+                session,
+                notes,
+                listed_notes,
+                selected_note_id,
+                view,
+                startup_issue,
+            )
+            .await;
         }
     });
 

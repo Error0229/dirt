@@ -10,8 +10,13 @@
 //! open, whichever it is. A note found by searching may be far older than
 //! the list reaches; while it is open it has to stay in what the app
 //! holds, or a refresh of the list would close it under the person.
+//!
+//! How many notes the list holds starts at [`LISTED_NOTES`] and grows by
+//! as many each time the person asks for older notes, so the list reaches
+//! every note without reading them all at the start.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
 use dioxus_query::prelude::*;
@@ -19,8 +24,21 @@ use dioxus_query::prelude::*;
 use dirt_core::models::{Note, NoteId};
 use dirt_core::Store;
 
-/// How many notes the list holds, most recently edited first.
+/// How many notes the list holds at first, most recently edited first,
+/// and how many more each request for older notes adds.
 pub const LISTED_NOTES: usize = 100;
+
+/// How many notes the list holds now.
+static LISTED: AtomicUsize = AtomicUsize::new(LISTED_NOTES);
+
+/// Says how many notes the list holds, so that a refresh reads as many.
+pub fn set_listed_notes(count: usize) {
+    LISTED.store(count, Ordering::Relaxed);
+}
+
+fn listed_notes() -> usize {
+    LISTED.load(Ordering::Relaxed)
+}
 
 /// The store the app reads notes from now.
 static NOTES_STORE: RwLock<Option<Arc<Store>>> = RwLock::new(None);
@@ -70,7 +88,7 @@ impl QueryCapability for NotesQuery {
             .ok_or("The note store has changed")?;
         tracing::debug!("NotesQuery: fetching notes from database");
         let mut notes = db
-            .list_notes(LISTED_NOTES, 0)
+            .list_notes(listed_notes(), 0)
             .await
             .map_err(|e| e.to_string())?;
         // The open note stays, however old it is.
@@ -137,6 +155,14 @@ mod tests {
         store.delete_note(&oldest.id).await.unwrap();
         set_open_note(Some(oldest.id));
         assert_eq!(query.run(&()).await.unwrap().len(), LISTED_NOTES);
+
+        // Asked for older notes, the list holds as many more.
+        set_open_note(None);
+        set_listed_notes(LISTED_NOTES + 2);
+        assert_eq!(query.run(&()).await.unwrap().len(), LISTED_NOTES + 2);
+        set_listed_notes(3 * LISTED_NOTES);
+        assert_eq!(query.run(&()).await.unwrap().len(), LISTED_NOTES + 4);
+        set_listed_notes(LISTED_NOTES);
 
         // A query left over from another store reads nothing from this one.
         let other = NotesQuery(Some(folder.path().join("another.db")));

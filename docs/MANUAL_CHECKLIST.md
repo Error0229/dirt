@@ -46,7 +46,8 @@ else is on the screen.
 | D15 | Settings → Devices → remove a device, then Change the account's key | Removing says the device still has the key and points to the change. The change asks for a second press, says the key was changed and that a new recovery phrase is needed; the Recovery phrase row says the account has none |
 | D9 | Settings → Devices → make a recovery phrase | 24 words, shown once |
 | D10 | Settings → Data → Export JSON, then Markdown | A file dialog each time, and a file holding every note |
-| D11 | Search for a word; press a tag | The list narrows; "All" widens it again |
+| D11 | Search for a word; press a tag | The list narrows; "All" widens it again. A note older than the 100 most recent is found |
+| D16 | With more than 100 notes, scroll to the end of the list and press "Show older notes" | 100 more notes appear below, and the button stays for as long as there are older ones. An open note stays open |
 | D12 | Settings → Theme: light, dark, system; font and size | The window follows at once |
 
 ## Android app
@@ -62,6 +63,7 @@ else is on the screen.
 | A7 | Add the "Quick capture" widget to the home screen and press it | A blank note to write in |
 | A8 | Type in the search box; press a tag | The list narrows. A note older than the 100 most recent is found. Pressing the tag again, or "All", widens the list |
 | A9 | Open a note found by searching, change it, save | The change is kept; the list is as before |
+| A19 | With more than 100 notes, scroll to the end of the list and press "Show older notes" | 100 more notes appear below. With exactly as many notes as are shown, one more press removes the button |
 | A10 | Settings → Export JSON, then Markdown | Android's screen for choosing a place. After "Save" the app says how many notes were saved, and the file holds them. Backing out says nothing was saved |
 | A11 | Change a note on another device. Leave Dirt and come back | The change appears |
 | A12 | Settings with a note that cannot be synced | The note by name, the reason, and what releases it. Pressing it opens the note if the device holds it |

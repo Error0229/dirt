@@ -19,7 +19,10 @@ use dirt_core::Store;
 
 use crate::bootstrap_config::load_bootstrap_config;
 use crate::components::{QuickCapture, SettingsPanel};
-use crate::queries::{invalidate_notes_query, set_notes_store, set_open_note, use_notes_query};
+use crate::queries::{
+    invalidate_notes_query, set_listed_notes, set_notes_store, set_open_note, use_notes_query,
+    LISTED_NOTES,
+};
 use crate::services::{data_folder, open_local_store};
 use crate::state::AppState;
 use crate::theme::{resolve_theme, ResolvedTheme};
@@ -65,6 +68,7 @@ pub fn App() -> Element {
     let mut current_note_id = use_signal(|| None);
     let search_query = use_signal(String::new);
     let active_tag_filter = use_signal(|| None::<String>);
+    let listed_notes = use_signal(|| LISTED_NOTES);
     let mut settings = use_signal(dirt_core::models::Settings::default);
     let mut theme = use_signal(|| resolve_theme(dirt_core::models::ThemeMode::System));
     let settings_open = use_signal(|| false);
@@ -133,6 +137,15 @@ pub fn App() -> Element {
 
     // The list is refreshed with the open note in it, whichever note it is.
     use_effect(move || set_open_note(current_note_id()));
+
+    // The list holds as many notes as the person has asked to see. When
+    // they ask for older ones it is read again, that much longer.
+    use_effect(move || {
+        set_listed_notes(listed_notes());
+        spawn(async move {
+            invalidate_notes_query().await;
+        });
+    });
 
     // Follow the session: when the person signs in or out, the store in use
     // changes with them.
@@ -322,6 +335,7 @@ pub fn App() -> Element {
         current_note_id,
         search_query,
         active_tag_filter,
+        listed_notes,
         settings,
         theme,
         db_service,

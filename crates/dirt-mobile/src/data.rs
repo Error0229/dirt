@@ -5,8 +5,9 @@ use std::path::Path;
 use dirt_core::models::{Note, NoteId};
 use dirt_core::{Error, Result, Store};
 
-const DEFAULT_NOTES_LIMIT: usize = 100;
-const FOUND_NOTES_LIMIT: usize = 100;
+/// How many notes the list shows at first, and how many a search may
+/// find. Each request for more adds as many again.
+pub const NOTES_PAGE: usize = 100;
 const EXPORT_NOTES_PAGE_SIZE: usize = 500;
 
 /// Thin wrapper around the shared core [`Store`] that adds the mobile
@@ -40,16 +41,21 @@ impl MobileNoteStore {
         (folder, Self { db })
     }
 
-    /// List notes, most recently edited first.
-    pub async fn list_notes(&self) -> Result<Vec<Note>> {
-        self.db.list_notes(DEFAULT_NOTES_LIMIT, 0).await
+    /// The `limit` most recently edited notes, the latest first.
+    pub async fn list_notes(&self, limit: usize) -> Result<Vec<Note>> {
+        self.db.list_notes(limit, 0).await
     }
 
-    /// Notes that contain every word of `query` and carry `tag`, either of
-    /// which may be left out. The store looks through every note, not only
-    /// the ones the list has loaded.
-    pub async fn find_notes(&self, query: &str, tag: Option<&str>) -> Result<Vec<Note>> {
-        self.db.find_notes(query, tag, FOUND_NOTES_LIMIT).await
+    /// Up to `limit` notes that contain every word of `query` and carry
+    /// `tag`, either of which may be left out. The store looks through
+    /// every note, not only the ones the list has loaded.
+    pub async fn find_notes(
+        &self,
+        query: &str,
+        tag: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Note>> {
+        self.db.find_notes(query, tag, limit).await
     }
 
     /// Every tag in use, with how many notes carry it, most used first.
@@ -125,7 +131,7 @@ mod tests {
         assert_eq!(updated.id, created.id);
 
         store.delete_note(&updated.id).await.unwrap();
-        let notes = store.list_notes().await.unwrap();
+        let notes = store.list_notes(NOTES_PAGE).await.unwrap();
         assert!(notes.is_empty());
     }
 
@@ -144,33 +150,46 @@ mod tests {
     async fn finding_reaches_notes_the_list_has_not_loaded() {
         let (_folder, store) = MobileNoteStore::open_temporary();
         let oldest = store.create_note("call the plumber #home").await.unwrap();
-        for number in 0..DEFAULT_NOTES_LIMIT {
+        for number in 0..NOTES_PAGE {
             store
                 .create_note(&format!("filler {number} #work"))
                 .await
                 .unwrap();
         }
-        let listed = store.list_notes().await.unwrap();
+        let listed = store.list_notes(NOTES_PAGE).await.unwrap();
+        assert_eq!(listed.len(), NOTES_PAGE);
         assert!(listed.iter().all(|note| note.id != oldest.id));
+        // Asked for more, the list reaches it.
+        let longer = store.list_notes(2 * NOTES_PAGE).await.unwrap();
+        assert_eq!(longer.len(), NOTES_PAGE + 1);
+        assert_eq!(longer.last().unwrap().id, oldest.id);
 
-        let by_word = store.find_notes("plumb", None).await.unwrap();
+        let by_word = store.find_notes("plumb", None, NOTES_PAGE).await.unwrap();
         assert_eq!(by_word.len(), 1);
         assert_eq!(by_word[0].id, oldest.id);
-        let by_tag = store.find_notes("", Some("home")).await.unwrap();
+        let by_tag = store
+            .find_notes("", Some("home"), NOTES_PAGE)
+            .await
+            .unwrap();
         assert_eq!(by_tag.len(), 1);
         assert!(store
-            .find_notes("plumb", Some("work"))
+            .find_notes("plumb", Some("work"), NOTES_PAGE)
             .await
             .unwrap()
             .is_empty());
+        // A search finds no more than it is allowed, and more when allowed.
+        let some = store.find_notes("filler", None, 10).await.unwrap();
+        assert_eq!(some.len(), 10);
+        let all = store
+            .find_notes("filler", None, 2 * NOTES_PAGE)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), NOTES_PAGE);
 
         // Most used first, then by name.
         assert_eq!(
             store.list_tags().await.unwrap(),
-            [
-                ("work".to_owned(), DEFAULT_NOTES_LIMIT),
-                ("home".to_owned(), 1)
-            ]
+            [("work".to_owned(), NOTES_PAGE), ("home".to_owned(), 1)]
         );
     }
 

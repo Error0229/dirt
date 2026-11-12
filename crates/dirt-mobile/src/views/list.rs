@@ -7,12 +7,17 @@
 //! The list holds the most recently edited notes. Searching and narrowing
 //! to a tag ask the store, which looks through every note, so an old note
 //! is found though the list does not hold it.
+//!
+//! A hundred notes are shown at first. A button under the last one shows a
+//! hundred more, so every note can be reached by reading down the list as
+//! well as by searching.
 
 use dioxus::prelude::*;
 use dirt_core::models::Note;
 
 use dirt_core::session::SessionState;
 
+use crate::data::NOTES_PAGE;
 use crate::state::{AppState, View};
 use crate::ui::{ButtonVariant, UiButton, UiInput};
 
@@ -26,6 +31,7 @@ pub fn List() -> Element {
     let query = (state.search_query)();
     let active_tag = (state.tag_filter)();
     let narrowed = !query.trim().is_empty() || active_tag.is_some();
+    let listed = (state.listed_notes)();
 
     // Both come from the store, and are read again when the notes change.
     let tags = use_resource(move || {
@@ -42,12 +48,13 @@ pub fn List() -> Element {
         let store = (state.store)();
         let query = (state.search_query)();
         let tag = (state.tag_filter)();
+        let limit = (state.listed_notes)();
         let _ = (state.notes)();
         async move {
             if query.trim().is_empty() && tag.is_none() {
                 return None;
             }
-            store?.find_notes(&query, tag.as_deref()).await.ok()
+            store?.find_notes(&query, tag.as_deref(), limit).await.ok()
         }
     });
     // A tag can stop being in use while the list is narrowed to it: its
@@ -73,6 +80,15 @@ pub fn List() -> Element {
         found().flatten()
     } else {
         Some(notes.clone())
+    };
+    // The store is not asked how many notes there are, or how many a
+    // search matches. A list as long as it was allowed to be is taken to
+    // have more below it.
+    let more = shown.as_ref().is_some_and(|shown| shown.len() >= listed);
+    let more_label = if narrowed {
+        "Show more notes"
+    } else {
+        "Show older notes"
     };
 
     rsx! {
@@ -151,6 +167,28 @@ pub fn List() -> Element {
                 Some(shown) => rsx! {
                     for note in shown {
                         NoteCard { key: "{note.id}", note }
+                    }
+                    if more {
+                        UiButton {
+                            r#type: "button",
+                            block: true,
+                            variant: ButtonVariant::Secondary,
+                            onclick: move |_| {
+                                let longer = *state.listed_notes.peek() + NOTES_PAGE;
+                                state.listed_notes.set(longer);
+                                // A search is made again by itself, because
+                                // it reads the number. The list is read here.
+                                spawn(async move {
+                                    let store = state.store.peek().clone();
+                                    if let Some(store) = store {
+                                        if let Ok(notes) = store.list_notes(longer).await {
+                                            state.notes.set(notes);
+                                        }
+                                    }
+                                });
+                            },
+                            "{more_label}"
+                        }
                     }
                 },
                 None => rsx! {},

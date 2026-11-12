@@ -24,6 +24,9 @@ pub struct AppState {
     pub search_query: Signal<String>,
     /// Active tag filter
     pub active_tag_filter: Signal<Option<String>>,
+    /// How many notes the list shows, and how many a search may find. It
+    /// grows when the person asks for older notes.
+    pub listed_notes: Signal<usize>,
     /// Application settings
     pub settings: Signal<Settings>,
     /// Resolved theme (light/dark based on settings and system preference)
