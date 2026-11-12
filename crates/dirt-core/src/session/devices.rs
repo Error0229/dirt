@@ -697,6 +697,11 @@ impl Session {
     ///
     /// If another device changed the key first, nothing more is done: the
     /// account has a new key, which is what was asked for.
+    ///
+    /// An app shows how far a change has got from what its sync worker last
+    /// reported. The syncs made here do not pass through the worker, so it
+    /// is asked for one more when the change is made, which reports the
+    /// new key version and the notes still under the old one.
     pub async fn change_account_key(&self) -> Result<KeyChange, SessionError> {
         // The key this device holds has to be the one being replaced.
         self.sync_now().await?;
@@ -734,6 +739,7 @@ impl Session {
                     // This device takes the new key as the others do, from
                     // its own copy, and begins sending notes again.
                     let report = self.sync_now().await?;
+                    self.notify(Trigger::Manual);
                     return Ok(KeyChange::Changed {
                         key_version: changed.key_version,
                         old_key_notes: report.old_key_notes,
@@ -742,6 +748,7 @@ impl Session {
                 Err(error) if error.code() == Some(ErrorCode::DevicesChanged) => {}
                 Err(error) if error.code() == Some(ErrorCode::KeyChanged) => {
                     let report = self.sync_now().await?;
+                    self.notify(Trigger::Manual);
                     return Ok(KeyChange::ChangedByAnotherDevice {
                         key_version: report.key_version,
                     });

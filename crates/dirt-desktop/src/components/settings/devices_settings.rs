@@ -616,7 +616,15 @@ fn ApprovedDevice(notice: Notice) -> Element {
                         disabled: busy(),
                         onconfirm: move |()| run(
                             key_changed_words,
-                            Box::new(|session| Box::pin(async move { session.change_account_key().await.map(|_| ()) })),
+                            Box::new(move |session| Box::pin(async move {
+                                session.change_account_key().await?;
+                                // A phrase still on screen was made for
+                                // the key just replaced. It opens nothing
+                                // now, and must not be written down.
+                                let mut words = words;
+                                words.set(None);
+                                Ok(())
+                            })),
                         ),
                     }
                 }

@@ -247,6 +247,19 @@ What the run showed:
   never had one.** They say it now only when there was one. That was
   changed after the run and has not been seen on a device.
 
+What review showed:
+
+- **A recovery phrase still on screen stayed there after the key was
+  changed.** A person who made a phrase and changed the key before
+  pressing "I have written it down" was still told to write down words
+  that opened nothing. The apps clear them when the key changes. Found in
+  review; not seen on a device.
+- **An open app did not show the key change it had just made.** The apps
+  read how far a change has got from what the sync worker last reported,
+  and the change syncs past the worker. The session now asks the worker
+  for a sync when a change is made. A test with a running worker fails
+  without it. Found in review.
+
 ### 8c: the limits review
 
 - [ ] Each quota and limit in `dirt-proto` against measured use, with the
