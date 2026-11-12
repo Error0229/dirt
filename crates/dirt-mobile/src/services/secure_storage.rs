@@ -13,14 +13,23 @@
 //! publishes through `ndk_context`, and takes the Activity from the same
 //! place.
 //!
+//! Two things about JNI shape this code:
+//!
+//! - **Classes are loaded through the Activity's class loader.** Looking a
+//!   class up by name from a thread that native code attached searches the
+//!   system class loader, which knows Android's own classes but not the
+//!   app's or its libraries'. `AndroidX` Security is one of those libraries.
+//! - **A Java exception is cleared when a call fails.** One left pending
+//!   stops the process at the next JNI call.
+//!
 //! Threading: each method attaches the current thread, which does nothing
 //! if it is attached already. The preferences object is a global reference
 //! and may be used from any thread.
 
 #![allow(unsafe_code)]
 
-use jni::objects::{GlobalRef, JObject, JString, JValue};
-use jni::JavaVM;
+use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
+use jni::{JNIEnv, JavaVM};
 
 use dirt_core::secrets::{SecretError, SecretStore};
 
@@ -29,6 +38,44 @@ const PREFS_FILE: &str = "dev.dirt.device";
 
 const fn backend(message: String) -> SecretError {
     SecretError::Backend(message)
+}
+
+/// After a failed call, writes any pending Java exception to the log and
+/// clears it, so that the failure can be returned as an error.
+fn settle<T>(env: &JNIEnv<'_>, result: Result<T, SecretError>) -> Result<T, SecretError> {
+    if result.is_err() && env.exception_check().unwrap_or(false) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+    }
+    result
+}
+
+/// Loads one of the app's classes, by its dotted name, through the class
+/// loader of `activity`.
+fn app_class<'a>(
+    env: &mut JNIEnv<'a>,
+    activity: &JObject<'_>,
+    name: &str,
+) -> Result<JClass<'a>, SecretError> {
+    let loader = env
+        .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+        .map_err(|err| backend(format!("Activity.getClassLoader: {err}")))?
+        .l()
+        .map_err(|err| backend(format!("class loader cast: {err}")))?;
+    let class_name = env
+        .new_string(name)
+        .map_err(|err| backend(format!("alloc class name: {err}")))?;
+    let class = env
+        .call_method(
+            &loader,
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &[JValue::Object(&class_name)],
+        )
+        .map_err(|err| backend(format!("load {name}: {err}")))?
+        .l()
+        .map_err(|err| backend(format!("class cast for {name}: {err}")))?;
+    Ok(JClass::from(class))
 }
 
 /// One value in the app's encrypted preferences. Opened once at start-up.
@@ -40,7 +87,7 @@ pub struct EncryptedPrefs {
     /// instance returned by `EncryptedSharedPreferences.create`. Held
     /// for the lifetime of the store so the JVM doesn't GC it.
     prefs: GlobalRef,
-    /// The key (account) we read / write inside the preferences file.
+    /// The key the value is kept under inside the preferences file.
     pref_key: String,
 }
 
@@ -69,11 +116,8 @@ impl EncryptedPrefs {
         let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }
             .map_err(|err| backend(format!("invalid JavaVM handle: {err}")))?;
 
-        // Inner scope owns the `AttachGuard`. The guard borrows `vm`
-        // (so it can detach on drop), so we cannot move `vm` into
-        // `Self` while the guard is still alive — explicitly bounding
-        // the borrow with this block lets the guard drop before the
-        // `Ok(Self { vm, .. })` construction below.
+        // The attach guard borrows `vm`, so it has to be gone before `vm`
+        // moves into `Self` below.
         let prefs_ref = {
             let mut env = vm
                 .attach_current_thread()
@@ -85,8 +129,8 @@ impl EncryptedPrefs {
             // invocation is sound.
             let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
 
-            let master_key = build_master_key(&mut env, &activity)?;
-            let prefs = create_encrypted_prefs(&mut env, &activity, PREFS_FILE, &master_key)?;
+            let opened = open_prefs(&mut env, &activity);
+            let prefs = settle(&env, opened)?;
             env.new_global_ref(prefs)
                 .map_err(|err| backend(format!("global ref for SharedPreferences: {err}")))?
         };
@@ -105,33 +149,8 @@ impl SecretStore for EncryptedPrefs {
             .vm
             .attach_current_thread()
             .map_err(|err| backend(format!("attach JVM thread: {err}")))?;
-
-        let key = env
-            .new_string(&self.pref_key)
-            .map_err(|err| backend(format!("alloc pref key string: {err}")))?;
-        let null_default = JObject::null();
-
-        let value = env
-            .call_method(
-                self.prefs.as_obj(),
-                "getString",
-                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-                &[JValue::Object(&key), JValue::Object(&null_default)],
-            )
-            .map_err(|err| backend(format!("SharedPreferences.getString: {err}")))?
-            .l()
-            .map_err(|err| backend(format!("getString return value: {err}")))?;
-
-        if value.is_null() {
-            return Ok(None);
-        }
-
-        let jstr = JString::from(value);
-        let stored: String = env
-            .get_string(&jstr)
-            .map_err(|err| backend(format!("decode prefs string: {err}")))?
-            .into();
-        Ok(Some(stored))
+        let read = read_value(&mut env, self.prefs.as_obj(), &self.pref_key);
+        settle(&env, read)
     }
 
     fn save(&self, value: &str) -> Result<(), SecretError> {
@@ -139,34 +158,8 @@ impl SecretStore for EncryptedPrefs {
             .vm
             .attach_current_thread()
             .map_err(|err| backend(format!("attach JVM thread: {err}")))?;
-
-        let editor = env
-            .call_method(
-                self.prefs.as_obj(),
-                "edit",
-                "()Landroid/content/SharedPreferences$Editor;",
-                &[],
-            )
-            .map_err(|err| backend(format!("SharedPreferences.edit: {err}")))?
-            .l()
-            .map_err(|err| backend(format!("edit return value: {err}")))?;
-
-        let key = env
-            .new_string(&self.pref_key)
-            .map_err(|err| backend(format!("alloc pref key string: {err}")))?;
-        let value = env
-            .new_string(value)
-            .map_err(|err| backend(format!("alloc pref value string: {err}")))?;
-
-        env.call_method(
-            &editor,
-            "putString",
-            "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
-            &[JValue::Object(&key), JValue::Object(&value)],
-        )
-        .map_err(|err| backend(format!("Editor.putString: {err}")))?;
-
-        commit_editor(&mut env, &editor)
+        let written = write_value(&mut env, self.prefs.as_obj(), &self.pref_key, Some(value));
+        settle(&env, written)
     }
 
     fn clear(&self) -> Result<(), SecretError> {
@@ -174,22 +167,81 @@ impl SecretStore for EncryptedPrefs {
             .vm
             .attach_current_thread()
             .map_err(|err| backend(format!("attach JVM thread: {err}")))?;
+        let removed = write_value(&mut env, self.prefs.as_obj(), &self.pref_key, None);
+        settle(&env, removed)
+    }
+}
 
-        let editor = env
-            .call_method(
-                self.prefs.as_obj(),
-                "edit",
-                "()Landroid/content/SharedPreferences$Editor;",
-                &[],
-            )
-            .map_err(|err| backend(format!("SharedPreferences.edit: {err}")))?
-            .l()
-            .map_err(|err| backend(format!("edit return value: {err}")))?;
+// ---- The JNI calls themselves. ----
 
-        let key = env
-            .new_string(&self.pref_key)
-            .map_err(|err| backend(format!("alloc pref key string: {err}")))?;
+fn read_value(
+    env: &mut JNIEnv<'_>,
+    prefs: &JObject<'_>,
+    pref_key: &str,
+) -> Result<Option<String>, SecretError> {
+    let key = env
+        .new_string(pref_key)
+        .map_err(|err| backend(format!("alloc pref key string: {err}")))?;
+    let null_default = JObject::null();
 
+    let value = env
+        .call_method(
+            prefs,
+            "getString",
+            "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+            &[JValue::Object(&key), JValue::Object(&null_default)],
+        )
+        .map_err(|err| backend(format!("SharedPreferences.getString: {err}")))?
+        .l()
+        .map_err(|err| backend(format!("getString return value: {err}")))?;
+
+    if value.is_null() {
+        return Ok(None);
+    }
+
+    let jstr = JString::from(value);
+    let stored: String = env
+        .get_string(&jstr)
+        .map_err(|err| backend(format!("decode prefs string: {err}")))?
+        .into();
+    Ok(Some(stored))
+}
+
+/// Stores `value` under `pref_key`, or removes what is there if `value` is
+/// `None`.
+fn write_value(
+    env: &mut JNIEnv<'_>,
+    prefs: &JObject<'_>,
+    pref_key: &str,
+    value: Option<&str>,
+) -> Result<(), SecretError> {
+    let editor = env
+        .call_method(
+            prefs,
+            "edit",
+            "()Landroid/content/SharedPreferences$Editor;",
+            &[],
+        )
+        .map_err(|err| backend(format!("SharedPreferences.edit: {err}")))?
+        .l()
+        .map_err(|err| backend(format!("edit return value: {err}")))?;
+
+    let key = env
+        .new_string(pref_key)
+        .map_err(|err| backend(format!("alloc pref key string: {err}")))?;
+
+    if let Some(value) = value {
+        let value = env
+            .new_string(value)
+            .map_err(|err| backend(format!("alloc pref value string: {err}")))?;
+        env.call_method(
+            &editor,
+            "putString",
+            "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
+            &[JValue::Object(&key), JValue::Object(&value)],
+        )
+        .map_err(|err| backend(format!("Editor.putString: {err}")))?;
+    } else {
         env.call_method(
             &editor,
             "remove",
@@ -197,30 +249,58 @@ impl SecretStore for EncryptedPrefs {
             &[JValue::Object(&key)],
         )
         .map_err(|err| backend(format!("Editor.remove: {err}")))?;
+    }
 
-        commit_editor(&mut env, &editor)
+    // `commit()` and not `apply()`: `apply()` writes later and a failure
+    // would never reach the caller. `commit()` returns whether the write
+    // reached the disk.
+    let committed = env
+        .call_method(&editor, "commit", "()Z", &[])
+        .map_err(|err| backend(format!("Editor.commit: {err}")))?
+        .z()
+        .map_err(|err| backend(format!("commit return value: {err}")))?;
+    if committed {
+        Ok(())
+    } else {
+        Err(backend(
+            "SharedPreferences.commit returned false (disk write rejected)".into(),
+        ))
     }
 }
 
-// ---- Helpers (JNI ceremony pulled out so the trait impls stay readable). ----
-
-fn build_master_key<'a>(
-    env: &mut jni::JNIEnv<'a>,
+/// Makes or unwraps the master key and opens the encrypted preferences file.
+fn open_prefs<'a>(
+    env: &mut JNIEnv<'a>,
     activity: &JObject<'_>,
 ) -> Result<JObject<'a>, SecretError> {
+    let master_key = build_master_key(env, activity)?;
+    create_encrypted_prefs(env, activity, &master_key)
+}
+
+fn build_master_key<'a>(
+    env: &mut JNIEnv<'a>,
+    activity: &JObject<'_>,
+) -> Result<JObject<'a>, SecretError> {
+    let builder_class = app_class(env, activity, "androidx.security.crypto.MasterKey$Builder")?;
+    let scheme_class = app_class(
+        env,
+        activity,
+        "androidx.security.crypto.MasterKey$KeyScheme",
+    )?;
+
     // new MasterKey.Builder(context)
     let builder = env
         .new_object(
-            "androidx/security/crypto/MasterKey$Builder",
+            &builder_class,
             "(Landroid/content/Context;)V",
             &[JValue::Object(activity)],
         )
         .map_err(|err| backend(format!("new MasterKey.Builder: {err}")))?;
 
-    // KeyScheme.AES256_GCM static field.
+    // KeyScheme.AES256_GCM
     let key_scheme = env
         .get_static_field(
-            "androidx/security/crypto/MasterKey$KeyScheme",
+            &scheme_class,
             "AES256_GCM",
             "Landroidx/security/crypto/MasterKey$KeyScheme;",
         )
@@ -228,7 +308,7 @@ fn build_master_key<'a>(
         .l()
         .map_err(|err| backend(format!("KeyScheme cast: {err}")))?;
 
-    // builder.setKeyScheme(AES256_GCM) → returns the same builder
+    // builder.setKeyScheme(AES256_GCM), which returns the builder
     let with_scheme = env
         .call_method(
             &builder,
@@ -240,35 +320,47 @@ fn build_master_key<'a>(
         .l()
         .map_err(|err| backend(format!("setKeyScheme cast: {err}")))?;
 
-    // builder.build() → MasterKey
-    let master_key = env
-        .call_method(
-            &with_scheme,
-            "build",
-            "()Landroidx/security/crypto/MasterKey;",
-            &[],
-        )
-        .map_err(|err| backend(format!("Builder.build: {err}")))?
-        .l()
-        .map_err(|err| backend(format!("MasterKey cast: {err}")))?;
-
-    Ok(master_key)
+    // builder.build()
+    env.call_method(
+        &with_scheme,
+        "build",
+        "()Landroidx/security/crypto/MasterKey;",
+        &[],
+    )
+    .map_err(|err| backend(format!("Builder.build: {err}")))?
+    .l()
+    .map_err(|err| backend(format!("MasterKey cast: {err}")))
 }
 
 fn create_encrypted_prefs<'a>(
-    env: &mut jni::JNIEnv<'a>,
+    env: &mut JNIEnv<'a>,
     activity: &JObject<'_>,
-    file_name: &str,
     master_key: &JObject<'_>,
 ) -> Result<JObject<'a>, SecretError> {
+    let prefs_class = app_class(
+        env,
+        activity,
+        "androidx.security.crypto.EncryptedSharedPreferences",
+    )?;
+    let key_scheme_class = app_class(
+        env,
+        activity,
+        "androidx.security.crypto.EncryptedSharedPreferences$PrefKeyEncryptionScheme",
+    )?;
+    let value_scheme_class = app_class(
+        env,
+        activity,
+        "androidx.security.crypto.EncryptedSharedPreferences$PrefValueEncryptionScheme",
+    )?;
+
     let name = env
-        .new_string(file_name)
+        .new_string(PREFS_FILE)
         .map_err(|err| backend(format!("alloc prefs file name: {err}")))?;
 
     // PrefKeyEncryptionScheme.AES256_SIV
     let pref_key_scheme = env
         .get_static_field(
-            "androidx/security/crypto/EncryptedSharedPreferences$PrefKeyEncryptionScheme",
+            &key_scheme_class,
             "AES256_SIV",
             "Landroidx/security/crypto/EncryptedSharedPreferences$PrefKeyEncryptionScheme;",
         )
@@ -279,7 +371,7 @@ fn create_encrypted_prefs<'a>(
     // PrefValueEncryptionScheme.AES256_GCM
     let pref_value_scheme = env
         .get_static_field(
-            "androidx/security/crypto/EncryptedSharedPreferences$PrefValueEncryptionScheme",
+            &value_scheme_class,
             "AES256_GCM",
             "Landroidx/security/crypto/EncryptedSharedPreferences$PrefValueEncryptionScheme;",
         )
@@ -287,42 +379,20 @@ fn create_encrypted_prefs<'a>(
         .l()
         .map_err(|err| backend(format!("PrefValueEncryptionScheme cast: {err}")))?;
 
-    // Static call: EncryptedSharedPreferences.create(ctx, name, masterKey, keyScheme, valueScheme)
-    let prefs = env
-        .call_static_method(
-            "androidx/security/crypto/EncryptedSharedPreferences",
-            "create",
-            "(Landroid/content/Context;Ljava/lang/String;Landroidx/security/crypto/MasterKey;Landroidx/security/crypto/EncryptedSharedPreferences$PrefKeyEncryptionScheme;Landroidx/security/crypto/EncryptedSharedPreferences$PrefValueEncryptionScheme;)Landroid/content/SharedPreferences;",
-            &[
-                JValue::Object(activity),
-                JValue::Object(&name),
-                JValue::Object(master_key),
-                JValue::Object(&pref_key_scheme),
-                JValue::Object(&pref_value_scheme),
-            ],
-        )
-        .map_err(|err| backend(format!("EncryptedSharedPreferences.create: {err}")))?
-        .l()
-        .map_err(|err| backend(format!("EncryptedSharedPreferences cast: {err}")))?;
-
-    Ok(prefs)
-}
-
-/// `SharedPreferences.Editor.commit()` returns a `boolean` — `true` on a
-/// successful disk write. We use `commit()` rather than `apply()` so the
-/// failure mode surfaces to the caller; `apply()` writes asynchronously
-/// and a failure would never reach the caller.
-fn commit_editor(env: &mut jni::JNIEnv<'_>, editor: &JObject<'_>) -> Result<(), SecretError> {
-    let ok = env
-        .call_method(editor, "commit", "()Z", &[])
-        .map_err(|err| backend(format!("Editor.commit: {err}")))?
-        .z()
-        .map_err(|err| backend(format!("commit return value: {err}")))?;
-    if ok {
-        Ok(())
-    } else {
-        Err(backend(
-            "SharedPreferences.commit returned false (disk write rejected)".into(),
-        ))
-    }
+    // EncryptedSharedPreferences.create(context, name, masterKey, keyScheme, valueScheme)
+    env.call_static_method(
+        &prefs_class,
+        "create",
+        "(Landroid/content/Context;Ljava/lang/String;Landroidx/security/crypto/MasterKey;Landroidx/security/crypto/EncryptedSharedPreferences$PrefKeyEncryptionScheme;Landroidx/security/crypto/EncryptedSharedPreferences$PrefValueEncryptionScheme;)Landroid/content/SharedPreferences;",
+        &[
+            JValue::Object(activity),
+            JValue::Object(&name),
+            JValue::Object(master_key),
+            JValue::Object(&pref_key_scheme),
+            JValue::Object(&pref_value_scheme),
+        ],
+    )
+    .map_err(|err| backend(format!("EncryptedSharedPreferences.create: {err}")))?
+    .l()
+    .map_err(|err| backend(format!("EncryptedSharedPreferences cast: {err}")))
 }

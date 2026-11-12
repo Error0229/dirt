@@ -7,6 +7,7 @@
 use dioxus::prelude::*;
 use dirt_core::api::ErrorClass;
 use dirt_core::session::{Session, SessionError, SessionState, SignOutError, Unsynced};
+use dirt_core::util::as_sentence;
 
 use super::row::SettingRow;
 use crate::components::button::{Button, ButtonVariant};
@@ -78,7 +79,7 @@ pub(super) fn AccountSettingsTab() -> Element {
                         MessageKind::Info,
                         "Signed in. This device is waiting for approval.".to_owned(),
                     )),
-                    Err(error) => Some((MessageKind::Error, error.to_string())),
+                    Err(error) => Some((MessageKind::Error, as_sentence(&error))),
                 });
                 busy.set(false);
             });
@@ -99,7 +100,7 @@ pub(super) fn AccountSettingsTab() -> Element {
                 message.set(match session.check_approval().await {
                     Ok(SessionState::Ready { .. }) => None,
                     Ok(_) => Some((MessageKind::Info, "Not approved yet.".to_owned())),
-                    Err(error) => Some((MessageKind::Error, error.to_string())),
+                    Err(error) => Some((MessageKind::Error, as_sentence(&error))),
                 });
                 busy.set(false);
             });
@@ -121,7 +122,7 @@ pub(super) fn AccountSettingsTab() -> Element {
                             format!("Moved {moved} note(s) into your account."),
                         )
                     }
-                    Err(error) => (MessageKind::Error, error.to_string()),
+                    Err(error) => (MessageKind::Error, as_sentence(&error)),
                 }));
                 busy.set(false);
             });
@@ -149,7 +150,7 @@ pub(super) fn AccountSettingsTab() -> Element {
                             ),
                         )));
                     }
-                    Err(error) => message.set(Some((MessageKind::Error, error.to_string()))),
+                    Err(error) => message.set(Some((MessageKind::Error, as_sentence(&error)))),
                 }
                 busy.set(false);
             });

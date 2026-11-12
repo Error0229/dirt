@@ -16,9 +16,10 @@ pub async fn run_auth(command: AuthCommands, context: &Context) -> Result<(), Cl
             }
             Ok(())
         }
-        AuthCommands::Login { move_local_notes } => {
-            login(context.require_session()?, move_local_notes).await
-        }
+        AuthCommands::Login {
+            move_local_notes,
+            no_browser,
+        } => login(context.require_session()?, move_local_notes, no_browser).await,
         AuthCommands::Logout { discard_unsynced } => {
             logout(context.require_session()?, discard_unsynced).await
         }
@@ -88,19 +89,29 @@ pub async fn status_lines(context: &Context) -> Result<Vec<String>, CliError> {
     Ok(lines)
 }
 
-async fn login(session: &Session, move_local_notes: bool) -> Result<(), CliError> {
+async fn login(
+    session: &Session,
+    move_local_notes: bool,
+    no_browser: bool,
+) -> Result<(), CliError> {
     // A device that is ready signs in again only when the server has told
     // it to; otherwise there is nothing to do but move notes if asked.
     let must_sign_in = !session.state().is_ready() || needs_sign_in_again(session).await;
     if must_sign_in {
         let state = session
             .sign_in_with_browser(|address| {
-                println!("Opening your browser to sign in. If it does not open, go to:");
+                if no_browser {
+                    println!("Open this address in a browser on this computer to sign in:");
+                } else {
+                    println!("Opening your browser to sign in. If it does not open, go to:");
+                }
                 println!("{address}");
                 println!("Waiting for you to finish in the browser. Press Ctrl+C to cancel.");
-                // The address is printed above, so a browser that cannot be
-                // opened is not a failure.
-                let _ = webbrowser::open(address);
+                if !no_browser {
+                    // The address is printed above, so a browser that cannot
+                    // be opened is not a failure.
+                    let _ = webbrowser::open(address);
+                }
                 Ok(())
             })
             .await

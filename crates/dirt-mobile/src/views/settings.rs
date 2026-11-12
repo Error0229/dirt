@@ -8,6 +8,7 @@ use dioxus::prelude::*;
 use dirt_core::api::ErrorClass;
 use dirt_core::session::{SessionState, SignOutError, Unsynced};
 use dirt_core::sync::worker::{SyncStatus, Trigger};
+use dirt_core::util::as_sentence;
 
 use crate::app_shell::REDIRECT_URI;
 use crate::state::{AppState, View};
@@ -106,7 +107,7 @@ pub fn Settings() -> Element {
                         session.cancel_sign_in();
                         format!("Could not open the browser: {error}")
                     }),
-                    Err(error) => Err(error.to_string()),
+                    Err(error) => Err(as_sentence(&error)),
                 };
                 if let Err(problem) = opened {
                     message.set(Some((MessageKind::Error, problem)));
@@ -130,7 +131,7 @@ pub fn Settings() -> Element {
                 message.set(match session.check_approval().await {
                     Ok(SessionState::Ready { .. }) => None,
                     Ok(_) => Some((MessageKind::Info, "Not approved yet.".to_owned())),
-                    Err(error) => Some((MessageKind::Error, error.to_string())),
+                    Err(error) => Some((MessageKind::Error, as_sentence(&error))),
                 });
                 busy.set(false);
             });
@@ -159,7 +160,7 @@ pub fn Settings() -> Element {
                             format!("Moved {moved} note(s) into your account."),
                         )
                     }
-                    Err(error) => (MessageKind::Error, error.to_string()),
+                    Err(error) => (MessageKind::Error, as_sentence(&error)),
                 }));
                 busy.set(false);
             });
@@ -188,7 +189,7 @@ pub fn Settings() -> Element {
                             ),
                         )));
                     }
-                    Err(error) => message.set(Some((MessageKind::Error, error.to_string()))),
+                    Err(error) => message.set(Some((MessageKind::Error, as_sentence(&error)))),
                 }
                 busy.set(false);
             });

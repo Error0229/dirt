@@ -122,6 +122,10 @@ pub enum AuthCommands {
         /// asking
         #[arg(long)]
         move_local_notes: bool,
+        /// Print the sign-in address and do not open a browser. The
+        /// address must still be opened on this computer
+        #[arg(long)]
+        no_browser: bool,
     },
     /// Sign out and remove the account's notes and keys from this computer
     Logout {

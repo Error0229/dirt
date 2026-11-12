@@ -237,6 +237,12 @@ async fn run(
 
         let failure = match &outcome {
             Ok(report) => {
+                tracing::info!(
+                    "synced: {} received, {} sent, {} waiting",
+                    report.pulled,
+                    report.pushed,
+                    report.unsent
+                );
                 stopped = false;
                 if report.unsent > 0 {
                     // Other devices kept changing the same notes. Try again

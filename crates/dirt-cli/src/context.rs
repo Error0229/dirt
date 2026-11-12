@@ -30,8 +30,13 @@ pub struct Context {
     pub session: Option<Session>,
 }
 
-/// The folder the CLI and the desktop app keep their stores in.
+/// The folder the CLI and the desktop app keep their stores in:
+/// `DIRT_DATA_DIR` if it is set, which is for trying things out beside a
+/// real installation, and otherwise `<data dir>/dirt`.
 pub fn data_folder() -> PathBuf {
+    if let Some(folder) = env::var_os("DIRT_DATA_DIR").filter(|value| !value.is_empty()) {
+        return PathBuf::from(folder);
+    }
     dirs::data_dir()
         .unwrap_or_else(|| panic!("Failed to resolve CLI data directory"))
         .join("dirt")

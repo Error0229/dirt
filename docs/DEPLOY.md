@@ -36,6 +36,11 @@ tables you migrated.
 The server holds no Clerk secret key. It only checks tokens against Clerk's
 published keys, which it fetches from the issuer and keeps for an hour.
 
+The clients are given the server's address and nothing else: the CLI by
+`dirt config init --api-base-url`, the desktop and Android apps by
+`DIRT_API_BASE_URL` in `.env.client` when they are built. The server tells
+them which Clerk instance and client ID to sign in with.
+
 ## Production: Vercel and Neon
 
 ### One-time set-up
@@ -43,7 +48,7 @@ published keys, which it fetches from the issuer and keeps for an hour.
 1. **Neon:** create a project in AWS US West 2 (Oregon), on Postgres 18. A
    project's region cannot be changed later.
 2. **Clerk:** create an OAuth application that is a public client with PKCE
-   required, scopes `openid profile email`, and redirect targets
+   required, scopes `openid email`, and redirect targets
    `http://127.0.0.1/callback` and `dev.dirt.app://callback`.
 3. **Vercel:** create a project whose Root Directory is the repository root.
    `vercel.json` sends every path to the one function and pins it to `pdx1`,

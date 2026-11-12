@@ -1891,7 +1891,6 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "webbrowser",
- "wiremock",
 ]
 
 [[package]]

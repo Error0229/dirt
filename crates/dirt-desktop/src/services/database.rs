@@ -6,8 +6,12 @@ use dirt_core::store::{store_path, StoreName};
 use dirt_core::{Result, Store};
 
 /// The folder the desktop app and the CLI keep their stores in:
-/// `<data dir>/dirt`.
+/// `DIRT_DATA_DIR` if it is set, which is for trying things out beside a
+/// real installation, and otherwise `<data dir>/dirt`.
 pub fn data_folder() -> PathBuf {
+    if let Some(folder) = std::env::var_os("DIRT_DATA_DIR").filter(|value| !value.is_empty()) {
+        return PathBuf::from(folder);
+    }
     dirs::data_dir()
         .unwrap_or_else(|| panic!("Failed to resolve desktop data directory"))
         .join("dirt")
