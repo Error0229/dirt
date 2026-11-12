@@ -294,9 +294,12 @@ async fn run(
                 let class = error.class();
                 tracing::warn!("sync did not complete: {error}");
                 if class == ErrorClass::TryAgainLater {
-                    // Retry only while something is waiting to be sent.
-                    // With nothing to send, the next event is soon enough.
-                    if store.unsent_count().await.unwrap_or(0) > 0 {
+                    // Retry only while something is waiting to be sent: a
+                    // note, or a file this device holds. With nothing to
+                    // send, the next event is soon enough.
+                    let unsent = store.unsent_count().await.unwrap_or(0);
+                    let files = store.unsent_file_count().await.unwrap_or(0);
+                    if unsent > 0 || files > 0 {
                         timers.schedule_retry(&timing, server_pause(error));
                     } else {
                         timers.retry = None;

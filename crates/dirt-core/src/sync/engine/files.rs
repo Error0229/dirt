@@ -144,25 +144,13 @@ impl SyncEngine {
 
             let mut to_send = Vec::new();
             for (link, outcome) in self.ask(&links, false).await? {
-                match outcome {
-                    FileOutcome::Done => self.store.mark_file_confirmed(&link).await?,
-                    // The server does not have the file. If this device
-                    // does, it sends it. If not, another device has to.
-                    FileOutcome::NotUploaded | FileOutcome::NoSuchFile => {
-                        if shelf.holds(link.file_id) {
-                            to_send.push(link);
-                        }
-                    }
-                    // The note was purged, or went with a restore. The
-                    // next pull says which.
-                    FileOutcome::NoSuchNote => {}
-                    FileOutcome::Rejected { code, message } => {
-                        let reason = match code {
-                            ErrorCode::QuotaExceeded => "the note has too many files".to_owned(),
-                            _ => format!("refused by the server: {message}"),
-                        };
-                        self.flag_file(&link, reason).await?;
-                    }
+                // The server does not have the file. If this device does,
+                // it sends it. If not, another device has to.
+                let missing = matches!(outcome, FileOutcome::NotUploaded | FileOutcome::NoSuchFile);
+                if missing && shelf.holds(link.file_id) {
+                    to_send.push(link);
+                } else {
+                    self.settle(&link, outcome).await?;
                 }
             }
 
@@ -192,12 +180,34 @@ impl SyncEngine {
             if to_send.is_empty() {
                 continue;
             }
+            // The server looks at the note's other files only once it has
+            // found this one in the storage. So a refusal may come now,
+            // and not with the first answer.
             for (link, outcome) in self.ask(&to_send, false).await? {
-                if outcome == FileOutcome::Done {
-                    self.store.mark_file_confirmed(&link).await?;
-                }
+                self.settle(&link, outcome).await?;
             }
         }
+    }
+
+    /// Records the server's answer to a confirm that this cycle does
+    /// nothing more about.
+    async fn settle(&self, link: &FileLink, outcome: FileOutcome) -> Result<(), SyncError> {
+        match outcome {
+            FileOutcome::Done => self.store.mark_file_confirmed(link).await?,
+            // Still not there: this device does not hold the file, or it
+            // has just sent it and the storage does not show it yet. And a
+            // note that was purged, or went with a restore; the next pull
+            // says which. All wait for the next cycle.
+            FileOutcome::NotUploaded | FileOutcome::NoSuchFile | FileOutcome::NoSuchNote => {}
+            FileOutcome::Rejected { code, message } => {
+                let reason = match code {
+                    ErrorCode::QuotaExceeded => "the note has too many files".to_owned(),
+                    _ => format!("refused by the server: {message}"),
+                };
+                self.flag_file(link, reason).await?;
+            }
+        }
+        Ok(())
     }
 
     async fn flag_file(&self, link: &FileLink, reason: String) -> Result<(), SyncError> {

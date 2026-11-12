@@ -833,3 +833,111 @@ async fn a_removed_file_the_server_no_longer_knows_still_leaves_the_device(pool:
         "one pull and no more"
     );
 }
+
+/// The file does not get through, and then the server cannot be reached
+/// either. The note synced long ago, so nothing but the file is waiting.
+/// An open app goes on trying, and the file arrives when it can.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn an_open_app_keeps_trying_for_a_file_through_a_failed_cycle(pool: PgPool) {
+    file_bucket().await;
+    let server = Server::with_sign_in(pool.clone()).await;
+    let laptop = Client::new(&server, "Laptop", true);
+    laptop.sign_in("alice").await.unwrap();
+    laptop.transport.fail_storage(usize::MAX);
+
+    note_with_file(&laptop, "the whiteboard", &photograph()).await;
+    laptop.session.notify(Trigger::Changed);
+    eventually("the note reaches the server without its file", || async {
+        server.blob_count().await == 1 && laptop.session.sync_status().files_unsent == 1
+    })
+    .await;
+
+    // Now the server is out of reach as well, and a cycle fails outright.
+    laptop.transport.set_offline(true);
+    eventually("a cycle fails", || async {
+        laptop.session.sync_status().failure.is_some()
+    })
+    .await;
+    assert_eq!(laptop.session.sync_status().unsent, 0);
+
+    // Everything is back. Nobody touches the app.
+    laptop.transport.fail_storage(0);
+    laptop.transport.set_offline(false);
+    eventually("the file reaches the server", || async {
+        on_the_server(&pool).await.0 == 1
+    })
+    .await;
+    eventually("the app shows nothing waiting", || async {
+        let status = laptop.session.sync_status();
+        status.files_unsent == 0 && status.failure.is_none()
+    })
+    .await;
+}
+
+/// The server counts a note's files, and counts one that was removed until
+/// its reference is released. So a note may have room for a file on the
+/// device and none on the server. The server says so only once it has
+/// found the file in the storage, which is after the upload. The refusal
+/// is recorded then, with its reason.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_file_refused_after_it_was_sent_is_listed_with_its_reason(pool: PgPool) {
+    file_bucket().await;
+    let server = Server::with_sign_in(pool.clone()).await;
+    let (laptop, _phone) = two_devices(&server).await;
+    let note = laptop
+        .session
+        .store()
+        .create_note("a note with many files")
+        .await
+        .unwrap()
+        .id;
+    sync(&laptop).await;
+    // As many references as a note may have, as the server sees it.
+    sqlx::query(
+        "INSERT INTO files (account_id, file_id, size, confirmed) \
+         SELECT a.id, gen_random_uuid(), 1, true FROM accounts a, generate_series(1, $1)",
+    )
+    .bind(limits::MAX_FILES_PER_NOTE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO file_notes SELECT account_id, file_id, $1 FROM files")
+        .bind(note.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let source = laptop.folder().join("one more.jpg");
+    std::fs::write(&source, photograph()).unwrap();
+    let attachment = laptop
+        .session
+        .store()
+        .attach_file(&note, &source, "one more.jpg", "image/jpeg")
+        .await
+        .unwrap();
+    let report = sync(&laptop).await;
+
+    assert_eq!((report.files_sent, report.files_failed), (1, false));
+    let problems = laptop.session.store().file_problems().await.unwrap();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].file_id, attachment.file_id);
+    assert!(
+        problems[0].reason.contains("too many files"),
+        "{}",
+        problems[0].reason
+    );
+    // Refused, so not counted as waiting; and still only on this device.
+    assert_eq!(report.files_unsent, 0);
+    assert_eq!(
+        laptop.session.store().unsynced_file_count().await.unwrap(),
+        1
+    );
+    // The next cycle is told the same without sending the file again.
+    let sent = laptop.transport.storage_requests();
+    sync(&laptop).await;
+    assert_eq!(laptop.transport.storage_requests(), sent);
+    assert_eq!(
+        laptop.session.store().file_problems().await.unwrap().len(),
+        1
+    );
+}

@@ -427,6 +427,18 @@ What review showed:
   three clients show now lists each such file by its name and its note,
   with the reason, and says that this device is the only place it is.
 
+- **An open app stopped trying for a file when a whole cycle failed.** It
+  tried again after a cycle in which only the file failed. If that next
+  cycle could not reach the server at all, it looked only at whether notes
+  were waiting, found none, and stopped until something happened. A failed
+  cycle is now tried again while a file this device holds is waiting too.
+- **A refusal that came after the upload was dropped.** The server counts a
+  note's other files only once it has found the new one in the storage, so
+  "the note has too many files" can come with the confirm that follows the
+  upload. Only the first answer was looked at for a refusal. Both are now.
+  It can happen without any device being at fault: a file removed from a
+  note still counts on the server until its reference is released.
+
 Not checked on a real device: no client attaches a file yet.
 
 ### 9c: the CLI
