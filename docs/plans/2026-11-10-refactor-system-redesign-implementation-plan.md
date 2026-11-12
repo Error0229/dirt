@@ -870,6 +870,44 @@ Carried forward:
   "re-encrypt"; any device can resume an interrupted rotation; rotation
   cancels the recovery phrase and prompts for a new one.
 
+**Result (2026-11-12): built. Five decisions are with the owner.** Planned
+and reported in `docs/plans/2026-11-12-step-8-hardening-plan.md`, in five
+parts.
+
+- **The account's key can be changed,** from any of the three clients and
+  when a device is removed. A device that was away follows the change when
+  it comes back; one that missed more than a hundred changes waits to be
+  let in again.
+- **The limits review** is `docs/LIMITS.md`: every number with its reason
+  and what was measured. No number needed changing. Searching 20,000 notes
+  for a common word took 22 seconds and takes 27 ms now. Devices, removed
+  devices and stored key copies had no bound and have one. Both apps' lists
+  reach every note.
+- **The firewall was tried** on `dirt-trial`. One rate-limit rule stops a
+  flood from one address. Nothing on the free plans stops one request every
+  five minutes from keeping the database awake until its monthly allowance
+  is gone.
+- **Backups:** scripts that dump the database, encrypted, and restore it;
+  a daily workflow that waits for its settings; a check in CI; and a real
+  restore tried against `dirt-trial` with a signed-in client, which put
+  every note back. `docs/DEPLOY.md` says what a restore undoes.
+- **Deleted notes are purged** thirty days after a device saw them deleted.
+  The note limit is now on notes kept, not on notes ever written.
+
+With the owner, in `docs/OWNER_DECISIONS.md`, each with prices and a
+recommendation: where dumps are kept, the database plan, the hosting plan,
+the sign-in service for production, and how security reports are taken.
+No dump is stored anywhere until the first is decided.
+
+Carried forward:
+
+- For a decision: `dirt tui`, which is a stub; whether a client should be
+  able to bring a deleted note back, which now has thirty days to do it
+  in; and what the apps should say to a device stopped by a restore from
+  before a change of the key, which today is told to sign in again.
+- To step 9: an attachment's file expires with its note's purge, which
+  now exists.
+
 ### Step 9: Attachments
 
 - **Before planning:** a short design review. The gap check found that
