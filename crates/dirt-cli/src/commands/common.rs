@@ -249,6 +249,14 @@ pub fn capture_editor_input_with_initial(
     Ok(normalize_content(&note_content))
 }
 
+/// Runs the editor on `file_path` and waits for it.
+///
+/// `editor` is first taken as the name of a program, which lets a path
+/// with spaces in it work. If no program can be started under that name,
+/// it is taken as a program followed by arguments, as in `code --wait`.
+/// Whatever the first attempt's failure was, the second is made: Windows
+/// reports a name it cannot use, such as one holding a drive's colon after
+/// an argument, as something other than "not found".
 pub fn launch_editor(editor: &str, file_path: &Path) -> Result<(), CliError> {
     match Command::new(editor).arg(file_path).status() {
         Ok(status) => {
@@ -260,7 +268,7 @@ pub fn launch_editor(editor: &str, file_path: &Path) -> Result<(), CliError> {
                 )))
             }
         }
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+        Err(_) if editor.split_whitespace().count() != 1 => {
             let mut parts = editor.split_whitespace();
             let Some(program) = parts.next() else {
                 return Err(CliError::EditorFailed("empty EDITOR command".into()));

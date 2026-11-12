@@ -101,7 +101,7 @@ impl SyncOverview {
         for problem in &self.problems {
             lines.push(format!("  {} ({})", problem.title(), problem.note_id));
             lines.push(format!("    {}", as_sentence(&problem.reason)));
-            lines.push(format!("    {}", problem.kind.release()));
+            lines.push(format!("    {}", problem.release()));
         }
         lines
     }
@@ -144,16 +144,19 @@ impl NoteProblem {
     }
 }
 
-impl ProblemKind {
-    /// What ends the problem, as a sentence for the person.
+impl NoteProblem {
+    /// What ends the problem, as a sentence for the person. A held note
+    /// this device has a copy of and one it never had are different things
+    /// to wait for.
     #[must_use]
-    pub const fn release(self) -> &'static str {
-        match self {
-            Self::Held => {
+    pub const fn release(&self) -> &'static str {
+        match (self.kind, self.text.is_some()) {
+            (ProblemKind::Held, true) => {
                 "It will sync again when a device that can still read it edits it. \
                  Until then this device keeps its own copy and does not send it."
             }
-            Self::RetryAfterEdit => "Edit it on this device to try again.",
+            (ProblemKind::Held, false) => "It will arrive when a device that can read it edits it.",
+            (ProblemKind::RetryAfterEdit, _) => "Edit it on this device to try again.",
         }
     }
 }
@@ -248,6 +251,14 @@ mod tests {
         assert_eq!(lines[7], format!("  refused note ({})", refused.note_id));
         assert_eq!(lines[9], "    Edit it on this device to try again.");
         assert_eq!(lines.len(), 10);
+
+        // A note this device never had has no copy here to speak of.
+        let never_held = problem(None, ProblemKind::Held);
+        assert_eq!(
+            never_held.release(),
+            "It will arrive when a device that can read it edits it."
+        );
+        assert!(held.release().contains("keeps its own copy"));
 
         let quiet = SyncOverview::default().lines(0);
         assert_eq!(quiet, ["Never synced", "Nothing is waiting to be sent"]);

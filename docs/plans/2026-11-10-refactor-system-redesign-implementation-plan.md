@@ -822,6 +822,34 @@ Carried forward:
   - The Clerk production instance and its domain (amendment A5).
 - **Exit:** the manual checklist passes on all three clients; #217 is closed.
 
+**Result (2026-11-12): built, and checked as far as an agent can.** Planned
+and reported in `docs/plans/2026-11-12-step-7-clients-reconnected-plan.md`.
+
+- The three clients show one sync status view, from `dirt-core`, with each
+  note that could not be synced, the reason and what releases it.
+- The CLI's profiles are deleted. The CLI and the desktop app take the
+  server's address by one rule.
+- The Android app is handed the sign-in redirect through JNI, opens sign-in
+  in a custom tab, and again has search, the tag filter, export, text
+  shared from other apps and the home-screen widget, which its rewrite in
+  May 2026 had left out.
+- `docs/feature-parity.md` and `docs/MANUAL_CHECKLIST.md` are written.
+- #217 is closed.
+
+The exit is not met in full. Every checklist item that was run passed, on
+the CLI, the desktop app and the Android emulator. The items that need a
+person were not run: the desktop app's hotkey, tray, "Sign in" button,
+export dialog, search box, theme, and recovery-phrase, reset and deletion
+screens; the Android widget on a home screen; a physical Android device;
+`dirt auth recover`. #243 stays open for them.
+
+Carried forward:
+
+- To step 8: the desktop app's list and search reach only its 100 most
+  recent notes; the Clerk production instance, which needs a domain bought.
+- For a decision: `dirt tui`, which is a stub; and whether a client should
+  be able to bring a deleted note back.
+
 ### Step 8: Hardening
 
 - **Deliverables:**

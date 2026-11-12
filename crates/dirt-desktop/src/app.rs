@@ -19,7 +19,7 @@ use dirt_core::Store;
 
 use crate::bootstrap_config::load_bootstrap_config;
 use crate::components::{QuickCapture, SettingsPanel};
-use crate::queries::{invalidate_notes_query, use_notes_query};
+use crate::queries::{invalidate_notes_query, set_notes_store, use_notes_query};
 use crate::services::{data_folder, open_local_store};
 use crate::state::AppState;
 use crate::theme::{resolve_theme, ResolvedTheme};
@@ -120,7 +120,9 @@ pub fn App() -> Element {
             settings.set(loaded_settings);
 
             device_store.set(Some(Arc::new(opened.device)));
-            db_service.set(Some(Arc::new(opened.notes)));
+            let notes_store = Arc::new(opened.notes);
+            set_notes_store(Some(notes_store.clone()));
+            db_service.set(Some(notes_store));
             if let Some(opened_session) = &opened.session {
                 session_state.set(opened_session.state());
                 sync_status.set(opened_session.sync_status());
@@ -146,11 +148,18 @@ pub fn App() -> Element {
                     .is_some_and(|open| open.path() == store.path());
                 if !same_store {
                     current_note_id.set(None);
-                    db_service.set(Some(Arc::new(store)));
+                    let store = Arc::new(store);
+                    set_notes_store(Some(store.clone()));
+                    db_service.set(Some(store));
                 }
                 if state == SessionState::SignedOut {
                     // The account's store has been let go of above, so its
-                    // files can go now.
+                    // files can go now. Something may still be reading it
+                    // for a moment, a list being loaded for one, so it is
+                    // tried again shortly. What is still there after that
+                    // goes when the app next starts.
+                    current.remove_signed_out_stores();
+                    tokio::time::sleep(Duration::from_secs(3)).await;
                     current.remove_signed_out_stores();
                 }
             }
