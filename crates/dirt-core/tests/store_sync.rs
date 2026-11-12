@@ -522,6 +522,24 @@ async fn news_of_a_purge_removes_a_copy_that_holds_nothing_unsent() {
         store.apply_note_purge(&NoteId::new()).await.unwrap(),
         PurgeApplied::NotHeld
     );
+    // A note it does not hold because it could never read it: a blob under
+    // a key from before this device joined. It is listed as a problem, and
+    // the purge is the last that will ever be heard of it.
+    let unreadable = NoteId::new();
+    store
+        .flag_note_problem(
+            &unreadable,
+            "encrypted with a key this device does not have".to_owned(),
+            ProblemKind::Held,
+        )
+        .await
+        .unwrap();
+    assert_eq!(store.note_problems().await.unwrap().len(), 1);
+    assert_eq!(
+        store.apply_note_purge(&unreadable).await.unwrap(),
+        PurgeApplied::NotHeld
+    );
+    assert!(store.note_problems().await.unwrap().is_empty());
 
     // Live here, and sent: this device never saw the delete. What it holds
     // was in the version that was purged.

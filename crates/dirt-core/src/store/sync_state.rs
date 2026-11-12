@@ -374,6 +374,15 @@ pub(super) fn apply_purge(connection: &mut Connection, id: &NoteId) -> Result<Pu
         )
         .optional()?;
     let Some((row, document, deleted, unsent)) = held else {
+        // A note this device could never read is listed as a problem
+        // without being held: it joined after a change of the key, say.
+        // The note is gone now, and the problem with it. Left behind, it
+        // would be reported for ever, with no later version to cure it.
+        tx.execute(
+            "DELETE FROM sync_problems WHERE note_id = ?1",
+            [id.as_str()],
+        )?;
+        tx.commit()?;
         return Ok(PurgeApplied::NotHeld);
     };
     let applied = if unsent && !deleted {

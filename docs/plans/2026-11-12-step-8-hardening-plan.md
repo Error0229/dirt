@@ -531,6 +531,15 @@ Each rule was undone in turn, 21 in all, to see a test fail. Twenty did at
 once. The twenty-first showed a case with no test, a note that reaches a
 device already deleted, and has one now.
 
+What review showed:
+
+- **A purge left a problem behind that nothing could clear.** A device can
+  list a note as one it cannot read without holding it: a note under a key
+  from before the device joined. If that note was purged, the device was
+  told, found it held no such note, and did nothing, so the problem stayed
+  in its sync status for good. The purge now clears it. A test fails
+  without that. Found in review.
+
 Not checked on a device. The wait is thirty days and the apps have no way
 to shorten it, which is as it should be. The whole-device tests run the
 real client core against the real server with the wait set to nothing.
