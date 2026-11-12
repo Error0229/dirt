@@ -28,7 +28,7 @@
 
 mod files;
 
-pub use files::FileError;
+pub use files::{file_on_device, FileError};
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};

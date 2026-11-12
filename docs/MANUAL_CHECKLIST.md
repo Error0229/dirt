@@ -91,6 +91,12 @@ else is on the screen.
 | C11 | `dirt devices remove <ID> --change-key`, then write a note and `dirt sync --verbose` | The device is removed and the key changed. The removed device cannot sync. The other devices get the note |
 | C12 | `dirt auth change-key` on an account with a recovery phrase | The key is changed, and the command says the phrase no longer works and how to make a new one. `dirt auth recover` with the old phrase on a waiting device is refused |
 
+| C13 | `dirt attach <note> <a picture>`, then `dirt files <note>` | The file's ID. The list shows the file with its size and kind and nothing more, because it has been sent |
+| C14 | On another device: `dirt sync`, `dirt files <note>`, `dirt save <note> <name>` | The file is listed as not on this device; saving fetches it, and the copy is the same as the original byte for byte |
+| C15 | `dirt save` again to the same place | Refused: the file is already there. With `--force` it is replaced |
+| C16 | `dirt attach` with the file storage out of reach | The file's ID on standard output, and on standard error that 1 file is waiting. `dirt files` says so too. `dirt sync` once the storage is back sends it |
+| C17 | `dirt detach <note> <name>`, then `dirt sync` on the other device | The file is gone from the note on both |
+
 ## Making a note that cannot be synced
 
 D7, A12 and C4 need a note the device cannot read. With two devices in one
@@ -113,11 +119,18 @@ account, A and B:
   ago. Wait that long before A11 and D6.
 - The desktop app shows nothing to Windows UI Automation while its window
   is minimised.
+- The file checks need a server with file storage, which `dirt-trial` does
+  not have. `cargo run -p dirt-sim --example serve` runs the real server on
+  this machine with the storage from `compose.yaml` and a sign-in that
+  needs no account; the comment at the top of
+  `crates/dirt-sim/examples/serve.rs` says how to sign in and how to have
+  two devices on one computer.
 
 ## Runs
 
 | Date | Server | Desktop | Android | CLI | Not run |
 |---|---|---|---|---|---|
+| 2026-11-12, for step 9c | The real server on this machine (`dirt-sim`'s `serve`), with the local file storage | Not run | Not run | C13 to C17 passed, with two devices on one computer. A 4.4 MiB picture attached, with its thumbnail and the sync, in 1.8 s in a debug build. C5 again on the way | Against Cloudflare R2, and against `dirt-trial`: neither has storage for files yet |
 | 2026-11-12, for step 8c | None: not signed in | D16 passed, driven through UI Automation, and the same under a tag. D11's tag row | Emulator. A19 passed, and the same under a tag | Used to write the 230 notes | D16's "an open note stays open", which a test covers. Search typed into either app |
 | 2026-11-12, for step 8b | `dirt-trial` | Not run: D15 | Emulator. A16, A17 and A18 passed | C11 passed. C12 on an account with no phrase: the key was changed | D15: the desktop window could not be driven in the earlier run and was not tried again. C12's phrase: the account in the run had none |
 | 2026-11-12 | `dirt-trial` | D5, D6, D7, D13 passed. D11: the tag row only. D8 passed in step 6, not run again | Emulator. A1 to A6 and A8 to A14 passed. A8 without a note beyond the first 100, which the tests cover. A16: the phone said it had to sign in again; its first line was reworded afterwards and the new words have not been seen on a device | C1 to C10 passed. C2 with `--no-browser`. C6's `dirt auth recover` not run; the phrase was typed on Android instead | D1 to D4, D9, D10, D11's search, D12, D14: they need a person at the keyboard, or the window could not be driven. A7 with a widget placed on a home screen; its intent was sent instead. A15: no physical device |

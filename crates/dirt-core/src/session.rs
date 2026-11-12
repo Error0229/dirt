@@ -879,16 +879,7 @@ impl Session {
         }
         // Signed out, or waiting to be let in: the device has the files it
         // holds and no way to fetch another.
-        let store = self.store();
-        if store.file_part(note, file_id).await?.is_none() {
-            return Err(FileError::NotAttached);
-        }
-        let shelf = store.shelf();
-        if shelf.holds(file_id) {
-            Ok(shelf.path(file_id))
-        } else {
-            Err(FileError::Missing)
-        }
+        crate::sync::engine::file_on_device(&self.store(), note, file_id).await
     }
 
     /// How sync stands for the account, with each note that could not be

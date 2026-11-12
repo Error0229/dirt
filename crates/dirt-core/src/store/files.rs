@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use super::schema::write_transaction;
 use crate::files::shelf::Shelf;
-use crate::files::FilePart;
+use crate::files::{Attachment, FilePart};
 use crate::models::NoteId;
 use crate::notes::NoteDoc;
 use crate::{Error, Result};
@@ -29,6 +29,30 @@ pub struct FileLink {
     /// Where the reference sits in the store's order. Passing the last
     /// one's position as `after` fetches those that follow it.
     pub position: i64,
+}
+
+/// A file attached to a note, with where it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachedFile {
+    pub attachment: Attachment,
+    /// This device holds the file.
+    pub on_device: bool,
+    /// This device holds the file's thumbnail. False if it has none.
+    pub thumbnail_on_device: bool,
+    /// What the server has said about the file for this note.
+    pub standing: FileStanding,
+}
+
+/// What this device knows of the server's view of a file for a note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileStanding {
+    /// The server has recorded that the note refers to the file, and so
+    /// has the file.
+    Taken,
+    /// Not yet. If this device holds the file it has still to send it.
+    NotTaken,
+    /// The server refused the file, for this reason.
+    Refused(String),
 }
 
 /// A file that could not be sent for a note, and why.
@@ -80,6 +104,51 @@ fn links(connection: &Connection, sql: &str, first: i64, max: usize) -> Result<V
     Ok(links)
 }
 
+/// The files attached to a note, in the order they were attached, each
+/// with where it is. A deleted note has them still.
+pub(super) fn attached(
+    connection: &Connection,
+    note: &NoteId,
+    shelf: &Shelf,
+) -> Result<Vec<AttachedFile>> {
+    let document: Option<Vec<u8>> = connection
+        .query_row(
+            "SELECT doc FROM notes WHERE id = ?1",
+            [note.as_str()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(document) = document else {
+        return Err(Error::NotFound(note.to_string()));
+    };
+    let mut files = Vec::new();
+    // Reading needs no client ID of its own: nothing is written.
+    for attachment in NoteDoc::from_bytes(0, &document)?.attachments() {
+        let link: Option<(bool, Option<String>)> = connection
+            .query_row(
+                "SELECT confirmed, problem FROM file_links WHERE file_id = ?1 AND note_id = ?2",
+                params![attachment.file_id.to_string(), note.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let standing = match link {
+            Some((_, Some(reason))) => FileStanding::Refused(reason),
+            Some((true, None)) => FileStanding::Taken,
+            Some((false, None)) | None => FileStanding::NotTaken,
+        };
+        files.push(AttachedFile {
+            on_device: shelf.holds(attachment.file_id),
+            thumbnail_on_device: attachment
+                .thumbnail
+                .as_ref()
+                .is_some_and(|thumbnail| shelf.holds(thumbnail.file_id)),
+            standing,
+            attachment,
+        });
+    }
+    Ok(files)
+}
+
 /// One file that a note's document names, with its key.
 pub(super) fn part(connection: &Connection, note: &NoteId, file: Uuid) -> Result<Option<FilePart>> {
     let document: Option<Vec<u8>> = connection
@@ -96,7 +165,7 @@ pub(super) fn part(connection: &Connection, note: &NoteId, file: Uuid) -> Result
     Ok(NoteDoc::from_bytes(0, &document)?
         .attachments()
         .iter()
-        .flat_map(crate::files::Attachment::parts)
+        .flat_map(Attachment::parts)
         .find(|part| part.file_id == file))
 }
 

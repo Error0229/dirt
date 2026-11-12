@@ -31,7 +31,7 @@ use uuid::Uuid;
 use super::{SyncEngine, SyncError, SyncReport};
 use crate::api::ApiError;
 use crate::store::FileLink;
-use crate::Error;
+use crate::{Error, Store};
 
 /// Why a file could not be fetched.
 #[derive(Debug, thiserror::Error)]
@@ -52,6 +52,25 @@ pub enum FileError {
     Api(#[from] ApiError),
     #[error(transparent)]
     Store(#[from] Error),
+}
+
+/// Where a file that `note` names is on this device, for a device that
+/// cannot fetch: one that is signed out, or works on a database file given
+/// by hand.
+pub async fn file_on_device(
+    store: &Store,
+    note: &NoteId,
+    file_id: Uuid,
+) -> Result<PathBuf, FileError> {
+    if store.file_part(note, file_id).await?.is_none() {
+        return Err(FileError::NotAttached);
+    }
+    let shelf = store.shelf();
+    if shelf.holds(file_id) {
+        Ok(shelf.path(file_id))
+    } else {
+        Err(FileError::Missing)
+    }
 }
 
 /// What became of one file the engine tried to send.

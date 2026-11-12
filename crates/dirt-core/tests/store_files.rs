@@ -1042,3 +1042,58 @@ async fn a_picture_that_cannot_be_attached_leaves_nothing_behind() {
     }
     assert_eq!(files_on_the_shelf(store), 0);
 }
+
+/// What a list of a note's files shows: each file, whether this device
+/// holds it, and what the server has said of it.
+#[tokio::test]
+async fn a_notes_files_are_listed_with_where_they_stand() {
+    use dirt_core::store::FileStanding;
+
+    let desk = desk();
+    let store = &desk.store;
+    let (note, file) = synced_note_with_file(&desk, "the whiteboard").await;
+
+    let listed = store.attached_files(&note).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].attachment.file_id, file);
+    assert!(listed[0].on_device);
+    assert!(!listed[0].thumbnail_on_device, "it has no thumbnail");
+    assert_eq!(listed[0].standing, FileStanding::NotTaken);
+
+    sent(store, &note, 1).await;
+    let reference = link(store, file).await;
+    store
+        .flag_file_problem(&reference, "the note has too many files".to_owned())
+        .await
+        .unwrap();
+    assert_eq!(
+        store.attached_files(&note).await.unwrap()[0].standing,
+        FileStanding::Refused("the note has too many files".to_owned())
+    );
+
+    store.mark_file_confirmed(&reference).await.unwrap();
+    assert_eq!(
+        store.attached_files(&note).await.unwrap()[0].standing,
+        FileStanding::Taken
+    );
+
+    // The file leaves the device; the note names it still.
+    std::fs::remove_file(store.shelf().path(file)).unwrap();
+    let listed = store.attached_files(&note).await.unwrap();
+    assert!(!listed[0].on_device);
+    assert_eq!(listed[0].standing, FileStanding::Taken);
+
+    // A picture is listed with whether its thumbnail is here.
+    let picture = a_picture(&desk, "photo.png", 300, 300);
+    let attached = store
+        .attach_file(&note, &picture, "photo.png", "image/png")
+        .await
+        .unwrap();
+    let listed = store.attached_files(&note).await.unwrap();
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[1].attachment, attached);
+    assert!(listed[1].thumbnail_on_device);
+
+    // A note that is not there has no list.
+    assert!(store.attached_files(&NoteId::new()).await.is_err());
+}

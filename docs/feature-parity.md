@@ -81,14 +81,30 @@ The hotkey is shown in Settings and cannot be changed there.
 The desktop app and the CLI on one computer are one device. They share the
 data folder and the keychain entry, so signing in with either signs in both.
 
+## Files
+
+| | Desktop | Android | CLI |
+|---|---|---|---|
+| Attach a file to a note | Not yet: step 9d | Not yet: step 9e | `dirt attach <note> <file>`; `--name` and `--type` say what the path does not |
+| List a note's files | Not yet | Not yet | `dirt files <note>`, with each file's size and kind, and where it is if it is not both here and on the server; `--json` |
+| Save a copy of a file | Not yet | Not yet | `dirt save <note> <file> [path]`. Fetches the file first if this device does not hold it. Does not replace a file that is there unless `--force` |
+| Remove a file from a note | Not yet | Not yet | `dirt detach <note> <file>` |
+| See a picture's thumbnail | Not yet | Not yet | Not applicable |
+
+A file is named by the start of its ID or by its name. A picture gets a
+thumbnail when it is attached, whichever client attaches it. A file's name
+comes out of a note and is never used as a path: `dirt save` writes it as a
+plain name in the folder asked for.
+
 ## Sync
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
 | Sync without being asked | On start, on return to the window, after a change | On start, on return to the app, after a change | After each command that changes a note |
 | Sync now | Settings → Sync | Settings | `dirt sync` |
-| When it last synced, and how many notes wait | Settings → Sync | Settings, and a line above the list | `dirt auth status`, `dirt sync --verbose` |
+| When it last synced, and how many notes and files wait | Settings → Sync | Settings, and a line above the list | `dirt auth status`, `dirt sync --verbose`. `dirt sync` and any command that changes a note say when a file did not go |
 | Each note that could not be synced, with the reason and what releases it | Settings → Sync | Settings | `dirt auth status`, `dirt sync --verbose` |
+| Each file the server refused, with the reason | Settings → Sync | Settings | `dirt auth status`, `dirt sync`, `dirt files <note>` |
 | Open such a note from the list of them | Yes | Yes | By its ID, which is printed |
 
 Nothing syncs on a timer. An app left open and untouched shows what it had
@@ -115,7 +131,8 @@ which come from `dirt_core::sync::overview`.
 
 | What | Where it stands |
 |---|---|
-| Attachments | Specified in design section 10. Step 9 of the build order |
+| Attachments in the desktop and Android apps | The core and the CLI have them. Steps 9d and 9e of the build order |
+| Files in an export | Step 9f |
 | Bringing a deleted note back | The store can; no design document asks for a way to do it from a client. Needs a decision |
 | `dirt tui` | A stub that prints "Opening TUI..." and does nothing. No design document mentions a terminal interface. Needs a decision: remove it or plan it |
 | Themes and fonts on Android | No design document asks for them |

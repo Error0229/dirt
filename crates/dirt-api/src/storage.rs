@@ -22,6 +22,14 @@ use crate::config::FilesConfig;
 /// how long the link it signs for that request works.
 const OWN_REQUEST: Duration = Duration::from_secs(10);
 
+/// A request that got no answer, without the address it was sent to. The
+/// address is signed: it holds the storage key's name and, for as long as
+/// it is good, is the permission to make the request. It belongs in no
+/// log.
+fn unreachable(error: reqwest::Error) -> StorageError {
+    StorageError::Unreachable(error.without_url().to_string())
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
     #[error("the file storage is not set up correctly: {0}")]
@@ -105,12 +113,7 @@ impl FileStore {
             .bucket
             .head_object(Some(&self.credentials), key)
             .sign(OWN_REQUEST);
-        let response = self
-            .http
-            .head(url)
-            .send()
-            .await
-            .map_err(|error| StorageError::Unreachable(error.to_string()))?;
+        let response = self.http.head(url).send().await.map_err(unreachable)?;
         match response.status() {
             StatusCode::NOT_FOUND => Ok(None),
             status if status.is_success() => {
@@ -133,12 +136,7 @@ impl FileStore {
             .bucket
             .delete_object(Some(&self.credentials), key)
             .sign(OWN_REQUEST);
-        let response = self
-            .http
-            .delete(url)
-            .send()
-            .await
-            .map_err(|error| StorageError::Unreachable(error.to_string()))?;
+        let response = self.http.delete(url).send().await.map_err(unreachable)?;
         match response.status() {
             status if status.is_success() || status == StatusCode::NOT_FOUND => Ok(()),
             status => Err(StorageError::Refused(status.as_u16())),
@@ -158,10 +156,48 @@ impl FileStore {
             .header(CONTENT_LENGTH, 0)
             .send()
             .await
-            .map_err(|error| StorageError::Unreachable(error.to_string()))?;
+            .map_err(unreachable)?;
         match response.status() {
             status if status.is_success() || status == StatusCode::CONFLICT => Ok(()),
             status => Err(StorageError::Refused(status.as_u16())),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A storage that does not answer is reported without the signed
+    /// address the request went to.
+    #[tokio::test]
+    async fn a_storage_that_cannot_be_reached_is_reported_without_the_signed_address() {
+        let store = FileStore::new(&FilesConfig {
+            // Nothing listens there.
+            endpoint: "http://127.0.0.1:9".to_owned(),
+            bucket: "the-bucket".to_owned(),
+            region: "us-east-1".to_owned(),
+            access_key_id: "the-key-name".to_owned(),
+            secret_access_key: "the-secret".to_owned(),
+        })
+        .unwrap();
+
+        for error in [
+            store.size_of("account/file").await.unwrap_err(),
+            store.delete("account/file").await.unwrap_err(),
+            store.create_bucket().await.unwrap_err(),
+        ] {
+            let said = error.to_string();
+            assert!(matches!(error, StorageError::Unreachable(_)), "{said}");
+            for part in [
+                "X-Amz",
+                "the-key-name",
+                "the-bucket",
+                "account/file",
+                "the-secret",
+            ] {
+                assert!(!said.contains(part), "{part} is in: {said}");
+            }
         }
     }
 }
