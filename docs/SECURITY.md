@@ -50,6 +50,20 @@ person's email address as the sign-in service reports it, and network
 metadata such as addresses. It does not see note text, tags or titles: those
 are inside the ciphertext.
 
+**Backups.** The operator keeps dumps of the server's database for about
+thirty days. A dump holds what the server holds, so it holds no note that
+anyone but the account's devices can read. It is encrypted to a key the
+operator keeps off every server, and the storage it sits in cannot read it.
+Two things follow from having backups at all:
+
+- A deleted account stays in the dumps taken before it was deleted until
+  they are thirty days old.
+- If the operator ever restores a dump, the server goes back to what it
+  knew then. A device removed since is in the account again until it is
+  removed again, and a deleted account exists again until the operator
+  deletes it again. `docs/DEPLOY.md`, "After a restore", is what the
+  operator has to do and tell people.
+
 ## The keys
 
 | Key | Made | Kept | Used for |

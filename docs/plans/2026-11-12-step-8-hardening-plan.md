@@ -368,9 +368,81 @@ They need 20 devices or 30 days, and the tests cover them.
 
 ### 8d: backups and the production decisions
 
-- [ ] A scheduled dump of the database, and a restore from one, tried.
-- [ ] The four decisions under "Needs a person", each written up.
-- [ ] `docs/DEPLOY.md` for a production deployment.
+- [x] A scheduled dump of the database, and a restore from one, tried.
+- [x] The four decisions under "Needs a person", each written up.
+- [x] `docs/DEPLOY.md` for a production deployment.
+
+**Result (2026-11-12): done, except that no dump has been stored anywhere
+yet.** Where they are stored is the owner's to choose.
+
+- **The dump and the restore** are `scripts/backup-database.sh` and
+  `scripts/restore-database.sh`. The dump is encrypted with `age` to a key
+  whose private half never goes to GitHub or to the storage. The restore
+  goes only into an empty database, in one transaction, and raises every
+  account's epoch.
+- **The schedule** is `.github/workflows/backup.yml`, daily. It stores the
+  dump in any S3-compatible storage and does nothing until its settings
+  exist.
+- **CI tries both scripts on every change** (`scripts/check-backup.sh`):
+  it dumps a database with the server's schema and a row in every table,
+  restores it and compares the two, and checks that a dump cannot be read
+  or restored without its key.
+- **The decisions** are in `docs/OWNER_DECISIONS.md`: where dumps are kept,
+  the database plan, the hosting plan, the sign-in service and how security
+  reports are taken. Each has the facts as read from the provider's pages
+  that day, the cost and a recommendation.
+- **`docs/DEPLOY.md`** has what must be true before the server is public,
+  how to set up and restore backups, and what to tell people after a
+  restore.
+
+Tried for real against `dirt-trial`:
+
+1. A CLI signed in, wrote three notes and synced.
+2. The trial database was dumped and encrypted: 17 KB.
+3. A fourth note was written and synced. The server held four.
+4. The trial database was emptied and the dump restored into it: three
+   notes, the epoch raised.
+5. The CLI synced: "3 received, 4 sent". The server held four notes again.
+   The note written after the dump was not lost.
+
+That run raised the epoch by one. The script raises it by a thousand now,
+for the reason below; CI checks the number.
+
+What trying it showed:
+
+- **A restore from before a change of the account's key leaves every
+  device unable to sync.** The server is back at the old key and has lost
+  the copies of the new one; the devices hold the new key and have let the
+  old one go. Each says it has to sign in again, and signing in again does
+  not help. Resetting the account from a device that holds the notes puts
+  it right and loses nothing: a test in `dirt-sim` restores across a key
+  change, sees both devices stop, resets from one, signs the other in
+  again, and ends with every note on both, one written during the trouble
+  included. `docs/DEPLOY.md` tells the operator.
+- **A restore brings back what was removed.** A device removed since the
+  dump is in the account again, and a deleted account exists again. Nothing
+  in the code can know either. `docs/DEPLOY.md` and `docs/SECURITY.md` say
+  so, and say that a restore is something to tell people about.
+- **Raising the epoch by one could go unnoticed.** An account reset after
+  the dump raised its own epoch by one then, so the restored epoch plus one
+  is the number its devices already hold. The restore raises it by a
+  thousand.
+
+Not tried, and why:
+
+- **Storing a dump.** There is no bucket until the owner chooses one, so
+  the workflow's last step has never run. Its other steps are the ones CI
+  runs.
+- **A restore after a reset.** Reasoned through and written into
+  `docs/DEPLOY.md`, with the same way out as for a key change. Not tested.
+
+Needs a decision:
+
+- **The apps do not say what to do after such a restore.** A device stopped
+  this way says "This device has to sign in again", which is the wrong
+  advice. Saying the right thing needs the sync status to carry more than
+  the class of the failure. It matters only after a restore, which the
+  operator has to announce anyway.
 
 ### 8e: purging deleted notes
 
@@ -398,8 +470,13 @@ too, since an attachment's file is to expire with its note's purge.
 ## Exit
 
 - [ ] Every test above passes locally and in CI.
-- [ ] A device removed from an account on `dirt-trial` cannot read a note
-      written after the key was changed.
-- [ ] A dump has been restored into an empty database and a client has
+- [x] A device removed from an account on `dirt-trial` cannot read a note
+      written after the key was changed. On `dirt-trial` the removed phone
+      was refused by the server and every note was under a key made after
+      it was removed (8b). That it cannot open such a note is what the test
+      in `dirt-sim` shows, with real keys.
+- [x] A dump has been restored into an empty database and a client has
       synced against it.
-- [ ] The owner has the four decisions in front of them.
+- [x] The owner has the four decisions in front of them:
+      `docs/OWNER_DECISIONS.md`.
+- [ ] Deleted notes are purged (8e).

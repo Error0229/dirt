@@ -107,6 +107,8 @@ From trial 4 of the redesign
 
 ### Plans and their limits
 
+`docs/OWNER_DECISIONS.md` has each of these as a decision, with prices.
+
 - **Vercel Hobby** forbids commercial use. Charging for Dirt requires a paid
   plan.
 - **Neon's free plan** covers about 13 hours a day of an awake database,
@@ -118,9 +120,112 @@ From trial 4 of the redesign
 - **Clerk** needs a production instance on a domain you own before real users
   sign in. Its development instances are capped at 100 users.
 
+## Before the server is public
+
+What has to be true before anyone but the owner is given the server's
+address. The first three are the owner's decisions, written up in
+`docs/OWNER_DECISIONS.md`.
+
+- [ ] The database is on a plan that cannot be suspended by use (Neon's
+      Launch plan), with seven days of history.
+- [ ] Sign-in goes through a Clerk production instance on a domain the
+      owner holds, and the server runs on that domain.
+- [ ] Dumps are being stored: the "Database backup" workflow has run and a
+      dump from it has been restored once, as below.
+- [ ] The firewall's rate limit is set (step 5 of the one-time set-up).
+- [ ] Migrations are applied and `/healthz` answers.
+- [ ] `docs/MANUAL_CHECKLIST.md` has been run against this server, on a real
+      phone as well as the emulator.
+- [ ] GitHub's private vulnerability reporting is switched on, and
+      `docs/SECURITY.md` says to use it.
+
 ## Backups
 
-Neon keeps point-in-time history. A scheduled dump stored outside Neon is
-planned for step 8 of the redesign. After any restore, raise the affected
-accounts' `epoch`, so that clients forget the change numbers they have seen
-and merge again.
+There are two, and the first is the one to reach for.
+
+1. **Neon's own history.** It restores the database to any moment in its
+   window: six hours on the free plan, up to seven days on Launch. Use it
+   for a mistake that was just made.
+2. **A dump stored outside Neon,** taken once a day. It is for when Neon
+   itself is what was lost, or the mistake is older than the window.
+
+### Setting up the daily dump
+
+`.github/workflows/backup.yml` runs `scripts/backup-database.sh` at 03:17
+UTC every day, and when started by hand. It does nothing, and says so,
+until all of these exist in the repository's settings for Actions:
+
+| Name | Kind | What it is |
+|---|---|---|
+| `BACKUP_DATABASE_URL` | Secret | The database's **direct** connection string |
+| `BACKUP_AGE_RECIPIENT` | Variable | The public half of the encryption key, `age1…` |
+| `BACKUP_S3_ENDPOINT` | Variable | The storage's S3 address |
+| `BACKUP_S3_BUCKET` | Variable | The bucket's name |
+| `BACKUP_S3_ACCESS_KEY_ID` | Secret | A key that may add files to that bucket, and nothing else |
+| `BACKUP_S3_SECRET_ACCESS_KEY` | Secret | Its secret |
+
+Make the encryption key once, on a computer of your own:
+
+```bash
+age-keygen --output dirt-backup-key.txt   # prints the public half
+```
+
+Keep `dirt-backup-key.txt` somewhere that is neither GitHub nor the bucket:
+a password manager, and a printed copy. **Without it no dump can be read.**
+The public half is not a secret.
+
+How long dumps are kept is a rule on the bucket, not something the workflow
+does: a job that can delete dumps could delete all of them. Thirty days is
+enough to notice a problem and short enough that a deleted account does not
+stay in the dumps for long.
+
+A dump holds every account's encrypted notes, its device records and its
+e-mail address. Request counts and sign-in nonces are left out. It is
+encrypted before it leaves the workflow, so the storage is trusted only to
+keep it.
+
+GitHub switches a scheduled workflow off after 60 days without a commit to
+the repository, and e-mails the person who last changed it. A failed run is
+e-mailed too. Either e-mail means dumps have stopped.
+
+### Restoring a dump
+
+Into an **empty** database, never over a live one. `pg_restore` and `psql`
+must be version 18 or later.
+
+```bash
+RESTORE_DATABASE_URL='<direct connection string of an empty database>' \
+BACKUP_AGE_IDENTITY=dirt-backup-key.txt \
+  scripts/restore-database.sh dirt-20261112T031700Z.dump.age
+```
+
+The script refuses a database that already has tables, restores in one
+transaction so that a failure leaves nothing behind, and then raises every
+account's epoch. Point the server's `DATABASE_URL` at the restored database
+and deploy.
+
+CI runs `scripts/check-backup.sh` on every change: it dumps a database with
+the server's schema, restores it and compares the two. A change to the
+schema that the scripts cannot carry is found there, not on the day of a
+restore.
+
+### After a restore
+
+**Nothing a device holds is lost.** A device that sees the new epoch
+forgets the change numbers it has seen and merges everything again, so
+every note written since the dump is sent again by a device that has it.
+
+What a restore does undo is what only the server knew. Tell the people who
+use the server that it happened, and what to check:
+
+| Since the dump | After the restore | What the person does |
+|---|---|---|
+| A device was removed | **It is in the account again,** and its token works | Open Devices and remove it again. If its key was never changed, it can read the notes until then |
+| A device was let in | The server does not know it | Sign in again on it and let it in from another device. Its notes are still on it |
+| The account's key was changed | The server is back at the old key. Every device says it has to sign in again, and signing in again does not help | Start the account again (`dirt auth reset`, or Devices in the apps) from a device that holds the notes. They are sent again under a new key. Then sign the other devices in again |
+| The account was reset | The server holds the notes from before the reset, under a key no device has. Devices list them as notes they cannot read | The same: start the account again from a device that holds the notes |
+| A recovery phrase was made | The phrase opens nothing | Make a new one |
+| The account was deleted | **It exists again,** with its notes as they were | The operator deletes it again. Keep a record of deletions since the oldest dump you might restore |
+
+The first row and the last are the ones that matter for privacy. A restore
+is a reason to tell people, not something to do quietly.
