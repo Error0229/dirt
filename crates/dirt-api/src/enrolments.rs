@@ -189,6 +189,11 @@ pub async fn put_key(
             limits::MAX_WRAPPED_KEY_BYTES
         )));
     }
+    let mut tx = state.pool.begin().await?;
+    // The waiting device must be given the key the account has now. An
+    // approving device that has not caught up with a change of the key
+    // fetches the new one and leaves that.
+    crate::keys::lock_present_key(&mut tx, device.account_id, key.key_version).await?;
     sqlx::query(
         "INSERT INTO enrolment_keys (device_id, approver_id, key_version, wrapped) \
          VALUES ($1, $2, $3, $4) \
@@ -200,8 +205,9 @@ pub async fn put_key(
     .bind(device.id)
     .bind(key.key_version)
     .bind(&key.wrapped)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(device.respond(serde_json::json!({ "stored": true })))
 }
 
@@ -249,17 +255,31 @@ pub async fn complete(
     only_the_waiting_device(&device, target)?;
 
     let mut tx = state.pool.begin().await?;
+    // Approving a device and changing the account's key take the same
+    // lock. A change made first has removed the key left for this device,
+    // which then begins its exchange again. A change made after sees this
+    // device as approved and must hold a copy of the new key for it.
+    let present = crate::keys::lock_account(&mut tx, device.account_id).await?;
     // An approved device must have left a key: that is the approval. The
     // waiting device cannot approve itself by calling this.
-    let offered = sqlx::query("DELETE FROM enrolment_keys WHERE device_id = $1")
-        .bind(target)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-    if offered == 0 {
+    let offered: Option<(i32,)> =
+        sqlx::query_as("DELETE FROM enrolment_keys WHERE device_id = $1 RETURNING key_version")
+            .bind(target)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((offered,)) = offered else {
         return Err(ApiError::new(
             ErrorCode::NotFound,
             "no key has been left yet",
+        ));
+    };
+    if offered != present {
+        // Dropping the transaction keeps the key that was left. It cannot
+        // happen while a key change removes those keys, and is refused in
+        // case it ever can.
+        return Err(ApiError::new(
+            ErrorCode::KeyChanged,
+            "the key left for this device is not the account's present key",
         ));
     }
     sqlx::query("UPDATE devices SET status = 'approved' WHERE id = $1 AND status = 'pending'")

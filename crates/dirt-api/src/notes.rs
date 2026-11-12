@@ -51,12 +51,23 @@ async fn push_one(pool: &PgPool, account_id: Uuid, item: &PushItem) -> ApiResult
     }
 
     let mut tx = pool.begin().await?;
-    let (counter, note_count, bytes_used): (i64, i64, i64) = sqlx::query_as(
-        "SELECT change_counter, note_count, bytes_used FROM accounts WHERE id = $1 FOR UPDATE",
-    )
-    .bind(account_id)
-    .fetch_one(&mut *tx)
-    .await?;
+    let (counter, note_count, bytes_used, key_version, old_key_notes): (i64, i64, i64, i32, i64) =
+        sqlx::query_as(
+            "SELECT change_counter, note_count, bytes_used, key_version, old_key_notes \
+               FROM accounts WHERE id = $1 FOR UPDATE",
+        )
+        .bind(account_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    // A note is stored only under the account's present key. A device that
+    // has not caught up with a key change fetches the key and sends the
+    // note again; a device that was removed has no way to get it.
+    if item.key_version != key_version {
+        return Ok(rejected(
+            ErrorCode::KeyChanged,
+            "the account's key has changed; fetch the new one and send the note again",
+        ));
+    }
 
     let existing: Option<(i64, i32, i32, Option<Vec<u8>>)> = sqlx::query_as(
         "SELECT change_number, key_version, format_version, ciphertext \
@@ -67,6 +78,12 @@ async fn push_one(pool: &PgPool, account_id: Uuid, item: &PushItem) -> ApiResult
     .fetch_optional(&mut *tx)
     .await?;
 
+    // Replacing a note that was under an older key is one fewer to send
+    // again. When the last is replaced the key change is complete.
+    let was_under_old_key = matches!(
+        &existing,
+        Some((_, stored_under, _, Some(_))) if *stored_under < key_version
+    );
     let old_size = match existing {
         // The client believes the note is new and it is.
         None if item.base_change == 0 => None,
@@ -136,12 +153,15 @@ async fn push_one(pool: &PgPool, account_id: Uuid, item: &PushItem) -> ApiResult
     .execute(&mut *tx)
     .await?;
     sqlx::query(
-        "UPDATE accounts SET change_counter = $2, note_count = $3, bytes_used = $4 WHERE id = $1",
+        "UPDATE accounts \
+            SET change_counter = $2, note_count = $3, bytes_used = $4, old_key_notes = $5 \
+          WHERE id = $1",
     )
     .bind(account_id)
     .bind(change)
     .bind(note_count + i64::from(old_size.is_none()))
     .bind(new_total)
+    .bind((old_key_notes - i64::from(was_under_old_key)).max(0))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -271,11 +291,17 @@ pub async fn pull(
         .collect();
     // What needs the person's attention: devices waiting to join, and a
     // reset somebody asked for. A device learns both at its next sync.
-    let (pending_devices, reset_effective_at_ms): (i64, Option<i64>) = sqlx::query_as(
+    let (pending_devices, reset_effective_at_ms, key_version, old_key_notes): (
+        i64,
+        Option<i64>,
+        i32,
+        i64,
+    ) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM devices \
                   WHERE account_id = a.id AND status = 'pending' \
                     AND created_at >= now() - make_interval(days => $2)), \
-                (extract(epoch FROM a.reset_requested_at + make_interval(days => $3)) * 1000)::bigint \
+                (extract(epoch FROM a.reset_requested_at + make_interval(days => $3)) * 1000)::bigint, \
+                a.key_version, a.old_key_notes \
            FROM accounts a WHERE a.id = $1",
     )
     .bind(device.account_id)
@@ -291,5 +317,7 @@ pub async fn pull(
         more,
         pending_devices: u32::try_from(pending_devices).unwrap_or(u32::MAX),
         reset_effective_at_ms,
+        key_version,
+        old_key_notes: u64::try_from(old_key_notes).unwrap_or(0),
     }))
 }

@@ -378,6 +378,14 @@ impl Store {
             .await
     }
 
+    /// Marks a note as unsent though it has not changed, so that the next
+    /// push sends it again: under a new account key. Returns whether the
+    /// store holds the note and has no sync problem with it.
+    pub async fn resend_note(&self, id: &NoteId) -> Result<bool> {
+        let id = *id;
+        self.write(move |c| sync_state::resend(c, &id)).await
+    }
+
     /// How many notes are waiting to be pushed.
     pub async fn unsent_count(&self) -> Result<usize> {
         self.read(|c| sync_state::unsent_count(c)).await

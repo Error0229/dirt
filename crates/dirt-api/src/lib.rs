@@ -17,6 +17,7 @@ pub mod config;
 pub mod devices;
 pub mod enrolments;
 pub mod error;
+pub mod keys;
 pub mod notes;
 pub mod recovery;
 
@@ -113,6 +114,9 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/account/reset",
             post(account::reset).delete(account::cancel_reset),
         )
+        .route("/v1/account/key", post(keys::change))
+        .route("/v1/account/keys", get(keys::mine))
+        .route("/v1/account/key/notes", get(keys::old_notes))
         .route("/v1/notes/push", post(notes::push))
         .route("/v1/notes/pull", get(notes::pull))
         .fallback(not_found)

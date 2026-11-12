@@ -112,6 +112,12 @@ pub enum ErrorCode {
     QuotaExceeded,
     /// The recovery claim code is not the account's.
     RecoveryRejected,
+    /// The account's key has changed. A note sent under the old key is
+    /// sent again under the new one, once the device has fetched it.
+    KeyChanged,
+    /// The account's approved devices are not the ones a key change was
+    /// prepared for. Fetch the list and prepare it again.
+    DevicesChanged,
 }
 
 /// What a client does about an error. The class alone decides: no client
@@ -135,7 +141,11 @@ impl ErrorCode {
     #[must_use]
     pub const fn class(self) -> ErrorClass {
         match self {
-            Self::ServerError | Self::RateLimited => ErrorClass::TryAgainLater,
+            // The last two are put right by the device itself, which then
+            // makes the request again.
+            Self::ServerError | Self::RateLimited | Self::KeyChanged | Self::DevicesChanged => {
+                ErrorClass::TryAgainLater
+            }
             Self::Unauthenticated
             | Self::DeviceRevoked
             | Self::DeviceExpired
@@ -264,6 +274,15 @@ pub struct MyDevice {
     /// When a reset that was asked for takes effect, if one is pending.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset_effective_at_ms: Option<i64>,
+    /// The version of the account's key that notes are written under now.
+    #[serde(default = "first_key_version")]
+    pub key_version: i32,
+}
+
+/// The version of an account's first key.
+#[must_use]
+pub const fn first_key_version() -> i32 {
+    1
 }
 
 // ---- Enrolment: handing the account key to a new device ----
@@ -330,6 +349,67 @@ pub struct RecoveryClaim {
 }
 
 // ---- Account ----
+
+// ---- Changing the account's key ----
+
+/// The new account key, wrapped for one device. Only that device can open
+/// it, and only with the key it replaces.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceKey {
+    pub device_id: Uuid,
+    #[serde(with = "base64_bytes")]
+    pub wrapped: Vec<u8>,
+}
+
+/// `POST /v1/account/key`: an approved device changes the account's key.
+///
+/// The request holds the new key wrapped for every approved device, the
+/// caller included, so that from the moment it is accepted each of them can
+/// get the key and none depends on the caller staying alive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangeKey {
+    /// The version the caller is replacing. If the account has moved past
+    /// it, another device changed the key first.
+    pub from_version: i32,
+    pub keys: Vec<DeviceKey>,
+}
+
+/// The answer to `POST /v1/account/key`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyChanged {
+    /// The new key's version.
+    pub key_version: i32,
+    /// How many notes are still stored under an older key.
+    pub old_key_notes: u64,
+}
+
+/// `GET /v1/account/keys?after=V`: the calling device's wrapped copies of
+/// the account keys later than version `V`, oldest first.
+///
+/// A device that missed several changes opens them in order: each is
+/// wrapped with the one before it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceKeys {
+    pub keys: Vec<WrappedKey>,
+}
+
+/// `GET /v1/account/key/notes`: notes still stored under an older key,
+/// for a device to send again under the new one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OldKeyNotes {
+    /// The version notes are written under now.
+    pub key_version: i32,
+    /// Some of the notes still under an older key, in the order the server
+    /// numbered their last change.
+    pub notes: Vec<NoteId>,
+    /// How many there are in all.
+    pub total: u64,
+    /// Where the next page begins, if this one was full: pass it as
+    /// `after`. A device that can send none of a page again, because it
+    /// holds none of those notes, goes on to the next.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_after: Option<i64>,
+}
 
 /// The answer to `POST /v1/account/reset`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,6 +512,15 @@ pub struct PullResponse {
     /// approved device that did not expect it should cancel it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset_effective_at_ms: Option<i64>,
+    /// The version of the account's key that notes are written under now.
+    /// A device holding an older one fetches the newer before it pushes.
+    #[serde(default = "first_key_version")]
+    pub key_version: i32,
+    /// How many notes are still stored under an older key. While there
+    /// are any, a device that syncs sends some of them again under the
+    /// new key.
+    #[serde(default)]
+    pub old_key_notes: u64,
 }
 
 mod base64_bytes {

@@ -39,6 +39,9 @@ pub async fn put(
             limits::CLAIM_HASH_BYTES
         )));
     }
+    let mut tx = state.pool.begin().await?;
+    // A phrase must open the key the account has now.
+    crate::keys::lock_present_key(&mut tx, device.account_id, request.key_version).await?;
     sqlx::query(
         "INSERT INTO recovery_keys (account_id, key_version, wrapped, claim_hash) \
          VALUES ($1, $2, $3, $4) \
@@ -50,8 +53,9 @@ pub async fn put(
     .bind(request.key_version)
     .bind(&request.wrapped)
     .bind(&request.claim_hash)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(device.respond(serde_json::json!({ "stored": true })))
 }
 
@@ -107,10 +111,16 @@ pub async fn claim(
     if request.claim_code.is_empty() || request.claim_code.len() > limits::MAX_CLAIM_CODE_BYTES {
         return Err(ApiError::invalid("the claim code has the wrong length"));
     }
+    let mut tx = state.pool.begin().await?;
+    // Approving a device and changing the account's key take the same
+    // lock. A change made first has removed the recovery copy, and the
+    // claim finds none. A change made after sees this device as approved
+    // and must hold a copy of the new key for it.
+    crate::keys::lock_account(&mut tx, device.account_id).await?;
     let stored: Option<(Vec<u8>,)> =
         sqlx::query_as("SELECT claim_hash FROM recovery_keys WHERE account_id = $1")
             .bind(device.account_id)
-            .fetch_optional(&state.pool)
+            .fetch_optional(&mut *tx)
             .await?;
     let (claim_hash,) = stored.ok_or_else(no_recovery_copy)?;
     let presented = Sha256::digest(&request.claim_code);
@@ -121,7 +131,6 @@ pub async fn claim(
         ));
     }
     if device.status == DeviceStatus::Pending {
-        let mut tx = state.pool.begin().await?;
         sqlx::query("UPDATE devices SET status = 'approved' WHERE id = $1 AND status = 'pending'")
             .bind(device.id)
             .execute(&mut *tx)
@@ -135,7 +144,7 @@ pub async fn claim(
             .bind(device.id)
             .execute(&mut *tx)
             .await?;
-        tx.commit().await?;
     }
+    tx.commit().await?;
     Ok(device.respond(serde_json::json!({ "approved": true })))
 }

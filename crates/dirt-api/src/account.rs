@@ -113,6 +113,12 @@ pub async fn reset(
         .bind(device.id)
         .execute(&mut *tx)
         .await?;
+    // The device that remains makes a first key again. Wrapped copies of
+    // the keys before it are of no use to anyone.
+    sqlx::query("DELETE FROM device_keys WHERE device_id = $1")
+        .bind(device.id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("UPDATE devices SET status = 'approved' WHERE id = $1")
         .bind(device.id)
         .execute(&mut *tx)
@@ -120,6 +126,7 @@ pub async fn reset(
     let (epoch,): (i32,) = sqlx::query_as(
         "UPDATE accounts \
             SET epoch = epoch + 1, change_counter = 0, note_count = 0, bytes_used = 0, \
+                key_version = 1, old_key_notes = 0, \
                 key_established = true, reset_requested_at = NULL, reset_requested_by = NULL \
           WHERE id = $1 \
       RETURNING epoch",

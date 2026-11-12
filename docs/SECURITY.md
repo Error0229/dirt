@@ -21,6 +21,8 @@ device that already has it or from the person's recovery phrase.
 | Someone who takes over the person's email or sign-in | A device that is waiting for approval. It reads nothing. It can ask for the account to be reset, which the person's working devices are told about and can refuse for seven days |
 | A server that puts itself between two devices when one approves the other | Nothing, if the person compares the code the two devices show. See "Approving a device" |
 | Someone with a stolen device token | Ciphertext only. The token stops working when the device is removed |
+| A device that was removed, once the account's key has been changed | What it already had, and nothing written since. See "Changing the account's key" |
+| A server that tries to change an account's key to one it knows | Nothing. A device does not accept a key that was not wrapped with the key it replaces, which the server has never had |
 
 ## Who is not kept out
 
@@ -30,9 +32,12 @@ device that already has it or from the person's recovery phrase.
   keychain, or in Android's encrypted preferences, which protect them from
   other apps and not from the device's own user.
 - **A device that was removed, for what it already has.** Removing a device
-  stops it reaching the server, so it reads nothing new. It keeps the account
-  key it had and the notes it had. Changing the account key is what ends
-  that, and is not built yet (step 8 of the redesign).
+  stops it reaching the server, so it reads nothing new. It keeps the notes
+  it had and the account key it had. Changing the account's key means that
+  key reads nothing written afterwards; it cannot take back what the device
+  already holds.
+- **A removed device and the server acting together, against a key
+  change.** See the end of "Changing the account's key".
 - **A server in the middle of an approval, if nobody compares the codes.**
   The comparison is the protection. Pressing "they match" without looking
   gives it away.
@@ -50,7 +55,7 @@ are inside the ciphertext.
 | Key | Made | Kept | Used for |
 |---|---|---|---|
 | Account key, 256 bits | At random, by the account's first device | In each approved device's secure storage. Never on the server unencrypted | Encrypting every note |
-| Device key pair, X25519 | At random, by each device at first sign-in | Private half in the device's secure storage; public half on the server | Identifying the device in an approval. Later, receiving a new account key |
+| Device key pair, X25519 | At random, by each device at first sign-in | Private half in the device's secure storage; public half on the server | Identifying the device in an approval, and receiving a new account key when the key is changed |
 | Device token, 256 bits | By the server, at sign-in | On the device. The server keeps only its SHA-256 hash | Proving the device to the server on each request |
 
 Each note is encrypted with XChaCha20-Poly1305 under the account key, with a
@@ -138,11 +143,66 @@ could destroy the way back in, or set a claim code of their own.
 
 Making a new phrase ends the old one. So does removing it.
 
+## Changing the account's key
+
+A device that is removed can no longer reach the server, but it still has
+the account key. Changing the key is what makes that key worthless for
+anything written afterwards. The apps offer it when a device is removed, and
+it can be asked for at any time.
+
+The device that changes the key makes a new one at random and wraps it once
+for every device that stays, itself included. The server stores the wrapped
+copies and moves the account to the next key version, in one step. From then
+on:
+
+- the server refuses a note written under the old key;
+- each device fetches its own copy at its next sync, opens it, and writes
+  under the new key;
+- whichever devices sync send the notes they hold again under the new key,
+  until none is left under the old one.
+
+A device that was away fetches its copies when it comes back. If the key was
+changed more than once meanwhile, it opens them in order.
+
+**What a wrapped copy is sealed with.** Two secrets together, through
+HKDF-SHA256:
+
+- A secret that only the sender and the receiving device can compute: an
+  X25519 agreement between a key pair made for that one copy and the
+  receiving device's registered key. A removed device has the old account
+  key but not the other devices' private keys, so it cannot open their
+  copies.
+- The account key being replaced. Every device of the account has it; the
+  server never has. The server knows every device's public key, so it could
+  wrap a key of its own choosing for each of them. A device does not accept
+  it: the copy does not open without the old account key. The device then
+  stops syncing and says it has to sign in again, and adopts nothing.
+
+The new key is sealed with XChaCha20-Poly1305, and the account, the
+receiving device, the key version and both public keys are bound in, so a
+copy cannot be given to another device or passed off as another version.
+
+**The recovery phrase stops working** when the key changes, because its copy
+on the server holds the old key. The apps say the account has no phrase and
+offer to make one.
+
+**What this does not stop.** A removed device and the server acting
+together. The device that changes the key learns the other devices' public
+keys from the server. It has checked, by comparing a code, only the keys of
+the devices it let in or was let in by. If the server gives it a false key
+for one of the others and passes what it receives to a removed device, the
+two together hold both secrets and can open that copy. Neither can alone.
+Closing this would take every device checking every other device's key,
+which is what comparing codes does for a pair.
+
+A note that no device can send again, because no device can read it, stays
+under the old key. Everything written since the change is under the new one.
+
 ## Losing things
 
 | Lost | What happens |
 |---|---|
-| One device of several | Sign in on a new one and approve it from another. Remove the lost one from the device list |
+| One device of several | Sign in on a new one and approve it from another. Remove the lost one from the device list, and change the account's key |
 | Every device, with a recovery phrase | Sign in on a new device and type the phrase |
 | Every device, with no phrase | The notes on the server cannot be read by anyone. The account can be reset, which deletes them, and started again |
 | The recovery phrase | Nothing, while a device still works. Make a new one |

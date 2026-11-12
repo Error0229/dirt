@@ -18,7 +18,8 @@ use uuid::Uuid;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-/// The key version of every account until key rotation exists (step 8).
+/// The version of an account's first key. Each change of the key
+/// (`key_change`) is the next version.
 pub const KEY_VERSION: i32 = 1;
 
 /// The document format inside a blob: a yrs document in the v2 encoding.
@@ -87,13 +88,20 @@ pub struct BlobContext {
 }
 
 impl BlobContext {
-    /// The context for a blob this version of the app writes.
+    /// The context for a blob written under the account's first key.
     #[must_use]
     pub const fn current(account_id: Uuid, note_id: NoteId) -> Self {
+        Self::under(account_id, note_id, KEY_VERSION)
+    }
+
+    /// The context for a blob this version of the app writes under the
+    /// key of `key_version`.
+    #[must_use]
+    pub const fn under(account_id: Uuid, note_id: NoteId, key_version: i32) -> Self {
         Self {
             account_id,
             note_id,
-            key_version: KEY_VERSION,
+            key_version,
             format_version: FORMAT_VERSION,
         }
     }
@@ -193,6 +201,15 @@ impl DeviceKeyPair {
     #[must_use]
     pub fn public_bytes(&self) -> [u8; 32] {
         PublicKey::from(&self.0).to_bytes()
+    }
+
+    /// The secret this device and the holder of `their_public` can both
+    /// compute, or `None` for one of the few public values that give the
+    /// same secret to everybody.
+    #[must_use]
+    pub fn agree(&self, their_public: &[u8; 32]) -> Option<[u8; 32]> {
+        let shared = self.0.diffie_hellman(&PublicKey::from(*their_public));
+        shared.was_contributory().then(|| shared.to_bytes())
     }
 }
 
