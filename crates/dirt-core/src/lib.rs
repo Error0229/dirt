@@ -24,6 +24,7 @@ pub mod enrolment;
 pub mod error;
 pub mod export;
 pub mod identity;
+pub mod key_change;
 pub mod models;
 pub mod notes;
 pub mod recovery;
