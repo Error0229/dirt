@@ -268,7 +268,12 @@ already runs the desktop app needs none of it either.
   holds the key.
 - **Removing a device:** revokes its token at once.
 - **Key rotation:** issue a new account key, re-encrypt all notes, and wrap the
-  new key for the remaining devices. Specified here, built in step 8.
+  new key for the remaining devices. Built in step 8. The new key is wrapped
+  for each device with a secret only that device can compute and with the key
+  being replaced, so that neither a removed device nor the server can use the
+  change. `docs/SECURITY.md` describes it and says what it leaves open; the
+  step's plan records how offline devices and an interrupted change are
+  handled.
 
 ### 5.6 Rules for the build
 

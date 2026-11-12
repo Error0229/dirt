@@ -238,6 +238,19 @@ pub(super) fn apply_remote(
     Ok(note)
 }
 
+/// Makes a note unsent without changing it. What the server is known to
+/// hold for it stays as it is, so the push replaces exactly that.
+pub(super) fn resend(connection: &mut Connection, id: &NoteId) -> Result<bool> {
+    let tx = write_transaction(connection)?;
+    let marked = tx.execute(
+        "UPDATE notes SET pushed_revision = NULL \
+          WHERE id = ?1 AND id NOT IN (SELECT note_id FROM sync_problems)",
+        [id.as_str()],
+    )?;
+    tx.commit()?;
+    Ok(marked > 0)
+}
+
 pub(super) fn progress(connection: &Connection) -> Result<SyncProgress> {
     let read = |key: &str| -> Result<Option<i64>> {
         Ok(meta_get(connection, key)?.and_then(|value| value.parse().ok()))

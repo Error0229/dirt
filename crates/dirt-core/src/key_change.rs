@@ -342,6 +342,46 @@ mod tests {
         );
     }
 
+    /// The removed device as an attacker and not as an honest caller: it
+    /// has the old account key and every public value, and derives the
+    /// sealing key itself. Without the phone's private key it has to guess
+    /// the agreement, and a guess does not open the copy.
+    #[test]
+    fn the_old_account_key_and_everything_public_do_not_open_a_copy() {
+        let (old, new) = (AccountKey::generate(), AccountKey::generate());
+        let (phone, removed) = (DeviceKeyPair::generate(), DeviceKeyPair::generate());
+        let wrapped = wrap_account_key(&new, &old, &phone.public_bytes(), &context()).unwrap();
+        let one_time_public: [u8; 32] = wrapped[1..33].try_into().unwrap();
+        let (nonce, sealed) = wrapped[33..].split_at(NONCE_BYTES);
+
+        let opens_with = |agreement: &[u8; 32]| {
+            let (cipher, bound) = sealing(
+                agreement,
+                &old,
+                &one_time_public,
+                &phone.public_bytes(),
+                &context(),
+            );
+            cipher
+                .decrypt(
+                    XNonce::from_slice(nonce),
+                    Payload {
+                        msg: sealed,
+                        aad: &bound,
+                    },
+                )
+                .is_ok()
+        };
+        // The agreement the removed device can compute with its own key,
+        // and two that anyone can write down.
+        let its_own = removed.agree(&one_time_public).unwrap();
+        for guess in [its_own, [0u8; 32], one_time_public] {
+            assert!(!opens_with(&guess));
+        }
+        // The phone's does open it: the check above tests something.
+        assert!(opens_with(&phone.agree(&one_time_public).unwrap()));
+    }
+
     #[test]
     fn a_key_the_server_wraps_by_itself_is_refused() {
         // The server knows the phone's public key, the account, the device

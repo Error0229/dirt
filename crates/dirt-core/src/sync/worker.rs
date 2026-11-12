@@ -69,6 +69,12 @@ pub struct SyncStatus {
     /// pending. An approved device should refuse it unless the person
     /// expected it.
     pub reset_effective_at_ms: Option<i64>,
+    /// The version of the account's key that notes are written under, as
+    /// of the last sync. Zero before the first.
+    pub key_version: i32,
+    /// Notes still stored under an older key, as of the last sync. While
+    /// there are any, a change of the account's key is not complete.
+    pub old_key_notes: u64,
 }
 
 /// How long the worker waits in each situation.
@@ -287,15 +293,23 @@ async fn run(
         // Read from the engine and not from the cycle's report: a cycle that
         // failed has no report, but may have merged documents first.
         let pulled = engine.merged_total();
-        let attention = outcome
-            .as_ref()
-            .ok()
-            .map(|report| (report.pending_devices, report.reset_effective_at_ms));
+        let attention = outcome.as_ref().ok().map(|report| {
+            (
+                report.pending_devices,
+                report.reset_effective_at_ms,
+                report.key_version,
+                report.old_key_notes,
+            )
+        });
         status.send_modify(|status| {
             // A cycle that failed says nothing new about these.
-            if let Some((pending_devices, reset_effective_at_ms)) = attention {
+            if let Some((pending_devices, reset_effective_at_ms, key_version, old_key_notes)) =
+                attention
+            {
                 status.pending_devices = pending_devices;
                 status.reset_effective_at_ms = reset_effective_at_ms;
+                status.key_version = key_version;
+                status.old_key_notes = old_key_notes;
             }
             status.syncing = false;
             status.last_synced_ms = last_synced_ms;

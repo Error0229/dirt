@@ -384,6 +384,74 @@ async fn a_key_change_cancels_the_recovery_phrase_and_an_exchange_under_way(pool
     assert_eq!(me.device.status, dirt_proto::api::DeviceStatus::Pending);
 }
 
+/// A copy of the account key left for a waiting device, or under the
+/// recovery phrase, has to hold the key the account has now. A device that
+/// has not caught up with a change would otherwise hand on the key that was
+/// replaced.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_copy_of_a_replaced_key_is_not_accepted_for_a_new_device_or_a_phrase(pool: PgPool) {
+    let app = app(pool.clone());
+    let (laptop, phone) = two_devices(&app, &pool).await;
+    let tablet = register(&app, "alice", "Tablet").await;
+    change_key(
+        &app,
+        &laptop.token,
+        1,
+        vec![
+            wrapped_for(laptop.device_id, b"l"),
+            wrapped_for(phone.device_id, b"p"),
+        ],
+    )
+    .await;
+    post(
+        &app,
+        &format!("/v1/enrolments/{}/messages", tablet.device_id),
+        Some(&tablet.token),
+        json!({ "body": STANDARD.encode(b"commit"), "restart": true }),
+    )
+    .await;
+
+    let key_path = format!("/v1/enrolments/{}/key", tablet.device_id);
+    let leave = |version: i32| {
+        let app = app.clone();
+        let token = phone.token.clone();
+        let path = key_path.clone();
+        async move {
+            let body = json!({ "key_version": version, "wrapped": STANDARD.encode(b"sealed") });
+            call(&app, Method::PUT, &path, Some(&token), Some(body)).await
+        }
+    };
+    // The phone has not caught up: it offers the first key.
+    let refused = leave(1).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT);
+    assert_eq!(refused.code(), "key_changed");
+    let (left,): (i64,) = sqlx::query_as("SELECT count(*) FROM enrolment_keys")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+    assert_eq!(leave(2).await.status, StatusCode::OK);
+
+    let recovery = |version: i32| {
+        let app = app.clone();
+        let token = phone.token.clone();
+        async move {
+            let body = json!({
+                "key_version": version,
+                "wrapped": STANDARD.encode(b"sealed"),
+                "claim_hash": STANDARD.encode([7u8; limits::CLAIM_HASH_BYTES]),
+            });
+            call(&app, Method::PUT, "/v1/recovery", Some(&token), Some(body)).await
+        }
+    };
+    assert_eq!(recovery(1).await.code(), "key_changed");
+    let me: MyDevice = get(&app, "/v1/devices/me", Some(&laptop.token))
+        .await
+        .json();
+    assert!(!me.recovery_available);
+    assert_eq!(recovery(2).await.status, StatusCode::OK);
+}
+
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
 async fn a_removed_device_loses_its_copies_and_a_reset_starts_the_versions_again(pool: PgPool) {
     let app = app(pool.clone());

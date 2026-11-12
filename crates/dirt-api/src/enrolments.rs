@@ -189,6 +189,11 @@ pub async fn put_key(
             limits::MAX_WRAPPED_KEY_BYTES
         )));
     }
+    let mut tx = state.pool.begin().await?;
+    // The waiting device must be given the key the account has now. An
+    // approving device that has not caught up with a change of the key
+    // fetches the new one and leaves that.
+    crate::keys::lock_present_key(&mut tx, device.account_id, key.key_version).await?;
     sqlx::query(
         "INSERT INTO enrolment_keys (device_id, approver_id, key_version, wrapped) \
          VALUES ($1, $2, $3, $4) \
@@ -200,8 +205,9 @@ pub async fn put_key(
     .bind(device.id)
     .bind(key.key_version)
     .bind(&key.wrapped)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(device.respond(serde_json::json!({ "stored": true })))
 }
 

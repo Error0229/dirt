@@ -39,6 +39,9 @@ pub async fn put(
             limits::CLAIM_HASH_BYTES
         )));
     }
+    let mut tx = state.pool.begin().await?;
+    // A phrase must open the key the account has now.
+    crate::keys::lock_present_key(&mut tx, device.account_id, request.key_version).await?;
     sqlx::query(
         "INSERT INTO recovery_keys (account_id, key_version, wrapped, claim_hash) \
          VALUES ($1, $2, $3, $4) \
@@ -50,8 +53,9 @@ pub async fn put(
     .bind(request.key_version)
     .bind(&request.wrapped)
     .bind(&request.claim_hash)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(device.respond(serde_json::json!({ "stored": true })))
 }
 

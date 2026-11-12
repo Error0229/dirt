@@ -8,13 +8,17 @@
 //! the person's answer. That screen is the one place in Dirt that polls,
 //! because each device is waiting for the other.
 
-use dirt_proto::api::{DeviceInfo, DeviceStatus, EnrolmentMessage, PutRecovery, WrappedKey};
+use dirt_proto::api::{
+    ChangeKey, DeviceInfo, DeviceKey, DeviceStatus, EnrolmentMessage, ErrorCode, PutRecovery,
+    WrappedKey,
+};
 use uuid::Uuid;
 
 use super::{Session, SessionError, SessionState};
 use crate::api::ApiClient;
 use crate::crypto::{AccountKey, KEY_VERSION};
 use crate::enrolment::{Agreed, Approving, CancelReason, EnrolmentError, Joining, Message};
+use crate::key_change::{wrap_account_key, WrapContext};
 use crate::recovery::{RecoveryError, RecoveryPhrase};
 use crate::secrets::DeviceSecrets;
 use crate::sync::worker::Trigger;
@@ -37,6 +41,24 @@ pub enum ExchangeStep {
     Cancelled(CancelReason),
     /// Another device of the account is already approving this one.
     HandledElsewhere,
+}
+
+/// What came of asking to change the account's key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyChange {
+    /// The key was changed by this device.
+    Changed {
+        /// The new key's version.
+        key_version: i32,
+        /// Notes still stored under the old key after this device's first
+        /// sync. They are sent again as devices sync.
+        old_key_notes: u64,
+    },
+    /// Another device changed the key while this one was preparing to.
+    ChangedByAnotherDevice {
+        /// The version of the key the account has now.
+        key_version: i32,
+    },
 }
 
 /// What became of a request to reset the account.
@@ -261,7 +283,7 @@ impl Join {
         // between, the device holds the key and asks the server whether it
         // is approved the next time it looks.
         let mut secrets = self.secrets.clone();
-        secrets.account_key = Some(account_key);
+        secrets.set_only_key(wrapped.key_version, account_key);
         secrets.write(&*self.session.inner.secrets)?;
         self.api.complete_enrolment(secrets.device_id).await?;
         secrets.approved = true;
@@ -508,14 +530,16 @@ impl Approval {
         let ApprovalPhase::Comparing(agreed) = &self.phase else {
             return self.poll().await;
         };
-        let account_key = self
-            .secrets
-            .account_key
-            .as_ref()
+        // The key this device holds now, not the one it held when the
+        // exchange began: the account's key may have been changed since.
+        let keys = self
+            .session
+            .saved_secrets()
+            .and_then(|secrets| secrets.keys())
             .ok_or(SessionError::NotReady)?;
         let wrapped = WrappedKey {
-            key_version: KEY_VERSION,
-            wrapped: agreed.seal_key(account_key),
+            key_version: keys.version(),
+            wrapped: agreed.seal_key(keys.current()),
         };
         self.api.put_enrolment_key(self.target.id, &wrapped).await?;
         self.phase = ApprovalPhase::AwaitingCompletion;
@@ -660,6 +684,74 @@ impl Session {
         })
     }
 
+    // ---- Changing the account's key ----
+
+    /// Changes the account's key. Notes written from now on are under a
+    /// key that a device removed earlier never held.
+    ///
+    /// The new key is wrapped for every approved device and left with the
+    /// server in one request. Each device, this one included, then gets it
+    /// from its own copy at its next sync, and sends the notes it holds
+    /// again under it. The recovery phrase stops working, because its copy
+    /// holds the old key: make a new one afterwards.
+    ///
+    /// If another device changed the key first, nothing more is done: the
+    /// account has a new key, which is what was asked for.
+    pub async fn change_account_key(&self) -> Result<KeyChange, SessionError> {
+        // The key this device holds has to be the one being replaced.
+        self.sync_now().await?;
+        // The devices may change between looking and asking. Twice more is
+        // plenty; more than that is not a coincidence.
+        for _ in 0..3 {
+            let (api, secrets) = self.ready_api()?;
+            let keys = secrets.keys().ok_or(SessionError::NotReady)?;
+            let new = AccountKey::generate();
+            let mut wrapped = Vec::new();
+            for device in api.devices().await?.devices {
+                if device.status != DeviceStatus::Approved {
+                    continue;
+                }
+                let context = WrapContext {
+                    account_id: secrets.account_id,
+                    device_id: device.id,
+                    key_version: keys.version() + 1,
+                };
+                let copy = wrap_account_key(&new, keys.current(), &device.public_key, &context)
+                    .map_err(|_| SessionError::UnusableDeviceKey {
+                        device: device.name.clone(),
+                    })?;
+                wrapped.push(DeviceKey {
+                    device_id: device.id,
+                    wrapped: copy,
+                });
+            }
+            let request = ChangeKey {
+                from_version: keys.version(),
+                keys: wrapped,
+            };
+            match api.change_key(&request).await {
+                Ok(changed) => {
+                    // This device takes the new key as the others do, from
+                    // its own copy, and begins sending notes again.
+                    let report = self.sync_now().await?;
+                    return Ok(KeyChange::Changed {
+                        key_version: changed.key_version,
+                        old_key_notes: report.old_key_notes,
+                    });
+                }
+                Err(error) if error.code() == Some(ErrorCode::DevicesChanged) => {}
+                Err(error) if error.code() == Some(ErrorCode::KeyChanged) => {
+                    let report = self.sync_now().await?;
+                    return Ok(KeyChange::ChangedByAnotherDevice {
+                        key_version: report.key_version,
+                    });
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(SessionError::DevicesKeptChanging)
+    }
+
     // ---- The recovery phrase ----
 
     /// Makes a recovery phrase and leaves the account key, encrypted under
@@ -671,7 +763,7 @@ impl Session {
         let phrase = RecoveryPhrase::generate();
         let copy = phrase.seal(secrets.account_id, account_key);
         api.put_recovery(&PutRecovery {
-            key_version: KEY_VERSION,
+            key_version: secrets.key_version,
             wrapped: copy.wrapped,
             claim_hash: copy.claim_hash,
         })
@@ -698,7 +790,7 @@ impl Session {
         // server is asked anything.
         let account_key = phrase.open(secrets.account_id, &copy.wrapped)?;
 
-        secrets.account_key = Some(account_key);
+        secrets.set_only_key(copy.key_version, account_key);
         secrets.write(&*self.inner.secrets)?;
         api.claim_recovery(phrase.claim_code(secrets.account_id))
             .await?;
@@ -725,11 +817,12 @@ impl Session {
                 effective_at_ms: answer.effective_at_ms.unwrap_or_default(),
             });
         }
-        let fresh = DeviceSecrets {
-            account_key: Some(AccountKey::generate()),
+        let mut fresh = DeviceSecrets {
             approved: true,
             ..secrets
         };
+        // A reset starts the account's keys again from the first.
+        fresh.set_only_key(KEY_VERSION, AccountKey::generate());
         // As at first sign-in: this record is the only copy of the new key.
         fresh.write(&*self.inner.secrets)?;
         self.activate(fresh)?;

@@ -12,10 +12,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dirt_proto::api::{
-    DeviceList, EnrolmentMessage, EnrolmentMessages, ErrorBody, MyDevice, NonceResponse,
-    PostEnrolmentMessage, PullResponse, PushRequest, PushResponse, PutRecovery, RecoveryClaim,
-    RegisterDeviceRequest, RegisterDeviceResponse, ResetResponse, WrappedKey, PROTOCOL_HEADER,
-    PROTOCOL_VERSION,
+    ChangeKey, DeviceKeys, DeviceList, EnrolmentMessage, EnrolmentMessages, ErrorBody, KeyChanged,
+    MyDevice, NonceResponse, OldKeyNotes, PostEnrolmentMessage, PullResponse, PushRequest,
+    PushResponse, PutRecovery, RecoveryClaim, RegisterDeviceRequest, RegisterDeviceResponse,
+    ResetResponse, WrappedKey, PROTOCOL_HEADER, PROTOCOL_VERSION,
 };
 // What a client needs in order to act on a failure, re-exported so that the
 // interface crates do not depend on the protocol crate for it.
@@ -271,6 +271,27 @@ impl ApiClient {
     /// Blobs changed after change number `after`.
     pub async fn pull(&self, after: i64) -> Result<PullResponse, ApiError> {
         self.get(format!("/v1/notes/pull?after={after}")).await
+    }
+
+    // ---- Changing the account's key ----
+
+    /// Changes the account's key: stores the new key wrapped for every
+    /// approved device and moves the account to the next version.
+    pub async fn change_key(&self, request: &ChangeKey) -> Result<KeyChanged, ApiError> {
+        self.call("POST", "/v1/account/key".to_owned(), Some(request))
+            .await
+    }
+
+    /// This device's wrapped copies of the account keys after version
+    /// `after`, oldest first.
+    pub async fn account_keys(&self, after: i32) -> Result<Vec<WrappedKey>, ApiError> {
+        let copies: DeviceKeys = self.get(format!("/v1/account/keys?after={after}")).await?;
+        Ok(copies.keys)
+    }
+
+    /// Notes the server still holds under an older key.
+    pub async fn old_key_notes(&self) -> Result<OldKeyNotes, ApiError> {
+        self.get("/v1/account/key/notes".to_owned()).await
     }
 
     // ---- The approval exchange ----

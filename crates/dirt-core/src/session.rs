@@ -21,22 +21,23 @@
 mod devices;
 mod exchange;
 
-pub use devices::{Approval, ExchangeStep, Join, MyDevice, ResetOutcome};
+pub use devices::{Approval, ExchangeStep, Join, KeyChange, MyDevice, ResetOutcome};
 pub use exchange::{Answer, Exchange, ExchangeView, Pace};
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use dirt_proto::api::{DeviceStatus, ErrorCode, RegisterDeviceRequest};
 use tokio::sync::{watch, Notify};
 use uuid::Uuid;
 
 use crate::api::{ApiClient, ApiError, Transport};
-use crate::crypto::{AccountKey, DeviceKeyPair};
+use crate::crypto::{AccountKey, DeviceKeyPair, KEY_VERSION};
 use crate::identity::{Attempt, IdentityClient, IdentityError, Loopback};
+use crate::key_change::KeyRing;
 use crate::secrets::{DeviceSecrets, SecretError, SecretStore};
 use crate::store::{store_path, StoreName};
-use crate::sync::engine::{SyncEngine, SyncError, SyncReport};
+use crate::sync::engine::{KeyKeeper, StoredKeys, SyncEngine, SyncError, SyncReport};
 use crate::sync::overview::SyncOverview;
 use crate::sync::worker::{SyncStatus, SyncWorker, Timing, Trigger};
 use crate::{Error, Store};
@@ -124,6 +125,19 @@ pub enum SessionError {
     /// The account has no recovery copy for a phrase to open.
     #[error("this account has no recovery phrase")]
     NoRecoveryCopy,
+    /// The account's key cannot be changed because the server gave a
+    /// public key for one of the devices that is not a key.
+    #[error(
+        "the key registered for the device \"{device}\" cannot be used; remove that device first"
+    )]
+    UnusableDeviceKey {
+        /// The device's name.
+        device: String,
+    },
+    /// The account's devices changed each time the key change was
+    /// prepared for them.
+    #[error("the account's devices kept changing; try again")]
+    DevicesKeptChanging,
 }
 
 /// Why the device was not signed out.
@@ -227,16 +241,90 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Whether two records are the same sign-in with the same keys. A reset
-/// keeps the account, the device and the token and replaces the account
-/// key, so the key has to be compared too.
-fn same_keys(a: &DeviceSecrets, b: &DeviceSecrets) -> bool {
-    let key = |secrets: &DeviceSecrets| secrets.account_key.as_ref().map(|key| *key.as_bytes());
+/// Whether two records are the same sign-in: the same device of the same
+/// account, with the same token and standing.
+fn same_sign_in(a: &DeviceSecrets, b: &DeviceSecrets) -> bool {
     a.account_id == b.account_id
         && a.device_id == b.device_id
         && a.token == b.token
         && a.approved == b.approved
-        && key(a) == key(b)
+}
+
+/// Whether two records are the same sign-in with the same keys. A reset
+/// keeps the account, the device and the token and replaces the account
+/// key, so the keys have to be compared too.
+fn same_keys(a: &DeviceSecrets, b: &DeviceSecrets) -> bool {
+    same_sign_in(a, b)
+        && match (a.keys(), b.keys()) {
+            (Some(a), Some(b)) => a.same_as(&b),
+            (None, None) => true,
+            _ => false,
+        }
+}
+
+/// Whether `stored` holds the keys of `mine` moved on: a later version, or
+/// the same key with fewer older ones beside it. That is what storage
+/// looks like when another program on this device, or this program's own
+/// sync, followed a change of the account's key. After a reset it does
+/// not: the versions began again, with another key under the first.
+fn keys_follow(stored: &DeviceSecrets, mine: &DeviceSecrets) -> bool {
+    match (stored.keys(), mine.keys()) {
+        (Some(stored), Some(mine)) => {
+            stored.version() > mine.version()
+                || (stored.version() == mine.version()
+                    && stored.current().as_bytes() == mine.current().as_bytes())
+        }
+        _ => false,
+    }
+}
+
+/// The keys of one sign-in, as the sync engine reaches them: in secure
+/// storage, where the other program on this device may change them.
+struct SessionKeys {
+    stored: Arc<dyn SecretStore>,
+    /// The sign-in the engine was made for.
+    sign_in: DeviceSecrets,
+    /// The session, for keeping its own copy of the keys in step. Weak,
+    /// because the session owns the engine that owns this.
+    session: Weak<Inner>,
+}
+
+impl KeyKeeper for SessionKeys {
+    fn stored(&self) -> StoredKeys {
+        match DeviceSecrets::read(&*self.stored) {
+            Ok(Some(now)) if same_sign_in(&now, &self.sign_in) => {
+                now.keys().map_or(StoredKeys::Gone, StoredKeys::Keys)
+            }
+            Ok(_) => StoredKeys::Gone,
+            // Storage that cannot be read just now says nothing either way.
+            Err(_) => StoredKeys::Unknown,
+        }
+    }
+
+    fn keep(&self, keys: &KeyRing) -> Result<(), SyncError> {
+        // Read again and not written from memory: the other program may
+        // have signed out, and its sign-out must not be undone.
+        let mut now = match DeviceSecrets::read(&*self.stored) {
+            Ok(Some(now)) if same_sign_in(&now, &self.sign_in) => now,
+            Ok(_) => return Err(SyncError::Superseded),
+            Err(error) => return Err(SyncError::KeysNotStored(error.to_string())),
+        };
+        now.set_keys(keys);
+        now.write(&*self.stored)
+            .map_err(|error| SyncError::KeysNotStored(error.to_string()))?;
+        if let Some(session) = self.session.upgrade() {
+            if let Some(signed_in) = lock(&session.signed_in).as_mut() {
+                if same_sign_in(&signed_in.secrets, &self.sign_in) {
+                    signed_in.secrets.set_keys(keys);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn device(&self) -> (Uuid, DeviceKeyPair) {
+        (self.sign_in.device_id, self.sign_in.device_key.clone())
+    }
 }
 
 fn account_folder(data_folder: &Path, account_id: Uuid) -> Result<PathBuf, Error> {
@@ -367,8 +455,8 @@ impl Session {
         // The previous account's worker and store handles go first.
         lock(&self.inner.signed_in).take();
 
-        let account = match (&secrets.account_key, secrets.approved) {
-            (Some(key), true) => Some(self.open_account(&secrets, key)?),
+        let account = match (secrets.keys(), secrets.approved) {
+            (Some(keys), true) => Some(self.open_account(&secrets, keys)?),
             _ => None,
         };
         let signed_in = SignedIn { secrets, account };
@@ -388,7 +476,7 @@ impl Session {
     fn open_account(
         &self,
         secrets: &DeviceSecrets,
-        key: &AccountKey,
+        keys: KeyRing,
     ) -> Result<Account, SessionError> {
         let config = &self.inner.config;
         let folder = account_folder(&config.data_folder, secrets.account_id)?;
@@ -405,18 +493,17 @@ impl Session {
         let api = self.api().with_token(secrets.token.clone());
         // Another program on this device may sign out or replace the
         // account key while this one runs. The engine asks before each
-        // cycle whether what it holds is still what secure storage holds.
-        let stored = Arc::clone(&self.inner.secrets);
-        let mine = secrets.clone();
-        let still_current = move || match DeviceSecrets::read(&*stored) {
-            Ok(Some(now)) => same_keys(&now, &mine),
-            Ok(None) => false,
-            // Storage that cannot be read just now says nothing either way.
-            Err(_) => true,
+        // cycle whether what it holds is still what secure storage holds,
+        // and stores there each newer key it opens.
+        let keeper = SessionKeys {
+            stored: Arc::clone(&self.inner.secrets),
+            sign_in: secrets.clone(),
+            session: Arc::downgrade(&self.inner),
         };
+        let first = keys.current().clone();
         let engine = Arc::new(
-            SyncEngine::new(store.clone(), api, secrets.account_id, key.clone())
-                .guarded(Arc::new(still_current)),
+            SyncEngine::new(store.clone(), api, secrets.account_id, first)
+                .kept_by(keys, Arc::new(keeper)),
         );
         self.inner.status.send_replace(SyncStatus::default());
         let worker = config.background_sync.then(|| {
@@ -593,20 +680,26 @@ impl Session {
             }
         }
 
-        let account_key = match before.and_then(|saved| saved.account_key) {
-            Some(key) => Some(key),
-            // The first device of an account creates the account's key.
-            None if registered.first_device => Some(AccountKey::generate()),
-            None => None,
-        };
-        let secrets = DeviceSecrets {
+        // A device that signs in again keeps the keys it had.
+        let kept = before.and_then(|saved| saved.keys());
+        let mut secrets = DeviceSecrets {
             account_id: registered.account_id,
             device_id: registered.device_id,
             token: registered.token,
             device_key,
-            account_key,
+            account_key: None,
+            key_version: KEY_VERSION,
+            older_keys: std::collections::BTreeMap::new(),
             approved: registered.status == DeviceStatus::Approved,
         };
+        match kept {
+            Some(keys) => secrets.set_keys(&keys),
+            // The first device of an account creates the account's key.
+            None if registered.first_device => {
+                secrets.set_only_key(KEY_VERSION, AccountKey::generate());
+            }
+            None => {}
+        }
         // Saved before anything else: for a first device this record is
         // the only copy of the account key.
         secrets.write(&*self.inner.secrets)?;
@@ -648,6 +741,18 @@ impl Session {
         };
         if !same {
             if let Some(secrets) = stored {
+                // A change of the account's key that was followed, here or
+                // in the other program, is not a new sign-in. The engine
+                // takes the keys from storage at its next cycle; only this
+                // session's copy needs bringing up to date.
+                if let Some(mine) = &current {
+                    if same_sign_in(&secrets, mine) && keys_follow(&secrets, mine) {
+                        if let Some(signed_in) = lock(&self.inner.signed_in).as_mut() {
+                            signed_in.secrets = secrets;
+                        }
+                        return Ok(self.state());
+                    }
+                }
                 self.activate(secrets)?;
             } else {
                 lock(&self.inner.signed_in).take();

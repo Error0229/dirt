@@ -13,6 +13,7 @@
 //! A [`SecretStore`] keeps one opaque string. [`DeviceSecrets`] is what that
 //! string holds.
 
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use base64::engine::general_purpose::STANDARD;
@@ -21,7 +22,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::crypto::{AccountKey, DeviceKeyPair};
+use crate::crypto::{AccountKey, DeviceKeyPair, KEY_VERSION};
+use crate::key_change::KeyRing;
 
 /// Why secure storage could not be used.
 #[derive(Debug, thiserror::Error)]
@@ -169,6 +171,12 @@ pub struct DeviceSecrets {
     /// The key that encrypts the account's notes. A device that is waiting
     /// to be approved does not have it yet.
     pub account_key: Option<AccountKey>,
+    /// Which version of the account's key `account_key` is. The first key
+    /// is version 1, and each change of the key is the next.
+    pub key_version: i32,
+    /// The account keys before `account_key` that this device still needs,
+    /// by version: to read notes not yet sent again under the new key.
+    pub older_keys: BTreeMap<i32, AccountKey>,
     /// Whether the server has said this device is approved.
     pub approved: bool,
 }
@@ -180,6 +188,7 @@ impl std::fmt::Debug for DeviceSecrets {
             .field("device_id", &self.device_id)
             .field("approved", &self.approved)
             .field("has_account_key", &self.account_key.is_some())
+            .field("key_version", &self.key_version)
             .finish_non_exhaustive()
     }
 }
@@ -194,10 +203,20 @@ struct Record {
     device_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     account_key: Option<String>,
+    /// Absent in a record written before the account's key could change:
+    /// the key in it is the first.
+    #[serde(default = "first_key_version")]
+    key_version: i32,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    older_keys: BTreeMap<i32, String>,
     approved: bool,
 }
 
 const RECORD_VERSION: u32 = 1;
+
+const fn first_key_version() -> i32 {
+    KEY_VERSION
+}
 
 impl DeviceSecrets {
     /// Whether this device can read and write the account's notes: it is
@@ -205,6 +224,27 @@ impl DeviceSecrets {
     #[must_use]
     pub const fn is_ready(&self) -> bool {
         self.approved && self.account_key.is_some()
+    }
+
+    /// The account keys this device holds, or `None` while it is waiting.
+    #[must_use]
+    pub fn keys(&self) -> Option<KeyRing> {
+        self.account_key
+            .clone()
+            .map(|current| KeyRing::from_parts(self.key_version, current, self.older_keys.clone()))
+    }
+
+    /// Replaces the account keys this device holds.
+    pub fn set_keys(&mut self, keys: &KeyRing) {
+        self.account_key = Some(keys.current().clone());
+        self.key_version = keys.version();
+        self.older_keys = keys.older().clone();
+    }
+
+    /// Gives the device `key` as the account's key of `version`, and no
+    /// other: what a device holds when it is let in, and after a reset.
+    pub fn set_only_key(&mut self, version: i32, key: AccountKey) {
+        self.set_keys(&KeyRing::at(version, key));
     }
 
     /// Reads the record from `store`, or `None` if nobody is signed in.
@@ -228,19 +268,26 @@ impl DeviceSecrets {
         };
         let device_key = DeviceKeyPair::from_secret_bytes(&decode(&record.device_key)?)
             .map_err(|error| SecretError::Unreadable(error.to_string()))?;
+        let account_key_of = |text: &str| {
+            AccountKey::from_bytes(&decode(text)?)
+                .map_err(|error| SecretError::Unreadable(error.to_string()))
+        };
         let account_key = match &record.account_key {
-            Some(text) => Some(
-                AccountKey::from_bytes(&decode(text)?)
-                    .map_err(|error| SecretError::Unreadable(error.to_string()))?,
-            ),
+            Some(text) => Some(account_key_of(text)?),
             None => None,
         };
+        let mut older_keys = BTreeMap::new();
+        for (version, text) in &record.older_keys {
+            older_keys.insert(*version, account_key_of(text)?);
+        }
         Ok(Some(Self {
             account_id: record.account_id,
             device_id: record.device_id,
             token: record.token.clone(),
             device_key,
             account_key,
+            key_version: record.key_version,
+            older_keys,
             approved: record.approved,
         }))
     }
@@ -257,6 +304,12 @@ impl DeviceSecrets {
                 .account_key
                 .as_ref()
                 .map(|key| STANDARD.encode(key.as_bytes())),
+            key_version: self.key_version,
+            older_keys: self
+                .older_keys
+                .iter()
+                .map(|(version, key)| (*version, STANDARD.encode(key.as_bytes())))
+                .collect(),
             approved: self.approved,
         };
         let text = Zeroizing::new(
@@ -279,6 +332,8 @@ mod tests {
             device_key: DeviceKeyPair::generate(),
             approved: account_key.is_some(),
             account_key,
+            key_version: KEY_VERSION,
+            older_keys: BTreeMap::new(),
         }
     }
 
@@ -303,6 +358,45 @@ mod tests {
             written.account_key.as_ref().unwrap().as_bytes()
         );
         assert!(read.is_ready());
+    }
+
+    #[test]
+    fn the_keys_before_the_current_one_survive_being_stored_and_read() {
+        let store = MemorySecrets::new();
+        let mut keys = KeyRing::first(AccountKey::generate());
+        keys.adopt(AccountKey::generate());
+        keys.adopt(AccountKey::generate());
+        let mut written = sample(Some(AccountKey::generate()));
+        written.set_keys(&keys);
+        written.write(&store).unwrap();
+
+        let read = DeviceSecrets::read(&store).unwrap().unwrap();
+        assert_eq!(read.key_version, 3);
+        assert!(read.keys().unwrap().same_as(&keys));
+        assert_eq!(read.older_keys.len(), 2);
+    }
+
+    #[test]
+    fn a_record_written_before_keys_had_versions_holds_the_first_key() {
+        let store = MemorySecrets::new();
+        let written = sample(Some(AccountKey::generate()));
+        written.write(&store).unwrap();
+        // As an earlier version of the app wrote it: no version, no older
+        // keys.
+        let mut record: serde_json::Value =
+            serde_json::from_str(&store.load().unwrap().unwrap()).unwrap();
+        let fields = record.as_object_mut().unwrap();
+        fields.remove("key_version");
+        fields.remove("older_keys");
+        store.save(&record.to_string()).unwrap();
+
+        let read = DeviceSecrets::read(&store).unwrap().unwrap();
+        assert_eq!(read.key_version, KEY_VERSION);
+        assert!(read.older_keys.is_empty());
+        assert_eq!(
+            read.account_key.unwrap().as_bytes(),
+            written.account_key.unwrap().as_bytes()
+        );
     }
 
     #[test]

@@ -34,7 +34,7 @@ A client acts on the code's class and nothing else.
 
 | Class | Codes | What the client does |
 |---|---|---|
-| Try again later | `server_error`, `rate_limited` | Back off and retry; show as offline |
+| Try again later | `server_error`, `rate_limited`, `key_changed`, `devices_changed` | Back off and retry; show as offline. The last two a device puts right itself and then asks again: see "Changing the account's key" |
 | Stop until signed in | `unauthenticated`, `device_revoked`, `device_expired`, `device_pending`, `sign_in_rejected`, `too_many_pending_devices`, `recovery_rejected` | Stop syncing. Local notes are untouched |
 | Update the app | `unsupported_protocol`, `invalid_request`, `payload_too_large` | Stop. Never overwrite what this version cannot read |
 | Problem with one note | `not_found`, `note_too_large`, `quota_exceeded` | Flag that note and keep syncing the rest |
@@ -244,6 +244,52 @@ who took over the person's email can get.
 
 From an approved device. Cancels a reset that was asked for.
 
+### Changing the account's key
+
+An approved device replaces the account's key, so that a device removed
+earlier holds a key that reads nothing written afterwards. The devices wrap
+and open the key; the server stores the wrapped copies and opens none.
+`docs/SECURITY.md` describes how a copy is wrapped.
+
+**`POST /v1/account/key`** changes the key:
+
+```json
+{ "from_version": 1, "keys": [ { "device_id": "…", "wrapped": "<base64>" } ] }
+```
+
+`keys` holds the new key wrapped for every approved device of the account,
+the caller included, and for no other. In one transaction the server stores
+the copies, moves the account to version `from_version + 1`, counts every
+note it holds as still under an older key, and removes the recovery copy and
+anything an approval exchange has left for a waiting device. The answer is
+`{ "key_version": 2, "old_key_notes": 14 }`.
+
+- `key_changed` if the account is no longer at `from_version`: another
+  device changed the key first.
+- `devices_changed` if `keys` does not name exactly the approved devices.
+  The caller fetches the device list and wraps the key again.
+
+**`GET /v1/account/keys?after=V`** returns the calling device's copies of
+the keys later than version `V`, oldest first:
+`{ "keys": [ { "key_version": 2, "wrapped": "…" } ] }`. Each copy opens
+with the key before it.
+
+**`GET /v1/account/key/notes`** lists notes still stored under an older
+key, up to 500, with how many there are in all:
+`{ "key_version": 2, "notes": [ "…" ], "total": 14 }`. A device sends the
+ones it holds again under the new key. A push that replaces such a note
+counts it off; at zero the change is complete.
+
+While a key version is the account's present one:
+
+- a pushed note under any other version is rejected with `key_changed`,
+  which uses no change number;
+- a key left for a waiting device, and a recovery copy, must carry that
+  version, or the request is refused with `key_changed`.
+
+Removing a device removes its wrapped copies. A reset starts the versions
+again at 1.
+
 ### `POST /v1/notes/push`
 
 ```json
@@ -270,7 +316,9 @@ order:
   pull. The copies returned in one response are held to the batch limit;
   past it `current` is `null` and the client gets the copy from its next
   pull.
-- **rejected:** refused for a reason that concerns this note alone.
+- **rejected:** refused for a reason that concerns this note alone. With
+  `key_changed` nothing is wrong with the note: the device fetches the
+  account's new key and sends the note again under it.
 
 A refused item uses no change number. A push may name each note only once.
 
@@ -292,6 +340,10 @@ Two fields say what needs the person's attention, so that a device learns of
 it at its next sync: `pending_devices` is how many devices are waiting to be
 approved, and `reset_effective_at_ms` is present while a reset has been asked
 for.
+
+Two more follow a change of the account's key: `key_version` is the version
+notes are written under now, and `old_key_notes` is how many notes are still
+stored under an older one. `GET /v1/devices/me` reports `key_version` too.
 
 ## Limits
 
@@ -317,5 +369,4 @@ marker to the note's document, so this rule is what lets deletes through.
 
 ## Not built yet
 
-Changing the account key, which is what finally shuts out a device that was
-removed, is step 8 of the redesign. Attachments are step 9.
+Attachments are step 9 of the redesign.

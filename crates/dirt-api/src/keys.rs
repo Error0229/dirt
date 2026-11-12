@@ -38,6 +38,34 @@ fn to_count(count: i64) -> u64 {
     u64::try_from(count).unwrap_or(0)
 }
 
+/// Locks the account and checks that `key_version` is the version its
+/// notes are written under now.
+///
+/// A copy of the account key that is about to be stored, for a waiting
+/// device or under the recovery phrase, has to hold the present key. A
+/// device that has not caught up with a change would otherwise hand over
+/// the key that was replaced. The lock keeps a change from falling between
+/// this check and the write that follows it in the same transaction.
+pub async fn lock_present_key(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+    key_version: i32,
+) -> ApiResult<()> {
+    let (current,): (i32,) =
+        sqlx::query_as("SELECT key_version FROM accounts WHERE id = $1 FOR UPDATE")
+            .bind(account_id)
+            .fetch_one(&mut **tx)
+            .await?;
+    if key_version == current {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            ErrorCode::KeyChanged,
+            "the account's key has changed; fetch the new one first",
+        ))
+    }
+}
+
 /// `POST /v1/account/key`: an approved device changes the account's key.
 pub async fn change(
     State(state): State<AppState>,

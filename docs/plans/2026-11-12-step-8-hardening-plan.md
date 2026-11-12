@@ -81,17 +81,17 @@ is a setting on the repository and is the owner's to switch on.
 
 ### 8a: key rotation in the server and the core
 
-- [ ] `dirt-proto`: the rotation requests, `key_changed`, and the key
+- [x] `dirt-proto`: the rotation requests, `key_changed`, and the key
       version in what a pull and a device's own record report.
-- [ ] `dirt-api`: migration `0003`; wrapped keys per device per version;
+- [x] `dirt-api`: migration `0003`; wrapped keys per device per version;
       beginning a rotation in one transaction; the list of notes still
       under an old key; refusing an old key; closing the rotation in the
       push that replaces the last old note; clean-up on removal and reset.
-- [ ] `dirt-core`: wrapping and unwrapping; keys by version in the device's
+- [x] `dirt-core`: wrapping and unwrapping; keys by version in the device's
       secrets, with the old format still read; the engine fetching a key it
       lacks, sending again after `key_changed`, and re-encrypting; the
       session's "change the key".
-- [ ] `dirt-sim` tests against the real server:
+- [x] `dirt-sim` tests against the real server:
   - a removed device cannot read what is written after the rotation, with
     everything the server holds given to it;
   - a device that was offline through one rotation, and through two,
@@ -104,7 +104,61 @@ is a setting on the repository and is the owner's to switch on.
   - the recovery phrase stops working, and a new one works;
   - a device let in during a rotation reads everything once it is over;
   - a reset during a rotation.
-- [ ] `docs/SECURITY.md` and `docs/BACKEND_API.md`.
+- [x] `docs/SECURITY.md` and `docs/BACKEND_API.md`.
+
+**Result (2026-11-12): done.**
+
+- **The server** (`dirt-api::keys`, migration `0003`) has three requests:
+  change the key, fetch this device's copies, and list the notes still
+  under an older key. The account row holds the present key version and a
+  count of notes under older ones. A push locks that row, as it always
+  has, so a change and the pushes around it happen one at a time.
+- **Wrapping** is in `dirt-core::key_change`, with the ring of keys a
+  device holds. A wrapped copy is 105 bytes.
+- **The engine** follows a change without being told to. A pull says which
+  version notes are written under; the engine fetches its copies, opens
+  them in order and stores each before using it. A copy that does not open
+  ends the cycle with `KeyRejected` and nothing is adopted.
+- **The session** has `change_account_key`. It syncs, wraps the new key
+  for every approved device, sends the one request, and syncs again, which
+  is how this device takes the key too: from its own copy, as the others
+  do. It does not keep the key it made in memory and hope.
+- **A device's stored secrets** hold the key's version and the keys before
+  it. A record written before this step reads as holding the first key.
+
+What building it showed:
+
+- **Two programs on one device.** The desktop app and the CLI share one
+  place for their keys. When one of them followed a change and then let go
+  of the old key, the other could not tell the stored keys were its own
+  moved on, and stopped as if the account had been reset. A later version
+  in the device's own secure storage is now simply taken; only another key
+  under the same version, or an earlier version, is a reset.
+- **A device must hand over the key the account has now.** An approval is
+  opened, the key changes, and then the person says the codes match. The
+  approving device used the key it held when it opened the approval. It
+  now reads its keys when it answers, and the server refuses a copy for a
+  waiting device, or under a recovery phrase, that names any version but
+  the present one.
+- **A removed device as an attacker, not as a caller.** The first test of
+  "a removed device cannot open another device's copy" called the opening
+  function with the wrong device's key, and passed even with the agreement
+  taken out of the key derivation: the function binds the caller's own
+  public key, which an attacker would not use. The test now derives the
+  sealing key the way an attacker would, from the old account key and
+  every public value, and has to guess the agreement.
+
+Eleven rules were each broken by hand to confirm a test fails: that a
+copy needs the old account key, that it needs the device's key, that the
+server refuses a note under an old key, a change that leaves a device out
+or names a removed one, and a replaced key for a waiting device or under a
+phrase; that the engine stops at a copy that does not open, that old notes
+are sent again, that the recovery copy goes, and that an approving device
+hands over its present key. The two that were not caught at first are the
+last two findings above.
+
+Not in this part: any client's interface. `dirt devices remove` still says
+that changing the key is not available. That is 8b.
 
 ### 8b: key rotation in the three clients
 
