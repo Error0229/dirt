@@ -1,8 +1,7 @@
 //! Settings panel component.
 //!
-//! The Account tab drives the magic-code sign-in/sign-out flow against
-//! `dirt-api`'s `/v1/auth/*` endpoints. The Sync tab says that sync is
-//! unavailable and that notes are kept on this device only.
+//! The Account tab signs in and out through the session. The Sync tab shows
+//! how sync is going and has the sync button.
 
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
@@ -40,7 +39,7 @@ pub fn SettingsPanel() -> Element {
     let mut settings = state.settings;
     let mut theme = state.theme;
     let mut settings_open = state.settings_open;
-    let db_service = state.db_service;
+    let device_store = state.device_store;
 
     let colors = (state.theme)().palette();
 
@@ -52,7 +51,7 @@ pub fn SettingsPanel() -> Element {
         settings.set(new_settings.clone());
 
         // Save to database asynchronously
-        let db = db_service.read().clone();
+        let db = device_store.read().clone();
         spawn(async move {
             if let Some(db) = db {
                 if let Err(e) = db.save_settings(&new_settings).await {

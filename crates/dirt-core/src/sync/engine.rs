@@ -12,6 +12,8 @@
 use dirt_proto::api::{
     limits, ErrorClass, ErrorCode, NoteBlob, PushItem, PushOutcome, PushRequest,
 };
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use dirt_proto::NoteId;
 use uuid::Uuid;
 
@@ -75,6 +77,9 @@ pub struct SyncEngine {
     api: ApiClient,
     account_id: Uuid,
     key: AccountKey,
+    /// How many documents this engine has merged into the store, over all
+    /// its cycles, including cycles that went on to fail.
+    merged: AtomicU64,
 }
 
 /// What became of one pulled or returned blob.
@@ -94,7 +99,18 @@ impl SyncEngine {
             api,
             account_id,
             key,
+            merged: AtomicU64::new(0),
         }
+    }
+
+    /// How many documents from the server this engine has merged into the
+    /// store so far. A cycle that fails part-way has still changed the
+    /// store by what it merged first, and its report is lost with the
+    /// error; this count is not. A change in it means the notes on screen
+    /// may be out of date.
+    #[must_use]
+    pub fn merged_total(&self) -> u64 {
+        self.merged.load(Ordering::Relaxed)
     }
 
     /// Runs one cycle and reports what it did.
@@ -108,6 +124,9 @@ impl SyncEngine {
             }
         }
         report.unsent = self.store.unsent_count().await?;
+        self.store
+            .set_last_synced_ms(chrono::Utc::now().timestamp_millis())
+            .await?;
         Ok(report)
     }
 
@@ -143,7 +162,10 @@ impl SyncEngine {
     /// blob that cannot be used flags its note and is otherwise skipped.
     async fn apply(&self, blob: &NoteBlob, report: &mut SyncReport) -> Result<(), SyncError> {
         match self.try_apply(blob).await? {
-            Applied::Merged => report.pulled += 1,
+            Applied::Merged => {
+                report.pulled += 1;
+                self.merged.fetch_add(1, Ordering::Relaxed);
+            }
             Applied::AlreadyHere => {}
             Applied::Problem(reason) => {
                 // Held: this device must not push over a copy it could not

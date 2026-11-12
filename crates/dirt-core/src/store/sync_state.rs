@@ -125,6 +125,30 @@ pub(super) fn unsent_count(connection: &Connection) -> Result<usize> {
     Ok(usize::try_from(count).unwrap_or_default())
 }
 
+/// How many notes hold changes the server has not accepted, including the
+/// notes that are held back by a sync problem. This is what would be lost
+/// if the store were deleted now.
+pub(super) fn unsynced_count(connection: &Connection) -> Result<usize> {
+    let count: i64 = connection.query_row(
+        "SELECT count(*) FROM notes WHERE pushed_revision IS NULL OR pushed_revision <> revision",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(usize::try_from(count).unwrap_or_default())
+}
+
+/// When a sync cycle last completed, as Unix milliseconds.
+pub(super) fn last_synced(connection: &Connection) -> Result<Option<i64>> {
+    Ok(meta_get(connection, "last_synced_ms")?.and_then(|value| value.parse().ok()))
+}
+
+pub(super) fn set_last_synced(connection: &mut Connection, at_ms: i64) -> Result<()> {
+    let tx = write_transaction(connection)?;
+    meta_set(&tx, "last_synced_ms", &at_ms.to_string())?;
+    tx.commit()?;
+    Ok(())
+}
+
 /// Records that the server accepted `revision` of a note as change number
 /// `change`. If the note has been edited since, it stays unsent: its
 /// revision is by then higher than the one recorded here.

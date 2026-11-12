@@ -11,10 +11,13 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
+        <!-- singleTask: the sign-in redirect returns to the running activity
+             through onNewIntent instead of starting a second one. -->
         <activity
             android:configChanges="orientation|screenLayout|screenSize|keyboardHidden"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTask"
             android:name="dev.dioxus.main.MainActivity">
             <meta-data android:name="android.app.func_name" android:value="ANativeActivity_onCreate" />
             <meta-data android:name="android.app.lib_name" android:value="dioxusmain" />
@@ -28,6 +31,16 @@
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/*" />
+            </intent-filter>
+
+            <!-- The browser returns from sign-in to dev.dirt.app://callback.
+                 Any app can claim a custom scheme; PKCE is what makes a
+                 redirect taken by another app useless to it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="dev.dirt.app" android:host="callback" />
             </intent-filter>
         </activity>
 

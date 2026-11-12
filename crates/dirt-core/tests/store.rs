@@ -656,3 +656,30 @@ async fn closing_the_store_leaves_one_complete_file() {
         "kept in the main file"
     );
 }
+
+/// A store must open even if another program holds the file for longer than
+/// one write is willing to wait. A program that cannot open its notes can do
+/// nothing at all, so opening keeps trying.
+#[test]
+fn opening_outlasts_a_program_that_holds_the_file_for_a_long_time() {
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("notes.db");
+    drop(Store::open(&path).unwrap());
+
+    // Another program takes the write lock and keeps it for longer than the
+    // five seconds a single write waits.
+    let holder = rusqlite::Connection::open(&path).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let held_for = std::time::Duration::from_millis(6500);
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(held_for);
+        holder.execute_batch("COMMIT").unwrap();
+    });
+
+    let started = std::time::Instant::now();
+    let store = Store::open(&path);
+
+    assert!(store.is_ok(), "{:?}", store.err());
+    assert!(started.elapsed() >= held_for, "it waited for the lock");
+    release.join().unwrap();
+}

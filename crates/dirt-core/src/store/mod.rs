@@ -96,12 +96,18 @@ impl Store {
         if let Some(folder) = path.parent() {
             std::fs::create_dir_all(folder)?;
         }
-        let mut write_connection = schema::open_connection(&path)?;
-        let store_id = schema::set_up(&mut write_connection)?;
+        // Each step is tried again while the file is busy: see `schema`.
+        // Setting up the tables is safe to repeat, because it looks at what
+        // is there inside its own transaction.
+        let (mut write_connection, store_id) = schema::retry_while_busy(|| {
+            let mut connection = schema::open_connection(&path)?;
+            let store_id = schema::set_up(&mut connection)?;
+            Ok((connection, store_id))
+        })?;
         // Open every connection before starting any thread, so that a
         // failure here leaves nothing running.
         let read_connections = (0..READERS)
-            .map(|_| schema::open_reader(&path))
+            .map(|_| schema::retry_while_busy(|| schema::open_reader(&path)))
             .collect::<Result<Vec<_>>>()?;
 
         let mut threads = Vec::with_capacity(READERS + 1);
@@ -254,6 +260,11 @@ impl Store {
             .await
     }
 
+    /// How many notes the store holds, not counting deleted ones.
+    pub async fn note_count(&self) -> Result<usize> {
+        self.read(|c| notes::count(c)).await
+    }
+
     // ---- Documents ----
 
     /// Every note's CRDT document, deleted notes included.
@@ -354,6 +365,25 @@ impl Store {
     /// How many notes are waiting to be pushed.
     pub async fn unsent_count(&self) -> Result<usize> {
         self.read(|c| sync_state::unsent_count(c)).await
+    }
+
+    /// How many notes hold changes the server has not accepted, counting
+    /// the notes held back by a sync problem too: what deleting this store
+    /// now would lose.
+    pub async fn unsynced_count(&self) -> Result<usize> {
+        self.read(|c| sync_state::unsynced_count(c)).await
+    }
+
+    /// When a sync cycle last completed, as Unix milliseconds, or `None` if
+    /// none ever has.
+    pub async fn last_synced_ms(&self) -> Result<Option<i64>> {
+        self.read(|c| sync_state::last_synced(c)).await
+    }
+
+    /// Records that a sync cycle completed at `at_ms`.
+    pub async fn set_last_synced_ms(&self, at_ms: i64) -> Result<()> {
+        self.write(move |c| sync_state::set_last_synced(c, at_ms))
+            .await
     }
 
     /// Records that the server accepted `revision` of a note as change

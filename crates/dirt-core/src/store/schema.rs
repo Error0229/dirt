@@ -8,6 +8,15 @@
 //!    write-ahead-log mode. The busy timeout does not cover that switch.
 //! 2. Every write transaction starts with `BEGIN IMMEDIATE`, including the
 //!    one that sets up the tables.
+//!
+//! A third rule came from a test that failed once on a loaded machine: a
+//! store that finds the file busy while it opens tries again, for longer
+//! than one busy timeout. Several things can make an open find the file
+//! busy that waiting inside SQLite does not cover or cannot outlast: other
+//! processes writing without a pause, and the moment in which the last
+//! connection of another process closes and SQLite has the file to itself.
+//! A program that cannot open its notes cannot do anything, so opening is
+//! given more patience than a single write.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -18,6 +27,9 @@ use crate::Result;
 
 /// How long a connection waits for another process's write to finish.
 pub(super) const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long opening a store keeps trying while the file is busy.
+const OPEN_PATIENCE: Duration = Duration::from_secs(20);
 
 /// The version of the tables below, kept in SQLite's `user_version`.
 const SCHEMA_VERSION: i64 = 2;
@@ -72,6 +84,23 @@ fn is_busy(error: &rusqlite::Error) -> bool {
         error.sqlite_error_code(),
         Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
     )
+}
+
+/// Runs one step of opening a store, and runs it again for as long as it
+/// fails because the file is busy, up to [`OPEN_PATIENCE`]. The step must be
+/// safe to repeat.
+pub(super) fn retry_while_busy<T>(mut step: impl FnMut() -> Result<T>) -> Result<T> {
+    let started = Instant::now();
+    loop {
+        match step() {
+            Err(crate::Error::Sqlite(error))
+                if is_busy(&error) && started.elapsed() < OPEN_PATIENCE =>
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            outcome => return outcome,
+        }
+    }
 }
 
 /// Opens one connection the way every Dirt process must.

@@ -1,4 +1,4 @@
-use std::path::Path;
+use dirt_core::Store;
 
 use crate::commands::common::{
     format_note_lines, normalize_search_query, note_to_list_item, search_notes, NoteListItem,
@@ -9,10 +9,10 @@ pub async fn run_search(
     query: &str,
     limit: usize,
     as_json: bool,
-    db_path: &Path,
+    db: &Store,
 ) -> Result<(), CliError> {
     let normalized_query = normalize_search_query(query)?;
-    let notes = search_notes(&normalized_query, limit, db_path).await?;
+    let notes = search_notes(&normalized_query, limit, db).await?;
 
     if as_json {
         let json_items = notes

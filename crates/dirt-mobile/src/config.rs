@@ -1,7 +1,8 @@
 //! Runtime configuration handling for mobile.
 //!
-//! Just the data directory plumbing. The bearer token is not kept here;
-//! it lives in the OS secure-storage layer (see `services::auth_store`).
+//! Just the data directory plumbing. Nothing secret is kept here; the
+//! account's keys live in the device's secure storage (see
+//! `services::secure_storage`).
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
 use std::path::PathBuf;
@@ -31,6 +32,17 @@ fn fallback_mobile_data_directory() -> PathBuf {
                 .join("dirt")
         },
     )
+}
+
+/// The app's private files folder, which `MainActivity` knows as
+/// `filesDir`. The activity leaves the sign-in redirect there.
+#[cfg(target_os = "android")]
+pub fn android_files_directory() -> Option<PathBuf> {
+    android_process_name().map(|process_name| {
+        PathBuf::from("/data/user/0")
+            .join(process_name)
+            .join("files")
+    })
 }
 
 #[cfg(not(target_os = "android"))]

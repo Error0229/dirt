@@ -5,5 +5,5 @@
 mod database;
 mod export;
 
-pub use database::open_local_store;
+pub use database::{data_folder, open_local_store};
 pub use export::{export_notes_to_path, suggested_export_file_name, NotesExportFormat};

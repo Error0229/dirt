@@ -11,23 +11,9 @@ name = "dirt-mobile"
 path = "src/main.rs"
 
 [dependencies]
-# `default-features = false` opts out of dirt-core's `keyring-store`.
-# `dirt-mobile` is Android-only: the `[[bin]]` target, the
-# `[target.'cfg(target_os = "android")']` Dioxus deps below, and the
-# CI matrix (`cargo check -p dirt-mobile --target x86_64-linux-android`)
-# all only build for Android. iOS is not currently planned; if it
-# lands later this dep line should target-split — `cfg(target_os =
-# "android")` keeps `default-features = false`, while a
-# `cfg(target_os = "ios")` branch leaves them on so iOS gets the
-# Keychain backend via `keyring`'s `apple-native` feature.
-#
-# The opt-out is partly documentation-of-intent: even with default
-# features on, `dirt-core`'s `keyring` dep is already target-gated to
-# `cfg(not(target_os = "android"))`, so an Android build wouldn't
-# physically pull `keyring`. Making the opt-out explicit removes any
-# question about resolver behaviour for future Cargo versions and
-# matches the "no transitive features the consumer doesn't need"
-# rule we apply on the server side (`dirt-api`).
+# Without dirt-core's `keyring-store`: the app is Android-only, and on
+# Android the account's keys are kept in the platform's encrypted
+# preferences (`services::secure_storage`), not in a desktop keychain.
 dirt-core = { path = "../dirt-core", default-features = false }
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -38,13 +24,16 @@ thiserror.workspace = true
 [target.'cfg(target_os = "android")'.dependencies]
 dioxus = { workspace = true, features = ["mobile"] }
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
-# JNI bridge for the Android-side `TokenStore`. `ndk-context` exposes the
-# JavaVM + Activity handles the Dioxus mobile runtime publishes; `jni`
-# is the Rust binding to Android's Java APIs (KeyStore + AndroidX
-# EncryptedSharedPreferences). Android-only — host builds use the
-# file-backed fallback under `cfg(not(target_os = "android"))`.
+# JNI bridge for the device's secure storage. `ndk-context` exposes the
+# JavaVM and Activity handles the Dioxus mobile runtime publishes; `jni`
+# is the Rust binding to Android's Java APIs (KeyStore and AndroidX
+# EncryptedSharedPreferences).
 jni = "0.21"
 ndk-context = "0.1"
+# Opens the system browser on the sign-in page.
+webbrowser = "1"
+# The pause between looks for the sign-in redirect.
+tokio = { workspace = true }
 
 [build-dependencies]
 dotenvy = "0.15"
@@ -56,11 +45,6 @@ serde_json = { workspace = true }
 # temporary folder.
 tokio.workspace = true
 tempfile = "3"
-# `services::auth_flow` tests run the request / verify / logout steps
-# against a mock HTTP server, so a developer running
-# `cargo test -p dirt-mobile` on Windows / Linux exercises the sign-in
-# flow without an Android emulator.
-wiremock = { workspace = true }
 
 [lints]
 workspace = true

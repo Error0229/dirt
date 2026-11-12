@@ -306,6 +306,15 @@ pub(super) fn remove_unchanged(
     Ok(removed)
 }
 
+/// How many notes are not deleted.
+pub(super) fn count(connection: &Connection) -> Result<usize> {
+    let count: i64 =
+        connection.query_row("SELECT count(*) FROM notes WHERE deleted = 0", [], |row| {
+            row.get(0)
+        })?;
+    Ok(usize::try_from(count).unwrap_or_default())
+}
+
 pub(super) fn get(connection: &Connection, id: &NoteId) -> Result<Option<Note>> {
     Ok(connection
         .query_row(

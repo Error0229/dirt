@@ -5,7 +5,6 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
-use dirt_core::store::{store_path, StoreName};
 use dirt_core::{Note, NoteId, Store};
 use serde::Serialize;
 
@@ -25,9 +24,8 @@ pub struct NoteListItem {
 pub async fn list_notes(
     limit: usize,
     tag: Option<&str>,
-    db_path: &Path,
+    db: &Store,
 ) -> Result<Vec<Note>, CliError> {
-    let db = open_database(db_path)?;
     if let Some(tag_name) = tag {
         Ok(db.list_notes_by_tag(tag_name, limit, 0).await?)
     } else {
@@ -35,10 +33,8 @@ pub async fn list_notes(
     }
 }
 
-pub async fn list_all_notes(db_path: &Path) -> Result<Vec<Note>, CliError> {
+pub async fn list_all_notes(db: &Store) -> Result<Vec<Note>, CliError> {
     const PAGE_SIZE: usize = 500;
-
-    let db = open_database(db_path)?;
 
     let mut notes = Vec::new();
     let mut offset = 0usize;
@@ -57,12 +53,7 @@ pub async fn list_all_notes(db_path: &Path) -> Result<Vec<Note>, CliError> {
     Ok(notes)
 }
 
-pub async fn search_notes(
-    query: &str,
-    limit: usize,
-    db_path: &Path,
-) -> Result<Vec<Note>, CliError> {
-    let db = open_database(db_path)?;
+pub async fn search_notes(query: &str, limit: usize, db: &Store) -> Result<Vec<Note>, CliError> {
     Ok(db.search_notes(query, limit).await?)
 }
 
@@ -310,23 +301,4 @@ pub fn create_temp_note_file_path() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_nanos());
     env::temp_dir().join(format!("dirt-note-{}-{now}.md", std::process::id()))
-}
-
-pub fn resolve_db_path(cli_db_path: Option<PathBuf>) -> PathBuf {
-    cli_db_path
-        .or_else(|| env::var_os("DIRT_DB_PATH").map(PathBuf::from))
-        .unwrap_or_else(default_db_path)
-}
-
-/// The local store's file, which the desktop app opens too, so both show
-/// the same notes.
-pub fn default_db_path() -> PathBuf {
-    let data_folder = dirs::data_dir()
-        .unwrap_or_else(|| panic!("Failed to resolve CLI data directory"))
-        .join("dirt");
-    store_path(&data_folder, &StoreName::Local)
-}
-
-pub fn open_database(path: &Path) -> Result<Store, CliError> {
-    Ok(Store::open(path)?)
 }

@@ -12,8 +12,8 @@ use common::{
     sign_in_again, sign_with_another_key, try_register,
 };
 use dirt_proto::api::{
-    limits, DeviceInfo, DeviceList, DeviceStatus, PushOutcome, RegisterDeviceResponse,
-    EPOCH_HEADER, PROTOCOL_HEADER,
+    limits, DeviceInfo, DeviceList, DeviceStatus, NonceResponse, PushOutcome,
+    RegisterDeviceResponse, EPOCH_HEADER, PROTOCOL_HEADER,
 };
 use serde_json::json;
 use sqlx::PgPool;
@@ -80,6 +80,17 @@ async fn the_first_device_is_approved_and_later_ones_wait(pool: PgPool) {
     let other = register(&app, "bob", "Laptop").await;
     assert_ne!(other.account_id, first.account_id);
     assert!(other.first_device);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_nonce_comes_with_where_to_sign_in(pool: PgPool) {
+    let app = app(pool);
+    let answer: NonceResponse = call(&app, Method::POST, "/v1/nonces", None, None)
+        .await
+        .json();
+    assert_eq!(answer.issuer, common::ISSUER);
+    assert_eq!(answer.client_id, common::CLIENT_ID);
+    assert_eq!(answer.expires_in_secs, limits::NONCE_LIFETIME_SECS);
 }
 
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
@@ -313,8 +324,21 @@ async fn a_pending_device_can_only_ask_about_itself(pool: PgPool) {
 
     // Nothing the pending device tried had any effect.
     assert_eq!(pull(&app, &first.token, 0).await.items.len(), 1);
+
+    // It may remove itself, which is what signing out of it does.
+    let path = format!("/v1/devices/{}", pending.device_id);
+    let answer = call(&app, Method::DELETE, &path, Some(&pending.token), None).await;
+    assert_eq!(answer.status, StatusCode::OK);
+    let after = get(&app, "/v1/devices/me", Some(&pending.token)).await;
+    assert_eq!(after.code(), "device_revoked");
+    // That frees its place among the devices waiting.
+    assert_eq!(
+        register(&app, "alice", "Tablet").await.status,
+        DeviceStatus::Pending
+    );
+    // The removed device stays in the list, marked as revoked.
     let devices: DeviceList = get(&app, "/v1/devices", Some(&first.token)).await.json();
-    assert_eq!(devices.devices.len(), 2);
+    assert_eq!(devices.devices.len(), 3);
 }
 
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]

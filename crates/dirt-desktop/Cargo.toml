@@ -26,6 +26,8 @@ dioxus-query = "0.9.2"
 rfd = "0.15"
 thiserror.workspace = true
 single-instance = "0.3"
+# Opens the system browser on the sign-in page.
+webbrowser = "1"
 
 [build-dependencies]
 serde.workspace = true

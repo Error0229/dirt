@@ -51,6 +51,7 @@ pub fn QuickCapture() -> Element {
                 match db.create_note(&text).await {
                     Ok(note) => {
                         tracing::info!("Quick captured note: {}", note.id);
+                        state.note_changed();
                         invalidate_notes_query().await;
                     }
                     Err(e) => {

@@ -1,48 +1,67 @@
 //! Main application component.
 //!
-//! Notes are kept in the local store on this device; nothing syncs them.
-//!
-//! The session bearer lives in the OS-native keyring
-//! ([`KeyringTokenStore`]), not in an environment variable. Signing in
-//! through Settings → Account records who is signed in and has no other
-//! effect.
+//! The app holds one [`Session`], which says who is signed in, which note
+//! store is in use and how sync is going. Without a server in the build
+//! there is no session and notes stay in the local store.
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use dioxus::desktop::{window, LogicalPosition, LogicalSize};
+use dioxus::desktop::tao::event::{Event, WindowEvent};
+use dioxus::desktop::{use_wry_event_handler, window, LogicalPosition, LogicalSize};
 use dioxus::prelude::*;
-use dirt_core::auth::{AuthClient, KeyringTokenStore, StoredToken};
 use dirt_core::models::Note;
+use dirt_core::session::{Session, SessionState};
+use dirt_core::sync::worker::{SyncStatus, Trigger};
 use dirt_core::Store;
 
-use crate::bootstrap_config::{load_bootstrap_config, BootstrapConfig};
+use crate::bootstrap_config::load_bootstrap_config;
 use crate::components::{QuickCapture, SettingsPanel};
-use crate::queries::use_notes_query;
-use crate::services::open_local_store;
-use crate::state::{AppState, AuthDeps};
+use crate::queries::{invalidate_notes_query, use_notes_query};
+use crate::services::{data_folder, open_local_store};
+use crate::state::AppState;
 use crate::theme::{resolve_theme, ResolvedTheme};
 use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
 use crate::views::Home;
 use crate::{HOTKEY_TRIGGERED, TRAY_ENABLED};
 
-/// Keyring service identifier for the desktop session token. Matches
-/// the values used in [`dirt-cli`](../../../dirt-cli/src/commands/auth_cmd.rs)
-/// so the two binaries share one keyring slot — logging in on the CLI
-/// keeps you signed in on the desktop app and vice versa.
-const KEYRING_SERVICE: &str = "dev.dirt.session";
-/// Per-user discriminator inside the keyring service slot. Solo phase
-/// uses a static `"default"`; multi-user / multi-account would pivot to
-/// a user identifier.
-const KEYRING_ACCOUNT: &str = "default";
+/// Set when the window gains focus: the person has come back to the app.
+static WINDOW_FOCUSED: AtomicBool = AtomicBool::new(false);
+
+/// The stores the app starts with, and the session if the build has a
+/// server to sync with.
+struct Opened {
+    notes: Store,
+    device: Store,
+    session: Option<Session>,
+}
+
+fn open_stores(server_url: Option<&str>) -> Result<Opened, String> {
+    if let Some(url) = server_url {
+        let session = Session::on_this_computer(url, data_folder(), true)
+            .map_err(|error| error.to_string())?;
+        Ok(Opened {
+            notes: session.store(),
+            device: session.device_store(),
+            session: Some(session),
+        })
+    } else {
+        let local = open_local_store().map_err(|error| error.to_string())?;
+        Ok(Opened {
+            notes: local.clone(),
+            device: local,
+            session: None,
+        })
+    }
+}
 
 /// Root application component
 #[component]
 pub fn App() -> Element {
     // State signals
     let mut notes = use_signal(Vec::new);
-    let current_note_id = use_signal(|| None);
+    let mut current_note_id = use_signal(|| None);
     let search_query = use_signal(String::new);
     let active_tag_filter = use_signal(|| None::<String>);
     let mut settings = use_signal(dirt_core::models::Settings::default);
@@ -52,53 +71,105 @@ pub fn App() -> Element {
     let note_list_visible = use_signal(|| true);
     let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
     let mut db_service: Signal<Option<Arc<Store>>> = use_signal(|| None);
+    let mut device_store: Signal<Option<Arc<Store>>> = use_signal(|| None);
     let mut startup_error: Signal<Option<String>> = use_signal(|| None);
-    let mut signed_in = use_signal(|| None);
-    // Bootstrap is build-baked (see `bootstrap_config::load_bootstrap_config`)
-    // and never changes at runtime. Loading it into a local rather than a
-    // `Signal` lets us build `auth_deps` synchronously below: the
-    // `_db_init_task` `use_resource` reads `auth_deps` early to restore
-    // the signed-in account, and must see the final value when it does.
+    let mut session: Signal<Option<Session>> = use_signal(|| None);
+    let mut session_state = use_signal(|| SessionState::SignedOut);
+    let mut sync_status = use_signal(SyncStatus::default);
+    // The server address is baked into the build and never changes while
+    // the app runs.
     let bootstrap = load_bootstrap_config();
+    let server_url = bootstrap.managed_api_base_url();
 
-    // Build the auth deps once from `bootstrap`. Same pattern as
-    // `dirt-mobile::app_shell::build_auth_deps`: every field is
-    // populated synchronously so any downstream `use_resource` /
-    // `use_effect` reading the signal sees a final value on first
-    // render. The signal is never mutated after init — it stays in a
-    // `Signal` only so it can be shared via `use_context_provider`.
-    let auth_deps: Signal<AuthDeps> = use_signal(|| build_auth_deps(&bootstrap));
+    // Open the stores, and the session if there is a server, then load
+    // this device's settings.
+    let _db_init_task = use_resource(move || {
+        let server_url = server_url.clone();
+        async move {
+            let opened = match open_stores(server_url.as_deref()) {
+                Ok(opened) => opened,
+                Err(error) => {
+                    tracing::error!("Failed to open the note store: {error}");
+                    startup_error.set(Some(format!("Could not open your notes: {error}")));
+                    return;
+                }
+            };
+            let loaded_settings = match opened.device.load_settings().await {
+                Ok(settings) => settings,
+                Err(error) => {
+                    tracing::error!("Failed to load desktop settings: {error}");
+                    startup_error.set(Some(format!("Could not read your settings: {error}")));
+                    return;
+                }
+            };
+            theme.set(resolve_theme(loaded_settings.theme));
+            settings.set(loaded_settings);
 
-    // Open the local store and load the settings; once that is done,
-    // restore the signed-in account from the keyring.
-    let _db_init_task = use_resource(move || async move {
-        match open_local_store() {
-            Ok(db) => {
-                let db = Arc::new(db);
-
-                let loaded_settings = match db.load_settings().await {
-                    Ok(settings) => settings,
-                    Err(error) => {
-                        tracing::error!("Failed to load desktop settings: {error}");
-                        startup_error.set(Some(format!("Could not read your settings: {error}")));
-                        db_service.set(None);
-                        return;
-                    }
-                };
-                let resolved_theme = resolve_theme(loaded_settings.theme);
-                settings.set(loaded_settings);
-                theme.set(resolved_theme);
-
-                db_service.set(Some(db));
-
-                let stored = stored_session(&auth_deps.read());
-                signed_in.set(stored);
+            device_store.set(Some(Arc::new(opened.device)));
+            db_service.set(Some(Arc::new(opened.notes)));
+            if let Some(opened_session) = &opened.session {
+                session_state.set(opened_session.state());
+                sync_status.set(opened_session.sync_status());
             }
-            Err(error) => {
-                tracing::error!("Failed to initialize database: {error}");
-                startup_error.set(Some(format!("Could not open your notes: {error}")));
-                db_service.set(None);
+            session.set(opened.session);
+        }
+    });
+
+    // Follow the session: when the person signs in or out, the store in use
+    // changes with them.
+    let _session_watch = use_resource(move || {
+        let current = session();
+        async move {
+            let Some(current) = current else { return };
+            let mut states = current.watch_state();
+            while states.changed().await.is_ok() {
+                let state = *states.borrow_and_update();
+                session_state.set(state);
+                let store = current.store();
+                let same_store = db_service
+                    .peek()
+                    .as_ref()
+                    .is_some_and(|open| open.path() == store.path());
+                if !same_store {
+                    current_note_id.set(None);
+                    db_service.set(Some(Arc::new(store)));
+                }
+                if state == SessionState::SignedOut {
+                    // The account's store has been let go of above, so its
+                    // files can go now.
+                    current.remove_signed_out_stores();
+                }
             }
+        }
+    });
+
+    // Follow sync: show its status, and reload the list when notes arrive
+    // from another device.
+    let _sync_watch = use_resource(move || {
+        let current = session();
+        async move {
+            let Some(current) = current else { return };
+            let mut statuses = current.watch_sync();
+            let mut pulled = statuses.borrow().pulled;
+            while statuses.changed().await.is_ok() {
+                let status = statuses.borrow_and_update().clone();
+                if status.pulled != pulled {
+                    pulled = status.pulled;
+                    invalidate_notes_query().await;
+                }
+                sync_status.set(status);
+            }
+        }
+    });
+
+    // The window gaining focus is the person coming back to the app.
+    use_wry_event_handler(move |event, _| {
+        if let Event::WindowEvent {
+            event: WindowEvent::Focused(true),
+            ..
+        } = event
+        {
+            WINDOW_FOCUSED.store(true, Ordering::SeqCst);
         }
     });
 
@@ -139,6 +210,19 @@ pub fn App() -> Element {
                     tracing::info!("Quit requested from tray");
                     std::process::exit(0);
                 }
+            }
+
+            // The person came back to the app. The CLI may have signed in or
+            // out, or written notes, in the meantime: notice both, and sync
+            // unless that just happened.
+            if WINDOW_FOCUSED.swap(false, Ordering::SeqCst) {
+                if let Some(current) = session.peek().clone() {
+                    if let Err(error) = current.reload() {
+                        tracing::error!("Could not re-read the sign-in: {error}");
+                    }
+                    current.notify(Trigger::Returned);
+                }
+                invalidate_notes_query().await;
             }
 
             // Check if hotkey was triggered
@@ -207,7 +291,6 @@ pub fn App() -> Element {
         }
     });
 
-    use_context_provider(|| auth_deps);
     use_context_provider(|| AppState {
         notes,
         current_note_id,
@@ -216,8 +299,11 @@ pub fn App() -> Element {
         settings,
         theme,
         db_service,
+        device_store,
         startup_error,
-        signed_in,
+        session,
+        session_state,
+        sync_status,
         settings_open,
         quick_capture_open,
         note_list_visible,
@@ -258,53 +344,6 @@ pub fn App() -> Element {
                     SettingsPanel {}
                 }
             }
-        }
-    }
-}
-
-/// Build the per-process auth dependencies from the build-baked
-/// bootstrap.
-///
-/// Synchronous on purpose: the `_db_init_task` `use_resource` reads
-/// `auth_deps` as soon as the store is open, so every field must hold
-/// its final value at signal init. `bootstrap` is constant for the
-/// lifetime of the process, so there is nothing for the reactive layer
-/// to react to anyway.
-fn build_auth_deps(bootstrap: &BootstrapConfig) -> AuthDeps {
-    let api_base_url = bootstrap
-        .dirt_api_base_url
-        .as_deref()
-        .filter(|value| !value.trim().is_empty());
-    let (auth_client, normalized_url) =
-        api_base_url.map_or((None, None), |url| match AuthClient::new(url) {
-            Ok(client) => {
-                let normalized = client.base_url().to_string();
-                (Some(Arc::new(client)), Some(normalized))
-            }
-            Err(err) => {
-                tracing::error!("AuthClient build failed for `{url}`: {err}");
-                (None, None)
-            }
-        });
-    AuthDeps {
-        auth_client,
-        token_store: Arc::new(KeyringTokenStore::new(KEYRING_SERVICE, KEYRING_ACCOUNT)),
-        api_base_url: normalized_url,
-    }
-}
-
-/// The session saved in the keyring, if there is one.
-///
-/// Returns `None` when no API base URL is configured: the Account tab
-/// can then neither sign in nor sign out, so it does not show a saved
-/// session as signed in.
-fn stored_session(deps: &AuthDeps) -> Option<StoredToken> {
-    deps.auth_client.as_ref()?;
-    match deps.token_store.load() {
-        Ok(stored) => stored,
-        Err(error) => {
-            tracing::error!("Failed to read the saved session: {error}");
-            None
         }
     }
 }

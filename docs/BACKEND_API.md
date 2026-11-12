@@ -50,8 +50,13 @@ Answers `{"ok": true, "protocol": 1}` without touching the database.
 Returns a single-use value for the Clerk sign-in:
 
 ```json
-{ "nonce": "…", "expires_in_secs": 600 }
+{ "nonce": "…", "expires_in_secs": 600,
+  "issuer": "https://….clerk.accounts.dev", "client_id": "…" }
 ```
+
+`issuer` and `client_id` say where to sign in. A client is configured with
+the server's address only and learns the identity provider here, so the two
+cannot disagree about it.
 
 The client passes it to Clerk as the OpenID Connect `nonce`. Clerk's ID token
 is valid for a day; binding it to a value that works once means a copied
@@ -105,6 +110,9 @@ The account's devices, for an approved device:
 
 Removes a device from the account. Its token stops working with its next
 request. A device in another account is reported as not found.
+
+An approved device may remove any device of its account. A pending device may
+remove only itself, which is what signing out of it does.
 
 ### `POST /v1/notes/push`
 

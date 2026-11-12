@@ -173,6 +173,8 @@ and when they change.
 - Before sign-in, the client asks our server for a single-use nonce and passes
   it to Clerk. The ID token stays valid for a day, so without the nonce it
   could be replayed.
+- The same answer names the Clerk issuer and the client ID. A client is
+  configured with our server's address only.
 - The client sends Clerk's ID token to our server once, when registering the
   device. The server verifies the signature against Clerk's public keys and
   checks the issuer, the audience, the expiry and the nonce. It maps the Clerk

@@ -12,10 +12,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dirt_proto::api::{
-    DeviceInfo, DeviceList, ErrorBody, ErrorClass, ErrorCode, NonceResponse, PullResponse,
-    PushRequest, PushResponse, RegisterDeviceRequest, RegisterDeviceResponse, PROTOCOL_HEADER,
-    PROTOCOL_VERSION,
+    DeviceInfo, DeviceList, ErrorBody, NonceResponse, PullResponse, PushRequest, PushResponse,
+    RegisterDeviceRequest, RegisterDeviceResponse, PROTOCOL_HEADER, PROTOCOL_VERSION,
 };
+// What a client needs in order to act on a failure, re-exported so that the
+// interface crates do not depend on the protocol crate for it.
+pub use dirt_proto::api::{ErrorClass, ErrorCode};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use uuid::Uuid;

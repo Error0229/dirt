@@ -1,33 +1,32 @@
 //! Data access layer for the mobile app.
 
-#[cfg(target_os = "android")]
-use std::path::PathBuf;
+use std::path::Path;
 
 use dirt_core::models::{Note, NoteId};
-#[cfg(target_os = "android")]
-use dirt_core::store::{store_path, StoreName};
 use dirt_core::{Error, Result, Store};
-
-#[cfg(target_os = "android")]
-use crate::config::default_mobile_data_directory;
 
 const DEFAULT_NOTES_LIMIT: usize = 100;
 const EXPORT_NOTES_PAGE_SIZE: usize = 500;
 
 /// Thin wrapper around the shared core [`Store`] that adds the mobile
-/// app's defaults: where the database lives, how many notes the list
-/// shows, and trimming of note content.
+/// app's defaults: how many notes the list shows, and trimming of note
+/// content. Which store it wraps is the session's decision.
 #[derive(Clone)]
 pub struct MobileNoteStore {
     db: Store,
 }
 
 impl MobileNoteStore {
-    /// Open the local store at the default mobile database path.
-    #[cfg(target_os = "android")]
-    pub fn open_default() -> Result<Self> {
-        let db = Store::open(default_db_path())?;
-        Ok(Self { db })
+    /// Wraps the store the session says is in use.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub const fn new(db: Store) -> Self {
+        Self { db }
+    }
+
+    /// The file of the store this wraps, which tells two stores apart.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn path(&self) -> &Path {
+        self.db.path()
     }
 
     /// Open a store on a file inside a new temporary folder, for tests.
@@ -90,12 +89,6 @@ fn normalize_content(content: &str) -> Result<String> {
         ));
     }
     Ok(normalized.to_string())
-}
-
-/// The database file of the local store under the mobile data directory.
-#[cfg(target_os = "android")]
-pub fn default_db_path() -> PathBuf {
-    store_path(&default_mobile_data_directory(), &StoreName::Local)
 }
 
 #[cfg(test)]

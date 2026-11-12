@@ -149,11 +149,19 @@ pub struct ErrorBody {
 
 // ---- Devices ----
 
-/// `POST /v1/nonces`: a value to put in the Clerk sign-in as its nonce.
+/// `POST /v1/nonces`: a value to put in the Clerk sign-in as its nonce,
+/// with where to sign in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NonceResponse {
     pub nonce: String,
     pub expires_in_secs: u32,
+    /// The identity provider this server accepts sign-ins from. A client
+    /// is configured with the server's address only and learns the rest
+    /// here, so the two can never disagree about where to sign in.
+    pub issuer: String,
+    /// The OAuth client ID to sign in with. It is a public client: there
+    /// is no secret.
+    pub client_id: String,
 }
 
 /// `POST /v1/devices`: registers the device that just signed in.

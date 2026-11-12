@@ -731,12 +731,24 @@ erDiagram
 - **Exit:** the simulation and tampering tests pass; the desktop signs in and
   syncs with one device; #211 and #216 are closed.
 
-**Progress (2026-11-11):** built in two parts, planned in
-`docs/plans/2026-11-11-step-5-encryption-and-sync-plan.md`. Part 5a is done:
-the crypto module, the store's sync state, the server client, the sync cycle
-and the simulation harness (`crates/dirt-sim`), with the simulation and
-tampering tests passing. Part 5b, sign-in and the clients, is next. No client
-syncs yet.
+**Result (2026-11-12): done.** Built in two parts, planned and reported in
+`docs/plans/2026-11-11-step-5-encryption-and-sync-plan.md`. Part 5a: the
+crypto module, the store's sync state, the server client, the sync cycle and
+the simulation harness (`crates/dirt-sim`). Part 5b: sign-in, the secrets
+module, the session, the event-driven worker, and the three clients on top
+of them, with the old sign-in and HTTP clients deleted. A device signs in
+through Clerk and syncs with the server on `dirt-trial`. #234, #211 and #216
+are closed.
+
+Carried forward:
+
+- To step 6: the account reset must work for an account whose first device
+  never saved its key. Sign-out is refused on every account until the
+  recovery phrase exists.
+- To step 7: the list of notes that could not be synced, in every client;
+  the desktop app's Sign in button tried against Clerk by a person. Sync on
+  return to the app, which the plan put in step 7, was built here for both
+  the desktop app and Android.
 
 ### Step 6: More devices
 
@@ -745,7 +757,9 @@ syncs yet.
     open (amendment D1).
   - The recovery phrase.
   - The device list with removal.
-  - Account reset and account deletion (amendment C2).
+  - Account reset and account deletion (amendment C2). The reset must work
+    for an account whose first device never saved its key, which step 5
+    found can happen if the app stops at the wrong moment.
   - Fresh security docs.
 - **Pointer from research:** Matrix's short-code verification is the
   established protocol to model. The `vodozemac` crate implements its key

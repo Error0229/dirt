@@ -7,14 +7,14 @@ repository.workspace = true
 description = "Core library for Dirt - models, database, and business logic"
 
 [features]
-# Default ON for desktop / CLI / mobile consumers (the mobile module
-# itself is target-gated to non-Android, so this is a no-op on Android
-# builds). `dirt-sim` opts out via `default-features = false` so that its
-# tests build on a Linux image without libdbus.
+# On by default, for the desktop app and the CLI. `dirt-sim` and
+# `dirt-mobile` turn it off: the simulation keeps secrets in memory and
+# must build on a Linux image without libdbus, and Android has its own
+# secure storage.
 default = ["keyring-store"]
 
-# Enables `auth::KeyringTokenStore` and the underlying `keyring` crate.
-# `sync-secret-service` requires `libdbus-1-dev` on Linux.
+# Enables `secrets::KeyringSecrets` and the `keyring` crate under it. On
+# Linux that needs `libdbus-1-dev`.
 keyring-store = ["dep:keyring"]
 
 [dependencies]
@@ -28,28 +28,25 @@ uuid.workspace = true
 chrono.workspace = true
 regex.workspace = true
 rusqlite.workspace = true
-tokio.workspace = true
+# `net` and `io-util` are for the listener the browser returns to at sign-in.
+tokio = { workspace = true, features = ["net", "io-util"] }
 tracing.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-# Best-effort scrub of `StoredToken`'s session_token / session_id heap
-# allocations on drop. Already a transitive dep through `keyring`, so
-# promoting it to direct costs nothing in the lockfile.
+# Clears keys from memory when they are dropped, as far as that can be done.
 zeroize = { version = "1.8", features = ["derive"] }
 # Note encryption and device keys. Audited implementations; nothing in this
 # crate implements a cipher itself.
 chacha20poly1305 = "0.10"
+base64 = "0.22"
+# The PKCE challenge of the sign-in is a SHA-256 hash.
+sha2 = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 
-# Platform-native secret store for `auth::KeyringTokenStore`.
-# Target-gated to non-Android because the `keyring` crate has no
-# Android backend; `dirt-mobile` will provide its own Android KeyStore
-# token store in P2.7. The features here line up with each desktop OS's
-# native store: Keychain on macOS, Credential Manager on Windows,
-# Secret Service / DBus on Linux.
-#
-# Marked optional so the `keyring-store` Cargo feature can flip it
-# off entirely, which `dirt-sim` needs on Linux images where the libdbus
-# headers are absent.
+# The operating system's keychain, for `secrets::KeyringSecrets`: Keychain
+# on macOS, Credential Manager on Windows, the Secret Service over DBus on
+# Linux. Not for Android, which the `keyring` crate does not support and
+# where `dirt-mobile` uses the platform's encrypted preferences. Optional,
+# so that the `keyring-store` feature can leave it out altogether.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"], optional = true }
 
@@ -57,9 +54,7 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 # The deletion tests compare against plain yrs behaviour.
 yrs.workspace = true
 tempfile = "3"
-# Mock HTTP server for api_client + auth client tests. Pinned in
-# `[workspace.dependencies]` so dirt-core and dirt-cli share one version
-# (the `0.6` line pairs cleanly with reqwest 0.12).
+# A stand-in identity provider for the sign-in tests.
 wiremock = { workspace = true }
 
 [lints]

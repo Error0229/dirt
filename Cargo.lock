@@ -1890,13 +1890,14 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing-subscriber",
- "wiremock",
+ "webbrowser",
 ]
 
 [[package]]
 name = "dirt-core"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chacha20poly1305",
  "chrono",
  "dirt-proto",
@@ -1906,6 +1907,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "similar",
  "tempfile",
  "thiserror 2.0.21",
@@ -1940,6 +1942,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tray-icon 0.19.3",
+ "webbrowser",
 ]
 
 [[package]]
@@ -1960,7 +1963,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "wiremock",
+ "webbrowser",
 ]
 
 [[package]]
@@ -1985,8 +1988,11 @@ dependencies = [
  "http-body-util",
  "jsonwebtoken",
  "rand_core 0.6.4",
+ "reqwest",
  "rsa",
+ "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sqlx",
  "tempfile",
  "tokio",

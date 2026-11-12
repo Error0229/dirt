@@ -1,23 +1,30 @@
 //! dirt-core: everything the Dirt clients share.
 //!
 //! - [`notes`]: a note as a CRDT document, and what is derived from it.
-//! - [`store`]: the local SQLite database of notes, tags, search and settings.
+//! - [`store`]: the local SQLite database of notes, tags, search, settings
+//!   and sync state.
+//! - [`crypto`]: the account key, note encryption and the device key pair.
+//! - [`identity`]: signing in through the browser.
+//! - [`secrets`]: the device's secure storage.
+//! - [`api`]: the client for the Dirt server.
+//! - [`sync`]: the sync cycle and the worker that schedules it.
+//! - [`session`]: the one object a client holds: who is signed in, which
+//!   store is in use, and sync.
 //! - [`export`]: notes as JSON or Markdown.
-//! - [`auth`] and [`sync`]: the sign-in and HTTP clients for the server that
-//!   the redesign replaces in steps 4 and 5. Nothing here syncs notes until
-//!   then.
 //!
 //! The desktop app, the Android app and the CLI hold interface and platform
-//! code only. No SQL lives outside [`store`].
+//! code only. No SQL, HTTP or cryptography lives outside this crate.
 
 pub mod api;
-pub mod auth;
 pub mod config;
 pub mod crypto;
 pub mod error;
 pub mod export;
+pub mod identity;
 pub mod models;
 pub mod notes;
+pub mod secrets;
+pub mod session;
 pub mod store;
 pub mod sync;
 pub mod util;

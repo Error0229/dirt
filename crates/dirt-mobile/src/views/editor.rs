@@ -53,6 +53,7 @@ pub fn Editor() -> Element {
 
             match outcome {
                 Ok(()) => {
+                    state.note_changed();
                     refresh_notes_signal(&store, &mut state).await;
                     state.view.set(View::List);
                     state.selected_note_id.set(None);
@@ -83,6 +84,7 @@ pub fn Editor() -> Element {
 
             match store.delete_note(&id).await {
                 Ok(()) => {
+                    state.note_changed();
                     refresh_notes_signal(&store, &mut state).await;
                     state.view.set(View::List);
                     state.selected_note_id.set(None);

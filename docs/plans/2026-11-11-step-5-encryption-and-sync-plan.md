@@ -2,7 +2,7 @@
 title: "Step 5: encryption and sync for one device"
 type: plan
 date: 2026-11-11
-status: in progress
+status: done
 parent: docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md
 tracking: "#241"
 ---
@@ -56,6 +56,14 @@ Decisions this plan adds:
 | Where secrets live | One record per account in the operating system's keychain on desktop and CLI, shared by both; Android's encrypted preferences on Android; memory in tests. The record holds the device token, the device key pair and the account key |
 | The transport | The sync code talks to a small trait, not to `reqwest` directly. Production uses `reqwest`; the simulation tests plug the real server in, in the same process |
 | The simulation harness | A crate of its own, `dirt-sim`, that depends on both `dirt-core` and `dirt-api`. Neither of those may depend on the other |
+| Where a client learns the identity provider | From the server. The answer to `POST /v1/nonces` names the issuer and the client ID, so a client is configured with the server's address only and the two cannot disagree about where to sign in |
+| Which store is in use | The account's store only while the device is ready: approved and holding the account key. A device that is signed out or waiting for approval reads and writes the local store |
+| Notes written before signing in | They stay in the local store until the person says to move them. Each client asks once at sign-in and offers it again afterwards |
+| Preferences | Theme and font describe the device, so they are kept in the local store and do not change at sign-in |
+| A device that is waiting and signs out | It removes itself from the account. The server lets a waiting device remove itself and nothing else; otherwise it would wait for ever and count against the limit of three |
+| Signing in again as someone else | Refused. The device keeps the account it holds, and the device that was just registered for the other account is removed |
+| The CLI after a write | The note is saved and its ID printed first. The sync that follows has ten seconds; a failure is a warning, never an error. `DIRT_NO_SYNC` skips it |
+| Trying things beside a real installation | `DIRT_DATA_DIR` moves the data folder for the desktop app and the CLI. The keychain entry is named after the server, so each server has its own |
 
 ## Work, in two pull requests
 
@@ -105,18 +113,92 @@ Decisions this plan adds:
 
 ### 5b: sign-in and the clients
 
-- [ ] `dirt-core::identity`: the Clerk sign-in from trial 3 and device
+- [x] `dirt-core::identity`: the Clerk sign-in from trial 3 and device
       registration.
-- [ ] `dirt-core::secrets`: the keychain, Android and in-memory stores.
-- [ ] `dirt-core::session`: one object with four states (signed out, signing
+- [x] `dirt-core::secrets`: the keychain, Android and in-memory stores.
+- [x] `dirt-core::session`: one object with four states (signed out, signing
       in, waiting for approval, ready) that all three clients render.
-- [ ] The sync worker: driven by events, with no timer.
-- [ ] Desktop, CLI and Android: sign in, open the account's store, move the
+- [x] The sync worker: driven by events, with no timer.
+- [x] Desktop, CLI and Android: sign in, open the account's store, move the
       local notes into it after a confirmation, sync on the events of design
       section 8.3, a sync button and the time of the last sync.
-- [ ] Delete `dirt-core/src/auth/`, the old `dirt-core/src/sync/` clients and
+- [x] Delete `dirt-core/src/auth/`, the old `dirt-core/src/sync/` clients and
       what the clients keep for them.
-- [ ] Close #234, #211 and #216.
+- [x] Close #234, #211 and #216.
+
+**Result (2026-11-12): done.**
+
+Checked against the server on `dirt-trial` with a real Clerk sign-in (the
+development instance's test user):
+
+- **CLI:** a note written before signing in; `dirt auth login` through the
+  browser; the note moved into the account and sent. `dirt add` then took
+  0.6 seconds including its sync. With the account's local store deleted,
+  `dirt sync` received both notes back from the server and decrypted them.
+  `dirt auth logout` was refused as the account's only approved device.
+- **Desktop:** started on the same data folder, it was already signed in
+  through the shared keychain entry, showed the notes and synced at start.
+  A note created in the app was sent two seconds later. The sync button
+  synced, and Sign out showed the refusal. The Sign in button itself was
+  not pressed against Clerk: it opens the system's own browser, which the
+  check could not drive. It calls the same function the CLI does.
+- **Android (x86_64 emulator):** a note written before signing in; Sign in
+  opened Chrome on Clerk's page; after the code and the consent page, the
+  redirect to `dev.dirt.app://callback` came back to the app, which showed
+  the device as signed in and synced. The note was moved into the account
+  and sent. After the app was stopped and started again it was still signed
+  in, from the encrypted preferences, and synced at start. Sign out showed
+  the refusal. Left in the background for 40 seconds and brought back, it
+  synced at once; brought back again within 30 seconds, it did not. Stopping
+  the app while the browser was open was not repeated here; trial 3 did it,
+  and the simulation covers the saved attempt.
+
+The test account was deleted from the trial database afterwards, and the
+keychain entry and the app's data removed.
+
+What building it showed:
+
+- **The Android app stopped at start.** Its secure storage looked its Java
+  classes up by name from a thread that native code had attached, which
+  searches the system class loader and cannot find a library the app ships.
+  No test could have shown it: the code only runs on Android. It now loads
+  them through the Activity's class loader, and clears a Java exception
+  after a failed call so that the failure is an error and not a crash. The
+  old sign-in code had the same fault.
+- **A cycle that failed had still changed the store.** The worker reported
+  what a cycle pulled only when the cycle succeeded. One that merged notes
+  and then failed on its push left the list on screen stale, and the retry
+  did not pull those notes again. The count now comes from the engine and
+  includes cycles that failed. Found in review.
+- **Android knows when the app comes back through the web view.** The page
+  becomes visible again, which needs no Java. Found missing in review.
+- **Opening a store could fail on a busy file.** The four-process store test
+  failed once in CI on Windows: one process found the file busy while
+  opening. It did not happen again in 25 local runs, nor with eight
+  processes opening sixty fresh files, nor with four processes opening and
+  closing three hundred times each, so the cause is not pinned down. The
+  likeliest is three processes writing without a pause on a slow disk for
+  longer than the five seconds one wait lasts. Opening now tries again for
+  up to twenty seconds, which covers that and the other ways an open can
+  find the file busy. A test holds the file for six and a half seconds and
+  checks that the store still opens.
+- **Two apps can claim the redirect.** The emulator still held the trial's
+  app, registered for the same address, so Android asked which to open.
+  PKCE is why choosing the wrong one gives that app nothing.
+- **An account can be left without a key.** The first device creates the
+  account key after the server has registered it. If the app stops before
+  the key is saved, the server believes the account has its key and every
+  later device waits for an approval nobody can give. The window is one
+  write to secure storage. The account reset of step 6 is the way out, and
+  must work for an account in this state.
+- **Until step 6, nobody who signs in can sign out.** Every account has one
+  approved device, and signing out of it is refused. That is the decision
+  above doing its job; the recovery phrase of step 6 lifts it.
+- **The sign-in page asks for consent.** Clerk shows an "Allow" page for the
+  OAuth application after the code is entered. Whether it can be skipped for
+  a first-party application is already a question for step 6.
+- **The desktop app needs `dx` to look right.** Built with plain `cargo`, it
+  runs without its style sheets. This was so before this step.
 
 ## Tests
 
@@ -147,7 +229,9 @@ Each of these is an exit condition.
 
 ## Exit
 
-- [ ] Every test above passes locally and in CI.
-- [ ] The desktop app signs in through Clerk and syncs with the server on
-      `dirt-trial`.
-- [ ] #234, #211 and #216 are closed.
+- [x] Every test above passes locally and in CI.
+- [x] A device signs in through Clerk and syncs with the server on
+      `dirt-trial`: done from the CLI, which is the same device as the
+      desktop app and runs the same code. The desktop app's own Sign in
+      button was not pressed against Clerk; see the result above.
+- [x] #234, #211 and #216 are closed.

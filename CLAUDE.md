@@ -8,14 +8,14 @@ The project is also a system design case study. Multi-user accounts, three clien
 
 ## Status: redesign in progress
 
-`main` is partway through an approved redesign: steps 1 to 4 of 9 are done, and the first half of step 5 (the sync core and its simulation tests). The clients run on the new local core and the new server is built, but no client talks to it yet: sync is off until the second half of step 5. Read both documents before changing architecture, sync, login or storage:
+`main` is partway through an approved redesign: steps 1 to 5 of 9 are done. One device signs in through Clerk and syncs its notes, encrypted, through the new server. A second device cannot be given the account key until step 6, so it waits. Read both documents before changing architecture, sync, login or storage:
 
 - `docs/plans/2026-11-10-system-redesign-design.md` - requirements, decisions and the target design
 - `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md` - build order, trials and clean-up
 
 Rules while the redesign is under way:
 
-- Do not extend code the design lists for deletion (section 14): the old HTTP clients `dirt-core/src/sync/api_client.rs` and `session_client.rs`, and the old login client in `dirt-core/src/auth/`. Step 5 replaces both. The new sync cycle is `dirt-core/src/sync/engine.rs`.
+- Do not extend code the design lists for deletion (section 14): `config_profiles.rs` in the CLI, which step 7 removes.
 - No SQL, HTTP or cryptography in a client crate. They belong in `dirt-core`.
 - `dirt-api` must not depend on `dirt-core`. The two share only `dirt-proto`. `dirt-sim`, the test harness, is the one crate that depends on both.
 - `rusqlite` is held at 0.39 by `sqlx` 0.9: see the comment in the root `Cargo.toml` before raising either.
@@ -33,10 +33,11 @@ What the code on `main` uses today:
 - **Local database**: SQLite through `rusqlite` with the bundled build, FTS5 for full-text search (`dirt-core::store`)
 - **Server**: `dirt-api`, axum on Vercel's serverless Rust runtime
 - **Server database**: Postgres 18 through `sqlx`; Neon in production, Docker locally
-- **Login**: the server accepts a Clerk ID token and issues a device token. The clients still hold the old email-code sign-in until step 5
-- **Sync**: none in the clients at present. The sync cycle, note encryption (XChaCha20-Poly1305) and the server client exist in `dirt-core` and are exercised by `dirt-sim`; nothing calls them from a client yet
+- **Login**: Clerk in the system browser (OAuth with PKCE, no Clerk SDK). The server checks the ID token once and issues a device token
+- **Sync**: encrypted note documents (XChaCha20-Poly1305), pulled, merged and pushed by `dirt-core::sync`. It runs on events (start, return to the app, a change, the sync button) and never on a timer
+- **Secrets**: the device token, device key and account key in the operating system's keychain (`keyring`) on desktop and CLI, and in Android's encrypted preferences
 
-What the redesign still moves to: Clerk sign-in in the clients, event-driven sync of encrypted documents, and end-to-end encryption. See the design's decision table.
+What the redesign still adds: giving the account key to more devices, the recovery phrase, account reset, and attachments. See the design's build order.
 
 ## Project Structure
 
@@ -44,7 +45,7 @@ What the redesign still moves to: Clerk sign-in in the clients, event-driven syn
 api/axum.rs        # Vercel serverless entry point (root package `dirt-vercel`)
 crates/
 ├── dirt-proto/    # Types shared by the server and the clients
-├── dirt-core/     # Notes as CRDT documents, the local store, encryption, the sync cycle, export, old login client
+├── dirt-core/     # Notes as CRDT documents, the local store, encryption, sign-in, the session, sync, export
 ├── dirt-api/      # The server: device registry and encrypted note blobs on Postgres
 ├── dirt-sim/      # Tests only: real client cores syncing through the real server in one process
 ├── dirt-desktop/  # Dioxus desktop application
@@ -62,10 +63,10 @@ docs/
 # Build all crates
 cargo build
 
-# Run desktop app
-cargo run -p dirt-desktop
-# Or use dx CLI for hot reload:
+# Run desktop app. Plain cargo runs it without its style sheets; dx bundles them:
 cd crates/dirt-desktop && dx serve
+# For a quick check that it starts:
+cargo run -p dirt-desktop
 
 # Run CLI
 cargo run -p dirt-cli

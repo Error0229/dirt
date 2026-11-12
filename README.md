@@ -12,19 +12,18 @@ A redesign is in progress, and `main` is partway through it.
 - **Build order:**
   [docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md](docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md)
 
-**Where it stands: step 5 of 9, half done.** The desktop app, the CLI and the
-Android app run on the new local core, the new server is built, and the sync
-core (note encryption, the sync cycle and the server client) is built and
-tested against the real server. **Sync is still off:** no client calls it
-yet. Notes stay on the device they were written on until the second half of
-step 5 adds sign-in and connects the clients.
+**Where it stands: step 5 of 9.** One device signs in through Clerk and syncs
+its notes through the new server, which stores only ciphertext it cannot
+read. **A second device cannot join yet:** it signs in and then waits, because
+handing it the account key is step 6. Until then sync keeps one device's
+notes backed up, and the desktop app and the CLI on one computer in step.
 
 ## Workspace layout
 
 | Crate | Purpose |
 |---|---|
 | `dirt-proto` | Types shared by the server and the clients. |
-| `dirt-core` | Everything the clients share: notes as mergeable documents, the local store (notes, tags, search, settings), note encryption, the sync cycle, export, and the old sign-in client. |
+| `dirt-core` | Everything the clients share: notes as mergeable documents, the local store (notes, tags, search, settings), note encryption, sign-in, the session, sync, and export. |
 | `dirt-desktop` | Dioxus desktop app. |
 | `dirt-mobile` | Dioxus Android app. |
 | `dirt-cli` | `dirt add`, `dirt list`, `dirt search`, `dirt export` and more. |
@@ -46,20 +45,42 @@ cargo run -p dirt-cli list
 Notes are saved to `dirt/stores/local/notes.db` under your platform's data
 directory (`%APPDATA%` on Windows). The desktop app opens the same file, so
 both show the same notes, and both can run at the same time. `--db-path` or
-`DIRT_DB_PATH` selects another file.
+`DIRT_DB_PATH` selects another file, which never syncs. A `dirt.db` left by
+an earlier version is not read and not changed.
 
-`dirt sync` reports that sync is unavailable. A `dirt.db` left by an earlier
-version is not read and not changed.
+### Sign in and sync
+
+Point the CLI at a server, then sign in through the browser:
+
+```bash
+dirt config init --api-base-url https://your-server.example
+dirt auth login      # opens the browser; --no-browser prints the address
+dirt auth status     # who is signed in, last sync, notes waiting
+dirt sync            # one sync, now
+```
+
+Signing in opens a store for the account, `stores/account-<id>/`, and asks
+whether to move the notes written before into it. After that, every `dirt`
+command that changes a note syncs once before it returns; the note is saved
+first, so a slow or missing network costs nothing but a warning.
+
+The CLI and the desktop app on one computer are one device. They share the
+data folder and the keychain entry, so signing in with either signs in both.
 
 ### Run the desktop app
 
 ```bash
-cargo run -p dirt-desktop
+cd crates/dirt-desktop && dx serve
 ```
 
-Settings → Account still holds the old email-code sign-in. It works only
-against a deployment of the old server, and signing in does not sync
-anything. Step 5 replaces it with sign-in through Clerk.
+`cargo run -p dirt-desktop` starts it too, but without its style sheets:
+`dx` is what bundles them.
+
+The server to sync with is fixed when the app is built: set
+`DIRT_API_BASE_URL` in `.env.client` (see `.env.client.example`). Without
+it the app keeps its notes on the device and Settings says so. With it,
+Settings → Account signs in through the browser, and Settings → Sync shows
+when the app last synced and has the sync button.
 
 ### Run the API server
 
@@ -76,8 +97,8 @@ cargo run -p dirt-api                # listens on 0.0.0.0:8080
 
 ## How the current code works
 
-- **Local first, and for now local only.** Every change is one transaction in
-  a local SQLite file. Nothing waits on a network.
+- **Local first.** Every change is one transaction in a local SQLite file.
+  Nothing waits on a network: sync runs afterwards, in the background.
 - **A note is a document that merges.** Each note is stored as a CRDT
   document. Its text, tags, search entry and last-edited time are derived from
   the document on every change. An edit records only the parts of the text
@@ -89,21 +110,36 @@ cargo run -p dirt-api                # listens on 0.0.0.0:8080
   the write lock, which is what lets the desktop app and the CLI share the
   file.
 - **A store per account.** Stores live in `stores/local/` and
-  `stores/account-<id>/`. Only `local` is used until sign-in opens an account
-  store in step 5.
+  `stores/account-<id>/`. A device that is signed out, or signed in but not
+  yet approved, uses `local`. Signing out removes the account's store from
+  the device.
+- **Signing in is Clerk's job, and nothing else is.** The app opens Clerk's
+  page in the system browser and receives an ID token. It shows that token to
+  the server once, to register the device; from then on the device uses its
+  own token and Clerk is out of the path.
+- **The server cannot read notes.** Each note leaves the device encrypted
+  under the account key, which the first device makes and the server never
+  sees. The key, the device's token and its key pair live in the operating
+  system's keychain, or in Android's encrypted preferences.
+- **Sync runs when something happens.** It runs when the app starts, when you
+  come back to it, a moment after a note changes, and when you press the
+  sync button. It retries by itself only while a note is waiting to be sent.
+  There is no timer, so an app left open and untouched shows what it had when
+  it last synced.
 
 ### Known limitations
 
-- **No sync** until the second half of step 5.
-- **The desktop app does not watch the file.** It shows a note written by the
-  CLI only when it next reloads its list, for example on restart. If the CLI
-  changes a note that is open in the desktop editor, the desktop app's next
-  save replaces that change.
-- **Signing in does nothing for notes yet.** The account screens still hold
-  the old email-code sign-in, which this repository's server no longer
-  answers. Step 5 replaces it and opens a store per account (issue #234).
-- **The server cannot yet approve a second device.** The first device of an
-  account is approved at once; later ones wait for step 6.
+- **One device per account.** The first device of an account is approved at
+  once. A later one signs in and waits: nothing can hand it the account key
+  until step 6.
+- **You cannot sign out yet.** Signing out deletes the account key from the
+  device, and on an account's only approved device that is the only copy.
+  It is refused until step 6 adds the recovery phrase.
+- **Lose the device, lose the notes.** For the same reason: until the
+  recovery phrase exists, the account key is in one place.
+- **The desktop app does not watch the file.** It reloads its list when its
+  window regains focus. If the CLI changes a note that is open in the desktop
+  editor, the desktop app's next save replaces that change.
 
 ## Testing
 
