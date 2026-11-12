@@ -50,6 +50,10 @@ pub struct NoteProblem {
     pub note_id: NoteId,
     pub reason: String,
     pub kind: ProblemKind,
+    /// The note's text on this device, to name it by. `None` for a note
+    /// this device does not hold: a blob that could not be read may belong
+    /// to a note it has never had.
+    pub text: Option<String>,
 }
 
 /// What ends a note's sync problem.
@@ -295,18 +299,22 @@ pub(super) fn set_problem(
 }
 
 pub(super) fn problems(connection: &Connection) -> Result<Vec<NoteProblem>> {
-    let mut statement = connection
-        .prepare("SELECT note_id, reason, retry_after_edit FROM sync_problems ORDER BY note_id")?;
+    let mut statement = connection.prepare(
+        "SELECT p.note_id, p.reason, p.retry_after_edit, n.text \
+           FROM sync_problems p LEFT JOIN notes n ON n.id = p.note_id \
+          ORDER BY p.note_id",
+    )?;
     let rows = statement.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, bool>(2)?,
+            row.get::<_, Option<String>>(3)?,
         ))
     })?;
     let mut problems = Vec::new();
     for row in rows {
-        let (id, reason, retry_after_edit) = row?;
+        let (id, reason, retry_after_edit, text) = row?;
         if let Ok(note_id) = id.parse() {
             let kind = if retry_after_edit {
                 ProblemKind::RetryAfterEdit
@@ -317,6 +325,7 @@ pub(super) fn problems(connection: &Connection) -> Result<Vec<NoteProblem>> {
                 note_id,
                 reason,
                 kind,
+                text,
             });
         }
     }

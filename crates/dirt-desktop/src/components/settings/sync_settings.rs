@@ -3,37 +3,41 @@
 //! Sync runs when the app starts, when its window regains focus, after a
 //! note changes, and when this button is pressed. Nothing syncs on a timer,
 //! so an app left open and untouched shows what it had when it last synced.
+//!
+//! What is shown, and in which words, comes from `dirt-core`'s sync
+//! overview, which the Android app and `dirt sync --verbose` show too.
 
 use dioxus::prelude::*;
-use dirt_core::api::ErrorClass;
 use dirt_core::session::SessionState;
 use dirt_core::store::NoteProblem;
+use dirt_core::sync::overview::SyncOverview;
 use dirt_core::sync::worker::Trigger;
+use dirt_core::util::{as_sentence, now_ms};
 
 use super::account_settings::session_of;
 use super::row::SettingRow;
 use crate::components::button::{Button, ButtonVariant};
 use crate::state::AppState;
-use crate::time_format::format_short_time;
 
 #[component]
 pub(super) fn SyncSettingsTab() -> Element {
     let state = use_context::<AppState>();
     let session = session_of(&state);
     let session_state = (state.session_state)();
-    let status = (state.sync_status)();
-    let mut problems = use_signal(Vec::<NoteProblem>::new);
+    let mut overview = use_signal(|| None::<SyncOverview>);
 
-    // The reasons are in the store; read them again whenever a sync ends.
+    // The counts and the notes that could not be synced are in the store;
+    // read them again whenever sync reports something new.
     use_effect(move || {
         let _ = (state.sync_status)();
-        let store = state.db_service.read().clone();
+        let _ = (state.session_state)();
+        let session = session_of(&state);
         spawn(async move {
-            let list = match store {
-                Some(store) => store.note_problems().await.unwrap_or_default(),
-                None => Vec::new(),
+            let read = match session {
+                Some(session) => session.sync_overview().await.ok(),
+                None => None,
             };
-            problems.set(list);
+            overview.set(read);
         });
     });
 
@@ -60,26 +64,26 @@ pub(super) fn SyncSettingsTab() -> Element {
         };
     }
 
-    let last_synced = status.last_synced_ms.map_or_else(
-        || "Never synced".to_owned(),
-        |at| match format_short_time(at).as_str() {
-            "now" => "Synced just now".to_owned(),
-            ago => format!("Synced {ago} ago"),
-        },
-    );
-    let failure = status.failure.as_ref().map(|failure| match failure.class {
-        ErrorClass::TryAgainLater => {
-            "The server could not be reached. Your notes are saved and will be sent later."
-                .to_owned()
-        }
-        ErrorClass::StopUntilSignedIn => {
-            "This device has to sign in again. See the Account tab.".to_owned()
-        }
-        ErrorClass::UpdateTheApp => {
-            "This version of Dirt is too old to sync. Update the app.".to_owned()
-        }
-        ErrorClass::ProblemWithOneNote => failure.message.clone(),
+    // Until the store has been read, the worker's own figures stand in.
+    let status = (state.sync_status)();
+    let shown = overview().unwrap_or_else(|| SyncOverview {
+        syncing: status.syncing,
+        last_synced_ms: status.last_synced_ms,
+        unsent: status.unsent,
+        failure: status.failure.clone(),
+        problems: Vec::new(),
     });
+    let last_synced = shown.last_synced(now_ms());
+    let waiting = shown.waiting();
+    let failure = shown
+        .failure
+        .as_ref()
+        .map(dirt_core::sync::worker::SyncFailure::advice);
+    let problem_count = match shown.problems.len() {
+        0 => None,
+        1 => Some("1 note could not be synced:".to_owned()),
+        count => Some(format!("{count} notes could not be synced:")),
+    };
 
     rsx! {
         SettingRow {
@@ -87,19 +91,18 @@ pub(super) fn SyncSettingsTab() -> Element {
             description: "Notes sync when you open or return to Dirt, after you change one, and when you press the button",
 
             div { class: "auth-panel",
-                div { class: "auth-status",
-                    if status.syncing { "Syncing..." } else { "{last_synced}" }
-                }
-                if status.unsent > 0 {
-                    div { class: "auth-hint", "{status.unsent} note(s) waiting to be sent" }
+                div { class: "auth-status", "{last_synced}" }
+                if let Some(text) = waiting {
+                    div { class: "auth-hint", "{text}" }
                 }
                 if let Some(text) = failure {
                     div { class: "auth-error", "{text}" }
                 }
-                for problem in problems() {
-                    div { class: "auth-error",
-                        "A note is not syncing: {problem.reason}."
-                    }
+                if let Some(text) = problem_count {
+                    div { class: "auth-error", "{text}" }
+                }
+                for problem in shown.problems {
+                    ProblemNote { key: "{problem.note_id}", problem }
                 }
                 div { class: "auth-actions",
                     Button {
@@ -110,6 +113,44 @@ pub(super) fn SyncSettingsTab() -> Element {
                     }
                 }
             }
+        }
+    }
+}
+
+/// One note that could not be synced: which it is, why, and what releases
+/// it. A note that is on this device opens when its name is pressed.
+#[component]
+fn ProblemNote(problem: NoteProblem) -> Element {
+    let mut state = use_context::<AppState>();
+    let id = problem.note_id;
+    let title = problem.title();
+    let reason = as_sentence(&problem.reason);
+    let release = problem.kind.release();
+    // Only a note in the list can be opened: not one this device never
+    // held, and not a deleted one.
+    let on_this_device = (state.notes)().iter().any(|note| note.id == id);
+
+    rsx! {
+        div { class: "sync-problem",
+            if on_this_device {
+                button {
+                    class: "sync-problem-title sync-problem-open",
+                    r#type: "button",
+                    title: "Open this note",
+                    onclick: move |_| {
+                        // The note must not be hidden by a search or a tag.
+                        state.search_query.set(String::new());
+                        state.active_tag_filter.set(None);
+                        state.current_note_id.set(Some(id));
+                        state.settings_open.set(false);
+                    },
+                    "{title}"
+                }
+            } else {
+                div { class: "sync-problem-title", "{title}" }
+            }
+            div { class: "auth-hint", "{reason}" }
+            div { class: "auth-hint", "{release}" }
         }
     }
 }

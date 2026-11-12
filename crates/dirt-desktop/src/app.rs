@@ -11,6 +11,7 @@ use std::time::Duration;
 use dioxus::desktop::tao::event::{Event, WindowEvent};
 use dioxus::desktop::{use_wry_event_handler, window, LogicalPosition, LogicalSize};
 use dioxus::prelude::*;
+use dirt_core::config::ServerAddress;
 use dirt_core::models::Note;
 use dirt_core::session::{Session, SessionState};
 use dirt_core::sync::worker::{SyncStatus, Trigger};
@@ -76,16 +77,29 @@ pub fn App() -> Element {
     let mut session: Signal<Option<Session>> = use_signal(|| None);
     let mut session_state = use_signal(|| SessionState::SignedOut);
     let mut sync_status = use_signal(SyncStatus::default);
-    // The server address is baked into the build and never changes while
-    // the app runs.
-    let bootstrap = load_bootstrap_config();
-    let server_url = bootstrap.managed_api_base_url();
+    // The server is `DIRT_API_BASE_URL` in the environment, or else the
+    // address baked into the build: the rule the CLI follows too, because
+    // the two are one device. It does not change while the app runs.
+    let server_url =
+        ServerAddress::on_this_computer(load_bootstrap_config().dirt_api_base_url.as_deref())
+            .map(|address| address.map(|address| address.url))
+            .map_err(|error| dirt_core::util::as_sentence(&error));
 
     // Open the stores, and the session if there is a server, then load
     // this device's settings.
     let _db_init_task = use_resource(move || {
         let server_url = server_url.clone();
         async move {
+            // An address that cannot be one stops the app: carrying on
+            // without a server, or with another, is not what was asked for.
+            let server_url = match server_url {
+                Ok(url) => url,
+                Err(problem) => {
+                    tracing::error!("{problem}");
+                    startup_error.set(Some(problem));
+                    return;
+                }
+            };
             let opened = match open_stores(server_url.as_deref()) {
                 Ok(opened) => opened,
                 Err(error) => {

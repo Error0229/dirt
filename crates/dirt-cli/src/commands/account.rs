@@ -2,6 +2,7 @@
 
 use std::io::{self, BufRead, IsTerminal, Write};
 
+use dirt_core::config::AddressSource;
 use dirt_core::session::{ResetOutcome, Session, SessionState, SignOutError, Unsynced};
 use dirt_core::util::as_sentence;
 
@@ -170,9 +171,17 @@ pub async fn status_lines(context: &Context) -> Result<Vec<String>, CliError> {
     let Some(session) = &context.session else {
         return Ok(vec![
             "No server is configured. Notes are kept on this device only.".to_owned(),
+            "Set DIRT_API_BASE_URL to a server's address to sync.".to_owned(),
         ]);
     };
     let mut lines = Vec::new();
+    if let Some(server) = &context.server {
+        let source = match server.source {
+            AddressSource::Environment => "from DIRT_API_BASE_URL",
+            AddressSource::Build => "the address this program was built with",
+        };
+        lines.push(format!("Server: {} ({source}).", server.url));
+    }
     match session.state() {
         SessionState::SignedOut | SessionState::SigningIn => {
             lines.push("Not signed in. Notes are kept on this device only.".to_owned());
@@ -217,30 +226,9 @@ pub async fn status_lines(context: &Context) -> Result<Vec<String>, CliError> {
         }
         SessionState::Ready { account_id, .. } => {
             lines.push(format!("Signed in to account {account_id}."));
-            let store = session.store();
-            let last = store.last_synced_ms().await?;
-            lines.push(last.map_or_else(
-                || "Never synced.".to_owned(),
-                |at| {
-                    format!(
-                        "Last synced {}.",
-                        crate::commands::common::format_relative_time(
-                            at,
-                            chrono::Utc::now().timestamp_millis()
-                        )
-                    )
-                },
-            ));
-            let unsent = store.unsent_count().await?;
-            if unsent > 0 {
-                lines.push(format!("{unsent} note(s) waiting to be sent."));
-            }
-            for problem in store.note_problems().await? {
-                lines.push(format!(
-                    "Note {} is not syncing: {}.",
-                    problem.note_id, problem.reason
-                ));
-            }
+            // The same view the apps show and `dirt sync --verbose` prints.
+            let overview = session.sync_overview().await.map_err(account_error)?;
+            lines.extend(overview.lines(dirt_core::util::now_ms()));
             let waiting = session.local_notes_waiting().await.map_err(account_error)?;
             if waiting > 0 {
                 lines.push(format!(

@@ -1,6 +1,9 @@
 //! What every command works with: the note store in use and, when a server
 //! is configured, the session that says who is signed in.
 //!
+//! The server is `DIRT_API_BASE_URL` in the environment, or else the
+//! address the CLI was built with. The desktop app follows the same rule.
+//!
 //! The CLI and the desktop app on one computer are one device. They share
 //! the data folder and the keychain, so signing in with either signs in
 //! both, and both read and write the same notes.
@@ -10,11 +13,11 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use dirt_core::api::ErrorClass;
+use dirt_core::config::ServerAddress;
 use dirt_core::session::{Session, SessionError};
 use dirt_core::sync::engine::SyncError;
 use dirt_core::Store;
 
-use crate::config_profiles::{normalize_text_option, CliProfilesConfig};
 use crate::error::CliError;
 
 /// How long a command that changed a note waits for the sync that follows.
@@ -28,6 +31,8 @@ pub struct Context {
     /// Present when a server is configured and no explicit database file
     /// was asked for.
     pub session: Option<Session>,
+    /// The server the session talks to, and where its address came from.
+    pub server: Option<ServerAddress>,
 }
 
 /// The folder the CLI and the desktop app keep their stores in:
@@ -42,17 +47,13 @@ pub fn data_folder() -> PathBuf {
         .join("dirt")
 }
 
-/// The server to sync with: `DIRT_API_BASE_URL`, or else the active
-/// profile's address.
-pub fn server_url() -> Result<Option<String>, CliError> {
-    if let Some(url) = normalize_text_option(env::var("DIRT_API_BASE_URL").ok()) {
-        return Ok(Some(url));
-    }
-    let config = CliProfilesConfig::load().map_err(CliError::Config)?;
-    let profile_name = config.resolve_profile_name(None);
-    Ok(config
-        .profile(&profile_name)
-        .and_then(crate::config_profiles::CliProfile::dirt_api_base_url))
+/// The server to sync with: `DIRT_API_BASE_URL` in the environment, or else
+/// the address this program was built with. An address that cannot be one
+/// is an error and not a reason to use the other: the notes would go
+/// somewhere the person did not mean.
+pub fn server_address() -> Result<Option<ServerAddress>, CliError> {
+    ServerAddress::on_this_computer(option_env!("DIRT_BUILT_IN_API_BASE_URL"))
+        .map_err(|error| CliError::Config(error.to_string()))
 }
 
 impl Context {
@@ -66,21 +67,24 @@ impl Context {
             return Ok(Self {
                 store: Store::open(path)?,
                 session: None,
+                server: None,
             });
         }
-        let Some(url) = server_url()? else {
+        let Some(server) = server_address()? else {
             let local =
                 dirt_core::store::store_path(&data_folder(), &dirt_core::store::StoreName::Local);
             return Ok(Self {
                 store: Store::open(local)?,
                 session: None,
+                server: None,
             });
         };
-        let session = Session::on_this_computer(&url, data_folder(), false)
+        let session = Session::on_this_computer(&server.url, data_folder(), false)
             .map_err(|error| CliError::Account(error.to_string()))?;
         Ok(Self {
             store: session.store(),
             session: Some(session),
+            server: Some(server),
         })
     }
 
@@ -89,7 +93,7 @@ impl Context {
         self.session.as_ref().ok_or_else(|| {
             CliError::Account(
                 "no server is configured, or a database file was given explicitly. \
-                 Set one with `dirt config init --api-base-url <URL>`"
+                 Set DIRT_API_BASE_URL to the server's address"
                     .to_owned(),
             )
         })
@@ -99,7 +103,7 @@ impl Context {
     /// let go. For commands that remove the store's files.
     pub fn into_session(self) -> Result<Session, CliError> {
         self.require_session()?;
-        let Self { store, session } = self;
+        let Self { store, session, .. } = self;
         drop(store);
         session.ok_or_else(|| CliError::Account("no server is configured".to_owned()))
     }

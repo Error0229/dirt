@@ -29,5 +29,9 @@ chrono.workspace = true
 [dev-dependencies]
 tempfile = "3"
 
+[build-dependencies]
+# Reads `.env.client`, as the desktop app's build script does.
+dotenvy = "0.15"
+
 [lints]
 workspace = true

@@ -36,10 +36,11 @@ tables you migrated.
 The server holds no Clerk secret key. It only checks tokens against Clerk's
 published keys, which it fetches from the issuer and keeps for an hour.
 
-The clients are given the server's address and nothing else: the CLI by
-`dirt config init --api-base-url`, the desktop and Android apps by
-`DIRT_API_BASE_URL` in `.env.client` when they are built. The server tells
-them which Clerk instance and client ID to sign in with.
+The clients are given the server's address and nothing else, as
+`DIRT_API_BASE_URL`. All three take it from `.env.client` when they are
+built. The CLI and the desktop app also read it from the environment when
+they start, and that comes first. The server tells them which Clerk instance
+and client ID to sign in with.
 
 ## Production: Vercel and Neon
 
