@@ -5,10 +5,12 @@
 
 ## Status
 
-`main` holds a redesign whose nine steps are all built. What is left
-needs a person: decisions that are the owner's
-([docs/OWNER_DECISIONS.md](docs/OWNER_DECISIONS.md)) and a checklist to try
-by hand on real devices
+`main` holds a redesign whose nine steps are all built, and a server runs
+it at `https://api.dirt.catjam.dev`. That server is the owner's own for now:
+its database is on a free plan that heavy use can suspend, so it is not yet
+offered to anyone else
+([docs/OWNER_DECISIONS.md](docs/OWNER_DECISIONS.md)). What is left needs a
+person: a checklist to try by hand on real devices
 ([docs/MANUAL_CHECKLIST.md](docs/MANUAL_CHECKLIST.md)).
 
 - **What is changing and why:**

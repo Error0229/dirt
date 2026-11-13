@@ -1,23 +1,27 @@
 # Decisions for the owner
 
-Six things are the owner's to decide. Five have to be decided before Dirt
-runs for people other than its owner; the sixth before attachments can be
-tried on real devices. Each costs money, opens an account in the owner's name, or changes a
-setting only the owner can change, so none was taken while the redesign was
-being built. Each is written up here with what is known, what it costs and
-a recommendation.
+Six things were the owner's to decide. Each costs money, opens an account
+in the owner's name, or changes a setting only the owner can change, so none
+was taken while the redesign was being built. **The owner took all six on
+2026-11-13.** Each is written up here with what was known, what it costs,
+the recommendation, and then what was decided and what was set up.
 
 The facts were read from each provider's own pages on 2026-11-12. Prices
 change: check them again before paying.
 
-| Decision | Recommended | Costs | Blocks |
+| Decision | Recommended | Decided | Costs today |
 |---|---|---|---|
-| [Where dumps are kept](#1-where-the-database-dumps-are-kept) | Backblaze B2 | Nothing at first | Backups running at all |
-| [The database plan](#2-the-database-plan) | Neon's Launch plan | About $19 a month at most, usually far less | A public launch |
-| [The hosting plan](#3-the-hosting-plan) | Stay on Vercel's Hobby plan | Nothing | Charging money |
-| [The sign-in service](#4-the-sign-in-service-for-production) | A Clerk production instance on a domain | A domain's yearly fee | More than 100 users |
-| [How security reports are taken](#5-how-security-reports-are-taken) | Switch on GitHub's private reporting | Nothing | Nothing; do it now |
-| [The storage for attachments](#6-the-storage-for-attachments) | Cloudflare R2 | Nothing at first; needs a billing profile | Trying attachments on real devices |
+| [Where dumps are kept](#1-where-the-database-dumps-are-kept) | Backblaze B2 | Backblaze B2. Running | Nothing |
+| [The database plan](#2-the-database-plan) | Neon's Launch plan before a public launch | The free plan, for now | Nothing |
+| [The hosting plan](#3-the-hosting-plan) | Stay on Vercel's Hobby plan | Hobby | Nothing |
+| [The sign-in service](#4-the-sign-in-service-for-production) | A Clerk production instance on a domain | Done, on `dirt.catjam.dev` | Nothing more: the owner had the domain |
+| [How security reports are taken](#5-how-security-reports-are-taken) | Switch on GitHub's private reporting | Switched on | Nothing |
+| [The storage for attachments](#6-the-storage-for-attachments) | Cloudflare R2 | Cloudflare R2 | Nothing |
+
+What the decisions made is one more server, for real use, beside the trial
+server. `docs/DEPLOY.md`, "What exists", lists both.
+
+[What is still the owner's](#what-is-still-the-owners) is at the end.
 
 ## 1. Where the database dumps are kept
 
@@ -60,13 +64,30 @@ should not depend on that.
 free plan is 1 GB. Thirty of those are 30 GB, about 20 cents a month on B2.
 Today's dumps are a few kilobytes.
 
-**The owner does:** opens the storage account, makes the bucket, its rule
-and its key; makes the encryption key with `age-keygen` and stores the
-private half somewhere that is not GitHub and not the bucket; sets the
-workflow's settings.
+**Decided (2026-11-13): Backblaze B2, and it runs.** A private bucket holds
+the dumps of the production database. The workflow stored its first dump,
+and that dump was fetched and restored into an empty database with the
+owner's key.
 
-**Not tried:** the upload step. No bucket exists until this is decided. The
-dump, the encryption and the restore were tried: see the step 8 plan.
+**The recommendation had one thing wrong.** A B2 key that may only write
+can still do two things to a dump whose name it knows: hide it, and upload
+another file under its name. The bucket's rule deletes a hidden file a day
+later, and a replaced file counts as hidden. So the key alone did not keep
+a thief from destroying dumps. Tried on the new bucket: the key hid a test
+file and replaced it.
+
+What closes it is Object Lock. The bucket keeps every file for 30 days
+from its upload, whatever is done to its name, and Backblaze's pages say a
+rule does not delete a locked file. The rule then removes each dump on the
+day after its lock ends. Tried with the workflow's key: it could add a
+file, and could not list the bucket, read a file or delete a version. The
+lock is in governance mode, which the owner's own login can pass, so the
+owner can still delete a dump. `docs/DEPLOY.md`, "Setting up the daily
+dump", has the commands.
+
+**Still the owner's:** the private half of the encryption key. It is a
+file on the owner's computer and nowhere else. It belongs in a password
+manager and on paper: without it no dump can be read.
 
 ## 2. The database plan
 
@@ -106,6 +127,13 @@ it is suspended. Set the history window to seven days when moving.
 **Not checked:** whether Launch lets the compute size be capped at the
 smallest, which is what bounds the bill at $19.
 
+**Decided (2026-11-13): the free plan, for now.** The production database
+is a Neon project of its own on the free plan, beside the trial's. What is
+said above still holds: anyone who learns the server's address can use the
+month's allowance up, and the history reaches back six hours. The daily
+dump is what reaches further. Moving to Launch stays the thing to do before
+the address is given to people who would miss the server for two weeks.
+
 ## 3. The hosting plan
 
 Vercel's Hobby plan "is for personal, non-commercial use". Vercel's
@@ -123,6 +151,10 @@ shows no advertising. Move to Pro on the day it charges for anything.
 
 Nothing measured so far needs Pro. The one rate-limit rule Hobby allows is
 the one `docs/LIMITS.md` uses.
+
+**Decided (2026-11-13): Hobby.** The production server is a Hobby project.
+The one rule is one for each project, so the production project has its
+own.
 
 ## 4. The sign-in service for production
 
@@ -144,19 +176,33 @@ is to have users other than its owner.** Nothing in the code changes: the
 server is given the instance's address and client ID, and tells the clients
 (`docs/DEPLOY.md`).
 
-Two things about the production instance could not be settled from Clerk's
-pages, and have to be looked at in its dashboard when it exists:
+**Decided (2026-11-13): done, on the owner's domain.** The production
+instance signs people in at `accounts.dirt.catjam.dev`, and its tokens come
+from `https://clerk.dirt.catjam.dev`. The production server is at
+`https://api.dirt.catjam.dev`. `docs/DEPLOY.md` has how it was set up,
+which for a Clerk application made through Vercel is not what Clerk's pages
+describe.
 
-- **The consent page.** After signing in, Clerk shows a page asking the
-  person to allow Dirt. The pages read do not say whether it can be switched
-  off for an app that is the instance's own.
-- **A computer with no browser.** `dirt auth login --no-browser` prints an
-  address to open, and the browser then has to reach a port on the computer
-  the CLI runs on. On a server reached over SSH that needs a forwarded
-  port. The usual answer is the device-code grant, where the person types a
-  short code on another device. Clerk's pages do not mention it. If Clerk
-  does not offer it, the CLI needs another way, such as pasting back the
-  address the browser ends on. That would be new work and is not planned.
+- **How people sign in:** with a code sent to their email address, and
+  nothing else. Passwords are off, as on the trial instance.
+- **Google is not offered,** though the trial instance offers it. In
+  production Clerk wants the application's own Google credentials, which
+  are made in a Google Cloud account. That account is the owner's to open.
+
+The two things that could not be settled from Clerk's pages were looked at
+in the dashboard:
+
+- **The consent page can be switched off,** for each OAuth application. It
+  is left on. Dirt's client is a public one: any program on the computer can
+  start a sign-in in its name, and the page is where the person sees that
+  happen. Switching it off saves one press at each sign-in and is the
+  owner's to weigh.
+- **Clerk offers the device-code grant,** also for each OAuth application,
+  and it is off. So a computer with no browser can be served the usual way:
+  the CLI shows a short code and the person enters it on another device.
+  The CLI does not do this, and nothing plans it yet: the design lists it
+  under details not yet decided (section 13). Until it is built,
+  `dirt auth login --no-browser` with a forwarded port is what there is.
 
 ## 5. How security reports are taken
 
@@ -172,6 +218,9 @@ proof of concept and the impact; only the maintainers see it.
 under Advanced Security, to the right of "Private vulnerability reporting".
 When it is on, `docs/SECURITY.md`'s last section should say to use that
 button, and that is a two-line change.
+
+**Decided (2026-11-13): switched on,** and `docs/SECURITY.md` says to use
+it.
 
 ## 6. The storage for attachments
 
@@ -208,13 +257,37 @@ storage. Fifty accounts filled to the top are the free
 Anyone can sign up, so the bill has no ceiling of its own. It grows by that
 much for each account that fills itself.
 
-**The owner does:** opens the R2 account, makes a bucket and a token
-limited to it, and gives the trial server the bucket's address and the
-token. `docs/DEPLOY.md` lists the settings.
+**Decided (2026-11-13): Cloudflare R2.** The owner's Cloudflare account
+already had R2. Two private buckets were made in it, in western North
+America beside the servers: `dirt-files` for the production server and
+`dirt-trial-files` for the trial server.
+
+**Not done yet: the two tokens.** Each server needs a token that may read
+and write objects in its own bucket and nothing else. Cloudflare's
+command-line program made the buckets and cannot make tokens: its sign-in
+is not allowed to. They are made in Cloudflare's dashboard, under R2,
+"Manage API Tokens", and that needs the owner signed in. Until each
+server has its token it syncs notes and answers `files_unavailable` to
+anything about files, as before.
 
 **Until then:** attachments are built and tested against a store on the
 developer's machine that speaks the same protocol. They cannot be tried on
 a phone.
+
+## What is still the owner's
+
+Nothing here blocks the owner's own use of the production server.
+
+| What | Why it is the owner's | When |
+|---|---|---|
+| Keep the dumps' private key | It is one file on the owner's computer. Without it no dump can be read | Now |
+| Sign in to Cloudflare's dashboard for the two R2 tokens | Only the dashboard makes them | Before attachments work on either server |
+| Sign in to the production server for the first time | The first device of an account makes its key and should be the owner's own | When the owner starts using it |
+| Google sign-in on the production server | Needs credentials from a Google Cloud account | If it is wanted |
+| Neon's Launch plan | Costs money | Before the address is given to others |
+| The consent page at sign-in | A trade of one press against one check, on the owner's instance | Whenever |
+| Sign-in by device code for the CLI | New work, not planned | If it is wanted |
+| The rest of `docs/MANUAL_CHECKLIST.md` | Needs a person, a phone and a Mac | Before the address is given to others |
 
 ## Sources
 
