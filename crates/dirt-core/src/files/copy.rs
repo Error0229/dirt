@@ -1,5 +1,5 @@
-//! Handing a file out of the store: a copy saved where the person says,
-//! and what may be opened without asking.
+//! Handing a file out of the store: a copy saved where the person says, a
+//! copy for another program to show, and what may be opened without asking.
 
 use std::fs;
 use std::io;
@@ -57,6 +57,70 @@ fn beside(target: &Path) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_nanos());
     target.with_file_name(format!(".dirt-save-{}-{moment}", std::process::id()))
+}
+
+/// Copies a file out of the store into `folder`, for another program to
+/// show, and returns where the copy is.
+///
+/// A file in the store has its ID for a name and must not be changed. So
+/// a file is opened by copying it to a folder of its own under the name
+/// the note gives it, and handing that copy over. A program that changes
+/// what it was given changes the copy.
+///
+/// `folder` is the app's own place for such copies. It is made if it is
+/// not there, and closed to everybody but its owner where the system has
+/// such a thing, whether or not it was there before. It should not be in
+/// a place the users of a computer share.
+///
+/// Refused for a file the system would run and not show: see
+/// [`runs_as_a_program`]. An app does not offer to open such a file, and
+/// this is where that is enforced.
+pub fn copy_for_opening(
+    folder: &Path,
+    held: &Path,
+    file_id: uuid::Uuid,
+    name: &str,
+) -> io::Result<PathBuf> {
+    if runs_as_a_program(name) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a file that can run as a program is saved, not opened",
+        ));
+    }
+    // Closed to other users before anything is put in it.
+    make_private(folder)?;
+    // A folder for each file, so that two files of one name do not meet.
+    let folder = folder.join(file_id.to_string());
+    fs::create_dir_all(&folder)?;
+    // The name comes out of a note. It is used as a plain name only.
+    let copy = folder.join(super::safe_file_name(name));
+    // Opened before: the copy is made again, in case it was changed.
+    save_copy(held, &copy, true)?;
+    Ok(copy)
+}
+
+/// Makes `folder` if it is not there, for its owner alone.
+fn make_private(folder: &Path) -> io::Result<()> {
+    fs::create_dir_all(folder)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Set whether or not it was just made: one made before, by this
+        // program or anything else, is closed too.
+        fs::set_permissions(folder, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Removes a folder of copies made for opening, and everything in it. A
+/// folder that is not there is no failure, and neither is one a program
+/// still has a file open in: it goes the next time.
+pub fn clear_copies(folder: &Path) {
+    match fs::remove_dir_all(folder) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => tracing::debug!("copies of opened files were not all removed: {error}"),
+    }
 }
 
 /// Whether a file of this name is something the system would run, and
@@ -134,6 +198,12 @@ pub fn runs_as_a_program(name: &str) -> bool {
         "pl",
         "rb",
         "php",
+        // Android: opening one offers to install it.
+        "apk",
+        "apks",
+        "apkm",
+        "xapk",
+        "aab",
         // Documents that carry programs of their own.
         "docm",
         "dotm",
@@ -243,6 +313,87 @@ mod tests {
     }
 
     #[test]
+    fn a_file_is_copied_out_under_its_own_name_to_be_opened() {
+        let folder = tempfile::tempdir().unwrap();
+        let held = folder.path().join("0192d3a8-0000-7000-8000-000000000001");
+        fs::write(&held, b"a photograph").unwrap();
+        let opened = folder.path().join("opened");
+        let file = uuid::Uuid::from_u128(1);
+
+        let copy = copy_for_opening(&opened, &held, file, "whiteboard.jpg").unwrap();
+
+        assert_eq!(copy, opened.join(file.to_string()).join("whiteboard.jpg"));
+        assert_eq!(fs::read(&copy).unwrap(), b"a photograph");
+        // The program that showed it changed it. The store's file is as
+        // it was, and opening again gives the file again.
+        fs::write(&copy, b"scribbled over").unwrap();
+        assert_eq!(fs::read(&held).unwrap(), b"a photograph");
+        let again = copy_for_opening(&opened, &held, file, "whiteboard.jpg").unwrap();
+        assert_eq!(again, copy);
+        assert_eq!(fs::read(&copy).unwrap(), b"a photograph");
+
+        // Another file of the same name has a place of its own.
+        let other =
+            copy_for_opening(&opened, &held, uuid::Uuid::from_u128(2), "whiteboard.jpg").unwrap();
+        assert_ne!(other, copy);
+
+        // A name from a note is a name and never a path.
+        let third = uuid::Uuid::from_u128(3);
+        let escaped = copy_for_opening(&opened, &held, third, "../../escaped.jpg").unwrap();
+        assert_eq!(escaped, opened.join(third.to_string()).join("escaped.jpg"));
+        assert!(!folder.path().join("escaped.jpg").exists());
+
+        clear_copies(&opened);
+        assert!(!opened.exists());
+        // Clearing what is not there is no failure.
+        clear_copies(&opened);
+    }
+
+    /// A file the system would run is not copied out to be opened,
+    /// whatever asks for it.
+    #[test]
+    fn a_program_is_not_copied_out_to_be_opened() {
+        let folder = tempfile::tempdir().unwrap();
+        let held = folder.path().join("held");
+        fs::write(&held, b"MZ").unwrap();
+        let opened = folder.path().join("opened");
+
+        for name in [
+            "setup.exe",
+            "photo.jpg.lnk",
+            "run.bat",
+            "README",
+            "game.apk",
+        ] {
+            let error =
+                copy_for_opening(&opened, &held, uuid::Uuid::from_u128(1), name).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput, "{name}");
+        }
+        assert!(!opened.exists(), "nothing was copied anywhere");
+    }
+
+    /// On a computer with several users, nobody but the owner can look
+    /// into the folder the copies are in, however it came to be there.
+    #[cfg(unix)]
+    #[test]
+    fn the_folder_of_copies_is_closed_to_other_users() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let folder = tempfile::tempdir().unwrap();
+        let held = folder.path().join("held");
+        fs::write(&held, b"a photograph").unwrap();
+        let opened = folder.path().join("opened");
+        // Made beforehand, open to everybody.
+        fs::create_dir(&opened).unwrap();
+        fs::set_permissions(&opened, fs::Permissions::from_mode(0o777)).unwrap();
+
+        copy_for_opening(&opened, &held, uuid::Uuid::from_u128(1), "whiteboard.jpg").unwrap();
+
+        let mode = fs::metadata(&opened).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "{mode:o}");
+    }
+
+    #[test]
     fn what_the_system_would_run_is_not_opened_with_one_press() {
         for shown in [
             "photo.jpg",
@@ -269,6 +420,7 @@ mod tests {
             "tool.sh",
             "Thing.app",
             "program.AppImage",
+            "game.apk",
             // The ending is what is left when a name is made safe: a
             // space or a dot after it changes nothing.
             "setup.exe ",

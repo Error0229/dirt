@@ -16,7 +16,7 @@ pub mod seal;
 pub mod shelf;
 pub mod thumbnail;
 
-pub use copy::{runs_as_a_program, save_copy};
+pub use copy::{clear_copies, copy_for_opening, runs_as_a_program, save_copy};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
