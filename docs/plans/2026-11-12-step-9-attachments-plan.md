@@ -598,6 +598,17 @@ What review showed:
   reach can take minutes to give up. The rows now show at once, from what
   the device holds, and each thumbnail appears when it is had.
 
+- **Turning to another note cut an attach short.** The attaching belonged
+  to the panel of the note, and the panel is made afresh for each note, so
+  files chosen and not yet attached were dropped, and one could be left
+  copied and not named. Attaching is now a task of its own that finishes
+  whatever the window does.
+- **A saved copy could replace a file nobody was asked about.** The save
+  dialog asks before replacing a file that is there. If nothing was there,
+  nobody agreed to anything, and a file that turned up while this one was
+  fetched was replaced all the same. Now it is left alone and the person
+  is told.
+
 **Why those are left for a person.** While the app was being driven, a
 person was at the machine. The save dialog had opened in their own folder
 with one of their files selected. Windows asks before replacing a file, so

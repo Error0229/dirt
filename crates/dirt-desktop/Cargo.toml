@@ -18,7 +18,9 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 chrono.workspace = true
 dirs = "6"
-tokio = { version = "1", features = ["time"] }
+# `rt`: attaching files runs as a task of its own, which outlives the part
+# of the window that started it.
+tokio = { version = "1", features = ["time", "rt"] }
 uuid.workspace = true
 # Hands a file to the system to open with whatever shows files of its kind.
 open = "5"

@@ -18,7 +18,11 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use dirt_core::files::{runs_as_a_program, safe_file_name, save_copy};
+use std::sync::Arc;
+
+use dirt_core::files::{media_type_for, runs_as_a_program, safe_file_name, save_copy};
+use dirt_core::util::as_sentence;
+use dirt_core::{NoteId, Store};
 use uuid::Uuid;
 
 /// The name of the folder, inside a store's folder, that the copies are
@@ -100,6 +104,53 @@ fn copy_into(folder: &Path, held: &Path, file_id: Uuid, name: &str) -> io::Resul
     // Opened before: the copy is made again, in case it was changed.
     save_copy(held, &copy, true)?;
     Ok(copy)
+}
+
+/// Attaches the files at `paths` to a note, one after another, and returns
+/// a line for each that could not be attached.
+///
+/// This is run as a task of its own. Attaching a file is two steps, the
+/// copy onto the shelf and the note that names it; a task that belonged to
+/// a part of the window would be dropped between them if the person turned
+/// to another note, and the files after it would not be attached at all.
+pub async fn attach_all(store: Arc<Store>, note: NoteId, paths: Vec<PathBuf>) -> Vec<String> {
+    let mut failed = Vec::new();
+    for path in paths {
+        let given = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        // The name goes into the note as a name, never as a path.
+        let name = safe_file_name(&given);
+        let attached = store
+            .attach_file(&note, &path, &name, media_type_for(&name))
+            .await;
+        if let Err(error) = attached {
+            failed.push(format!("{name}: {}", as_sentence(&error)));
+        }
+    }
+    failed
+}
+
+/// Writes the copy a person asked for in a save dialog.
+///
+/// `was_there` says whether something was at `target` when the dialog
+/// closed. If so, the dialog asked about replacing it and the person said
+/// yes. If not, nobody agreed to replace anything: a file that has come to
+/// be there since, while the file was being fetched, is left alone and the
+/// copy is not made.
+pub fn save_where_asked(held: &Path, target: &Path, was_there: bool) -> Result<(), String> {
+    save_copy(held, target, was_there).map_err(|error| {
+        if error.kind() == io::ErrorKind::AlreadyExists {
+            format!(
+                "A file appeared at {} while this one was being fetched. It was not \
+                 replaced. Save again to choose.",
+                target.display()
+            )
+        } else {
+            as_sentence(&error)
+        }
+    })
 }
 
 /// Hands a file to the system, to open with whatever shows files of its
@@ -212,6 +263,67 @@ mod tests {
 
         let mode = std::fs::metadata(&opened).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700, "{mode:o}");
+    }
+
+    /// Files are attached one after another, and one that cannot be does
+    /// not stop the rest.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn files_are_attached_in_turn_and_a_failure_is_said() {
+        let folder = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(folder.path().join("store").join("notes.db")).unwrap());
+        let note = store.create_note("the meeting").await.unwrap().id;
+        let first = folder.path().join("first.txt");
+        let last = folder.path().join("last.txt");
+        std::fs::write(&first, b"one").unwrap();
+        std::fs::write(&last, b"three").unwrap();
+        let missing = folder.path().join("missing.txt");
+
+        // As the window runs it: a task of its own, which nothing that
+        // happens in the window can stop half-way.
+        let failed = tokio::spawn(attach_all(
+            Arc::clone(&store),
+            note,
+            vec![first, missing, last],
+        ))
+        .await
+        .unwrap();
+
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(failed[0].starts_with("missing.txt: "), "{failed:?}");
+        let names: Vec<String> = store
+            .note_attachments(&note)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|attachment| attachment.name)
+            .collect();
+        assert_eq!(names, ["first.txt", "last.txt"]);
+    }
+
+    /// A save dialog asks before replacing a file that is there. For a
+    /// place where nothing was, nobody was asked, so nothing that turns
+    /// up there meanwhile is replaced.
+    #[test]
+    fn a_saved_copy_replaces_only_what_the_dialog_asked_about() {
+        let folder = tempfile::tempdir().unwrap();
+        let held = folder.path().join("held");
+        std::fs::write(&held, b"the file from the note").unwrap();
+
+        // Nothing there when asked, and nothing since: written.
+        let fresh = folder.path().join("fresh.txt");
+        save_where_asked(&held, &fresh, false).unwrap();
+        assert_eq!(std::fs::read(&fresh).unwrap(), b"the file from the note");
+
+        // Nothing there when asked; something by the time of writing.
+        let appeared = folder.path().join("appeared.txt");
+        std::fs::write(&appeared, b"somebody else's").unwrap();
+        let said = save_where_asked(&held, &appeared, false).unwrap_err();
+        assert!(said.contains("was not replaced"), "{said}");
+        assert_eq!(std::fs::read(&appeared).unwrap(), b"somebody else's");
+
+        // There when asked, and the person agreed.
+        save_where_asked(&held, &appeared, true).unwrap();
+        assert_eq!(std::fs::read(&appeared).unwrap(), b"the file from the note");
     }
 
     /// A file the system would run is not copied out to be opened, whatever

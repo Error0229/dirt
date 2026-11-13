@@ -15,16 +15,17 @@ use std::path::PathBuf;
 
 use dioxus::prelude::*;
 use dirt_core::files::thumbnail::as_data_uri;
-use dirt_core::files::{media_type_for, runs_as_a_program, safe_file_name, save_copy};
+use dirt_core::files::{runs_as_a_program, safe_file_name};
 use dirt_core::store::AttachedFile;
 use dirt_core::sync::engine::{file_on_device, FileError};
 use dirt_core::sync::overview::size_words;
+use dirt_core::sync::worker::Trigger;
 use dirt_core::util::as_sentence;
 use dirt_core::NoteId;
 use uuid::Uuid;
 
 use crate::components::button::{Button, ButtonVariant};
-use crate::services::{copy_for_opening, open_with_system};
+use crate::services::{attach_all, copy_for_opening, open_with_system, save_where_asked};
 use crate::state::AppState;
 
 /// The buttons here are smaller than the app's others: a row has three, and
@@ -142,29 +143,28 @@ pub fn AttachmentPanel(note_id: NoteId, dropped: Signal<Vec<PathBuf>>) -> Elemen
         let Some(store) = state.db_service.peek().clone() else {
             return;
         };
+        // The attaching is a task of its own, and tells the sync worker
+        // itself when it is done. Turning to another note drops this panel
+        // and whatever it was waiting for, and must not drop files the
+        // person has already chosen.
+        let session = state.session.peek().clone();
+        let attaching = tokio::spawn(async move {
+            let failed = attach_all(store, note_id, paths).await;
+            if let Some(session) = session {
+                session.notify(Trigger::Changed);
+            }
+            failed
+        });
+        // What follows is this panel's own: it shows how the task went,
+        // if the panel is still there to show it.
         spawn(async move {
             busy.set(Some("Attaching...".to_owned()));
             message.set(None);
-            let mut failed = Vec::new();
-            for path in paths {
-                let given = path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                // The name goes into the note as a name, never as a path.
-                let name = safe_file_name(&given);
-                let attached = store
-                    .attach_file(&note_id, &path, &name, media_type_for(&name))
-                    .await;
-                if let Err(error) = attached {
-                    failed.push(format!("{name}: {}", as_sentence(&error)));
-                }
-            }
+            let failed = attaching.await.unwrap_or_default();
             busy.set(None);
             if !failed.is_empty() {
                 message.set(Some(format!("Not attached. {}", failed.join(" "))));
             }
-            state.note_changed();
             changed.set(changed() + 1);
         });
     };
@@ -235,13 +235,14 @@ pub fn AttachmentPanel(note_id: NoteId, dropped: Signal<Vec<PathBuf>>) -> Elemen
             let Some(chosen) = chosen else {
                 return;
             };
+            // If something is there, the dialog has just asked about
+            // replacing it. If nothing is, nobody agreed to replace
+            // anything, whatever turns up while the file is fetched.
+            let was_there = chosen.path().exists();
             busy.set(Some(format!("Saving {}...", attachment.name)));
             message.set(None);
             let saved = match held(&state, note_id, attachment.file_id).await {
-                // The dialog has already asked about a file that is there.
-                Ok(path) => {
-                    save_copy(&path, chosen.path(), true).map_err(|error| as_sentence(&error))
-                }
+                Ok(path) => save_where_asked(&path, chosen.path(), was_there),
                 Err(why) => Err(why),
             };
             busy.set(None);
