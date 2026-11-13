@@ -609,6 +609,11 @@ What review showed:
   fetched was replaced all the same. Now it is left alone and the person
   is told.
 
+- **Saving to a slow disk would have frozen the window.** The copy for
+  "Save a copy" and for "Open" was made on the thread that draws the
+  window. It is now made on a worker, and the window waits for it without
+  stopping.
+
 **Why those are left for a person.** While the app was being driven, a
 person was at the machine. The save dialog had opened in their own folder
 with one of their files selected. Windows asks before replacing a file, so

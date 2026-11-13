@@ -51,6 +51,20 @@ async fn held(state: &AppState, note: NoteId, file: Uuid) -> Result<PathBuf, Str
     found.map_err(|error| error.advice(can_fetch))
 }
 
+/// Runs work on files away from the thread that draws the window, and
+/// waits for it.
+///
+/// Copying a file takes as long as the disk it goes to takes: a network
+/// drive, a stick that is slow or has stalled. Done on the window's own
+/// thread it would stop the window drawing and answering for that long.
+async fn off_the_window<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|error| Err(as_sentence(&error)))
+}
+
 /// The note's files, as the store has them. Nothing is fetched for this.
 async fn files_of(state: &AppState, note: NoteId) -> Vec<AttachedFile> {
     match state.db_service.peek().clone() {
@@ -207,9 +221,13 @@ pub fn AttachmentPanel(note_id: NoteId, dropped: Signal<Vec<PathBuf>>) -> Elemen
                 .map(|store| store.path().to_path_buf());
             let opened = match (held(&state, note_id, attachment.file_id).await, store) {
                 (Ok(path), Some(store)) => {
-                    copy_for_opening(&store, &path, attachment.file_id, &attachment.name)
-                        .and_then(|copy| open_with_system(&copy))
-                        .map_err(|error| as_sentence(&error))
+                    let (file_id, name) = (attachment.file_id, attachment.name.clone());
+                    off_the_window(move || {
+                        copy_for_opening(&store, &path, file_id, &name)
+                            .and_then(|copy| open_with_system(&copy))
+                            .map_err(|error| as_sentence(&error))
+                    })
+                    .await
                 }
                 (Err(why), _) => Err(why),
                 (Ok(_), None) => Err("The note store is not open.".to_owned()),
@@ -238,11 +256,17 @@ pub fn AttachmentPanel(note_id: NoteId, dropped: Signal<Vec<PathBuf>>) -> Elemen
             // If something is there, the dialog has just asked about
             // replacing it. If nothing is, nobody agreed to replace
             // anything, whatever turns up while the file is fetched.
-            let was_there = chosen.path().exists();
+            let target = chosen.path().to_path_buf();
+            let looked = target.clone();
+            let was_there = off_the_window(move || Ok(looked.exists()))
+                .await
+                .unwrap_or(false);
             busy.set(Some(format!("Saving {}...", attachment.name)));
             message.set(None);
             let saved = match held(&state, note_id, attachment.file_id).await {
-                Ok(path) => save_where_asked(&path, chosen.path(), was_there),
+                Ok(path) => {
+                    off_the_window(move || save_where_asked(&path, &target, was_there)).await
+                }
                 Err(why) => Err(why),
             };
             busy.set(None);
