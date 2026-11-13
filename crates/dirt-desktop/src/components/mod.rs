@@ -2,6 +2,7 @@
 //!
 //! Reusable UI components for the desktop application.
 
+mod attachments;
 mod note_actions;
 mod note_card;
 mod note_editor;

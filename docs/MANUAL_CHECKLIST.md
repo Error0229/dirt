@@ -29,7 +29,10 @@ Afterwards, delete the test account, the keychain entry and the app's data.
 
 D2, D3 and D4 need a person at the keyboard: a global hotkey, the tray, and
 the system browser cannot be driven from a script without acting on whatever
-else is on the screen.
+else is on the screen. So do D18, D20 and D21. A file dialog opens in the
+person's own folders with one of their files selected, and "Open" starts
+another program on their screen; neither is for a script on a desktop that
+somebody is using.
 
 | # | Do | Expect |
 |---|---|---|
@@ -49,6 +52,13 @@ else is on the screen.
 | D11 | Search for a word; press a tag | The list narrows; "All" widens it again. A note older than the 100 most recent is found |
 | D16 | With more than 100 notes, scroll to the end of the list and press "Show older notes" | 100 more notes appear below, and the button stays for as long as there are older ones. An open note stays open |
 | D12 | Settings → Theme: light, dark, system; font and size | The window follows at once |
+| D17 | Open a note and press "Attach a file"; choose a picture and a text file together | Both appear under the note, the picture with its thumbnail. After a moment neither says it is waiting to be sent |
+| D18 | Drop a file from the file manager on the note's text | It is attached. The window does not leave the app to show the file |
+| D19 | On another device attach a picture to the same note; sync here | The file appears with its thumbnail and says it is not on this device |
+| D20 | Press "Open" on that file | It is fetched and opens in the system's viewer under its own name. The row no longer says it is not on this device |
+| D21 | Press "Save a copy" | The dialog proposes the file's name. The saved copy is the same as the original |
+| D22 | Press "Remove"; sync the other device | The file is gone from the note on both |
+| D23 | Attach a file named `something.exe` (any file will do) | It is attached. Its row offers "Save a copy" and "Remove", and no "Open" |
 
 ## Android app
 
@@ -130,6 +140,7 @@ account, A and B:
 
 | Date | Server | Desktop | Android | CLI | Not run |
 |---|---|---|---|---|---|
+| 2026-11-13, for step 9d | The real server on this machine (`dirt-sim`'s `serve`), with the local file storage | D17 passed, through the file dialog, with one file. D19 passed: the thumbnail came by itself and the picture stayed away. D22's "Remove" passed, checked against `dirt files` on the same device. D23 passed: a file named `setup.exe` had no "Open". The rows were looked at in a capture of the window | Not run | Used as the second device, and to check the desktop's store | D18: needs a hand to drop a file. D20: "Open" was pressed once, by a person at the machine and not by the script; the file was fetched and a copy made under its own name, and what the viewer showed was not seen. D21: the dialog opened with the right title and was not answered, because it had one of the person's own files selected |
 | 2026-11-12, for step 9c | The real server on this machine (`dirt-sim`'s `serve`), with the local file storage | Not run | Not run | C13 to C17 passed, with two devices on one computer. A 4.4 MiB picture attached, with its thumbnail and the sync, in 1.8 s in a debug build. C5 again on the way | Against Cloudflare R2, and against `dirt-trial`: neither has storage for files yet |
 | 2026-11-12, for step 8c | None: not signed in | D16 passed, driven through UI Automation, and the same under a tag. D11's tag row | Emulator. A19 passed, and the same under a tag | Used to write the 230 notes | D16's "an open note stays open", which a test covers. Search typed into either app |
 | 2026-11-12, for step 8b | `dirt-trial` | Not run: D15 | Emulator. A16, A17 and A18 passed | C11 passed. C12 on an account with no phrase: the key was changed | D15: the desktop window could not be driven in the earlier run and was not tried again. C12's phrase: the account in the run had none |

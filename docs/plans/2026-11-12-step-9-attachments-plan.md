@@ -549,10 +549,78 @@ storage account for `dirt-trial`.
 
 ### 9d: the desktop app
 
-- [ ] Attach from a file dialog and by dropping a file on a note. A row of
+- [x] Attach from a file dialog and by dropping a file on a note. A row of
       attachments under the note, with thumbnails for images. Open, save
       and remove.
-- [ ] The sync status view counts files waiting.
+- [x] The sync status view counts files waiting. (Done with the sync
+      itself in 9b: the view's words come from the core.)
+
+**Result (2026-11-13).**
+
+- **Under the open note:** a row for each file, with its thumbnail or its
+  kind, its name, its size and what kind of file it is, and where it stands
+  when there is something to say. "Attach a file" opens a file dialog that
+  takes several. Files dropped anywhere on the note are attached.
+- **A thumbnail is fetched by itself.** A picture attached on another
+  device shows its thumbnail here without the picture being fetched.
+- **"Open" hands a copy to the system.** The store's file has its ID for a
+  name and must not be changed, so a copy is made under the name the note
+  gives it, in a folder of its own, and that is what the system is given.
+  The copies are removed when the app next starts.
+- **A file the system would run is not opened.** A program, a script, a
+  shortcut, a document with macros, a file with no ending. It is offered
+  for saving only. The list is in the core, for Android to use too, and
+  the copy for opening refuses such a file whatever asks.
+- **"Save a copy"** asks where first, with the file's name proposed, and
+  then fetches. The dialog itself asks before replacing a file.
+- **Moved into the core** for both apps: writing a copy without ever
+  emptying what is there (9c's review), the words for a file that cannot
+  be had, and a thumbnail's bytes as something a web view can show.
+
+Tried for real against the server on this machine, with the CLI as the
+second device and as a check on the desktop's own store: the rows and
+thumbnails as drawn, attaching through the file dialog, removing, and a
+thumbnail arriving from the other device. `docs/MANUAL_CHECKLIST.md` has
+the run and what it left for a person: dropping a file, opening one in
+another program, and answering the save dialog.
+
+What review showed:
+
+- **Copies made for opening were in the system's place for temporary
+  files.** On a computer with several users that place is shared: a copy
+  could be read by the others, and the folder could be made by one of them
+  beforehand. The copies are now in the store's own folder, beside the
+  files they are copies of, in a folder closed to everybody but its owner.
+  They are as private as the store, and go with the account's folder at
+  sign-out as well as at the next start.
+- **A thumbnail that was slow to fetch kept the whole list from showing.**
+  The rows waited for every thumbnail, and a thumbnail on a server out of
+  reach can take minutes to give up. The rows now show at once, from what
+  the device holds, and each thumbnail appears when it is had.
+
+- **Turning to another note cut an attach short.** The attaching belonged
+  to the panel of the note, and the panel is made afresh for each note, so
+  files chosen and not yet attached were dropped, and one could be left
+  copied and not named. Attaching is now a task of its own that finishes
+  whatever the window does.
+- **A saved copy could replace a file nobody was asked about.** The save
+  dialog asks before replacing a file that is there. If nothing was there,
+  nobody agreed to anything, and a file that turned up while this one was
+  fetched was replaced all the same. Now it is left alone and the person
+  is told.
+
+- **Saving to a slow disk would have frozen the window.** The copy for
+  "Save a copy" and for "Open" was made on the thread that draws the
+  window. It is now made on a worker, and the window waits for it without
+  stopping.
+
+**Why those are left for a person.** While the app was being driven, a
+person was at the machine. The save dialog had opened in their own folder
+with one of their files selected. Windows asks before replacing a file, so
+nothing was lost, but a script has no business answering a dialog like
+that on a desktop somebody is using. The test window is now moved off the
+screen as soon as it exists, where it can still be listed and captured,
+and file dialogs and "Open" are not driven at all.
 
 ### 9e: the Android app
 
@@ -567,6 +635,14 @@ storage account for `dirt-trial`.
       phone's camera save, and say so in `docs/feature-parity.md`.
 
 ### 9f: export, limits and the documents
+
+- [ ] On Linux and macOS, make the data folder for its owner alone, and
+      close one that is already there. Today it gets the permissions the
+      system gives any new folder, so on a computer whose home folders are
+      open to its other users, they can read the notes and files. Found in
+      review of 9d, where only the folder of copies made for opening was
+      closed. A database file given by hand (`--db-path`) is left as the
+      person made it.
 
 - [ ] Export with files (review item 7).
 - [ ] The limits measured, and their rows in `docs/LIMITS.md`.

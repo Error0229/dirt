@@ -92,6 +92,24 @@ characters a file system refuses and never as one of the names Windows
 keeps for devices, so a note cannot make a device write outside the folder
 its owner chose.
 
+An app opens a file by handing a copy of it to whatever the system uses
+for files of its kind. For a program, a script, a shortcut or a document
+that carries macros, that is the system itself: the file would run. A file
+reaches a device from another device of the account, and one of those may
+be in the wrong hands. So the apps do not offer to open such a file, or one
+with no ending to say what it is. It can be saved, and run from where it
+was saved by somebody who means to. The list of kinds is
+`dirt_core::files::runs_as_a_program`. A copy made for opening is the
+store's file under the name the note gives it. It is kept in the store's
+own folder, closed to other users of the computer, and not in the system's
+shared place for temporary files. It is removed when the app next starts,
+and with the account's folder at sign-out.
+
+The store's folder itself is made with the permissions the system gives a
+new folder. On Linux and macOS, where a person's home may be open to other
+users of the computer, that can leave the notes and files readable by them.
+Making the data folder for its owner alone is in the build order (step 9f).
+
 A file that a device holds is kept beside the notes' database, as it was
 attached: not encrypted, as the notes there are not. What protects both is
 the device.

@@ -1,16 +1,16 @@
 //! Note editor component
 //!
-//! Attachment UI was removed during the Supabase teardown — the
-//! `AttachmentPanel` from main relied on `media_api_client` and
-//! `auth_session`, both of which are gone with the R2/Supabase work
-//! that's deferred to a future commit. The plain-text editor stays.
+//! The note's text, saved as it is typed, and under it the files attached
+//! to the note. A file dropped anywhere on the editor is attached.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use dioxus::prelude::*;
 
 use dirt_core::NoteId;
 
+use crate::components::attachments::AttachmentPanel;
 use crate::components::update_note_content;
 use crate::queries::invalidate_notes_query;
 use crate::state::AppState;
@@ -124,6 +124,25 @@ pub fn NoteEditor() -> Element {
         }
     };
 
+    // Files dropped on the editor, for the panel below to attach.
+    let mut dropped = use_signal(Vec::<PathBuf>::new);
+    let on_drop = move |evt: Event<DragData>| {
+        // Left to itself the window would leave the app and show the file.
+        evt.prevent_default();
+        if current_note_id().is_none() {
+            return;
+        }
+        let paths: Vec<PathBuf> = evt
+            .data_transfer()
+            .files()
+            .iter()
+            .map(dioxus::html::FileData::path)
+            .collect();
+        if !paths.is_empty() {
+            dropped.set(paths);
+        }
+    };
+
     rsx! {
         div {
             class: "note-editor",
@@ -135,8 +154,11 @@ pub fn NoteEditor() -> Element {
                 position: relative;
                 min-width: 0;
             ",
+            // Saying that a drop is welcome is what lets one happen.
+            ondragover: move |evt: Event<DragData>| evt.prevent_default(),
+            ondrop: on_drop,
 
-            if current_note.is_some() {
+            if let Some(note) = current_note.as_ref() {
                 textarea {
                     class: "editor-textarea",
                     style: "
@@ -158,6 +180,11 @@ pub fn NoteEditor() -> Element {
                     oninput: on_input,
                     onblur: on_blur,
                     onkeydown: on_keydown,
+                }
+                // One panel for each note, made afresh when another note
+                // is opened: what it holds belongs to the note.
+                for note_id in [note.id] {
+                    AttachmentPanel { key: "{note_id}", note_id, dropped }
                 }
             } else {
                 div {

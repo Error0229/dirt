@@ -959,6 +959,20 @@ async fn a_picture_is_attached_with_a_thumbnail() {
     assert_eq!(in_use, both);
     assert_eq!(files_on_the_shelf(store), 2);
 
+    // The thumbnail's bytes, for an app to show: read only if small.
+    assert_eq!(
+        store
+            .small_file(thumbnail.file_id, 1_000_000)
+            .await
+            .unwrap(),
+        Some(small.clone())
+    );
+    assert_eq!(store.small_file(thumbnail.file_id, 10).await.unwrap(), None);
+    assert_eq!(
+        store.small_file(Uuid::now_v7(), 1_000_000).await.unwrap(),
+        None
+    );
+
     // A file that is not a picture has none, whatever it is called.
     let text = desk.a_file("minutes.png", b"not a picture at all");
     let plain = store

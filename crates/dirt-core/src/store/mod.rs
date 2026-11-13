@@ -322,6 +322,26 @@ impl Store {
         self.read(move |c| files::attached(c, &note, &shelf)).await
     }
 
+    /// The bytes of a small file this device holds, such as a thumbnail,
+    /// read on the store's own thread. `None` if the device does not hold
+    /// it, or it is larger than `most` bytes: this is for showing a small
+    /// picture, not for handling a file.
+    pub async fn small_file(&self, file_id: uuid::Uuid, most: u64) -> Result<Option<Vec<u8>>> {
+        let shelf = self.shelf();
+        self.read(move |_| {
+            let path = shelf.path(file_id);
+            match std::fs::metadata(&path) {
+                Ok(found) if found.is_file() && found.len() <= most => {
+                    Ok(Some(std::fs::read(&path)?))
+                }
+                Ok(_) => Ok(None),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(error.into()),
+            }
+        })
+        .await
+    }
+
     // ---- Files and the server ----
 
     /// One file that a note names: an attachment or a thumbnail, with the

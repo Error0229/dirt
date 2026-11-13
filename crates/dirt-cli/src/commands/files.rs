@@ -6,9 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-use dirt_core::files::{media_type_for, safe_file_name, Attachment};
+use dirt_core::files::{media_type_for, safe_file_name, save_copy, Attachment};
 use dirt_core::store::AttachedFile;
-use dirt_core::sync::engine::{file_on_device, FileError};
+use dirt_core::sync::engine::file_on_device;
 use dirt_core::sync::overview::size_words;
 use dirt_core::{NoteId, Store};
 use serde::Serialize;
@@ -212,7 +212,7 @@ pub async fn run_save(
         Some(session) => session.fetch_file(&note, file_id).await,
         None => file_on_device(store, &note, file_id).await,
     }
-    .map_err(|error| CliError::Files(why_not_fetched(&error, context.session.is_some())))?;
+    .map_err(|error| CliError::Files(error.advice(context.session.is_some())))?;
 
     copy_to(&held, &target, replace)?;
     println!("{}", target.display());
@@ -226,87 +226,16 @@ fn already_there(target: &Path) -> CliError {
     ))
 }
 
-/// Writes a copy of `held` at `target`.
-///
-/// Unless `replace` is set, the copy is made only if nothing is at
-/// `target` at the moment it is opened. Looking first and writing after
-/// would not do: fetching a file takes a while, and something may have
-/// come to be there meanwhile, put by another program or by another
-/// `dirt save`.
-///
-/// With `replace`, the copy is written beside `target` and then given its
-/// name. What was at `target` is never opened, so it is never emptied:
-/// were `target` the device's own copy of the file, or a link to it,
-/// emptying it first would leave nothing to copy and destroy the file.
-/// And the old file is there whole until the new one is.
+/// Writes a copy of `held` at `target`, as [`save_copy`] does, and says
+/// what to do if something is there and was not to be replaced.
 pub fn copy_to(held: &Path, target: &Path, replace: bool) -> Result<(), CliError> {
-    let written = if replace {
-        beside(target)
-    } else {
-        target.to_path_buf()
-    };
-    let mut to = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&written)
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::AlreadyExists && !replace {
-                already_there(target)
-            } else {
-                CliError::Io(error)
-            }
-        })?;
-    let copied = std::fs::File::open(held)
-        .and_then(|mut from| std::io::copy(&mut from, &mut to))
-        .and_then(|_| {
-            drop(to);
-            if replace {
-                std::fs::rename(&written, target)
-            } else {
-                Ok(())
-            }
-        });
-    if let Err(error) = copied {
-        // Half a file under the name of the whole is worse than none.
-        // What is removed is this command's own: it was made just now.
-        let _ = std::fs::remove_file(&written);
-        return Err(error.into());
-    }
-    Ok(())
-}
-
-/// A name in `target`'s folder that nothing has, to write a file under
-/// before it takes `target`'s place.
-///
-/// The name is short and owes nothing to `target`'s own. A name made
-/// from it would be longer than it, and a destination may already be as
-/// long as a name can be.
-fn beside(target: &Path) -> PathBuf {
-    let moment = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_nanos());
-    target.with_file_name(format!(".dirt-save-{}-{moment}", std::process::id()))
-}
-
-/// Why a file could not be had, in words that say what can be done.
-fn why_not_fetched(error: &FileError, can_fetch: bool) -> String {
-    match error {
-        FileError::Missing if can_fetch => {
-            "the file is not on this device and the server does not have it. A device \
-             that holds it sends it when it next syncs"
-                .to_owned()
+    save_copy(held, target, replace).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists && !replace {
+            already_there(target)
+        } else {
+            CliError::Io(error)
         }
-        FileError::Missing => {
-            "the file is not on this device, and this device is not signed in to fetch it"
-                .to_owned()
-        }
-        FileError::Damaged => {
-            "the server's copy of the file could not be decrypted. Nothing was saved. \
-             `dirt save` on a device that holds the file still works"
-                .to_owned()
-        }
-        other => other.to_string(),
-    }
+    })
 }
 
 /// Removes a file from a note and prints the file's ID.

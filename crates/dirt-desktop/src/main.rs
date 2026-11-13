@@ -84,6 +84,9 @@ fn main() {
         }
     };
 
+    // Copies of files handed to other programs in earlier runs.
+    services::clear_opened_copies(&services::data_folder());
+
     // Configure Dioxus to hide window on close instead of exiting
     // Hide window instead of exiting when closed - keeps app running in tray
     let config = Config::new().with_close_behaviour(WindowCloseBehaviour::WindowHides);

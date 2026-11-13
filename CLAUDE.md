@@ -8,7 +8,7 @@ The project is also a system design case study. Multi-user accounts, three clien
 
 ## Status: redesign in progress
 
-`main` is partway through an approved redesign: steps 1 to 8 of 9 are built, and of step 9 the server, the core and the CLI (`docs/plans/2026-11-12-step-9-attachments-plan.md`). Some of step 7's manual checklist is left for a person (`docs/MANUAL_CHECKLIST.md`, #243), and step 8 leaves five decisions to the owner (`docs/OWNER_DECISIONS.md`). Devices sign in through Clerk and sync their notes, encrypted, through the new server. A second device is let in by comparing a code with one that is already in, or by the recovery phrase. `docs/SECURITY.md` describes what is protected. Read both documents before changing architecture, sync, login or storage:
+`main` is partway through an approved redesign: steps 1 to 8 of 9 are built, and of step 9 the server, the core, the CLI and the desktop app (`docs/plans/2026-11-12-step-9-attachments-plan.md`). Some of step 7's manual checklist is left for a person (`docs/MANUAL_CHECKLIST.md`, #243), and step 8 leaves five decisions to the owner (`docs/OWNER_DECISIONS.md`). Devices sign in through Clerk and sync their notes, encrypted, through the new server. A second device is let in by comparing a code with one that is already in, or by the recovery phrase. `docs/SECURITY.md` describes what is protected. Read both documents before changing architecture, sync, login or storage:
 
 - `docs/plans/2026-11-10-system-redesign-design.md` - requirements, decisions and the target design
 - `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md` - build order, trials and clean-up
@@ -42,7 +42,7 @@ What the code on `main` uses today:
 
 - **Files**: a file attached to a note is encrypted in pieces with a key kept in the note's document, and goes straight to S3-compatible storage by a link the server signs (`dirt-core::files`, `dirt-core::sync::engine::files`, `dirt-api::files`). A picture gets a thumbnail, made on the device with the `image` crate
 
-What the redesign still adds: attachments in the desktop and Android apps, and in exports. See the step 9 plan.
+What the redesign still adds: attachments in the Android app, and in exports. See the step 9 plan.
 
 ## Project Structure
 
