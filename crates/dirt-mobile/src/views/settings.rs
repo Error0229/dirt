@@ -495,7 +495,9 @@ async fn save_export(
             "There are no notes to export.".to_owned(),
         );
     }
-    if !activity::save_file(&file.name, file.mime_type, &file.text) {
+    // This save's own name: its outcome is not another's.
+    let request = activity::new_request();
+    if !activity::save_file(&request, &file.name, file.mime_type, &file.text) {
         return (
             MessageKind::Error,
             "Android's screen for saving a file could not be opened.".to_owned(),
@@ -504,7 +506,7 @@ async fn save_export(
     // The person is choosing where to save. The activity says when they
     // have, or have backed out.
     let outcome = loop {
-        if let Some(outcome) = activity::take_save_outcome() {
+        if let Some(outcome) = activity::take_save_outcome(&request) {
             break outcome;
         }
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;

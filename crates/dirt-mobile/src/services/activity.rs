@@ -200,15 +200,27 @@ pub fn open_file(path: &str, mime_type: &str) -> bool {
 /// inside the app, and writes it there. Returns `false` if Android's
 /// screen for that could not be asked for. How it went comes from
 /// [`take_save_outcome`].
-pub fn save_copy(name: &str, mime_type: &str, path: &str) -> bool {
-    ask("saveCopy", &[name, mime_type, path])
+pub fn save_copy(request: &str, name: &str, mime_type: &str, path: &str) -> bool {
+    ask("saveCopy", &[request, name, mime_type, path])
+}
+
+/// A name for one asking of the activity, under which its answer is kept
+/// until it is collected. Two askings can overlap, a save still writing
+/// when the next is started, and each gets its own answer.
+pub fn new_request() -> String {
+    static ASKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    format!(
+        "request-{}",
+        ASKED.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
 }
 
 /// Asks the person where to save a file named `name` and writes `text`
-/// there. Returns `false` if Android's screen for that could not be asked
-/// for. How it went comes from [`take_save_outcome`].
-pub fn save_file(name: &str, mime_type: &str, text: &str) -> bool {
-    ask("saveFile", &[name, mime_type, text])
+/// there. `request` is a name from [`new_request`], under which
+/// [`take_save_outcome`] says how it went. Returns `false` if Android's
+/// screen for that could not be asked for, or is already up.
+pub fn save_file(request: &str, name: &str, mime_type: &str, text: &str) -> bool {
+    ask("saveFile", &[request, name, mime_type, text])
 }
 
 /// How saving a file went.
@@ -220,10 +232,10 @@ pub enum SaveOutcome {
     Failed(String),
 }
 
-/// How the save that [`save_file`] began went, once, or `None` while the
-/// person is still choosing where.
-pub fn take_save_outcome() -> Option<SaveOutcome> {
-    let outcome = take_text("takeSaveOutcome")?;
+/// How the save asked for as `request` went, once, or `None` while the
+/// person is still choosing where or the file is still being written.
+pub fn take_save_outcome(request: &str) -> Option<SaveOutcome> {
+    let outcome = take_text_for("takeSaveOutcome", request)?;
     Some(match outcome.as_str() {
         "saved" => SaveOutcome::Saved,
         "cancelled" => SaveOutcome::Cancelled,

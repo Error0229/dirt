@@ -11,7 +11,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use dioxus::prelude::*;
@@ -53,8 +52,7 @@ pub async fn choose_files() -> Option<Vec<Incoming>> {
     // A name for this asking, so that what is chosen comes back to it and
     // to no other: files chosen for one note may still be on their way in
     // when the person chooses again for another.
-    static ASKED: AtomicU64 = AtomicU64::new(0);
-    let request = format!("files-{}", ASKED.fetch_add(1, Ordering::Relaxed));
+    let request = activity::new_request();
     if !activity::pick_files(&request) {
         return None;
     }
@@ -333,9 +331,16 @@ pub fn AttachmentPanel(note_id: NoteId) -> Element {
             let saved = match held(&state, note_id, attachment.file_id).await {
                 Ok(path) => {
                     let name = safe_file_name(&attachment.name);
-                    if activity::save_copy(&name, &attachment.media_type, &path.to_string_lossy()) {
+                    // This save's own name: its outcome is not another's.
+                    let request = activity::new_request();
+                    if activity::save_copy(
+                        &request,
+                        &name,
+                        &attachment.media_type,
+                        &path.to_string_lossy(),
+                    ) {
                         loop {
-                            if let Some(outcome) = activity::take_save_outcome() {
+                            if let Some(outcome) = activity::take_save_outcome(&request) {
                                 break Ok(outcome);
                             }
                             tokio::time::sleep(ASK_EVERY).await;

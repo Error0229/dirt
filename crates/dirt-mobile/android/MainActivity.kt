@@ -82,7 +82,14 @@ class MainActivity : WryActivity() {
         // the Rust side takes that.
         private var fileToSave: String? = null
         private var copyToSave: String? = null
-        private var saveOutcome: String? = null
+
+        // How each save went, under the name the Rust side gave the request
+        // to save, as the files chosen to attach are kept: a save may still
+        // be writing when the person starts another.
+        private val saveOutcomes = HashMap<String, String>()
+
+        // The request the screen for choosing a place is up for, if it is.
+        private var savingFor: String? = null
 
         // The files the person chose to attach, for each request to choose
         // some, under the name the Rust side gave the request: a JSON list
@@ -251,30 +258,60 @@ class MainActivity : WryActivity() {
         // takeSaveOutcome, as for saveFile.
         @Keep
         @JvmStatic
-        fun saveCopy(name: String, mimeType: String, path: String): Boolean {
+        fun saveCopy(request: String, name: String, mimeType: String, path: String): Boolean {
             val activity = current.get() ?: return false
+            if (!beginSaving(request)) return false
             setFileToSave(null)
             setCopyToSave(path)
-            setSaveOutcome(null)
-            activity.runOnUiThread {
-                runCatching {
-                    val request = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        type = mimeType
-                        putExtra(Intent.EXTRA_TITLE, name)
-                    }
-                    activity.startActivityForResult(request, REQUEST_SAVE_FILE)
-                }.onFailure { failure ->
-                    setCopyToSave(null)
-                    setSaveOutcome("failed:" + (failure.message ?: failure.javaClass.simpleName))
-                }
-            }
+            activity.runOnUiThread { askForAPlace(activity, request, name, mimeType) }
             return true
         }
 
+        // Puts up Android's screen for choosing where a file goes.
+        private fun askForAPlace(
+            activity: MainActivity,
+            request: String,
+            name: String,
+            mimeType: String,
+        ) {
+            runCatching {
+                val choose = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = mimeType
+                    putExtra(Intent.EXTRA_TITLE, name)
+                }
+                activity.startActivityForResult(choose, REQUEST_SAVE_FILE)
+            }.onFailure { failure ->
+                endSaving()
+                setFileToSave(null)
+                setCopyToSave(null)
+                setSaveOutcome(
+                    request,
+                    "failed:" + (failure.message ?: failure.javaClass.simpleName),
+                )
+            }
+        }
+
         @Synchronized
-        private fun setSaveOutcome(outcome: String?) {
-            saveOutcome = outcome
+        private fun setSaveOutcome(request: String, outcome: String) {
+            saveOutcomes[request] = outcome
+        }
+
+        // Says the screen for choosing a place is up for `request`, unless
+        // it is already up for another.
+        @Synchronized
+        private fun beginSaving(request: String): Boolean {
+            if (savingFor != null) return false
+            savingFor = request
+            return true
+        }
+
+        // The request that screen was up for, now that it is not.
+        @Synchronized
+        private fun endSaving(): String? {
+            val request = savingFor
+            savingFor = null
+            return request
         }
 
         // Asks the person where to save a file, with Android's own screen
@@ -284,37 +321,22 @@ class MainActivity : WryActivity() {
         // takeSaveOutcome.
         @Keep
         @JvmStatic
-        fun saveFile(name: String, mimeType: String, text: String): Boolean {
+        fun saveFile(request: String, name: String, mimeType: String, text: String): Boolean {
             val activity = current.get() ?: return false
+            if (!beginSaving(request)) return false
             setFileToSave(text)
             setCopyToSave(null)
-            setSaveOutcome(null)
-            activity.runOnUiThread {
-                runCatching {
-                    val request = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        type = mimeType
-                        putExtra(Intent.EXTRA_TITLE, name)
-                    }
-                    activity.startActivityForResult(request, REQUEST_SAVE_FILE)
-                }.onFailure { failure ->
-                    setFileToSave(null)
-                    setSaveOutcome("failed:" + (failure.message ?: failure.javaClass.simpleName))
-                }
-            }
+            activity.runOnUiThread { askForAPlace(activity, request, name, mimeType) }
             return true
         }
 
-        // "saved", "cancelled" or "failed:" and why, once, or null while
-        // the person is still choosing.
+        // How the save asked for as `request` went: "saved", "cancelled" or
+        // "failed:" and why, once. Null while the person is still choosing
+        // or the file is still being written.
         @Keep
         @JvmStatic
         @Synchronized
-        fun takeSaveOutcome(): String? {
-            val outcome = saveOutcome
-            saveOutcome = null
-            return outcome
-        }
+        fun takeSaveOutcome(request: String): String? = saveOutcomes.remove(request)
     }
 
     // A cold start. If it is the sign-in redirect, the app was stopped while
@@ -520,11 +542,15 @@ class MainActivity : WryActivity() {
     }
 
     private fun placeChosen(resultCode: Int, data: Intent?) {
+        // The screen is down, and another save may be asked for while this
+        // one is written. What is written, and how it went, stay this
+        // request's.
+        val request = endSaving() ?: return
         val text = takeFileToSave()
         val copy = takeCopyToSave()
         val place = data?.data
         if (resultCode != RESULT_OK || place == null || (text == null && copy == null)) {
-            setSaveOutcome("cancelled")
+            setSaveOutcome(request, "cancelled")
             return
         }
         // Off the main thread: a file may be ten megabytes, and the place
@@ -544,7 +570,7 @@ class MainActivity : WryActivity() {
             }.getOrElse { failure ->
                 "failed:" + (failure.message ?: failure.javaClass.simpleName)
             }
-            setSaveOutcome(outcome)
+            setSaveOutcome(request, outcome)
             runOnUiThread { tellThePage() }
         }.start()
     }

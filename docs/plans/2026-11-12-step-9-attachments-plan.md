@@ -704,6 +704,12 @@ What review showed:
   and the editor was then set to that. What was written since now stays in
   the editor.
 
+- **Two saves could take each other's outcome.** A save is still being
+  written after Android's screen for choosing a place has gone, and the
+  person can start another. Both waited on one answer, so one could be
+  told the other's result, and a result could be lost. Each save now has a
+  name and its own outcome, for the export as for a copy of a file.
+
 Not tried: a physical phone, and a share of several pictures at once.
 
 ### 9f: export, limits and the documents
