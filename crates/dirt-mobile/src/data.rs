@@ -8,7 +8,6 @@ use dirt_core::{Error, Result, Store};
 /// How many notes the list shows at first, and how many a search may
 /// find. Each request for more adds as many again.
 pub const NOTES_PAGE: usize = 100;
-const EXPORT_NOTES_PAGE_SIZE: usize = 500;
 
 /// Thin wrapper around the shared core [`Store`] that adds the mobile
 /// app's defaults: how many notes the list shows, and trimming of note
@@ -70,25 +69,6 @@ impl MobileNoteStore {
         let mut tags = self.db.list_tags().await?;
         tags.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         Ok(tags)
-    }
-
-    /// List all notes for full export operations.
-    pub async fn list_all_notes(&self) -> Result<Vec<Note>> {
-        let mut notes = Vec::new();
-        let mut offset = 0usize;
-
-        loop {
-            let batch = self.db.list_notes(EXPORT_NOTES_PAGE_SIZE, offset).await?;
-            let count = batch.len();
-            notes.extend(batch);
-
-            if count < EXPORT_NOTES_PAGE_SIZE {
-                break;
-            }
-            offset += count;
-        }
-
-        Ok(notes)
     }
 
     /// Create a note.
@@ -198,16 +178,5 @@ mod tests {
             store.list_tags().await.unwrap(),
             [("work".to_owned(), NOTES_PAGE), ("home".to_owned(), 1)]
         );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn list_all_notes_returns_full_collection() {
-        let (_folder, store) = MobileNoteStore::open_temporary();
-        store.create_note("One").await.unwrap();
-        store.create_note("Two").await.unwrap();
-        store.create_note("Three").await.unwrap();
-
-        let notes = store.list_all_notes().await.unwrap();
-        assert_eq!(notes.len(), 3);
     }
 }

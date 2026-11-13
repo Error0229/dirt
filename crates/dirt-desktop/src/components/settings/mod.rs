@@ -7,11 +7,12 @@
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 
+use dirt_core::export::ExportFormat;
 use dirt_core::models::{Settings, ThemeMode};
 
 use super::button::{Button, ButtonVariant};
 use super::dialog::{DialogContent, DialogRoot, DialogTitle};
-use crate::services::{export_notes_to_path, suggested_export_file_name, NotesExportFormat};
+use crate::services::export_into;
 use crate::state::AppState;
 use crate::theme::resolve_theme;
 use account_settings::AccountSettingsTab;
@@ -78,7 +79,7 @@ pub fn SettingsPanel() -> Element {
     let mut export_busy = use_signal(|| false);
     let mut export_message = use_signal(|| None::<String>);
 
-    let mut export_notes = move |format: NotesExportFormat| {
+    let mut export_notes = move |format: ExportFormat| {
         if export_busy() {
             return;
         }
@@ -87,6 +88,7 @@ pub fn SettingsPanel() -> Element {
         export_message.set(None);
 
         let db = state.db_service.read().clone();
+        let session = state.session.peek().clone();
         let mut export_busy_signal = export_busy;
         let mut export_message_signal = export_message;
         spawn(async move {
@@ -96,34 +98,35 @@ pub fn SettingsPanel() -> Element {
                 return;
             };
 
-            let default_name =
-                suggested_export_file_name(format, chrono::Utc::now().timestamp_millis());
-            let Some(file) = AsyncFileDialog::new()
-                .set_file_name(&default_name)
-                .save_file()
+            // The person chooses a folder, and the export is a new folder
+            // inside it: nothing of theirs is written over or mixed with.
+            let Some(chosen) = AsyncFileDialog::new()
+                .set_title("Choose a folder to export into")
+                .pick_folder()
                 .await
             else {
                 export_busy_signal.set(false);
                 return;
             };
 
-            match export_notes_to_path(db.as_ref(), format, file.path()).await {
-                Ok(count) => {
-                    export_message_signal.set(Some(format!(
-                        "Exported {count} notes to {}",
-                        file.path().display()
-                    )));
-                }
-                Err(error) => {
-                    export_message_signal.set(Some(format!("Export failed: {error}")));
-                }
-            }
+            let exported = export_into(
+                db.as_ref(),
+                session.as_ref(),
+                format,
+                chosen.path(),
+                chrono::Utc::now().timestamp_millis(),
+            )
+            .await;
+            export_message_signal.set(Some(match exported {
+                Ok(exported) => exported.said,
+                Err(error) => format!("Export failed: {error}"),
+            }));
             export_busy_signal.set(false);
         });
     };
 
-    let export_json = move |_: MouseEvent| export_notes(NotesExportFormat::Json);
-    let export_markdown = move |_: MouseEvent| export_notes(NotesExportFormat::Markdown);
+    let export_json = move |_: MouseEvent| export_notes(ExportFormat::Json);
+    let export_markdown = move |_: MouseEvent| export_notes(ExportFormat::Markdown);
 
     let mut active_tab = use_signal(|| SettingsTab::Appearance);
 

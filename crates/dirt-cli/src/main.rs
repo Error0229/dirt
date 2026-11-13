@@ -95,8 +95,13 @@ async fn run() -> Result<(), CliError> {
         Some(Commands::Detach { note, file }) => {
             commands::files::run_detach(&note, &file, &context).await?;
         }
-        Some(Commands::Export { format, output }) => {
-            commands::export::run_export(format, output.as_deref(), store).await?;
+        Some(Commands::Export {
+            format,
+            output,
+            folder,
+        }) => {
+            commands::export::run_export(format, output.as_deref(), folder.as_deref(), &context)
+                .await?;
         }
         Some(Commands::Sync { verbose }) => commands::sync::run_sync(&context, verbose).await?,
         Some(Commands::Auth { command }) => {

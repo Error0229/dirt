@@ -425,8 +425,8 @@ pub fn Settings() -> Element {
     }
 }
 
-/// Saves every note to one file, in a place the person chooses on
-/// Android's own screen for that.
+/// Saves every note and its files as one zip file, in a place the person
+/// chooses on Android's own screen for that.
 #[component]
 fn ExportPanel() -> Element {
     let state = use_context::<AppState>();
@@ -437,7 +437,8 @@ fn ExportPanel() -> Element {
         busy.set(true);
         message.set(None);
         spawn(async move {
-            let said = save_export((state.store)(), format).await;
+            let session = state.session.peek().clone();
+            let said = save_export((state.store)(), session, format).await;
             message.set(Some(said));
             busy.set(false);
         });
@@ -446,7 +447,10 @@ fn ExportPanel() -> Element {
     rsx! {
         div { style: "{PANEL}",
             p { style: "{HEADING}", "Export" }
-            p { style: "{TEXT}", "Save every note to a file. You choose where it goes." }
+            p {
+                style: "{TEXT}",
+                "Save every note and its files as one zip file. You choose where it goes."
+            }
             div { style: "display: flex; gap: 8px;",
                 UiButton {
                     r#type: "button",
@@ -465,6 +469,11 @@ fn ExportPanel() -> Element {
                     "Export Markdown"
                 }
             }
+            if busy() {
+                // Files this device does not hold are fetched first, which
+                // takes a while for many.
+                p { style: "{TEXT}", "Exporting..." }
+            }
             if let Some((kind, text)) = message() {
                 MessageBanner { kind, text }
             }
@@ -475,13 +484,28 @@ fn ExportPanel() -> Element {
 /// Makes the export, hands it to Android to save, and says how it went.
 async fn save_export(
     store: Option<std::sync::Arc<crate::data::MobileNoteStore>>,
+    session: Option<dirt_core::session::Session>,
     format: ExportFormat,
 ) -> (MessageKind, String) {
     let Some(store) = store else {
         return (MessageKind::Error, "The notes are not open yet.".to_owned());
     };
-    let file = match crate::export::export_file(&store, format, now_ms()).await {
-        Ok(file) => file,
+    let made = crate::export::make_archive(
+        store.core(),
+        session.as_ref(),
+        format,
+        &crate::export::export_folder(),
+        now_ms(),
+    )
+    .await;
+    let archive = match made {
+        Ok(Some(archive)) => archive,
+        Ok(None) => {
+            return (
+                MessageKind::Info,
+                "There are no notes to export.".to_owned(),
+            )
+        }
         Err(error) => {
             return (
                 MessageKind::Error,
@@ -489,15 +513,23 @@ async fn save_export(
             )
         }
     };
-    if file.notes == 0 {
-        return (
-            MessageKind::Info,
-            "There are no notes to export.".to_owned(),
-        );
-    }
+    let said = hand_over(&archive).await;
+    // Android has its own copy now, or the person backed out.
+    archive.discard();
+    said
+}
+
+/// Asks the person where the archive should go, waits for Android to copy
+/// it there, and says how that went.
+async fn hand_over(archive: &crate::export::Archive) -> (MessageKind, String) {
     // This save's own name: its outcome is not another's.
     let request = activity::new_request();
-    if !activity::save_file(&request, &file.name, file.mime_type, &file.text) {
+    if !activity::save_copy(
+        &request,
+        &archive.name,
+        crate::export::MIME_TYPE,
+        &archive.path.to_string_lossy(),
+    ) {
         return (
             MessageKind::Error,
             "Android's screen for saving a file could not be opened.".to_owned(),
@@ -512,8 +544,15 @@ async fn save_export(
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     };
     match outcome {
-        SaveOutcome::Saved if file.notes == 1 => (MessageKind::Info, "Saved 1 note.".to_owned()),
-        SaveOutcome::Saved => (MessageKind::Info, format!("Saved {} notes.", file.notes)),
+        SaveOutcome::Saved if archive.left_out.is_empty() => {
+            (MessageKind::Info, format!("Saved {}.", archive.counts))
+        }
+        // Saved, and not whole: said as loudly as a failure, since the
+        // person may keep this file as their copy of the notes.
+        SaveOutcome::Saved => (
+            MessageKind::Error,
+            format!("Saved {}.\n{}", archive.counts, archive.left_out.join("\n")),
+        ),
         SaveOutcome::Cancelled => (MessageKind::Info, "Nothing was saved.".to_owned()),
         SaveOutcome::Failed(why) => (
             MessageKind::Error,
@@ -601,6 +640,7 @@ fn MessageBanner(kind: MessageKind, text: String) -> Element {
                 border-radius: 10px;
                 font-size: 13px;
                 line-height: 1.4;
+                white-space: pre-line;
             ",
             "{text}"
         }

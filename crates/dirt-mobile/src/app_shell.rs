@@ -25,7 +25,7 @@ use dirt_core::config::ServerAddress;
 use dirt_core::models::{Note, NoteId};
 use dirt_core::secrets::slot_name;
 use dirt_core::session::{Session, SessionConfig, SessionError, SessionState};
-use dirt_core::store::{store_path, StoreName};
+use dirt_core::store::StoreName;
 use dirt_core::sync::worker::{SyncStatus, Timing, Trigger};
 use dirt_core::Store;
 
@@ -68,11 +68,8 @@ fn open_session(server_url: &str) -> Result<Session, String> {
 }
 
 fn open_local_store() -> Result<Store, String> {
-    Store::open(store_path(
-        &default_mobile_data_directory(),
-        &StoreName::Local,
-    ))
-    .map_err(|error| error.to_string())
+    Store::open_in(&default_mobile_data_directory(), &StoreName::Local)
+        .map_err(|error| error.to_string())
 }
 
 /// Finishes a sign-in with a redirect, and says what to tell the person if
@@ -201,8 +198,10 @@ pub fn AppShell() -> Element {
     let _init = use_resource(move || {
         let server_url = server_url.clone();
         async move {
-            // Copies of files lent to other apps in earlier runs.
+            // Copies of files lent to other apps in earlier runs, and
+            // exports that were never saved.
             dirt_core::files::clear_copies(&crate::views::attachments::opened_folder());
+            crate::export::clear_exports(&crate::export::export_folder());
             let server_url = match server_url {
                 Ok(url) => url,
                 Err(problem) => {
@@ -296,8 +295,10 @@ pub fn AppShell() -> Element {
                 if state == SessionState::SignedOut {
                     current.remove_signed_out_stores();
                     // Copies of the account's files that were lent to other
-                    // apps go with the account.
+                    // apps go with the account, and so does an export of
+                    // its notes that is still waiting to be saved.
                     dirt_core::files::clear_copies(&crate::views::attachments::opened_folder());
+                    crate::export::clear_exports(&crate::export::export_folder());
                 }
             }
         }

@@ -83,10 +83,10 @@ class MainActivity : WryActivity() {
         private val saveOutcomes = HashMap<String, String>()
 
         // The save the screen for choosing a place is up for, if it is up:
-        // the request's name, and what is to be written, which is a text or
-        // the path of a file. They are one thing, set together and taken
-        // together, so that what one save writes can never be another's.
-        private class Saving(val request: String, val text: String?, val copy: String?)
+        // the request's name, and the path of the file to be written. They
+        // are one thing, set together and taken together, so that what one
+        // save writes can never be another's.
+        private class Saving(val request: String, val copy: String)
 
         private var saving: Saving? = null
 
@@ -228,14 +228,17 @@ class MainActivity : WryActivity() {
         }
 
         // Asks the person where to save a copy of the file at `path`, which
-        // is inside the app, and writes it there. Returns false when the
-        // screen could not be asked for. How it went is collected with
-        // takeSaveOutcome, as for saveFile.
+        // is inside the app, with Android's own screen for that, and writes
+        // it there: one of a note's files, or an export of the notes. The
+        // app needs no permission: it is given the one place the person
+        // chose. Returns false when the screen could not be asked for, or
+        // is already up for another save. How it went is collected with
+        // takeSaveOutcome.
         @Keep
         @JvmStatic
         fun saveCopy(request: String, name: String, mimeType: String, path: String): Boolean {
             val activity = current.get() ?: return false
-            if (!beginSaving(Saving(request, null, path))) return false
+            if (!beginSaving(Saving(request, path))) return false
             activity.runOnUiThread { askForAPlace(activity, request, name, mimeType) }
             return true
         }
@@ -284,20 +287,6 @@ class MainActivity : WryActivity() {
             val save = saving
             saving = null
             return save
-        }
-
-        // Asks the person where to save a file, with Android's own screen
-        // for that, and writes `text` there. The app needs no permission:
-        // it is given the one place the person chose. Returns false when
-        // the screen could not be asked for. How it went is collected with
-        // takeSaveOutcome.
-        @Keep
-        @JvmStatic
-        fun saveFile(request: String, name: String, mimeType: String, text: String): Boolean {
-            val activity = current.get() ?: return false
-            if (!beginSaving(Saving(request, text, null))) return false
-            activity.runOnUiThread { askForAPlace(activity, request, name, mimeType) }
-            return true
         }
 
         // How the save asked for as `request` went: "saved", "cancelled" or
@@ -516,24 +505,20 @@ class MainActivity : WryActivity() {
         // one is written. What is written, and how it went, stay this
         // request's.
         val save = endSaving() ?: return
-        val (request, text, copy) = Triple(save.request, save.text, save.copy)
+        val (request, copy) = Pair(save.request, save.copy)
         val place = data?.data
-        if (resultCode != RESULT_OK || place == null || (text == null && copy == null)) {
+        if (resultCode != RESULT_OK || place == null) {
             setSaveOutcome(request, "cancelled")
             return
         }
-        // Off the main thread: a file may be ten megabytes, and the place
-        // may be slow.
+        // Off the main thread: a file may be ten megabytes and an export
+        // of the notes many times that, and the place may be slow.
         Thread {
             val outcome = runCatching {
                 val file = contentResolver.openOutputStream(place)
                     ?: error("the file could not be opened")
                 file.use { to ->
-                    if (copy != null) {
-                        File(copy).inputStream().use { from -> from.copyTo(to) }
-                    } else {
-                        to.write(text.orEmpty().toByteArray(Charsets.UTF_8))
-                    }
+                    File(copy).inputStream().use { from -> from.copyTo(to) }
                 }
                 "saved"
             }.getOrElse { failure ->

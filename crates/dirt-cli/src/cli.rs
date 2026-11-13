@@ -104,14 +104,21 @@ pub enum Commands {
         /// The start of the file's ID, or its name
         file: String,
     },
-    /// Export notes
+    /// Export every note: its text alone, or with the attached files
     Export {
-        /// Export format
+        /// The format of the notes' text
         #[arg(long, value_enum, default_value_t = ExportFormat::Json)]
         format: ExportFormat,
-        /// Optional output path (stdout when omitted)
-        #[arg(short, long, value_name = "PATH")]
+        /// Write the notes' text to this file and do not print it. The text
+        /// names each note's files and does not hold them
+        #[arg(short, long, value_name = "PATH", conflicts_with = "folder")]
         output: Option<PathBuf>,
+        /// Write the notes and their files into this folder, which must
+        /// not be there yet. A file this device does not hold is fetched
+        /// first. If a file cannot be had the folder is written without
+        /// it, and the command says which and fails
+        #[arg(long, value_name = "FOLDER")]
+        folder: Option<PathBuf>,
     },
     /// Generate shell completion scripts
     Completions {

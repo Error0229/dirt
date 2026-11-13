@@ -1,9 +1,8 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use dirt_core::export::render_markdown_export;
 use dirt_core::notes::NoteDoc;
-use dirt_core::{Note, NoteId, Store};
+use dirt_core::{NoteId, Store};
 use tempfile::TempDir;
 use tokio::time::sleep;
 
@@ -14,7 +13,7 @@ use crate::commands::common::{
 };
 use crate::commands::completions::run_completions;
 use crate::commands::delete::run_delete;
-use crate::commands::export::run_export;
+use crate::commands::export::{files_not_here, run_export};
 use crate::commands::sync::run_sync;
 use crate::context::Context;
 use crate::error::CliError;
@@ -241,31 +240,6 @@ fn an_editor_that_does_not_exist_is_an_error() {
     );
 }
 
-#[test]
-fn note_to_export_item_sorts_tags() {
-    let note = Note::new("#zeta test #alpha #beta");
-    let export = dirt_core::export::note_to_export_item(&note);
-
-    assert_eq!(export.tags, vec!["alpha", "beta", "zeta"]);
-}
-
-#[test]
-fn render_markdown_export_includes_frontmatter_and_content() {
-    let note = Note {
-        id: "cccccccc-cccc-7ccc-8ccc-111111111111".parse().unwrap(),
-        content: "Hello export #tag".to_string(),
-        created_at: 123,
-        updated_at: 456,
-    };
-
-    let rendered = render_markdown_export(&[note]);
-    assert!(rendered.contains("id: cccccccc-cccc-7ccc-8ccc-111111111111"));
-    assert!(rendered.contains("created_at: 123"));
-    assert!(rendered.contains("updated_at: 456"));
-    assert!(rendered.contains("tags:\n  - tag"));
-    assert!(rendered.contains("Hello export #tag"));
-}
-
 #[tokio::test(flavor = "current_thread")]
 async fn run_export_writes_json_file() {
     let (_folder, db_path) = temp_db();
@@ -279,15 +253,124 @@ async fn run_export_writes_json_file() {
             .map_or(0, |duration| duration.as_nanos())
     ));
 
-    run_export(ExportFormat::Json, Some(&output_path), &store)
-        .await
-        .unwrap();
+    run_export(
+        ExportFormat::Json,
+        Some(&output_path),
+        None,
+        &without_a_server(&store),
+    )
+    .await
+    .unwrap();
 
     let exported = std::fs::read_to_string(&output_path).unwrap();
     assert!(exported.contains("\"content\": \"Export me #one\""));
     assert!(exported.contains("\"tags\": [\n      \"one\"\n    ]"));
 
     let _ = std::fs::remove_file(output_path);
+}
+
+/// A note with two files, the second of which this device does not hold.
+async fn note_with_a_file_here_and_one_away(folder: &TempDir, store: &Store) -> NoteId {
+    let note = store.create_note("Trip #travel").await.unwrap();
+    for (name, bytes) in [("ticket.txt", "a ticket"), ("map.txt", "north is up")] {
+        let source = folder.path().join(name);
+        std::fs::write(&source, bytes).unwrap();
+        store
+            .attach_file(&note.id, &source, name, "text/plain")
+            .await
+            .unwrap();
+    }
+    let away = store.note_attachments(&note.id).await.unwrap()[1].file_id;
+    std::fs::remove_file(store.shelf().path(away)).unwrap();
+    note.id
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_export_into_a_folder_holds_the_files_and_fails_if_one_is_missing() {
+    let (folder, db_path) = temp_db();
+    let store = Store::open(&db_path).unwrap();
+    let note = note_with_a_file_here_and_one_away(&folder, &store).await;
+    let context = without_a_server(&store);
+    let target = folder.path().join("out");
+
+    // One file cannot be had: the folder is written, and the command
+    // fails, saying which.
+    let failed = run_export(ExportFormat::Json, None, Some(&target), &context)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        failed.to_string(),
+        "1 file is not in the export.\n\
+         The file is not on this device, and this device is not signed in to fetch it.\n  \
+         map.txt, attached to: Trip #travel"
+    );
+    assert_eq!(
+        std::fs::read(
+            target
+                .join("files")
+                .join(note.to_string())
+                .join("ticket.txt")
+        )
+        .unwrap(),
+        b"a ticket"
+    );
+    let notes = std::fs::read_to_string(target.join("notes.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&notes).unwrap();
+    assert_eq!(
+        parsed[0]["files"][0]["path"],
+        format!("files/{note}/ticket.txt")
+    );
+    assert!(parsed[0]["files"][1]["path"].is_null());
+
+    // A folder that is there is not written into.
+    let again = run_export(ExportFormat::Json, None, Some(&target), &context)
+        .await
+        .unwrap_err();
+    assert!(again.to_string().contains("is already there"), "{again}");
+
+    // With every file on the device, the command succeeds.
+    let away = store.note_attachments(&note).await.unwrap()[1].file_id;
+    std::fs::write(store.shelf().path(away), b"north is up").unwrap();
+    let whole = folder.path().join("whole");
+    run_export(ExportFormat::Markdown, None, Some(&whole), &context)
+        .await
+        .unwrap();
+    assert!(whole.join("notes.md").is_file());
+    assert_eq!(
+        std::fs::read(whole.join("files").join(note.to_string()).join("map.txt")).unwrap(),
+        b"north is up"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_text_alone_names_the_files_and_says_they_are_not_exported() {
+    let (folder, db_path) = temp_db();
+    let store = Store::open(&db_path).unwrap();
+    note_with_a_file_here_and_one_away(&folder, &store).await;
+    let output = folder.path().join("notes.json");
+    run_export(
+        ExportFormat::Json,
+        Some(&output),
+        None,
+        &without_a_server(&store),
+    )
+    .await
+    .unwrap();
+    let parsed: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&output).unwrap()).unwrap();
+    assert_eq!(parsed[0]["files"][0]["name"], "ticket.txt");
+    assert!(parsed[0]["files"][0]["path"].is_null());
+    assert_eq!(parsed[0]["files"].as_array().unwrap().len(), 2);
+
+    assert_eq!(files_not_here(0), None);
+    assert_eq!(
+        files_not_here(1).unwrap(),
+        "1 file attached to these notes is named here and not exported. \
+         `dirt export --folder <folder>` writes the notes and their files."
+    );
+    assert!(files_not_here(2)
+        .unwrap()
+        .starts_with("2 files attached to these notes are named here"));
 }
 
 #[test]
