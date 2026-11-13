@@ -11,6 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use dioxus::prelude::*;
@@ -49,11 +50,16 @@ pub fn opened_folder() -> PathBuf {
 /// Asks the person which files to attach, on Android's screen for that,
 /// and waits for them. `None` if they chose none.
 pub async fn choose_files() -> Option<Vec<Incoming>> {
-    if !activity::pick_files() {
+    // A name for this asking, so that what is chosen comes back to it and
+    // to no other: files chosen for one note may still be on their way in
+    // when the person chooses again for another.
+    static ASKED: AtomicU64 = AtomicU64::new(0);
+    let request = format!("files-{}", ASKED.fetch_add(1, Ordering::Relaxed));
+    if !activity::pick_files(&request) {
         return None;
     }
     loop {
-        if let Some(picked) = activity::take_picked() {
+        if let Some(picked) = activity::take_picked(&request) {
             return match picked {
                 Picked::Cancelled => None,
                 Picked::Files(files) => Some(files),

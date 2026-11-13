@@ -104,6 +104,34 @@ fn take_text(method: &str) -> Option<String> {
     }
 }
 
+/// Calls a static method of the activity that takes one text and returns a
+/// text or null.
+fn take_text_for(method: &str, text: &str) -> Option<String> {
+    let taken = with_activity(|env, class| {
+        let given = env.new_string(text)?;
+        let value = env
+            .call_static_method(
+                class,
+                method,
+                "(Ljava/lang/String;)Ljava/lang/String;",
+                &[JValue::Object(&given)],
+            )?
+            .l()?;
+        if value.is_null() {
+            return Ok(None);
+        }
+        let text: String = env.get_string(&JString::from(value))?.into();
+        Ok(Some(text))
+    });
+    match taken {
+        Ok(text) => text,
+        Err(error) => {
+            tracing::warn!("MainActivity.{method} could not be called: {error}");
+            None
+        }
+    }
+}
+
 /// Calls a static method of the activity that takes texts and says whether
 /// it could do what was asked.
 fn ask(method: &str, texts: &[&str]) -> bool {
@@ -148,16 +176,18 @@ pub fn take_capture() -> Option<Capture> {
 }
 
 /// Asks the person which files to attach, on Android's own screen for
-/// that. Returns `false` if the screen could not be asked for. What was
-/// chosen comes from [`take_picked`].
-pub fn pick_files() -> bool {
-    ask("pickFiles", &[])
+/// that. `request` is a name of the caller's own for this asking, under
+/// which [`take_picked`] gives what was chosen: two askings can overlap,
+/// and each gets its own files. Returns `false` if the screen could not be
+/// asked for, or is already up for another asking.
+pub fn pick_files(request: &str) -> bool {
+    ask("pickFiles", &[request])
 }
 
-/// The files the person chose, once they are copied into the app, or that
-/// they chose none. `None` while they are still choosing.
-pub fn take_picked() -> Option<Picked> {
-    take_text("takePicked").map(|given| parse_picked(&given))
+/// The files the person chose for `request`, once they are copied into the
+/// app, or that they chose none. `None` while they are still choosing.
+pub fn take_picked(request: &str) -> Option<Picked> {
+    take_text_for("takePicked", request).map(|given| parse_picked(&given))
 }
 
 /// Lends the file at `path`, which is inside the app, to whatever other

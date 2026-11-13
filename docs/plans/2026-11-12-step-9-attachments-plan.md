@@ -694,6 +694,16 @@ What review showed:
   on a thread where nothing else would. Each file's failures are now its
   own, and the copying as a whole always gives its answer.
 
+- **Two askings for files could take each other's.** With the choosing
+  no longer tied to a screen, files chosen for one note could still be on
+  their way in when the person chose again for another, and both waited on
+  one answer. Each asking now has a name, and the activity keeps each
+  one's files under it. Only one chooser is on the screen at a time.
+- **Text written while a new note's files were attached was lost.** The
+  note is saved with the text as it stood when the files were asked for,
+  and the editor was then set to that. What was written since now stays in
+  the editor.
+
 Not tried: a physical phone, and a share of several pictures at once.
 
 ### 9f: export, limits and the documents

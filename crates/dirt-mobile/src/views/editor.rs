@@ -125,7 +125,13 @@ pub fn Editor() -> Element {
     // screen, so that leaving it does not drop files already chosen. What
     // is done here is only what the screen shows of it.
     let attach_to_new = move |_| {
-        let attaching = choose_and_attach(state, Target::New { text: draft() });
+        let written = draft();
+        let attaching = choose_and_attach(
+            state,
+            Target::New {
+                text: written.clone(),
+            },
+        );
         spawn(async move {
             busy.set(true);
             error.set(None);
@@ -138,7 +144,13 @@ pub fn Editor() -> Element {
                 error.set(Some(attached.failed.join(" ")));
             }
             if let Some((note, text)) = attached.note {
-                draft.set(text);
+                // The note was saved with the text as it stood when the
+                // files were asked for. Whatever the person has written
+                // since is theirs and stays in the editor, to be saved
+                // with the Save button like any other edit.
+                if draft() == written {
+                    draft.set(text);
+                }
                 state.selected_note_id.set(Some(note));
             }
         });

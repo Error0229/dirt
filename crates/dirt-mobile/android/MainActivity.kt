@@ -84,10 +84,20 @@ class MainActivity : WryActivity() {
         private var copyToSave: String? = null
         private var saveOutcome: String? = null
 
-        // The files the person chose to attach, as a JSON list, once they
-        // have all been copied into the app; "cancelled" if none was
-        // chosen. Null while the person is choosing or the copying goes on.
-        private var picked: String? = null
+        // The files the person chose to attach, for each request to choose
+        // some, under the name the Rust side gave the request: a JSON list
+        // once they have all been copied into the app, or "cancelled" if
+        // none was chosen. A request has no entry while the person is
+        // choosing or the copying goes on.
+        //
+        // Each request has its own answer because two can overlap: files
+        // chosen for one note may still be on their way in when the person
+        // goes to another note and chooses again. One shared answer would
+        // let either note take the other's files.
+        private val picked = HashMap<String, String>()
+
+        // The request the chooser on screen is for, if it is on screen.
+        private var pickingFor: String? = null
 
         // The activity on screen, for opening other screens over it.
         private var current = WeakReference<MainActivity>(null)
@@ -120,44 +130,62 @@ class MainActivity : WryActivity() {
         fun takeCapture(): String? = captures.removeFirstOrNull()
 
         @Synchronized
-        private fun setPicked(files: String?) {
-            picked = files
+        private fun setPicked(request: String, files: String) {
+            picked[request] = files
+        }
+
+        // Says the chooser is on screen for `request`, unless it is already
+        // on screen for another.
+        @Synchronized
+        private fun beginPicking(request: String): Boolean {
+            if (pickingFor != null) return false
+            pickingFor = request
+            return true
+        }
+
+        // The request the chooser was on screen for, now that it is not.
+        @Synchronized
+        private fun endPicking(): String? {
+            val request = pickingFor
+            pickingFor = null
+            return request
         }
 
         // Asks the person which files to attach, with Android's own screen
         // for that. The app needs no permission: it is given the files the
-        // person chose. Returns false when the screen could not be asked
-        // for. What was chosen is collected with takePicked.
+        // person chose. `request` is a name the caller made up, under which
+        // it collects what was chosen with takePicked. Returns false when
+        // the screen could not be asked for, or is already up for another
+        // request.
         @Keep
         @JvmStatic
-        fun pickFiles(): Boolean {
+        fun pickFiles(request: String): Boolean {
             val activity = current.get() ?: return false
-            setPicked(null)
+            if (!beginPicking(request)) return false
             activity.runOnUiThread {
                 runCatching {
-                    val request = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    val choose = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE)
                         type = "*/*"
                         putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                     }
-                    activity.startActivityForResult(request, REQUEST_PICK_FILES)
-                }.onFailure { setPicked("cancelled") }
+                    activity.startActivityForResult(choose, REQUEST_PICK_FILES)
+                }.onFailure {
+                    endPicking()
+                    setPicked(request, "cancelled")
+                }
             }
             return true
         }
 
-        // The files the person chose, once, as a JSON list of entries each
-        // with a "name", a "mime" and either the "path" of a copy inside
-        // the app or a "problem"; or "cancelled". Null while the person is
-        // still choosing or the files are still being copied.
+        // The files the person chose for `request`, once, as a JSON list of
+        // entries each with a "name", a "mime" and either the "path" of a
+        // copy inside the app or a "problem"; or "cancelled". Null while
+        // the person is still choosing or the files are still being copied.
         @Keep
         @JvmStatic
         @Synchronized
-        fun takePicked(): String? {
-            val files = picked
-            picked = null
-            return files
-        }
+        fun takePicked(request: String): String? = picked.remove(request)
 
         // Hands a file inside the app to whatever other app shows files of
         // its kind, for reading only. The other app is given this one file
@@ -468,6 +496,9 @@ class MainActivity : WryActivity() {
     }
 
     private fun filesPicked(resultCode: Int, data: Intent?) {
+        // The chooser is off the screen, and another may be asked for
+        // while these files are copied in. They stay this request's.
+        val request = endPicking() ?: return
         val chosen = mutableListOf<Uri>()
         if (resultCode == RESULT_OK && data != null) {
             // Several files come as a list, one comes by itself.
@@ -479,11 +510,11 @@ class MainActivity : WryActivity() {
             }
         }
         if (chosen.isEmpty()) {
-            setPicked("cancelled")
+            setPicked(request, "cancelled")
             return
         }
         Thread {
-            setPicked(copyAllIn(chosen).toString())
+            setPicked(request, copyAllIn(chosen).toString())
             runOnUiThread { tellThePage() }
         }.start()
     }
