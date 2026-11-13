@@ -61,7 +61,7 @@ deployed by hand, after its migrations.
 | Vercel project | `dirt-server` | `dirt-trial` |
 | Database | Neon project `dirt-prod`, free plan | Neon project `dirt-trial`, free plan |
 | Sign-in | The Clerk application's production instance, `https://clerk.dirt.catjam.dev`. An email code | Its development instance. An email code, or Google |
-| Files | R2 bucket `dirt-files` | R2 bucket `dirt-trial-files` |
+| Files | R2 bucket `dirt-files`, with a token of its own | R2 bucket `dirt-trial-files`, with a token of its own |
 | Dumps | Daily, to Backblaze B2 | None |
 | Firewall | The rate limit below | The same |
 
@@ -71,11 +71,6 @@ made through Vercel's marketplace, so they are managed and billed through
 the Vercel account. That is a tie to Vercel the design's portability rule
 would rather not have: moving the server to another host means moving the
 Clerk application and the database out of Vercel's hands first.
-
-Neither server has its file settings yet. The buckets exist; the token
-each server needs is made in Cloudflare's dashboard
-(`docs/OWNER_DECISIONS.md`, decision 6). Until then both sync notes and
-refuse files.
 
 A third Vercel project, `dirt-api`, is the server from before the redesign.
 Nothing here uses it.
@@ -112,6 +107,11 @@ Nothing here uses it.
 5. **Files.** Make a Cloudflare R2 bucket and a token limited to it, and
    set the five `FILES_S3_` variables on the Vercel project. The endpoint
    is the account's S3 address, `https://<account>.r2.cloudflarestorage.com`.
+   The token is made in Cloudflare's dashboard, under R2, "Manage API
+   Tokens": an account token, "Object Read & Write", applied to the one
+   bucket. The page then shows the access key ID and the secret, once.
+   Each server has a bucket and a token of its own, so that nothing done
+   on the trial server can reach production's files.
    Set `CRON_SECRET` to a random string of sixteen characters or more:
    `vercel.json` asks Vercel to call `/v1/maintenance/sweep` once a day,
    at some point in the hour after 04:00 UTC, and Vercel presents the secret
@@ -199,7 +199,9 @@ As of 2026-11-13, for the production server:
       dump from it has been restored once, as below.
 - [x] The firewall's rate limit is set (step 6 of the one-time set-up).
 - [ ] The file storage is set up (step 5), and a file attached on one device
-      has been opened on another through it.
+      has been opened on another through it. **It is set up. The second
+      half was done on the trial server, whose storage is set up the same
+      way; on production it waits for the first sign-in.**
 - [x] Migrations are applied and `/healthz` answers.
 - [ ] `docs/MANUAL_CHECKLIST.md` has been run against this server, on a real
       phone as well as the emulator.

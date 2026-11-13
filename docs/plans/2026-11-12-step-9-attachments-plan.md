@@ -804,6 +804,8 @@ beyond the tests in CI; a physical phone.
 - [x] No file's bytes, name or key reach the server: a test reads what the
       server and the store hold (the same test, and `dirt-api`'s
       `a_file_goes_up_through_one_link_and_comes_down_through_another`).
-- [ ] On real devices against `dirt-trial`: needs the owner's storage
-      account. Until then every client was tried against the real server
-      on one machine, the Android app on an emulator.
+- [ ] On real devices against `dirt-trial`. **Half done (2026-11-13):**
+      the owner chose R2 and the trial server has its bucket. A computer
+      and the Android emulator exchanged files through it in both
+      directions (`docs/MANUAL_CHECKLIST.md`, the run of that day). A
+      phone that is not an emulator is still to be tried.
