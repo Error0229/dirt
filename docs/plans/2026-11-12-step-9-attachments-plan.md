@@ -708,7 +708,10 @@ What review showed:
   written after Android's screen for choosing a place has gone, and the
   person can start another. Both waited on one answer, so one could be
   told the other's result, and a result could be lost. Each save now has a
-  name and its own outcome, for the export as for a copy of a file.
+  name and its own outcome, for the export as for a copy of a file. A
+  save's name and what it writes are also kept as one thing, set and taken
+  in one step: taken one after the other, a second save could put its file
+  in between and have it written to the first save's place.
 
 Not tried: a physical phone, and a share of several pictures at once.
 

@@ -77,19 +77,18 @@ class MainActivity : WryActivity() {
         // a list of "files", as `fileEntry` writes them.
         private val captures = ArrayDeque<String>()
 
-        // The text of a file the person is choosing a place for, or the
-        // path of a file to save a copy of, and how saving it went, until
-        // the Rust side takes that.
-        private var fileToSave: String? = null
-        private var copyToSave: String? = null
-
         // How each save went, under the name the Rust side gave the request
         // to save, as the files chosen to attach are kept: a save may still
         // be writing when the person starts another.
         private val saveOutcomes = HashMap<String, String>()
 
-        // The request the screen for choosing a place is up for, if it is.
-        private var savingFor: String? = null
+        // The save the screen for choosing a place is up for, if it is up:
+        // the request's name, and what is to be written, which is a text or
+        // the path of a file. They are one thing, set together and taken
+        // together, so that what one save writes can never be another's.
+        private class Saving(val request: String, val text: String?, val copy: String?)
+
+        private var saving: Saving? = null
 
         // The files the person chose to attach, for each request to choose
         // some, under the name the Rust side gave the request: a JSON list
@@ -228,30 +227,6 @@ class MainActivity : WryActivity() {
             }.isSuccess
         }
 
-        @Synchronized
-        private fun setFileToSave(text: String?) {
-            fileToSave = text
-        }
-
-        @Synchronized
-        private fun takeFileToSave(): String? {
-            val text = fileToSave
-            fileToSave = null
-            return text
-        }
-
-        @Synchronized
-        private fun setCopyToSave(path: String?) {
-            copyToSave = path
-        }
-
-        @Synchronized
-        private fun takeCopyToSave(): String? {
-            val path = copyToSave
-            copyToSave = null
-            return path
-        }
-
         // Asks the person where to save a copy of the file at `path`, which
         // is inside the app, and writes it there. Returns false when the
         // screen could not be asked for. How it went is collected with
@@ -260,9 +235,7 @@ class MainActivity : WryActivity() {
         @JvmStatic
         fun saveCopy(request: String, name: String, mimeType: String, path: String): Boolean {
             val activity = current.get() ?: return false
-            if (!beginSaving(request)) return false
-            setFileToSave(null)
-            setCopyToSave(path)
+            if (!beginSaving(Saving(request, null, path))) return false
             activity.runOnUiThread { askForAPlace(activity, request, name, mimeType) }
             return true
         }
@@ -283,8 +256,6 @@ class MainActivity : WryActivity() {
                 activity.startActivityForResult(choose, REQUEST_SAVE_FILE)
             }.onFailure { failure ->
                 endSaving()
-                setFileToSave(null)
-                setCopyToSave(null)
                 setSaveOutcome(
                     request,
                     "failed:" + (failure.message ?: failure.javaClass.simpleName),
@@ -297,21 +268,22 @@ class MainActivity : WryActivity() {
             saveOutcomes[request] = outcome
         }
 
-        // Says the screen for choosing a place is up for `request`, unless
+        // Says the screen for choosing a place is up for this save, unless
         // it is already up for another.
         @Synchronized
-        private fun beginSaving(request: String): Boolean {
-            if (savingFor != null) return false
-            savingFor = request
+        private fun beginSaving(save: Saving): Boolean {
+            if (saving != null) return false
+            saving = save
             return true
         }
 
-        // The request that screen was up for, now that it is not.
+        // The save that screen was up for, now that it is not: its request
+        // and what it writes, taken in one step.
         @Synchronized
-        private fun endSaving(): String? {
-            val request = savingFor
-            savingFor = null
-            return request
+        private fun endSaving(): Saving? {
+            val save = saving
+            saving = null
+            return save
         }
 
         // Asks the person where to save a file, with Android's own screen
@@ -323,9 +295,7 @@ class MainActivity : WryActivity() {
         @JvmStatic
         fun saveFile(request: String, name: String, mimeType: String, text: String): Boolean {
             val activity = current.get() ?: return false
-            if (!beginSaving(request)) return false
-            setFileToSave(text)
-            setCopyToSave(null)
+            if (!beginSaving(Saving(request, text, null))) return false
             activity.runOnUiThread { askForAPlace(activity, request, name, mimeType) }
             return true
         }
@@ -545,9 +515,8 @@ class MainActivity : WryActivity() {
         // The screen is down, and another save may be asked for while this
         // one is written. What is written, and how it went, stay this
         // request's.
-        val request = endSaving() ?: return
-        val text = takeFileToSave()
-        val copy = takeCopyToSave()
+        val save = endSaving() ?: return
+        val (request, text, copy) = Triple(save.request, save.text, save.copy)
         val place = data?.data
         if (resultCode != RESULT_OK || place == null || (text == null && copy == null)) {
             setSaveOutcome(request, "cancelled")
