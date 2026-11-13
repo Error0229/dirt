@@ -10,7 +10,7 @@
 //! Where a file stands, and why one could not be had, is said in the words
 //! `dirt-core` gives every client.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use dioxus::prelude::*;
@@ -50,30 +50,22 @@ async fn held(state: &AppState, note: NoteId, file: Uuid) -> Result<PathBuf, Str
     found.map_err(|error| error.advice(can_fetch))
 }
 
-/// The note's files, and the thumbnails of those that have one.
-async fn load(state: &AppState, note: NoteId) -> (Vec<AttachedFile>, HashMap<Uuid, String>) {
-    let Some(store) = state.db_service.peek().clone() else {
-        return (Vec::new(), HashMap::new());
-    };
-    let files = store.attached_files(&note).await.unwrap_or_default();
-    let mut thumbnails = HashMap::new();
-    for file in &files {
-        let Some(thumbnail) = &file.attachment.thumbnail else {
-            continue;
-        };
-        if !file.thumbnail_on_device {
-            // Fetched once and then kept. A thumbnail that cannot be had
-            // is done without: the row shows the file's kind.
-            let _ = held(state, note, thumbnail.file_id).await;
-        }
-        if let Ok(Some(picture)) = store
-            .small_file(thumbnail.file_id, MOST_THUMBNAIL_BYTES)
-            .await
-        {
-            thumbnails.insert(file.attachment.file_id, as_data_uri(&picture));
-        }
+/// The note's files, as the store has them. Nothing is fetched for this.
+async fn files_of(state: &AppState, note: NoteId) -> Vec<AttachedFile> {
+    match state.db_service.peek().clone() {
+        Some(store) => store.attached_files(&note).await.unwrap_or_default(),
+        None => Vec::new(),
     }
-    (files, thumbnails)
+}
+
+/// A thumbnail this device holds, as something the window can show.
+async fn thumbnail_held(state: &AppState, thumbnail: Uuid) -> Option<String> {
+    let store = state.db_service.peek().clone()?;
+    let picture = store
+        .small_file(thumbnail, MOST_THUMBNAIL_BYTES)
+        .await
+        .ok()??;
+    Some(as_data_uri(&picture))
 }
 
 /// The files of the open note, and the ways to add one.
@@ -93,11 +85,54 @@ pub fn AttachmentPanel(note_id: NoteId, dropped: Signal<Vec<PathBuf>>) -> Elemen
 
     // Read again when the note changes, when a file is added or removed
     // here, and when a sync has brought something or sent something.
+    // Reading the list fetches nothing, so the rows are there at once.
     let listed = use_resource(move || {
         let _ = changed();
         let sync = (state.sync_status)();
         let _ = (sync.pulled, sync.files_unsent, sync.syncing);
-        async move { load(&state, note_id).await }
+        async move { files_of(&state, note_id).await }
+    });
+
+    // The thumbnails come after the rows, each as it is had. One this
+    // device holds is read from it. One it does not hold is fetched, which
+    // may take long or fail: the row shows the file's kind meanwhile, and
+    // everything else about the file works without it. A fetch is tried
+    // once for as long as the note is open.
+    let mut thumbnails = use_signal(HashMap::<Uuid, String>::new);
+    let mut asked = use_signal(HashSet::<Uuid>::new);
+    use_effect(move || {
+        let Some(files) = listed() else {
+            return;
+        };
+        spawn(async move {
+            let wanted: Vec<(Uuid, Uuid, bool)> = files
+                .iter()
+                .filter_map(|file| {
+                    let thumbnail = file.attachment.thumbnail.as_ref()?;
+                    Some((
+                        file.attachment.file_id,
+                        thumbnail.file_id,
+                        file.thumbnail_on_device,
+                    ))
+                })
+                .filter(|(file, _, _)| !thumbnails.peek().contains_key(file))
+                .collect();
+            for (file, thumbnail, _) in wanted.iter().filter(|(_, _, here)| *here) {
+                if let Some(picture) = thumbnail_held(&state, *thumbnail).await {
+                    thumbnails.write().insert(*file, picture);
+                }
+            }
+            for (file, thumbnail, _) in wanted.iter().filter(|(_, _, here)| !*here) {
+                if !asked.write().insert(*thumbnail) {
+                    continue;
+                }
+                if held(&state, note_id, *thumbnail).await.is_ok() {
+                    if let Some(picture) = thumbnail_held(&state, *thumbnail).await {
+                        thumbnails.write().insert(*file, picture);
+                    }
+                }
+            }
+        });
     });
 
     let attach = move |paths: Vec<PathBuf>| {
@@ -165,11 +200,19 @@ pub fn AttachmentPanel(note_id: NoteId, dropped: Signal<Vec<PathBuf>>) -> Elemen
             let attachment = file.attachment;
             busy.set(Some(format!("Opening {}...", attachment.name)));
             message.set(None);
-            let opened = match held(&state, note_id, attachment.file_id).await {
-                Ok(path) => copy_for_opening(&path, attachment.file_id, &attachment.name)
-                    .and_then(|copy| open_with_system(&copy))
-                    .map_err(|error| as_sentence(&error)),
-                Err(why) => Err(why),
+            let store = state
+                .db_service
+                .peek()
+                .as_ref()
+                .map(|store| store.path().to_path_buf());
+            let opened = match (held(&state, note_id, attachment.file_id).await, store) {
+                (Ok(path), Some(store)) => {
+                    copy_for_opening(&store, &path, attachment.file_id, &attachment.name)
+                        .and_then(|copy| open_with_system(&copy))
+                        .map_err(|error| as_sentence(&error))
+                }
+                (Err(why), _) => Err(why),
+                (Ok(_), None) => Err("The note store is not open.".to_owned()),
             };
             busy.set(None);
             if let Err(why) = opened {
@@ -228,7 +271,8 @@ pub fn AttachmentPanel(note_id: NoteId, dropped: Signal<Vec<PathBuf>>) -> Elemen
         });
     };
 
-    let (files, thumbnails) = listed().unwrap_or_default();
+    let files = listed().unwrap_or_default();
+    let thumbnails = thumbnails();
     let working = busy();
 
     rsx! {

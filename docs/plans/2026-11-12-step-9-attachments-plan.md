@@ -584,6 +584,20 @@ thumbnail arriving from the other device. `docs/MANUAL_CHECKLIST.md` has
 the run and what it left for a person: dropping a file, opening one in
 another program, and answering the save dialog.
 
+What review showed:
+
+- **Copies made for opening were in the system's place for temporary
+  files.** On a computer with several users that place is shared: a copy
+  could be read by the others, and the folder could be made by one of them
+  beforehand. The copies are now in the store's own folder, beside the
+  files they are copies of, in a folder closed to everybody but its owner.
+  They are as private as the store, and go with the account's folder at
+  sign-out as well as at the next start.
+- **A thumbnail that was slow to fetch kept the whole list from showing.**
+  The rows waited for every thumbnail, and a thumbnail on a server out of
+  reach can take minutes to give up. The rows now show at once, from what
+  the device holds, and each thumbnail appears when it is had.
+
 **Why those are left for a person.** While the app was being driven, a
 person was at the machine. The save dialog had opened in their own folder
 with one of their files selected. Windows asks before replacing a file, so
@@ -605,6 +619,14 @@ and file dialogs and "Open" are not driven at all.
       phone's camera save, and say so in `docs/feature-parity.md`.
 
 ### 9f: export, limits and the documents
+
+- [ ] On Linux and macOS, make the data folder for its owner alone, and
+      close one that is already there. Today it gets the permissions the
+      system gives any new folder, so on a computer whose home folders are
+      open to its other users, they can read the notes and files. Found in
+      review of 9d, where only the folder of copies made for opening was
+      closed. A database file given by hand (`--db-path`) is left as the
+      person made it.
 
 - [ ] Export with files (review item 7).
 - [ ] The limits measured, and their rows in `docs/LIMITS.md`.
