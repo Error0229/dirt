@@ -192,16 +192,16 @@ As of 2026-11-13, for the production server:
       Launch plan), with seven days of history. **The owner chose the free
       plan for now.**
 - [x] Sign-in goes through a Clerk production instance on a domain the
-      owner holds, and the server runs on that domain. The server names
-      the instance and the sign-in page opens; **nobody has signed in
-      through it yet.**
+      owner holds, and the server runs on that domain. The owner signed
+      up and in through it from a phone on 2026-11-13.
 - [x] Dumps are being stored: the "Database backup" workflow has run and a
       dump from it has been restored once, as below.
 - [x] The firewall's rate limit is set (step 6 of the one-time set-up).
 - [ ] The file storage is set up (step 5), and a file attached on one device
-      has been opened on another through it. **It is set up. The second
-      half was done on the trial server, whose storage is set up the same
-      way; on production it waits for the first sign-in.**
+      has been opened on another through it. **It is set up, and a phone
+      has sent a file through it. Opening on another device was done on
+      the trial server, whose storage is set up the same way, and not yet
+      on production.**
 - [x] Migrations are applied and `/healthz` answers.
 - [ ] `docs/MANUAL_CHECKLIST.md` has been run against this server, on a real
       phone as well as the emulator.

@@ -147,6 +147,11 @@ account, A and B:
   ago. Wait that long before A11 and D6.
 - The desktop app shows nothing to Windows UI Automation while its window
   is minimised.
+- A build for a real phone names its processor:
+  `dx build --platform android --target aarch64-linux-android`, with
+  `DIRT_MOBILE_API_BASE_URL` set to the server. Without `--target` the
+  build is for the emulator. `adb install -r` puts it on a phone that has
+  USB debugging on.
 - Both servers have file storage since 2026-11-13. For trying files with
   no account and no network,
   `cargo run -p dirt-sim --example serve` runs the real server on
@@ -159,6 +164,7 @@ account, A and B:
 
 | Date | Server | Desktop | Android | CLI | Not run |
 |---|---|---|---|---|---|
+| 2026-11-13, the first real phone | Production, `https://api.dirt.catjam.dev` | Not run | A Pixel 10 Pro, Android 17, by the owner. A15 passed: signed up with an email code, and the app said it was signed in. A note and a file attached to it were sent; the server then held one account, one device, one note and one file. **Found:** Android warned at the start that the app "isn't 16 KB compatible". The phone runs with 16 KB memory pages and the app's library was linked for 4 KB ones. Fixed in the build script | Not run | A20 to A29 as written, and everything that needs a second device |
 | 2026-11-13, files through R2 | `dirt-trial`, with its R2 bucket | Not run | Emulator, with no window. A2 and A13 on the way: signed in through Clerk and was let in from the CLI, the codes the same. A21 passed, with three files attached on the computer: the picture's thumbnail was there, and "Open" fetched the picture and showed it. A20 with a 684 KiB file that is not a photograph | C13 passed, with three files (1.4 MiB, a text file named in Chinese, a picture). C14 for the phone's file: the copy `dirt save` wrote is the same as the original, byte for byte | The desktop app. A phone that is not an emulator. Removing a file, the limits and the daily sweep on this server |
 | 2026-11-13, the production server's first day | Production, `https://api.dirt.catjam.dev` | Not run | Not run | C2 as far as the browser: `dirt auth login --no-browser` printed an address at the production sign-in service, and the page it opened asked for an email address under "Sign in to Dirt". Not finished | Everything else. Nobody has signed in: production has no test user, a real address has to receive the code, and an account's first device should be its owner's |
 | 2026-11-13, for step 9f | The real server on this machine (`dirt-sim`'s `serve`), with the local file storage, reached from the emulator through `adb reverse` | Not run | Emulator, with no window. A10 passed, for JSON and for Markdown: the zip file saved to the phone's Downloads held the notes and every file, each compared byte for byte with the original, one of them under a name in Chinese. A28 passed: the phone had opened none of the files. A29 passed with the phone's network switched off: the zip file was saved without the one file, and the app named it in red | C18 to C21 passed, with two devices on one computer: a device that had fetched nothing exported four files, each the same as its original, among them two of one name and one named `../../outside.txt`, which was written inside the export. C22 passed on Linux (Ubuntu in WSL): a new data folder was `700`, one that had been `755` was closed, and the folder of a database given with `--db-path` stayed `755` | D10, D24 and D25: the desktop app chooses the folder in a file dialog, which is not driven on a desktop somebody may be using. What it writes is the core's, as the CLI's is, and its own part has tests. D26 and C22 on macOS, where the same tests run in CI. A physical phone |

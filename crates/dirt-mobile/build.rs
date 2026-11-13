@@ -32,6 +32,15 @@ struct MobileBootstrapConfig {
 }
 
 fn main() {
+    // Android 15 and later can run with memory pages of 16 KB, and some
+    // phones do (a Pixel 10 showed it first). A library whose segments are
+    // aligned to 4 KB, which is what NDK 26 links by default, is loaded
+    // there only by a slower compatibility path, with a warning on screen
+    // in a debuggable app, and Google Play refuses it. Aligned to 16 KB it
+    // loads on either kind of phone.
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+        println!("cargo:rustc-link-arg=-Wl,-z,max-page-size=16384");
+    }
     println!("cargo:rerun-if-env-changed=WRY_ANDROID_KOTLIN_FILES_OUT_DIR");
     println!("cargo:rerun-if-env-changed=DIRT_MOBILE_API_BASE_URL");
     println!("cargo:rerun-if-env-changed=DIRT_API_BASE_URL");

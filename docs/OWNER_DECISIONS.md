@@ -277,8 +277,9 @@ on the computer and was the same as the original, byte for byte. The
 bucket held five objects, none with a name or a size that is a file's
 own. `docs/MANUAL_CHECKLIST.md` has the run.
 
-**Not tried:** files on the production server, where nobody has signed in
-yet, and a phone that is not an emulator.
+**On the production server** the owner's phone, the account's first
+device, sent a note with a file the same day. Fetching it on a second
+device is still to be tried there.
 
 ## What is still the owner's
 
@@ -287,7 +288,6 @@ Nothing here blocks the owner's own use of the production server.
 | What | Why it is the owner's | When |
 |---|---|---|
 | Keep the dumps' private key | It is one file on the owner's computer. Without it no dump can be read | Now |
-| Sign in to the production server for the first time | The first device of an account makes its key and should be the owner's own | When the owner starts using it |
 | Google sign-in on the production server | Needs credentials from a Google Cloud account | If it is wanted |
 | Neon's Launch plan | Costs money | Before the address is given to others |
 | The consent page at sign-in | A trade of one press against one check, on the owner's instance | Whenever |
