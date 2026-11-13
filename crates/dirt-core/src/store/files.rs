@@ -149,6 +149,19 @@ pub(super) fn attached(
     Ok(files)
 }
 
+/// The notes that name a file, deleted notes among them. What goes
+/// through every note asks this first, and so asks about a note's files
+/// only where there are some.
+pub(super) fn notes_with_files(connection: &Connection) -> Result<HashSet<NoteId>> {
+    let mut statement = connection.prepare("SELECT DISTINCT note_id FROM note_files")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    let mut notes = HashSet::new();
+    for row in rows {
+        notes.insert(note_id(&row?)?);
+    }
+    Ok(notes)
+}
+
 /// One file that a note's document names, with its key.
 pub(super) fn part(connection: &Connection, note: &NoteId, file: Uuid) -> Result<Option<FilePart>> {
     let document: Option<Vec<u8>> = connection

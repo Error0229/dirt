@@ -53,6 +53,15 @@ hkdf = "0.12"
 # Reads a picture to make its thumbnail. Only the formats a phone or a
 # screenshot produces; nothing here writes any but JPEG.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+# Writes an export as one file, for a device that can save only one. With no
+# features it stores files as they are and compresses nothing: an export
+# is mostly pictures, which do not get smaller, and this way nothing comes
+# with it but a checksum.
+zip = { version = "9", default-features = false }
+# Two names for files in one folder of an export must differ where the
+# file system compares names as macOS does: by their letters, however the
+# accents on them are written. Already here, under `bip39`.
+unicode-normalization = "0.1"
 
 # The operating system's keychain, for `secrets::KeyringSecrets`: Keychain
 # on macOS, Credential Manager on Windows, the Secret Service over DBus on
