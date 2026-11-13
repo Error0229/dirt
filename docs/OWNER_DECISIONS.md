@@ -199,8 +199,11 @@ cost is the point made under decision 1: R2's tokens are "Object Read &
 Write" or "Object Read only", so the backup workflow's key could delete
 dumps as well as add them.
 
-**How much.** The plan for step 9 proposes 200 MiB of files for an account
-and 10 MiB for one file. Fifty accounts filled to the top are the free
+**How much.** An account may hold 200 MiB of files, and one file may be
+10 MiB. `docs/LIMITS.md` has what was measured for those numbers; they are
+the owner's to change. An account may also hold 20,000 files however small,
+which is about what the database is asked to keep and not about the
+storage. Fifty accounts filled to the top are the free
 10 GB; past that, a full account costs about a third of a cent a month.
 Anyone can sign up, so the bill has no ceiling of its own. It grows by that
 much for each account that fills itself.

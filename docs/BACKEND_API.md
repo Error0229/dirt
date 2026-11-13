@@ -446,7 +446,8 @@ signature covers, so the storage refuses a body of any other length.
   counts nothing more. That is how an upload is tried again. Another size
   is `invalid_request`: a file never changes.
 - `file_too_large` over 10 MiB; `quota_exceeded` when the account's files
-  would pass 200 MiB.
+  would pass 200 MiB, or when it has 20,000 files already, whatever their
+  size. A file that is refused is not counted.
 - If no note ever refers to the file, it is discarded after seven days.
 
 **`GET /v1/files/{id}`** answers `{ "url": "…", "size": 48213,
@@ -470,7 +471,7 @@ Each item gets its own result, in order:
 | `not_uploaded` | The server knows the file but the storage does not hold it at the size asked for. The device uploads it again |
 | `no_such_file` | The server does not know the file: never asked for, discarded, or lost to a restore. A device that holds the file asks for a link and uploads it again |
 | `no_such_note` | On confirming: the server does not hold the note, or it was purged. A device tries again once the note has synced |
-| `rejected` | With `quota_exceeded`: the note already refers to 20 files |
+| `rejected` | With `quota_exceeded`: the note already refers to 20 files, or the account's notes to 40,000 between them. A reference the server already has is never refused, so a device can always confirm again what it holds |
 
 Before a file is confirmed for the first time the server asks the storage
 whether it is there, at the size asked for. A file is counted as present
@@ -525,6 +526,13 @@ cycle. No device keeps a record of what it has uploaded: the server is
 asked. A new epoch makes a device confirm everything again. A request to
 the storage carries the signed link and nothing else of the device's.
 
+A device asks for a download link when a file is wanted and it does not
+hold it: the person opens or saves the file, a picture's thumbnail is to be
+shown, or an export is made, which wants every file of every note. A
+fetched file is kept, so each is asked for once. An export stops asking at
+the first request that does not get through, to the server or to the
+storage, and says which files it lacks.
+
 **`GET /v1/maintenance/sweep`** is the daily request. It must carry
 `Authorization: Bearer <CRON_SECRET>`; to anyone else, and on a server
 given no secret, there is no such address. It answers `{ "deleted": 3 }`.
@@ -566,8 +574,9 @@ stored under an older one. `GET /v1/devices/me` reports `key_version` too.
 | Purged notes per account | 100,000 |
 | A deleted note is purged | 30 days after a device saw it deleted |
 | One file | 10 MiB |
-| Files per account | 200 MiB |
+| Files per account | 200 MiB, and 20,000 files however small |
 | Files a note refers to | 20 |
+| References from an account's notes to files | 40,000 |
 | An upload no note confirmed | discarded after 7 days |
 | A file no note refers to | deleted after 30 days |
 | An upload link, a download link | good for 15 minutes, 5 minutes |
@@ -591,5 +600,6 @@ marker to the note's document, so this rule is what lets deletes through.
 
 ## Not built yet
 
-Attachments are step 9 of the redesign. The server's part, above, is built.
-No client attaches a file yet.
+Nothing: every call the redesign's nine steps planned is above. What the
+owner has still to decide before the server is public is in
+`docs/OWNER_DECISIONS.md`.

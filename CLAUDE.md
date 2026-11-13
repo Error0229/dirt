@@ -6,14 +6,14 @@ Dirt ("Do I Remember That?") is a cross-platform note-taking app focused on capt
 
 The project is also a system design case study. Multi-user accounts, three clients, sync and end-to-end encryption are all real requirements. Do not propose cutting scope to reduce complexity; justify each part against the requirements instead.
 
-## Status: redesign in progress
+## Status: the redesign is built
 
-`main` is partway through an approved redesign: steps 1 to 8 of 9 are built, and of step 9 everything but files in an export (`docs/plans/2026-11-12-step-9-attachments-plan.md`). Some of step 7's manual checklist is left for a person (`docs/MANUAL_CHECKLIST.md`, #243), and step 8 leaves five decisions to the owner (`docs/OWNER_DECISIONS.md`). Devices sign in through Clerk and sync their notes, encrypted, through the new server. A second device is let in by comparing a code with one that is already in, or by the recovery phrase. `docs/SECURITY.md` describes what is protected. Read both documents before changing architecture, sync, login or storage:
+All nine steps of an approved redesign are built on `main`. What is left needs a person: some of the manual checklist (`docs/MANUAL_CHECKLIST.md`, #243), and six decisions that are the owner's, among them the storage account without which the trial server has no attachments (`docs/OWNER_DECISIONS.md`). Devices sign in through Clerk and sync their notes, encrypted, through the new server. A second device is let in by comparing a code with one that is already in, or by the recovery phrase. `docs/SECURITY.md` describes what is protected. Read both documents before changing architecture, sync, login or storage:
 
 - `docs/plans/2026-11-10-system-redesign-design.md` - requirements, decisions and the target design
 - `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md` - build order, trials and clean-up
 
-Rules while the redesign is under way:
+Rules the redesign set, which still hold:
 
 - Nothing the design lists for deletion (section 14) is left. Do not bring any of it back.
 - The CLI and the desktop app on one computer are one device and must name one server. Both get it from `dirt_core::config::ServerAddress`: `DIRT_API_BASE_URL` in the environment, or else the address built in from `.env.client`.
@@ -23,6 +23,7 @@ Rules while the redesign is under way:
 - `rusqlite` is held at 0.39 by `sqlx` 0.9: see the comment in the root `Cargo.toml` before raising either.
 - The server's SQL is written with `sqlx::query` and `sqlx::query_as` on string literals, never the compile-time `query!` macros, so building needs no database.
 - Anything planned for later belongs in the design document now, with its place in the build order.
+- A program opens its own store with `Store::open_in`, which closes the data folder to the computer's other users first. `Store::open` is for a database file the person named, whose folder is theirs.
 - When a document goes out of date, archive it under `docs/archive/` with a banner; do not leave it in place.
 
 ## Tech Stack
@@ -41,8 +42,7 @@ What the code on `main` uses today:
 - **More devices**: Matrix's short-code verification from `vodozemac` hands the account key to a new device; a 24-word `bip39` recovery phrase is the other way in
 
 - **Files**: a file attached to a note is encrypted in pieces with a key kept in the note's document, and goes straight to S3-compatible storage by a link the server signs (`dirt-core::files`, `dirt-core::sync::engine::files`, `dirt-api::files`). A picture gets a thumbnail, made on the device with the `image` crate
-
-What the redesign still adds: attachments in exports. See the step 9 plan.
+- **Export**: every note as one text, JSON or Markdown, with each note's files beside it: a folder from the desktop app and the CLI, and from the Android app the same as one zip file, written with the `zip` crate (`dirt-core::export`)
 
 ## Project Structure
 
@@ -50,7 +50,7 @@ What the redesign still adds: attachments in exports. See the step 9 plan.
 api/axum.rs        # Vercel serverless entry point (root package `dirt-vercel`)
 crates/
 ├── dirt-proto/    # Types shared by the server and the clients
-├── dirt-core/     # Notes as CRDT documents, the local store, encryption, sign-in, the session, sync, export
+├── dirt-core/     # Notes as CRDT documents, the local store, files, encryption, sign-in, the session, sync, export
 ├── dirt-api/      # The server: device registry and encrypted note blobs on Postgres
 ├── dirt-sim/      # Tests only: real client cores syncing through the real server in one process
 ├── dirt-desktop/  # Dioxus desktop application

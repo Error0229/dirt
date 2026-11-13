@@ -919,9 +919,21 @@ Carried forward:
 **Planned (2026-11-12):** `docs/plans/2026-11-12-step-9-attachments-plan.md`
 holds the design review and the build order, in six parts. The file expiry
 question is settled there as the default above, made exact: a file goes
-thirty days after the last note that refers to it is purged. Nothing is
-built yet. Trying it on real devices needs object storage in an account
-that only the owner can open (`docs/OWNER_DECISIONS.md`, decision 6).
+thirty days after the last note that refers to it is purged.
+
+**Built (2026-11-13):** all six parts, each with its results in that plan:
+the server (9a), the core (9b), the CLI (9c), the desktop app (9d), the
+Android app (9e), and export, the limits and the documents (9f). Every
+client attaches, lists, opens, saves and removes files, and exports them
+with the notes. It was tried with real clients against the real server on
+one machine, with an S3-compatible store beside it. Trying it against
+`dirt-trial` needs object storage in an account that only the owner can
+open (`docs/OWNER_DECISIONS.md`, decision 6), and a phone was not tried.
+
+Carried forward, for a decision: recording a voice memo inside an app,
+which the design names and no step builds (the step 9 plan, review item
+8); and the numbers of the file limits, since storage past the free
+allowance is paid for.
 
 ## Acceptance criteria for this plan
 

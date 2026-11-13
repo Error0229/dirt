@@ -122,9 +122,17 @@ which come from `dirt_core::sync::overview`.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Every note as JSON | Settings → Data | Settings → Export | `dirt export` |
-| Every note as Markdown | Settings → Data | Settings → Export | `dirt export --format markdown` |
-| Where the file goes | A file dialog | Android's screen for choosing a place | `--output`, or standard output |
+| Every note and its files, the notes as JSON | Settings → Data | Settings → Export | `dirt export --folder <folder>` |
+| The same, the notes as Markdown | Settings → Data | Settings → Export | `dirt export --folder <folder> --format markdown` |
+| What is written | A new folder, `dirt-export-<time>`, inside the folder chosen in a dialog | One zip file holding what the folder would, saved through Android's screen for choosing a place | The folder named, which must not be there yet |
+| A file this device does not hold | Fetched first | Fetched first | Fetched first |
+| A file that cannot be had | Left out. The app names it, with the reason | Left out. The app names it, with the reason | Left out and named with the reason, and the command fails |
+| The notes' text alone, naming their files | No | No | `dirt export`, to standard output or `--output <file>` |
+
+An export is `notes.json` or `notes.md` and, beside it, `files/<note
+id>/<file name>` for each file. The text lists each note's files with the
+path of each, or no path for a file the export does not hold. It is made
+by `dirt_core::export`, the same for the three.
 
 ## Appearance
 
@@ -138,7 +146,6 @@ which come from `dirt_core::sync::overview`.
 
 | What | Where it stands |
 |---|---|
-| Files in an export | Step 9f |
 | Bringing a deleted note back | The store can; no design document asks for a way to do it from a client. Needs a decision |
 | `dirt tui` | A stub that prints "Opening TUI..." and does nothing. No design document mentions a terminal interface. Needs a decision: remove it or plan it |
 | Themes and fonts on Android | No design document asks for them |

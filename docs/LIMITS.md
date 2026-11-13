@@ -6,12 +6,16 @@ measured to check it. The numbers themselves live in one place in the code,
 
 This is the limits review of step 8 of the redesign
 (`docs/plans/2026-11-12-step-8-hardening-plan.md`, part 8c), carried out on
-2026-11-12.
+2026-11-12, and the review of the limits on files that step 9 added
+(`docs/plans/2026-11-12-step-9-attachments-plan.md`, part 9f), carried out
+on 2026-11-13.
 
 ## How the measurements were made
 
 `crates/dirt-sim/tests/limits.rs` holds them. They print numbers and assert
-nothing, so they are ignored in an ordinary test run:
+nothing, so they are ignored in an ordinary test run. The ones about files
+use the file storage that `compose.yaml` starts beside the database, an
+S3-compatible store on the same machine.
 
 ```bash
 docker compose up -d
@@ -96,6 +100,79 @@ about 360 bytes a note, twice the blob.
 | The account key wrapped under a recovery phrase | 72 bytes | 256 bytes |
 | The account key wrapped for a device when the key changes | 105 bytes | 256 bytes |
 
+### One file
+
+| What | Measured |
+|---|---|
+| The largest file that may be attached | 10,483,180 bytes, stored as 10,485,760. One byte more is refused on the device, before anything is sent |
+| Attaching it: copying it into the device's store | 40 ms |
+| Sending it with its note | 0.2 s, in 6 requests to the server and 1 to the storage |
+| Another device fetching it and opening it with its key | 0.1 s, in 1 request to the server and 1 to the storage |
+| A photograph of twelve million pixels, 3.1 MB as a JPEG: attaching it, its thumbnail made | 0.17 s |
+| Its thumbnail | 21 KB |
+| Sending the photograph and its thumbnail | 0.12 s, in 2 requests to the storage |
+| Another device fetching the thumbnail alone | 10 ms |
+
+On the Android emulator, attaching a photograph of as many pixels (8 MB as
+the camera saved it) took about three and a half seconds from choosing it
+to seeing it under the note, most of it making the thumbnail. That was an
+x86 emulator with optimised code; a phone was not measured. The app says
+"Attaching..." meanwhile.
+
+### What a file adds to its note
+
+A note's document names each of its files: the ID, the key, the name, the
+kind, the size and when it was attached. The document is sent whole each
+time the note is edited.
+
+| Files on a note of 280 characters | Blob on the server |
+|---|---|
+| 0 | 398 bytes |
+| 1 | 592 bytes |
+| 5 | 1,314 bytes |
+| 10 | 2,215 bytes |
+| 20 | 4,015 bytes |
+
+A file adds about 180 bytes, with a name as long as a phone gives a
+photograph. A picture with its thumbnail adds about 290, and ten of them
+fill a note. One file more than a note may have is refused on the device.
+
+### An account at its file limit
+
+Twenty files of the largest size, each on a note of its own: 200 MiB.
+
+| What | Requests to the storage | Time |
+|---|---|---|
+| Attaching them | 0 | 1.4 s |
+| Sending them | 20 | 3.8 s |
+| A file of one megabyte more | 0 | Refused by the server. The device keeps it and says the account's storage for files is full |
+| A device that holds none of them gathers an export, fetching every file | 20 | 4.0 s |
+| Gathering the export again | 0 | 20 ms |
+| Writing the export as a folder | 0 | 0.9 s |
+| Writing it as one zip file, 209,676,946 bytes | 0 | 0.8 s |
+
+The storage was on the same machine, so the times for sending and fetching
+are those of sealing, opening and copying 200 MiB, and say nothing of a
+network.
+
+The notes of an account at its note limit, 20,000 of a line each and no
+files, are gathered for an export in 0.4 s. Their text is 5.2 MB as JSON
+and 3.7 MB as Markdown, made in under 10 ms, and it is in memory whole
+while it is written.
+
+### What a file costs the database
+
+| Row | Bytes, with its indexes |
+|---|---|
+| A file | 147 |
+| A note's reference to a file | 229 |
+
+Measured over 100,000 rows of each. Counting an account's 100,000 files, or
+its 100,000 references, takes 6 ms. The server counts them when a link is
+asked for a new file and when a note refers to a file for the first time,
+and an account may have a fifth as many files and two fifths as many
+references, so the counting costs less than that.
+
 ## Each limit and its reason
 
 ### Notes
@@ -160,28 +237,27 @@ copies of about 105 bytes, 96 messages of 1 KiB, and a day of request counts.
 
 ### Files
 
-Step 9 of the redesign. These numbers are proposals: the server enforces
-them, and little has been measured against use yet. Part 9f of the step 9
-plan measures them. Storage past the free allowance is paid for, so they
-are also the owner's to change (`docs/OWNER_DECISIONS.md`, decision 6).
-
-Measured so far: attaching a photograph of twelve million pixels (8 MB as
-a JPEG) on the Android emulator took TIMING from choosing it to seeing it
-under the note, most of it making the thumbnail. That was an x86 emulator
-with optimised code; a phone was not measured. On a computer a 4.4 MiB
-picture took under two seconds with unoptimised code, the sync included.
-The app says "Attaching..." meanwhile.
+A file is not in the database. Its bytes are in object storage, and the
+database has a row for the file and a row for each note that refers to it.
+Storage past the free allowance is paid for, so the sizes below are also
+the owner's to change (`docs/OWNER_DECISIONS.md`, decision 6).
 
 | Limit | Number | Why this number |
 |---|---|---|
-| One file | 10 MiB | A photograph from a phone, a short recording, a PDF. It is uploaded in one request, so there is no resuming to build |
-| Files per account | 200 MiB | The storage's free allowance is 10 GB for every account together. A file is counted once, however many notes refer to it, and from the moment a link is issued |
-| Files a note refers to | 20 | Each adds its key and name to the note's document, which is sent whole on every edit. A picture's thumbnail is a file and counts as one, so a note holds ten pictures. A picture that fits only without its thumbnail is attached without |
+| One file | 10 MiB | A photograph from a phone, a short recording, a PDF: a photograph of twelve million pixels is about 3 MB. It is uploaded in one request, so there is no resuming to build. The limit is on the file as stored, which is 2,580 bytes more than the file at this size |
+| The bytes of an account's files | 200 MiB | The storage's free allowance is 10 GB for every account together. 200 MiB is 20 files of the largest size or some 69 photographs. A file is counted once, however many notes refer to it, and from the moment a link is issued |
+| The number of an account's files | 20,000 | One for each note an account may hold. A file's row costs the database 147 bytes whatever the file's size, so the bytes alone would allow millions of rows of files a byte long: see "What the review changed". At this number the rows are 3 MB. Counted as the bytes are, from the moment a link is issued, and a thumbnail is a file |
+| References from an account's notes to files | 40,000 | A file has one reference, from the note it is attached to, and a second only when a purged note lives on as a new note on a device that had an edit to it. Twice the number of files allows that for every file. A reference costs the database 229 bytes, so these are 9 MB at the most |
+| Files a note refers to | 20 | Each adds about 180 bytes to the note's document, which is sent whole on every edit: 3.6 KB for a note with 20. That is not what sets the number. It bounds what one note can make a device do, since a device confirms every reference of every note it holds, and what a row of files on a small screen can be. A picture's thumbnail is a file and counts as one, so a note holds ten pictures. A picture that fits only without its thumbnail is attached without |
 | An upload no note confirmed | discarded after 7 days | A device asked for a link and never finished. Its space comes back |
 | A file no note refers to | deleted after 30 days | A device that was away with an unsent edit to a purged note keeps the note's text as a new note, and its files with it. The files have to be there still |
-| An upload link | 15 minutes | Time to send 10 MiB on a slow connection. It is for one object of one exact size |
+| An upload link | 15 minutes | Time to send 10 MiB on a slow connection: any faster than 94 kbit/s finishes inside it. It is for one object of one exact size |
 | A download link | 5 minutes | A device asks for one each time it needs a file it does not hold |
 | An object whose row has gone | deleted an hour later | Four times the life of an upload link. A link issued just before the row went can still be used, and an upload that arrived after the object was deleted would put it back with nothing to remember it by |
+
+With every limit on files at its most, the rows one account can make the
+database hold are 12 MB: 20,000 files and 40,000 references. Its notes may
+be 50 MiB.
 
 ### Sizes fixed by a format
 
@@ -219,6 +295,17 @@ bytes, and an exchange holds 3 at its end against 32 allowed.
   older notes", which adds 100 at a time. Showing them all at once was not
   needed: the store can list 20,000 notes in 15 ms, but the app would have
   to draw them, and how long that takes was not measured.
+
+- **An account could have any number of files** (step 9f). Its files were
+  limited by their bytes and by how many one note may have, and neither
+  limits how many rows the database holds. With files a byte long, 20,000
+  notes of 20 files each are 400,000 files and 400,000 references: 59 MB
+  and 92 MB of database. Links asked for and never used cost a row each
+  for the week they are kept, and an account's requests allow 604,800 of
+  them: 89 MB more. One account could take a quarter of a gigabyte, where
+  its notes may take 50 MiB. An account now holds 20,000 files and its
+  notes 40,000 references to them, which is 12 MB at the most. Both are
+  refused as a full account is, with `quota_exceeded`.
 
 ## Requests from outside an account
 

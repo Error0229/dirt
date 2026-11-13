@@ -5,18 +5,25 @@
 
 ## Status
 
-A redesign is in progress, and `main` is partway through it.
+`main` holds a redesign whose nine steps are all built. What is left
+needs a person: decisions that are the owner's
+([docs/OWNER_DECISIONS.md](docs/OWNER_DECISIONS.md)) and a checklist to try
+by hand on real devices
+([docs/MANUAL_CHECKLIST.md](docs/MANUAL_CHECKLIST.md)).
 
 - **What is changing and why:**
   [docs/plans/2026-11-10-system-redesign-design.md](docs/plans/2026-11-10-system-redesign-design.md)
 - **Build order:**
   [docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md](docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md)
 
-**Where it stands: step 8 of 9.** Devices sign in through Clerk and sync
-their notes through the new server, which stores only ciphertext it cannot
-read. A second device is let into an account by comparing a short code with
-a device that is already in, or with the account's recovery phrase. The
-desktop app, the Android app and the CLI are all on the new core.
+**What it does.** Devices sign in through Clerk and sync their notes
+through the new server, which stores only ciphertext it cannot read. A
+second device is let into an account by comparing a short code with a
+device that is already in, or with the account's recovery phrase. A file
+attached to a note is encrypted on the device and kept in object storage
+the server only signs links for. Everything can be exported, notes and
+files, at any time. The desktop app, the Android app and the CLI are all on
+the new core.
 [docs/SECURITY.md](docs/SECURITY.md) says what is protected and what is not,
 and [docs/feature-parity.md](docs/feature-parity.md) what each client does.
 
@@ -25,10 +32,10 @@ and [docs/feature-parity.md](docs/feature-parity.md) what each client does.
 | Crate | Purpose |
 |---|---|
 | `dirt-proto` | Types shared by the server and the clients. |
-| `dirt-core` | Everything the clients share: notes as mergeable documents, the local store (notes, tags, search, settings), note encryption, sign-in, the session, sync, and export. |
+| `dirt-core` | Everything the clients share: notes as mergeable documents, the local store (notes, tags, search, settings), files attached to notes, encryption, sign-in, the session, sync, and export. |
 | `dirt-desktop` | Dioxus desktop app. |
 | `dirt-mobile` | Dioxus Android app. |
-| `dirt-cli` | `dirt add`, `dirt list`, `dirt search`, `dirt export` and more. |
+| `dirt-cli` | `dirt add`, `dirt list`, `dirt search`, `dirt attach`, `dirt export` and more. |
 | `dirt-api` | The server, on axum and Postgres: it checks a Clerk sign-in, keeps the device registry, and stores encrypted note blobs it cannot read. See [docs/BACKEND_API.md](docs/BACKEND_API.md). |
 | `dirt-sim` | Tests only: two or three real client cores syncing through the real server in one process, with lost answers, tampered blobs, replays and restored backups. |
 | `dirt-vercel` | Workspace-root package that hosts the Vercel serverless entry point at `api/axum.rs`. |

@@ -60,8 +60,7 @@ open, nor a file that was cut short. The account and the file are bound
 into every piece. The server and the storage see neither the key, nor the
 file's name or type, nor its contents. The server does see that a file exists, how large it is, and
 which notes refer to it, because devices have to tell it that for files to
-be cleaned up. So it knows how many files each note has. (No client
-attaches files yet: step 9 of the redesign.)
+be cleaned up. So it knows how many files each note has.
 
 A picture gets a thumbnail, made on the device that attaches it and
 encrypted as a second file with a key of its own. To the server the two are
@@ -114,14 +113,53 @@ app's cache up to the size a file may be and no further, under a name of
 the app's own; what the other app calls it travels beside it and is only
 ever used as a name.
 
-The store's folder itself is made with the permissions the system gives a
-new folder. On Linux and macOS, where a person's home may be open to other
-users of the computer, that can leave the notes and files readable by them.
-Making the data folder for its owner alone is in the build order (step 9f).
-
 A file that a device holds is kept beside the notes' database, as it was
 attached: not encrypted, as the notes there are not. What protects both is
-the device.
+the device, and on a computer with several users, the data folder.
+
+**The data folder is its owner's alone.** On Linux and macOS a new folder
+gets the permissions the system gives any folder, which on many computers
+lets every user read it, and a person's home is often open to the others.
+So the apps and the CLI make the data folder for its owner only, and close
+one that is already there and open, made by an earlier version. They do it
+each time they start, before they write anything there. Closing the folder
+closes everything in it. Only what others were allowed is taken away: what
+the owner allowed themselves is left as it was.
+
+Three things are outside this:
+
+- A database file given by hand (`dirt --db-path`, `DIRT_DB_PATH`) is in a
+  folder of the person's choosing, which is left as they made it.
+- A folder that cannot be closed is used as it is, and the log says so. It
+  may be on a drive that keeps no permissions, where refusing would leave
+  the person with no notes at all.
+- On Windows a person's data folder is already theirs alone, and on
+  Android an app's is. Nothing is changed there.
+
+The folder named by `DIRT_DATA_DIR` is the data folder and is treated as
+one: it is closed like any other. It should be a folder for Dirt and not
+one that holds other things.
+
+**An export leaves Dirt's care.** It is every note and every file, not
+encrypted, in a folder or a zip file that the person puts where they like.
+Nothing here protects it after that. What the apps do see to:
+
+- A file's place in the export is made from its name as a saved copy's is:
+  the last part only, without what a file system refuses. Two files of one
+  note that would have the same name, by any rule a file system compares
+  names by, get different ones. So an export writes inside its own folder
+  and nowhere else, whatever a note calls a file.
+- An export replaces nothing and is mixed into nothing. It takes its
+  folder's name by making the folder, which fails if anything has that
+  name at that moment. The files are written first and the notes' text
+  last, and if the writing fails, what was written is removed.
+- A file the device does not hold is fetched as any file is, and checked as
+  any file is. One that cannot be had is left out, and the export's own
+  text and the app both say which.
+- On Android the zip file is made in the app's own folder, beside the
+  notes, and copied by Android to the place the person chooses. The app's
+  copy is removed when that is done, at the next start if the app was
+  stopped meanwhile, and with the account at sign-out.
 
 **Backups.** The operator keeps dumps of the server's database for about
 thirty days. A dump holds what the server holds, so it holds no note that
