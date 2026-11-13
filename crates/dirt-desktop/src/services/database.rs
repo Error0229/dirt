@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use dirt_core::store::{store_path, StoreName};
+use dirt_core::store::StoreName;
 use dirt_core::{Result, Store};
 
 /// The folder the desktop app and the CLI keep their stores in:
@@ -20,5 +20,5 @@ pub fn data_folder() -> PathBuf {
 /// Opens the store that holds the notes kept on this device only, creating
 /// it on first run. A build with no server uses nothing else.
 pub fn open_local_store() -> Result<Store> {
-    Store::open(store_path(&data_folder(), &StoreName::Local))
+    Store::open_in(&data_folder(), &StoreName::Local)
 }

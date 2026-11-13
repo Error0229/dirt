@@ -301,7 +301,7 @@ struct SecretsLock {
 }
 
 fn lock_secrets(data_folder: &Path) -> SecretsLock {
-    let locked = std::fs::create_dir_all(data_folder)
+    let locked = crate::store::close_data_folder(data_folder)
         .and_then(|()| {
             std::fs::OpenOptions::new()
                 .create(true)
@@ -427,7 +427,7 @@ impl Session {
         secrets: Arc<dyn SecretStore>,
     ) -> Result<Self, SessionError> {
         sweep_signed_out(&config.data_folder);
-        let local = Store::open(store_path(&config.data_folder, &StoreName::Local))?;
+        let local = Store::open_in(&config.data_folder, &StoreName::Local)?;
         let (state, _) = watch::channel(SessionState::SignedOut);
         let (status, _) = watch::channel(SyncStatus::default());
         let session = Self {
@@ -567,7 +567,7 @@ impl Session {
             }
         }
         let name = StoreName::account(&secrets.account_id.to_string())?;
-        let store = Store::open(store_path(&config.data_folder, &name))?;
+        let store = Store::open_in(&config.data_folder, &name)?;
         let api = self.api().with_token(secrets.token.clone());
         // Another program on this device may sign out or replace the
         // account key while this one runs. The engine asks before each
@@ -634,7 +634,7 @@ impl Session {
         if self.inner.config.persist_attempts {
             // Saved before the browser opens: the app may not be running
             // when the browser returns.
-            std::fs::create_dir_all(&self.inner.config.data_folder).map_err(Error::Io)?;
+            crate::store::close_data_folder(&self.inner.config.data_folder).map_err(Error::Io)?;
             let saved = serde_json::to_vec(&attempt).map_err(Error::Serialization)?;
             std::fs::write(self.attempt_file(), saved).map_err(Error::Io)?;
         }
