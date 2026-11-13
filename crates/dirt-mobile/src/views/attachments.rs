@@ -25,7 +25,7 @@ use dirt_core::util::as_sentence;
 use uuid::Uuid;
 
 use crate::config::default_mobile_data_directory;
-use crate::incoming::{attach_incoming, Incoming, Picked};
+use crate::incoming::{attach_incoming, note_text, Incoming, Picked};
 use crate::services::activity::{self, SaveOutcome};
 use crate::state::AppState;
 use crate::ui::{ButtonVariant, UiButton};
@@ -60,6 +60,88 @@ pub async fn choose_files() -> Option<Vec<Incoming>> {
             };
         }
         tokio::time::sleep(ASK_EVERY).await;
+    }
+}
+
+/// The note files are being chosen for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// A note that is saved.
+    Note(NoteId),
+    /// A note that is not saved yet, with the text written so far. It is
+    /// saved first, with that text or, if there is none, called after the
+    /// files.
+    New { text: String },
+}
+
+/// What came of choosing files for a note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attached {
+    /// The note the files went to, with its text: the one that was open,
+    /// or the one that was made. `None` if no note could be made.
+    pub note: Option<(NoteId, String)>,
+    /// A line for each file that could not be attached.
+    pub failed: Vec<String>,
+}
+
+/// Asks the person which files to attach and attaches them, and says how
+/// it went: `None` if they chose none.
+///
+/// The whole of it runs apart from the screen that asked. Between the
+/// person choosing and the files being attached the activity copies them
+/// into the app, which takes a moment for a photograph, and the person may
+/// leave the note meanwhile. Files that were chosen are attached all the
+/// same, to the note they were chosen for. The answer comes back for the
+/// screen to show, if it is still there to hear it.
+pub fn choose_and_attach(
+    mut state: AppState,
+    target: Target,
+) -> tokio::sync::oneshot::Receiver<Option<Attached>> {
+    let (answer, heard) = tokio::sync::oneshot::channel();
+    dioxus::core::spawn_forever(async move {
+        let attached = match choose_files().await {
+            None => None,
+            Some(files) => Some(attach_chosen(&mut state, target, files).await),
+        };
+        // The screen that asked may be gone. That is no failure.
+        let _ = answer.send(attached);
+    });
+    heard
+}
+
+async fn attach_chosen(state: &mut AppState, target: Target, files: Vec<Incoming>) -> Attached {
+    let Some(store) = state.store.peek().clone() else {
+        crate::incoming::discard_all(&files);
+        return Attached {
+            note: None,
+            failed: vec!["The notes are not open.".to_owned()],
+        };
+    };
+    let (note, text, made) = match target {
+        Target::Note(note) => (note, String::new(), false),
+        Target::New { text } => match store.create_note(&note_text(&text, &files)).await {
+            Ok(note) => (note.id, note.content, true),
+            Err(error) => {
+                crate::incoming::discard_all(&files);
+                return Attached {
+                    note: None,
+                    failed: vec![format!("The note could not be saved: {error}")],
+                };
+            }
+        },
+    };
+    let failed = attach(state, note, files).await;
+    if made {
+        // A new note belongs in the list whether or not its editor is
+        // still open. The list is the app's, not the editor's.
+        let listed = *state.listed_notes.peek();
+        if let Ok(notes) = store.list_notes(listed).await {
+            state.notes.set(notes);
+        }
+    }
+    Attached {
+        note: Some((note, text)),
+        failed,
     }
 }
 
@@ -188,16 +270,18 @@ pub fn AttachmentPanel(note_id: NoteId) -> Element {
     });
 
     let choose = move |_| {
+        // Chosen and attached apart from this panel, which only shows how
+        // it went: leaving the note must not drop files already chosen.
+        let attaching = choose_and_attach(state, Target::Note(note_id));
         spawn(async move {
-            let Some(files) = choose_files().await else {
-                return;
-            };
             busy.set(Some("Attaching...".to_owned()));
             message.set(None);
-            let failed = attach(&state, note_id, files).await;
+            let attached = attaching.await.ok().flatten();
             busy.set(None);
-            if !failed.is_empty() {
-                message.set(Some(failed.join(" ")));
+            if let Some(attached) = attached {
+                if !attached.failed.is_empty() {
+                    message.set(Some(attached.failed.join(" ")));
+                }
             }
             changed.set(changed() + 1);
         });

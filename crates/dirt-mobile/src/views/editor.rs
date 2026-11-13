@@ -11,10 +11,9 @@
 use dioxus::prelude::*;
 
 use crate::data::MobileNoteStore;
-use crate::incoming::note_text;
 use crate::state::{AppState, View};
 use crate::ui::{ButtonVariant, UiButton, UiTextarea};
-use crate::views::attachments::{attach, choose_files, AttachmentPanel};
+use crate::views::attachments::{choose_and_attach, AttachmentPanel, Target};
 
 #[component]
 pub fn Editor() -> Element {
@@ -121,37 +120,27 @@ pub fn Editor() -> Element {
     // so that backing out of choosing saves nothing. Then the note is
     // saved, with its text or, if it has none, with what the files are
     // called; the files are attached; and the editor is on a saved note.
+    //
+    // The choosing, the saving and the attaching run apart from this
+    // screen, so that leaving it does not drop files already chosen. What
+    // is done here is only what the screen shows of it.
     let attach_to_new = move |_| {
+        let attaching = choose_and_attach(state, Target::New { text: draft() });
         spawn(async move {
-            let Some(files) = choose_files().await else {
-                return;
-            };
             busy.set(true);
             error.set(None);
-            let Some(store) = (state.store)() else {
-                crate::incoming::discard_all(&files);
-                error.set(Some("Local database is not ready yet.".to_string()));
-                busy.set(false);
+            let attached = attaching.await.ok().flatten();
+            busy.set(false);
+            let Some(attached) = attached else {
                 return;
             };
-            match store.create_note(&note_text(&draft(), &files)).await {
-                Ok(note) => {
-                    draft.set(note.content.clone());
-                    let failed = attach(&state, note.id, files).await;
-                    if !failed.is_empty() {
-                        error.set(Some(failed.join(" ")));
-                    }
-                    state.note_changed();
-                    refresh_notes_signal(&store, &mut state).await;
-                    state.selected_note_id.set(Some(note.id));
-                }
-                Err(err) => {
-                    crate::incoming::discard_all(&files);
-                    tracing::error!("Failed to save note: {err}");
-                    error.set(Some(format!("Save failed: {err}")));
-                }
+            if !attached.failed.is_empty() {
+                error.set(Some(attached.failed.join(" ")));
             }
-            busy.set(false);
+            if let Some((note, text)) = attached.note {
+                draft.set(text);
+                state.selected_note_id.set(Some(note));
+            }
         });
     };
 

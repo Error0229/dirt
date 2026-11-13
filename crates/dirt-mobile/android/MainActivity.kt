@@ -383,9 +383,23 @@ class MainActivity : WryActivity() {
     // Copies files that came from outside into the app's cache, and says
     // of each what it is called, what kind it is and where the copy is, or
     // why there is none.
+    //
+    // Whatever goes wrong with one file is that file's own problem: it
+    // gets an entry that says so, and the rest are still copied. This runs
+    // on a thread of its own, where a failure nothing caught would end the
+    // app, and would leave the Rust side waiting for an answer.
     private fun copyAllIn(files: List<Uri>): JSONArray {
         val entries = JSONArray()
-        files.forEach { entries.put(copyIn(it)) }
+        files.forEach { file ->
+            entries.put(
+                runCatching { copyIn(file) }.getOrElse { failure ->
+                    JSONObject()
+                        .put("name", file.lastPathSegment.orEmpty())
+                        .put("mime", "")
+                        .put("problem", failure.message ?: failure.javaClass.simpleName)
+                },
+            )
+        }
         return entries
     }
 
@@ -393,7 +407,10 @@ class MainActivity : WryActivity() {
         val entry = JSONObject()
         val name = displayName(file)
         entry.put("name", name)
-        entry.put("mime", contentResolver.getType(file) ?: "")
+        // The app that has the file is asked what kind it is, and may fail
+        // at that as at anything: the file was taken back, or the app is
+        // gone. Then the kind is left out, and read from the name later.
+        entry.put("mime", runCatching { contentResolver.getType(file) }.getOrNull() ?: "")
         runCatching {
             // A folder for each file, so that two of one name do not meet.
             val folder = File(File(cacheDir, INCOMING_FOLDER), System.nanoTime().toString())

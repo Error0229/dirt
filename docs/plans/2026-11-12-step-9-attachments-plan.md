@@ -682,6 +682,18 @@ What that showed:
   trying by hand can now be told that everybody is one person, and to put
   the sign-in on a port that is known (`SIGN_IN_AS`, `SIGN_IN_PORT`).
 
+What review showed:
+
+- **Leaving the note while the files were still being copied in dropped
+  them.** The waiting for Android's chooser belonged to the screen that
+  asked. Choosing, saving a new note and attaching are now one thing that
+  runs apart from the screen and finishes for the note the files were
+  chosen for.
+- **An app that failed when asked what kind of file it had could end
+  ours.** The question was asked outside what catches a file's failures,
+  on a thread where nothing else would. Each file's failures are now its
+  own, and the copying as a whole always gives its answer.
+
 Not tried: a physical phone, and a share of several pictures at once.
 
 ### 9f: export, limits and the documents
