@@ -12,9 +12,9 @@
 //!   written to a file.
 //! - **Capture.** [`take_capture`] gives what another app shared, text or
 //!   pictures, or the widget's request for a blank note.
-//! - **Saving a file.** [`save_file`] asks the person where to put a file
-//!   and writes it there; [`take_save_outcome`] says how that went.
-//!   [`save_copy`] does the same for a file that is already on the device.
+//! - **Saving a file.** [`save_copy`] asks the person where to put a copy
+//!   of a file the app has, one of a note's files or an export of the
+//!   notes, and writes it there; [`take_save_outcome`] says how that went.
 //! - **Files for a note.** [`pick_files`] asks the person which files to
 //!   attach, and [`take_picked`] gives them once they are copied into the
 //!   app. [`open_file`] lends one file to another app, to show.
@@ -197,9 +197,10 @@ pub fn open_file(path: &str, mime_type: &str) -> bool {
 }
 
 /// Asks the person where to save a copy of the file at `path`, which is
-/// inside the app, and writes it there. Returns `false` if Android's
-/// screen for that could not be asked for. How it went comes from
-/// [`take_save_outcome`].
+/// inside the app, and writes it there. `request` is a name from
+/// [`new_request`], under which [`take_save_outcome`] says how it went.
+/// Returns `false` if Android's screen for that could not be asked for,
+/// or is already up.
 pub fn save_copy(request: &str, name: &str, mime_type: &str, path: &str) -> bool {
     ask("saveCopy", &[request, name, mime_type, path])
 }
@@ -213,14 +214,6 @@ pub fn new_request() -> String {
         "request-{}",
         ASKED.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     )
-}
-
-/// Asks the person where to save a file named `name` and writes `text`
-/// there. `request` is a name from [`new_request`], under which
-/// [`take_save_outcome`] says how it went. Returns `false` if Android's
-/// screen for that could not be asked for, or is already up.
-pub fn save_file(request: &str, name: &str, mime_type: &str, text: &str) -> bool {
-    ask("saveFile", &[request, name, mime_type, text])
 }
 
 /// How saving a file went.

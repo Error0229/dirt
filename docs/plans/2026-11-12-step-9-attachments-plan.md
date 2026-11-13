@@ -170,7 +170,9 @@ for it. **It is not in this step.** It needs a decision, like `dirt tui`.
 
 ### 9. Limits
 
-Proposed, to be measured in part 9f as step 8c measured the others:
+Proposed, to be measured in part 9f as step 8c measured the others. They
+were, and two limits were added: see the result of 9f, and `docs/LIMITS.md`
+for the numbers as they stand.
 
 | Limit | Proposed | Why |
 |---|---|---|
@@ -629,7 +631,7 @@ and file dialogs and "Open" are not driven at all.
 - [x] Measure on the phone how long a twelve-megapixel photograph takes to
       attach, most of which is making its thumbnail, and write it into
       `docs/LIMITS.md`. If it is long enough to notice, the app says that
-      it is attaching. (Measured on the emulator: TIMING. A phone was not
+      it is attaching. (Measured on the emulator: about three and a half seconds. A phone was not
       to hand.)
 - [x] A photograph saved as HEIC is attached without a thumbnail, because
       the core does not read HEIC. See what the emulator's and a real
@@ -717,7 +719,7 @@ Not tried: a physical phone, and a share of several pictures at once.
 
 ### 9f: export, limits and the documents
 
-- [ ] On Linux and macOS, make the data folder for its owner alone, and
+- [x] On Linux and macOS, make the data folder for its owner alone, and
       close one that is already there. Today it gets the permissions the
       system gives any new folder, so on a computer whose home folders are
       open to its other users, they can read the notes and files. Found in
@@ -725,17 +727,83 @@ Not tried: a physical phone, and a share of several pictures at once.
       closed. A database file given by hand (`--db-path`) is left as the
       person made it.
 
-- [ ] Export with files (review item 7).
-- [ ] The limits measured, and their rows in `docs/LIMITS.md`.
-- [ ] `docs/SECURITY.md`, `docs/BACKEND_API.md`, `docs/feature-parity.md`
+- [x] Export with files (review item 7).
+- [x] The limits measured, and their rows in `docs/LIMITS.md`.
+- [x] `docs/SECURITY.md`, `docs/BACKEND_API.md`, `docs/feature-parity.md`
       and `docs/MANUAL_CHECKLIST.md`.
+
+**Result (2026-11-13).**
+
+- **An export is the notes' text and, beside it, the files:**
+  `notes.json` or `notes.md`, and `files/<note id>/<file name>`. The text
+  names every file of every note, with its path in the export or none, so
+  an export never lets a file go unsaid. The desktop app writes a new
+  folder inside one the person chooses, and the CLI the folder named
+  (`dirt export --folder`). The Android app writes the same as one zip
+  file, made in the app's own folder and handed to Android's screen for
+  saving. `dirt export` with no folder still gives the text alone, and says
+  how many files it names and does not hold.
+- **A file the device does not hold is fetched first.** One that cannot be
+  had is left out, and the export and the app both name it with the
+  reason. The first failure to reach the server or the storage ends the
+  fetching, so an export made with no network waits for that once. The CLI
+  writes the folder all the same and then fails: whoever keeps it as their
+  copy of the notes must not be told that all is well.
+- **A file's place in an export is made from its name as a saved copy's
+  is.** Two files of one note never share a place, whatever the case of
+  their letters or the way an accent is written, which is how Windows and
+  macOS compare names.
+- **An export replaces nothing.** It takes its folder's name by making the
+  folder. The first version made the export under another name and
+  renamed it when it was whole, and a test of that showed that on Windows
+  a folder renamed onto a file takes the file's place.
+- **The data folder is its owner's alone** on Linux and macOS, made so and
+  closed if it was open, each time a program starts. Tried on Linux, in
+  the tests and with the CLI itself. macOS runs the same tests in CI.
+- **The limits were measured, and two were missing.** A file has a row in
+  the database whatever its size, and so has each note's reference to it.
+  Nothing limited how many: with files a byte long, one account could make
+  the database hold a quarter of a gigabyte of rows. An account now holds
+  20,000 files and its notes 40,000 references, 12 MB at the most.
+  `docs/LIMITS.md` has what was measured: one file at its largest, what a
+  file adds to its note, an account at its file limit, and what a file's
+  rows cost.
+- **Left in the documents by 9e and put right:** three places where a
+  measured time had not been filled in.
+
+Tried for real against the server on this machine with the file storage.
+Two CLI devices: one that had fetched nothing exported every file, each
+the same as its original byte for byte, with two files of one name and one
+named `../../outside.txt` written inside the export; a second export to
+the same folder was refused; and with the storage stopped the export was
+written without the file it could not fetch, named it and failed. On the
+Android emulator, with no window: the zip file saved through Android's own
+screen held the notes and every file, the same as the originals, one under
+a name in Chinese; and with the phone's network off the app named, in red,
+the file the zip file lacks. On Linux, with the CLI itself: a new data
+folder is `700`, one that was `755` is closed, and the folder of a database
+given with `--db-path` is left alone.
+
+What review showed:
+
+- **Each file left out kept its note's whole text**, to name the note by,
+  where only the start of the first line is shown. A note may have twenty
+  files and a megabyte of text, and an export made with no network leaves
+  out every file the device has not fetched. Each now keeps the title.
+
+Not tried: the desktop app's export, whose folder is chosen in a file
+dialog, which is not driven on a desktop somebody may be using; macOS,
+beyond the tests in CI; a physical phone.
 
 ## Exit
 
-- [ ] Every test above passes locally and in CI.
-- [ ] A file attached on one device opens on another, in `dirt-sim` with
-      the real server and a real S3-compatible store.
-- [ ] No file's bytes, name or key reach the server: a test reads what the
-      server and the store hold.
+- [x] Every test above passes locally and in CI.
+- [x] A file attached on one device opens on another, in `dirt-sim` with
+      the real server and a real S3-compatible store
+      (`a_file_attached_on_one_device_is_read_on_the_other`).
+- [x] No file's bytes, name or key reach the server: a test reads what the
+      server and the store hold (the same test, and `dirt-api`'s
+      `a_file_goes_up_through_one_link_and_comes_down_through_another`).
 - [ ] On real devices against `dirt-trial`: needs the owner's storage
-      account.
+      account. Until then every client was tried against the real server
+      on one machine, the Android app on an emulator.

@@ -513,8 +513,8 @@ email inbox cannot destroy it.
 
 - Per-account request counts kept in the database, not in process memory.
 - Storage quotas: notes per account, bytes per note, total bytes per account.
-  The server cannot inspect what it stores, so size is the only thing it can
-  police.
+  The server cannot inspect what it stores, so size and number are the only
+  things it can police. Files have the same: section 10.
 - Unauthenticated traffic is left to the hosting platform's firewall.
 
 `docs/LIMITS.md` has every number with its reason, as settled by the limits
@@ -554,7 +554,12 @@ Rule: no HTTP, SQL or cryptography lives in a client crate.
 - **session:** one object a client holds, with four states: signed out, signing
   in, waiting for approval, and ready. All three clients render the same
   states.
-- **export:** as today.
+- **export:** every note as one text, JSON or Markdown, which names each
+  note's files; and, written to a folder or as one zip file, the files
+  beside it (`files/<note id>/<name>`). A file the device does not hold is
+  fetched first, and one that cannot be had is left out and named. The
+  desktop app and the CLI write the folder. The Android app, which can
+  save one file where the person says, writes the zip (step 9).
 
 ### 8.3 Behaviour
 
@@ -701,7 +706,11 @@ integration uses a Postgres service container.
   goes through this section against what steps 8c to 8e changed: purging,
   changing the account's key, and restoring a backup. Recording voice memos
   inside an app is not part of it and needs a decision.
-- **Limits:** a maximum size per file and a total per account.
+- **Limits:** a maximum size per file and a total per account; and, since
+  the database has a row for each file and for each note that refers to
+  one whatever the file's size, a maximum number of an account's files, of
+  the files one note refers to, and of an account's references in all.
+  `docs/LIMITS.md` has the numbers and what was measured for them.
 - **Key rotation stays cheap:** rotating the account key re-encrypts notes
   only, not files.
 - **Voice memos:** audio attachments. Transcription could only run on the

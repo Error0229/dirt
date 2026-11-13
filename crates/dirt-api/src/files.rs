@@ -152,6 +152,20 @@ pub async fn upload(
                     "the account's file storage is full",
                 ));
             }
+            // Files are counted as well as weighed. Each has a row here
+            // whatever its size, and the bytes an account may hold would
+            // pay for millions of rows of files a byte long.
+            let (files,): (i64,) =
+                sqlx::query_as("SELECT count(*) FROM files WHERE account_id = $1")
+                    .bind(device.account_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            if files >= limits::MAX_FILES_PER_ACCOUNT {
+                return Err(ApiError::new(
+                    ErrorCode::QuotaExceeded,
+                    "the account has as many files as it may",
+                ));
+            }
             // If nothing is ever uploaded, or no note ever refers to it,
             // the row goes after a week and its space with it.
             sqlx::query(
@@ -317,6 +331,32 @@ async fn confirm_one(
             code: ErrorCode::QuotaExceeded,
             message: "the note has as many files as it may".to_owned(),
         });
+    }
+    // A reference is a row too, and one file may have one from every note
+    // of the account. So the account's references are counted: when this
+    // would be a new one, which it is not each time a device confirms what
+    // it holds, as every device does at its first sync.
+    let (referred,): (bool,) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM file_notes \
+                         WHERE account_id = $1 AND file_id = $2 AND note_id = $3)",
+    )
+    .bind(account_id)
+    .bind(item.file_id)
+    .bind(note)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !referred {
+        let (references,): (i64,) =
+            sqlx::query_as("SELECT count(*) FROM file_notes WHERE account_id = $1")
+                .bind(account_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if references >= limits::MAX_FILE_REFERENCES_PER_ACCOUNT {
+            return Ok(FileOutcome::Rejected {
+                code: ErrorCode::QuotaExceeded,
+                message: "the account's notes refer to as many files as they may".to_owned(),
+            });
+        }
     }
     sqlx::query(
         "UPDATE files SET confirmed = true, delete_after = NULL \

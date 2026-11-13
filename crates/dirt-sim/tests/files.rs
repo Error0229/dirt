@@ -921,10 +921,9 @@ async fn a_file_refused_after_it_was_sent_is_listed_with_its_reason(pool: PgPool
     let problems = laptop.session.store().file_problems().await.unwrap();
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert_eq!(problems[0].file_id, attachment.file_id);
-    assert!(
-        problems[0].reason.contains("too many files"),
-        "{}",
-        problems[0].reason
+    assert_eq!(
+        problems[0].reason,
+        "the note or the account has as many files as it may"
     );
     // Refused, so not counted as waiting; and still only on this device.
     assert_eq!(report.files_unsent, 0);
@@ -1003,4 +1002,129 @@ async fn a_pictures_thumbnail_is_read_without_the_picture(pool: PgPool) {
     sync(&phone).await;
     sync(&phone).await;
     assert!(!holds(&phone, thumbnail.file_id));
+}
+
+/// Every row of every table the server has, as text, with what is stored
+/// as bytes written in hex as Postgres writes it.
+async fn everything_in_the_database(pool: &PgPool) -> String {
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT table_name::text FROM information_schema.tables \
+          WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert!(tables.iter().any(|table| table == "notes"), "{tables:?}");
+    assert!(tables.iter().any(|table| table == "files"), "{tables:?}");
+    let mut everything = String::new();
+    for table in tables {
+        let rows: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT string_agg(row_to_json(t)::text, ' ') FROM \"{table}\" t"
+        )))
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        everything.push_str(&rows.unwrap_or_default());
+        everything.push('\n');
+    }
+    everything
+}
+
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes.iter().fold(String::new(), |mut hex, byte| {
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    })
+}
+
+/// The server and the storage are given a file's size and nothing else of
+/// it: not its bytes, its name, its kind or its key, and not its
+/// thumbnail's. Everything both hold is read and looked through.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn nothing_of_a_file_but_its_size_reaches_the_server_or_the_storage(pool: PgPool) {
+    file_bucket().await;
+    let server = Server::with_sign_in(pool.clone()).await;
+    let laptop = Client::new(&server, "Laptop", false);
+    laptop.sign_in("alice").await.unwrap();
+    let store = laptop.session.store();
+    let note = store.create_note("the figures").await.unwrap().id;
+    // A picture, so that there is a thumbnail too, under a name and a
+    // kind that would be known again anywhere.
+    let source = laptop.folder().join("source.png");
+    image::RgbImage::from_fn(640, 480, |x, y| {
+        image::Rgb([
+            (x % 251).to_le_bytes()[0],
+            (y % 241).to_le_bytes()[0],
+            ((x * 7 + y * 13) % 239).to_le_bytes()[0],
+        ])
+    })
+    .save_with_format(&source, image::ImageFormat::Png)
+    .unwrap();
+    let plain = std::fs::read(&source).unwrap();
+    let attachment = store
+        .attach_file(
+            &note,
+            &source,
+            "quarterly-figures-unreleased.png",
+            "image/x-kind-of-its-own",
+        )
+        .await
+        .unwrap();
+    let thumbnail = attachment.thumbnail.clone().expect("a thumbnail");
+    let small = std::fs::read(store.shelf().path(thumbnail.file_id)).unwrap();
+    let report = sync(&laptop).await;
+    assert_eq!((report.files_sent, report.files_unsent), (2, 0));
+
+    let database = everything_in_the_database(&pool).await;
+    // The server does know the file is there, and how large it is stored.
+    assert!(database.contains(&attachment.file_id.to_string()));
+    assert!(database.contains(&sealed(&plain).to_string()));
+    let objects = [
+        stored(&pool, attachment.file_id).await.unwrap(),
+        stored(&pool, thumbnail.file_id).await.unwrap(),
+    ];
+
+    let secrets: [(&str, &[u8]); 6] = [
+        ("the file's name", b"quarterly-figures-unreleased"),
+        ("the file's kind", b"x-kind-of-its-own"),
+        ("the file's key", attachment.key.as_bytes()),
+        ("the thumbnail's key", thumbnail.key.as_bytes()),
+        (
+            "a stretch of the file",
+            &plain[plain.len() / 2..plain.len() / 2 + 48],
+        ),
+        (
+            "a stretch of the thumbnail",
+            &small[small.len() / 2..small.len() / 2 + 48],
+        ),
+    ];
+    for (what, secret) in secrets {
+        // In the database as text, or as the hex of bytes.
+        if let Ok(text) = std::str::from_utf8(secret) {
+            assert!(!database.contains(text), "{what} is in the database");
+        }
+        assert!(
+            !database.contains(&hex(secret)),
+            "{what} is in the database"
+        );
+        for object in &objects {
+            assert!(
+                !object.windows(secret.len()).any(|window| window == secret),
+                "{what} is in the storage"
+            );
+        }
+    }
+    // The looking would find such a thing: the device's own copy of the
+    // note's document, which is not encrypted, has the name in it.
+    let (_, document) = store
+        .note_documents()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|(id, _)| *id == note)
+        .unwrap();
+    assert!(document
+        .windows(b"quarterly-figures-unreleased".len())
+        .any(|window| window == b"quarterly-figures-unreleased"));
 }

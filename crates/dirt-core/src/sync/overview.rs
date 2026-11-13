@@ -281,7 +281,7 @@ impl SyncFailure {
 
 /// What to call a note with this text: the start of its first line, or
 /// nothing for a note with no text.
-fn first_line(text: &str) -> Option<String> {
+pub(crate) fn first_line(text: &str) -> Option<String> {
     let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
     let mut title: String = line.chars().take(TITLE_LENGTH).collect();
     if line.chars().count() > TITLE_LENGTH {

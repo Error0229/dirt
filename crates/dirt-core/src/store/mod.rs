@@ -24,7 +24,7 @@ use rusqlite::Connection;
 use tokio::sync::oneshot;
 
 pub use files::{AttachedFile, FileLink, FileProblem, FileStanding};
-pub use location::{store_path, StoreName};
+pub use location::{close_data_folder, store_path, StoreName};
 pub use sync_state::{
     NoteProblem, ProblemKind, PurgeApplied, PurgeCandidate, SyncProgress, UnsentNote,
 };
@@ -98,6 +98,18 @@ fn now_ms() -> i64 {
 }
 
 impl Store {
+    /// Opens a store of the application's own, under `data_folder`, making
+    /// what is not there yet.
+    ///
+    /// The data folder is closed to the other users of the computer first
+    /// ([`close_data_folder`]). This is how a program opens the store it
+    /// keeps for the person. [`Self::open`] is for a database file the
+    /// person gave by hand, whose folder is theirs to arrange.
+    pub fn open_in(data_folder: &Path, name: &StoreName) -> Result<Self> {
+        close_data_folder(data_folder)?;
+        Self::open(store_path(data_folder, name))
+    }
+
     /// Opens the database at `path`, creating the file, its folder and its
     /// tables if they are not there yet.
     pub fn open(path: impl Into<PathBuf>) -> Result<Self> {
@@ -320,6 +332,11 @@ impl Store {
     pub async fn attached_files(&self, note: &NoteId) -> Result<Vec<AttachedFile>> {
         let (note, shelf) = (*note, self.shelf());
         self.read(move |c| files::attached(c, &note, &shelf)).await
+    }
+
+    /// The notes that name a file, deleted notes among them.
+    pub async fn notes_with_files(&self) -> Result<std::collections::HashSet<NoteId>> {
+        self.read(|c| files::notes_with_files(c)).await
     }
 
     /// The bytes of a small file this device holds, such as a thumbnail,

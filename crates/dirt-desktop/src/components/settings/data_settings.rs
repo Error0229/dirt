@@ -13,7 +13,7 @@ pub(super) fn DataSettingsTab(
     rsx! {
         SettingRow {
             label: "Export",
-            description: "Export all notes as JSON or Markdown",
+            description: "Export every note and its files into a folder, the notes as JSON or Markdown",
 
             div {
                 class: "auth-panel",
@@ -41,8 +41,11 @@ pub(super) fn DataSettingsTab(
                 }
 
                 if let Some(message) = export_message {
+                    // One line for what was exported, and one for each
+                    // thing to say about files that were not.
                     div {
                         class: "auth-message",
+                        style: "white-space: pre-wrap;",
                         "{message}"
                     }
                 }

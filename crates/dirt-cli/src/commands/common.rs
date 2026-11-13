@@ -33,26 +33,6 @@ pub async fn list_notes(
     }
 }
 
-pub async fn list_all_notes(db: &Store) -> Result<Vec<Note>, CliError> {
-    const PAGE_SIZE: usize = 500;
-
-    let mut notes = Vec::new();
-    let mut offset = 0usize;
-
-    loop {
-        let batch = db.list_notes(PAGE_SIZE, offset).await?;
-        let count = batch.len();
-        notes.extend(batch);
-
-        if count < PAGE_SIZE {
-            break;
-        }
-        offset += count;
-    }
-
-    Ok(notes)
-}
-
 pub async fn search_notes(query: &str, limit: usize, db: &Store) -> Result<Vec<Note>, CliError> {
     Ok(db.search_notes(query, limit).await?)
 }

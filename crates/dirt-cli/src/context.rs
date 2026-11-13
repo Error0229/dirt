@@ -71,10 +71,8 @@ impl Context {
             });
         }
         let Some(server) = server_address()? else {
-            let local =
-                dirt_core::store::store_path(&data_folder(), &dirt_core::store::StoreName::Local);
             return Ok(Self {
-                store: Store::open(local)?,
+                store: Store::open_in(&data_folder(), &dirt_core::store::StoreName::Local)?,
                 session: None,
                 server: None,
             });
