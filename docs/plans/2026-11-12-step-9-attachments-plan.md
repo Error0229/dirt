@@ -784,6 +784,13 @@ the file the zip file lacks. On Linux, with the CLI itself: a new data
 folder is `700`, one that was `755` is closed, and the folder of a database
 given with `--db-path` is left alone.
 
+What review showed:
+
+- **Each file left out kept its note's whole text**, to name the note by,
+  where only the start of the first line is shown. A note may have twenty
+  files and a megabyte of text, and an export made with no network leaves
+  out every file the device has not fetched. Each now keeps the title.
+
 Not tried: the desktop app's export, whose folder is chosen in a file
 dialog, which is not driven on a desktop somebody may be using; macOS,
 beyond the tests in CI; a physical phone.

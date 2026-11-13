@@ -41,8 +41,9 @@ pub enum ExportError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LeftOut {
     pub note_id: NoteId,
-    /// The note's text, to name the note by.
-    pub note_text: String,
+    /// What to call the note: the start of its first line. Not its text,
+    /// which may be long, and a note may have twenty files left out.
+    pub note_title: String,
     /// The file's name, as the note gives it.
     pub name: String,
     /// Why the export does not hold it, as sentences for the person.
@@ -53,8 +54,7 @@ impl LeftOut {
     /// What to call the file: its name, and the note it is attached to.
     #[must_use]
     pub fn title(&self) -> String {
-        let note = first_line(&self.note_text).unwrap_or_else(|| "a note with no text".to_owned());
-        format!("{}, attached to: {note}", self.name)
+        format!("{}, attached to: {}", self.name, self.note_title)
     }
 }
 
@@ -461,7 +461,8 @@ async fn gather(
                         }
                         export.left_out.push(LeftOut {
                             note_id: note.id,
-                            note_text: note.content.clone(),
+                            note_title: first_line(&note.content)
+                                .unwrap_or_else(|| "a note with no text".to_owned()),
                             name: attachment.name.clone(),
                             why,
                         });
@@ -796,13 +797,13 @@ mod tests {
             [
                 LeftOut {
                     note_id: trip.id,
-                    note_text: "Trip to the coast\nmore".to_owned(),
+                    note_title: "Trip to the coast".to_owned(),
                     name: "away.txt".to_owned(),
                     why: why.to_owned(),
                 },
                 LeftOut {
                     note_id: trip.id,
-                    note_text: "Trip to the coast\nmore".to_owned(),
+                    note_title: "Trip to the coast".to_owned(),
                     name: "gone.txt".to_owned(),
                     why: why.to_owned(),
                 },
@@ -848,6 +849,31 @@ mod tests {
             ]
         );
         assert_eq!(files_under(&folder).len(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_file_left_out_names_its_note_by_a_title_and_not_by_its_text() {
+        let fixture = Fixture::new();
+        let long = format!("{}\n{}", "word ".repeat(40), "more text ".repeat(10_000));
+        let with_text = fixture.store.create_note(&long).await.unwrap();
+        let file = fixture.attach(&with_text.id, "a.txt", b"a").await;
+        fs::remove_file(fixture.store.shelf().path(file)).unwrap();
+        let export = Export::with_files(&fixture.store, None, ExportFormat::Json)
+            .await
+            .unwrap();
+        let left_out = &export.left_out()[0];
+        // The start of the first line, cut short: not a hundred thousand
+        // characters kept once more for each file.
+        assert!(left_out.note_title.starts_with("word word"));
+        assert!(
+            left_out.note_title.chars().count() < 100,
+            "{}",
+            left_out.note_title
+        );
+        assert_eq!(
+            left_out.title(),
+            format!("a.txt, attached to: {}", left_out.note_title)
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
