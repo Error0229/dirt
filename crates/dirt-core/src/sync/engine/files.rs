@@ -220,7 +220,11 @@ impl SyncEngine {
             FileOutcome::NotUploaded | FileOutcome::NoSuchFile | FileOutcome::NoSuchNote => {}
             FileOutcome::Rejected { code, message } => {
                 let reason = match code {
-                    ErrorCode::QuotaExceeded => "the note has too many files".to_owned(),
+                    // The note's own limit, or the account's on how
+                    // many files its notes may refer to in all.
+                    ErrorCode::QuotaExceeded => {
+                        "the note or the account has as many files as it may".to_owned()
+                    }
                     _ => format!("refused by the server: {message}"),
                 };
                 self.flag_file(link, reason).await?;

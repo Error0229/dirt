@@ -449,6 +449,107 @@ async fn a_file_starts_its_last_thirty_days_when_its_last_note_lets_go(pool: PgP
     assert!(about(due, limits::UNREFERENCED_FILE_DAYS), "{due:?}");
 }
 
+/// Files are counted as well as weighed: an account of files a byte long
+/// would otherwise have a row in the database for every byte it may hold.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn an_account_holds_only_so_many_files(pool: PgPool) {
+    file_bucket().await;
+    let app = app(pool.clone());
+    let device = register(&app, "alice", "Laptop").await;
+    let token = &device.token;
+    // The account has one file fewer than it may. They are written straight
+    // into the table: only their number matters here.
+    sqlx::query(
+        "INSERT INTO files (account_id, file_id, size, confirmed, delete_after) \
+         SELECT $1, gen_random_uuid(), 1, true, NULL FROM generate_series(1, $2)",
+    )
+    .bind(device.account_id)
+    .bind(limits::MAX_FILES_PER_ACCOUNT - 1)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let before = file_bytes(&pool, device.account_id).await;
+
+    let last = Uuid::now_v7();
+    assert_eq!(
+        ask_to_upload(&app, token, last, 1).await.status,
+        StatusCode::OK
+    );
+    let answer = ask_to_upload(&app, token, Uuid::now_v7(), 1).await;
+    assert_eq!(answer.status, StatusCode::INSUFFICIENT_STORAGE);
+    assert_eq!(answer.code(), "quota_exceeded");
+    // The file that was refused is not counted, in number or in bytes.
+    assert_eq!(file_bytes(&pool, device.account_id).await, before + 1);
+    let (files,): (i64,) = sqlx::query_as("SELECT count(*) FROM files")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(files, limits::MAX_FILES_PER_ACCOUNT);
+
+    // Asking again for a file the account has is how an upload is tried
+    // again, and is not one more file.
+    assert_eq!(
+        ask_to_upload(&app, token, last, 1).await.status,
+        StatusCode::OK
+    );
+    // Another account is not held to this one's count.
+    let other = register(&app, "bob", "Laptop").await;
+    assert_eq!(
+        ask_to_upload(&app, &other.token, Uuid::now_v7(), 1)
+            .await
+            .status,
+        StatusCode::OK
+    );
+}
+
+/// A reference from a note to a file is a row too, and the notes of an
+/// account may have only so many between them.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn an_accounts_notes_refer_to_only_so_many_files(pool: PgPool) {
+    file_bucket().await;
+    let app = app(pool.clone());
+    let device = register(&app, "alice", "Laptop").await;
+    let token = &device.token;
+    let note = a_note(&app, token).await;
+    let (first, second, third) = (
+        upload(&app, token, b"one").await,
+        upload(&app, token, b"two").await,
+        upload(&app, token, b"three").await,
+    );
+    assert_eq!(confirm(&app, token, first, note).await, FileOutcome::Done);
+    // One reference fewer than the account may have, with the one above.
+    // Written straight into the table, from notes that need not exist.
+    sqlx::query(
+        "INSERT INTO file_notes (account_id, file_id, note_id) \
+         SELECT $1, $2, gen_random_uuid() FROM generate_series(1, $3)",
+    )
+    .bind(device.account_id)
+    .bind(first)
+    .bind(limits::MAX_FILE_REFERENCES_PER_ACCOUNT - 2)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(confirm(&app, token, second, note).await, FileOutcome::Done);
+    assert!(matches!(
+        confirm(&app, token, third, note).await,
+        FileOutcome::Rejected {
+            code: ErrorCode::QuotaExceeded,
+            ..
+        }
+    ));
+    // The file that was refused is not confirmed: it goes after its week.
+    assert!(matches!(row(&pool, third).await, Some((false, Some(_)))));
+    // A reference the account already has is confirmed again, as every
+    // device does for the notes it holds.
+    assert_eq!(confirm(&app, token, second, note).await, FileOutcome::Done);
+    assert_eq!(confirm(&app, token, first, note).await, FileOutcome::Done);
+
+    // Letting one go makes room for another.
+    assert_eq!(release(&app, token, second, note).await, FileOutcome::Done);
+    assert_eq!(confirm(&app, token, third, note).await, FileOutcome::Done);
+}
+
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
 async fn a_note_refers_to_only_so_many_files(pool: PgPool) {
     file_bucket().await;

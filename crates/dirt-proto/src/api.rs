@@ -59,8 +59,22 @@ pub mod limits {
     /// Most encrypted file bytes one account may hold. A file is counted
     /// once, however many notes refer to it.
     pub const MAX_ACCOUNT_FILE_BYTES: i64 = 200 * 1024 * 1024;
+    /// Files one account may hold, however small.
+    ///
+    /// A file is counted from the moment a link to upload it is issued, as
+    /// its bytes are, and a picture's thumbnail is a file.
+    ///
+    /// The byte limit alone would let an account of one-byte files make
+    /// the database hold a row for each: see `docs/LIMITS.md`.
+    pub const MAX_FILES_PER_ACCOUNT: i64 = 20_000;
     /// Files one note may refer to.
     pub const MAX_FILES_PER_NOTE: i64 = 20;
+    /// References from notes to files that one account may have.
+    ///
+    /// A file has one for each note it is attached to, which is one, or
+    /// two when a note that was purged lives on as a new note on a device
+    /// that had an edit to it.
+    pub const MAX_FILE_REFERENCES_PER_ACCOUNT: i64 = 40_000;
     /// An upload that no note ever confirmed is discarded after this long.
     pub const UNCONFIRMED_FILE_DAYS: i64 = 7;
     /// A file is deleted this long after the last note that referred to it

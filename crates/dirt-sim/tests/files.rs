@@ -921,10 +921,9 @@ async fn a_file_refused_after_it_was_sent_is_listed_with_its_reason(pool: PgPool
     let problems = laptop.session.store().file_problems().await.unwrap();
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert_eq!(problems[0].file_id, attachment.file_id);
-    assert!(
-        problems[0].reason.contains("too many files"),
-        "{}",
-        problems[0].reason
+    assert_eq!(
+        problems[0].reason,
+        "the note or the account has as many files as it may"
     );
     // Refused, so not counted as waiting; and still only on this device.
     assert_eq!(report.files_unsent, 0);

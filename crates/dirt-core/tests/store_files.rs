@@ -1077,12 +1077,15 @@ async fn a_notes_files_are_listed_with_where_they_stand() {
     sent(store, &note, 1).await;
     let reference = link(store, file).await;
     store
-        .flag_file_problem(&reference, "the note has too many files".to_owned())
+        .flag_file_problem(
+            &reference,
+            "the note or the account has as many files as it may".to_owned(),
+        )
         .await
         .unwrap();
     assert_eq!(
         store.attached_files(&note).await.unwrap()[0].standing,
-        FileStanding::Refused("the note has too many files".to_owned())
+        FileStanding::Refused("the note or the account has as many files as it may".to_owned())
     );
 
     store.mark_file_confirmed(&reference).await.unwrap();
