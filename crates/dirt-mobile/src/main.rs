@@ -14,6 +14,8 @@ mod config;
 mod data;
 #[cfg(any(target_os = "android", test))]
 mod export;
+#[cfg(any(target_os = "android", test))]
+mod incoming;
 #[cfg(target_os = "android")]
 mod services;
 #[cfg(target_os = "android")]

@@ -13,8 +13,8 @@
 //! browser opened.
 //!
 //! The activity is asked in the same way for what came from outside the
-//! app: text another app shared, which becomes a note at once, and a press
-//! of the home-screen widget, which opens a blank note.
+//! app: text or pictures another app shared, which become a note at once,
+//! and a press of the home-screen widget, which opens a blank note.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,7 +32,8 @@ use dirt_core::Store;
 use crate::bootstrap_config::load_bootstrap_config;
 use crate::config::default_mobile_data_directory;
 use crate::data::{MobileNoteStore, NOTES_PAGE};
-use crate::services::activity::{take_capture, take_redirect, Capture};
+use crate::incoming::{attach_incoming, discard_all, note_text, Capture};
+use crate::services::activity::{take_capture, take_redirect};
 use crate::services::secure_storage::EncryptedPrefs;
 use crate::state::{AppState, View};
 use crate::ui::MOBILE_UI_STYLES;
@@ -84,10 +85,11 @@ async fn finish_sign_in(session: &Session, redirect: &str) -> Option<String> {
 
 /// Deals with what was asked of the app from outside it, if anything was.
 ///
-/// Shared text is saved as a note straight away: capture does not wait for
-/// the person, who finds the note at the top of the list. The widget asks
-/// for a blank note to write in. Neither takes the person out of a note
-/// they are in the middle of writing.
+/// What was shared is saved as a note straight away: capture does not
+/// wait for the person, who finds the note at the top of the list. Shared
+/// pictures are attached to it, and a note made of pictures alone is called
+/// after them. The widget asks for a blank note to write in. Neither takes
+/// the person out of a note they are in the middle of writing.
 async fn receive_capture(
     store: Signal<Option<Arc<MobileNoteStore>>>,
     session: Signal<Option<Session>>,
@@ -107,15 +109,25 @@ async fn receive_capture(
                     view.set(View::Editor);
                 }
             }
-            Capture::Shared(text) => {
+            Capture::Shared { text, files } => {
                 let Some(note_store) = store.peek().clone() else {
+                    discard_all(&files);
                     startup_issue.set(Some(
                         "What was shared could not be saved: the notes are not open.".to_owned(),
                     ));
                     continue;
                 };
-                match note_store.create_note(&text).await {
-                    Ok(_) => {
+                match note_store.create_note(&note_text(&text, &files)).await {
+                    Ok(note) => {
+                        // As a task of its own: it finishes whatever the
+                        // screen does meanwhile.
+                        let core = note_store.core().clone();
+                        let failed = tokio::spawn(attach_incoming(core, note.id, files))
+                            .await
+                            .unwrap_or_default();
+                        if !failed.is_empty() {
+                            startup_issue.set(Some(failed.join(" ")));
+                        }
                         if let Some(current) = session.peek().as_ref() {
                             current.notify(Trigger::Changed);
                         }
@@ -131,7 +143,8 @@ async fn receive_capture(
                         }
                     }
                     Err(error) => {
-                        tracing::error!("A shared text could not be saved: {error}");
+                        discard_all(&files);
+                        tracing::error!("What was shared could not be saved: {error}");
                         startup_issue
                             .set(Some(format!("What was shared could not be saved: {error}")));
                     }
@@ -181,6 +194,8 @@ pub fn AppShell() -> Element {
     let _init = use_resource(move || {
         let server_url = server_url.clone();
         async move {
+            // Copies of files lent to other apps in earlier runs.
+            dirt_core::files::clear_copies(&crate::views::attachments::opened_folder());
             let server_url = match server_url {
                 Ok(url) => url,
                 Err(problem) => {
@@ -273,6 +288,9 @@ pub fn AppShell() -> Element {
                 }
                 if state == SessionState::SignedOut {
                     current.remove_signed_out_stores();
+                    // Copies of the account's files that were lent to other
+                    // apps go with the account.
+                    dirt_core::files::clear_copies(&crate::views::attachments::opened_folder());
                 }
             }
         }

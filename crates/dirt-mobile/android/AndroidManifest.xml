@@ -33,6 +33,19 @@
                 <data android:mimeType="text/*" />
             </intent-filter>
 
+            <!-- A shared picture, or several, becomes a note with the
+                 pictures attached. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+
             <!-- The browser returns from sign-in to dev.dirt.app://callback.
                  Any app can claim a custom scheme; PKCE is what makes a
                  redirect taken by another app useless to it. -->
@@ -43,6 +56,21 @@
                 <data android:scheme="dev.dirt.app" android:host="callback" />
             </intent-filter>
         </activity>
+
+        <!-- Lends one file at a time to another app, for reading, when the
+             person opens a note's file. It is not open to other apps: each
+             is given the one address it was sent, and nothing else. The
+             only folder it can lend from is the one the app copies a file
+             into to be opened (res/xml/dirt_file_paths.xml). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/dirt_file_paths" />
+        </provider>
 
         <receiver
             android:enabled="true"

@@ -20,7 +20,7 @@ use dirt_proto::api::{
 };
 // What a client needs in order to act on a failure, re-exported so that the
 // interface crates do not depend on the protocol crate for it.
-pub use dirt_proto::api::{DeviceInfo, DeviceStatus, ErrorClass, ErrorCode};
+pub use dirt_proto::api::{limits, DeviceInfo, DeviceStatus, ErrorClass, ErrorCode};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use uuid::Uuid;

@@ -3,12 +3,18 @@
 //! Single textarea for the full note body. Save runs the appropriate
 //! create/update against `MobileNoteStore`, then refreshes the list
 //! signal so the new state is visible immediately.
+//!
+//! Under the text are the note's files. A note that has not been saved yet
+//! has none to show, and attaching a file to it saves it first: a file is
+//! attached to a note, and there has to be one.
 
 use dioxus::prelude::*;
 
 use crate::data::MobileNoteStore;
+use crate::incoming::note_text;
 use crate::state::{AppState, View};
 use crate::ui::{ButtonVariant, UiButton, UiTextarea};
+use crate::views::attachments::{attach, choose_files, AttachmentPanel};
 
 #[component]
 pub fn Editor() -> Element {
@@ -111,6 +117,44 @@ pub fn Editor() -> Element {
         });
     };
 
+    // A file for a note that is not saved yet. The files are chosen first,
+    // so that backing out of choosing saves nothing. Then the note is
+    // saved, with its text or, if it has none, with what the files are
+    // called; the files are attached; and the editor is on a saved note.
+    let attach_to_new = move |_| {
+        spawn(async move {
+            let Some(files) = choose_files().await else {
+                return;
+            };
+            busy.set(true);
+            error.set(None);
+            let Some(store) = (state.store)() else {
+                crate::incoming::discard_all(&files);
+                error.set(Some("Local database is not ready yet.".to_string()));
+                busy.set(false);
+                return;
+            };
+            match store.create_note(&note_text(&draft(), &files)).await {
+                Ok(note) => {
+                    draft.set(note.content.clone());
+                    let failed = attach(&state, note.id, files).await;
+                    if !failed.is_empty() {
+                        error.set(Some(failed.join(" ")));
+                    }
+                    state.note_changed();
+                    refresh_notes_signal(&store, &mut state).await;
+                    state.selected_note_id.set(Some(note.id));
+                }
+                Err(err) => {
+                    crate::incoming::discard_all(&files);
+                    tracing::error!("Failed to save note: {err}");
+                    error.set(Some(format!("Save failed: {err}")));
+                }
+            }
+            busy.set(false);
+        });
+    };
+
     let header_label = if is_existing { "Edit note" } else { "New note" };
 
     rsx! {
@@ -132,8 +176,25 @@ pub fn Editor() -> Element {
             UiTextarea {
                 value: "{draft_value}",
                 placeholder: "What's on your mind?",
-                rows: 14,
+                rows: 10,
                 oninput: move |event: FormEvent| draft.set(event.value()),
+            }
+
+            if let Some(note_id) = selected {
+                // One panel for each note, made afresh for another.
+                for note_id in [note_id] {
+                    AttachmentPanel { key: "{note_id}", note_id }
+                }
+            } else {
+                div {
+                    UiButton {
+                        r#type: "button",
+                        variant: ButtonVariant::Outline,
+                        disabled: busy(),
+                        onclick: attach_to_new,
+                        "Attach a file"
+                    }
+                }
             }
 
             if let Some(message) = error() {

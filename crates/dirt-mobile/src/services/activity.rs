@@ -10,10 +10,14 @@
 //!   over the app, and [`take_redirect`] gives the address the browser came
 //!   back with. That address carries the authorization code, so it is never
 //!   written to a file.
-//! - **Capture.** [`take_capture`] gives what another app shared, or the
-//!   widget's request for a blank note.
+//! - **Capture.** [`take_capture`] gives what another app shared, text or
+//!   pictures, or the widget's request for a blank note.
 //! - **Saving a file.** [`save_file`] asks the person where to put a file
 //!   and writes it there; [`take_save_outcome`] says how that went.
+//!   [`save_copy`] does the same for a file that is already on the device.
+//! - **Files for a note.** [`pick_files`] asks the person which files to
+//!   attach, and [`take_picked`] gives them once they are copied into the
+//!   app. [`open_file`] lends one file to another app, to show.
 //!
 //! All of it is JNI, as `secure_storage` is, and for the same two reasons
 //! classes are loaded through the Activity's class loader and a Java
@@ -27,6 +31,8 @@
 
 use jni::objects::{JClass, JObject, JString, JValue};
 use jni::{JNIEnv, JavaVM};
+
+use crate::incoming::{parse_capture, parse_picked, Capture, Picked};
 
 /// The activity, as the manifest names it.
 const ACTIVITY_CLASS: &str = "dev.dioxus.main.MainActivity";
@@ -130,24 +136,42 @@ pub fn open_sign_in_page(address: &str) -> bool {
     ask("openSignInPage", &[address])
 }
 
-/// What was asked of the app from outside it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Capture {
-    /// Another app shared this text. It becomes a note.
-    Shared(String),
-    /// The home-screen widget was pressed: a blank note to write in.
-    Blank,
-}
-
 /// What another app shared, or the widget's request, if one is waiting.
 /// Taking it removes it.
 pub fn take_capture() -> Option<Capture> {
-    let text = take_text("takeCapture")?;
-    Some(if text.trim().is_empty() {
-        Capture::Blank
-    } else {
-        Capture::Shared(text)
-    })
+    loop {
+        // One that cannot be read is passed over for the next.
+        if let Some(capture) = parse_capture(&take_text("takeCapture")?) {
+            return Some(capture);
+        }
+    }
+}
+
+/// Asks the person which files to attach, on Android's own screen for
+/// that. Returns `false` if the screen could not be asked for. What was
+/// chosen comes from [`take_picked`].
+pub fn pick_files() -> bool {
+    ask("pickFiles", &[])
+}
+
+/// The files the person chose, once they are copied into the app, or that
+/// they chose none. `None` while they are still choosing.
+pub fn take_picked() -> Option<Picked> {
+    take_text("takePicked").map(|given| parse_picked(&given))
+}
+
+/// Lends the file at `path`, which is inside the app, to whatever other
+/// app shows files of this kind. Returns `false` if none took it.
+pub fn open_file(path: &str, mime_type: &str) -> bool {
+    ask("openFile", &[path, mime_type])
+}
+
+/// Asks the person where to save a copy of the file at `path`, which is
+/// inside the app, and writes it there. Returns `false` if Android's
+/// screen for that could not be asked for. How it went comes from
+/// [`take_save_outcome`].
+pub fn save_copy(name: &str, mime_type: &str, path: &str) -> bool {
+    ask("saveCopy", &[name, mime_type, path])
 }
 
 /// Asks the person where to save a file named `name` and writes `text`
