@@ -147,8 +147,10 @@ account, A and B:
   ago. Wait that long before A11 and D6.
 - The desktop app shows nothing to Windows UI Automation while its window
   is minimised.
-- The file checks need a server with file storage, which `dirt-trial` does
-  not have. `cargo run -p dirt-sim --example serve` runs the real server on
+- The file checks need a server with file storage. Neither `dirt-trial` nor
+  the production server has it until its R2 token is made
+  (`docs/OWNER_DECISIONS.md`, decision 6).
+  `cargo run -p dirt-sim --example serve` runs the real server on
   this machine with the storage from `compose.yaml` and a sign-in that
   needs no account; the comment at the top of
   `crates/dirt-sim/examples/serve.rs` says how to sign in and how to have
@@ -158,6 +160,7 @@ account, A and B:
 
 | Date | Server | Desktop | Android | CLI | Not run |
 |---|---|---|---|---|---|
+| 2026-11-13, the production server's first day | Production, `https://api.dirt.catjam.dev` | Not run | Not run | C2 as far as the browser: `dirt auth login --no-browser` printed an address at the production sign-in service, and the page it opened asked for an email address under "Sign in to Dirt". Not finished | Everything else. Nobody has signed in: production has no test user, a real address has to receive the code, and an account's first device should be its owner's |
 | 2026-11-13, for step 9f | The real server on this machine (`dirt-sim`'s `serve`), with the local file storage, reached from the emulator through `adb reverse` | Not run | Emulator, with no window. A10 passed, for JSON and for Markdown: the zip file saved to the phone's Downloads held the notes and every file, each compared byte for byte with the original, one of them under a name in Chinese. A28 passed: the phone had opened none of the files. A29 passed with the phone's network switched off: the zip file was saved without the one file, and the app named it in red | C18 to C21 passed, with two devices on one computer: a device that had fetched nothing exported four files, each the same as its original, among them two of one name and one named `../../outside.txt`, which was written inside the export. C22 passed on Linux (Ubuntu in WSL): a new data folder was `700`, one that had been `755` was closed, and the folder of a database given with `--db-path` stayed `755` | D10, D24 and D25: the desktop app chooses the folder in a file dialog, which is not driven on a desktop somebody may be using. What it writes is the core's, as the CLI's is, and its own part has tests. D26 and C22 on macOS, where the same tests run in CI. A physical phone |
 | 2026-11-13, for step 9e | The real server on this machine (`dirt-sim`'s `serve`), with the local file storage, reached from the emulator through `adb reverse` | Not run | Emulator, with no window. A2 and A4's joining again on the way, against the stand-in sign-in. A20 to A27 passed: the photograph attached on the phone, the copy saved on the phone and the picture shared from Android's Files app were each compared byte for byte with the original. A twelve-megapixel photograph took about three and a half seconds to attach | The first device, and the check on what the phone sent | A physical phone, and so what its camera saves. A share of several pictures at once |
 | 2026-11-13, for step 9d | The real server on this machine (`dirt-sim`'s `serve`), with the local file storage | D17 passed, through the file dialog, with one file. D19 passed: the thumbnail came by itself and the picture stayed away. D22's "Remove" passed, checked against `dirt files` on the same device. D23 passed: a file named `setup.exe` had no "Open". The rows were looked at in a capture of the window | Not run | Used as the second device, and to check the desktop's store | D18: needs a hand to drop a file. D20: "Open" was pressed once, by a person at the machine and not by the script; the file was fetched and a copy made under its own name, and what the viewer showed was not seen. D21: the dialog opened with the right title and was not answered, because it had one of the person's own files selected |

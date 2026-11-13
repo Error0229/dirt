@@ -8,7 +8,7 @@ The project is also a system design case study. Multi-user accounts, three clien
 
 ## Status: the redesign is built
 
-All nine steps of an approved redesign are built on `main`. What is left needs a person: some of the manual checklist (`docs/MANUAL_CHECKLIST.md`, #243), and six decisions that are the owner's, among them the storage account without which the trial server has no attachments (`docs/OWNER_DECISIONS.md`). Devices sign in through Clerk and sync their notes, encrypted, through the new server. A second device is let in by comparing a code with one that is already in, or by the recovery phrase. `docs/SECURITY.md` describes what is protected. Read both documents before changing architecture, sync, login or storage:
+All nine steps of an approved redesign are built on `main`, and the owner has taken the six decisions that were theirs (`docs/OWNER_DECISIONS.md`). There are two servers: production at `https://api.dirt.catjam.dev`, and `dirt-trial`, where changes are tried and data is thrown away (`docs/DEPLOY.md`, "What exists"). Try things on the trial server, never on production. What is left needs a person: some of the manual checklist (`docs/MANUAL_CHECKLIST.md`, #243) and the short list at the end of `docs/OWNER_DECISIONS.md`. Devices sign in through Clerk and sync their notes, encrypted, through the new server. A second device is let in by comparing a code with one that is already in, or by the recovery phrase. `docs/SECURITY.md` describes what is protected. Read both documents before changing architecture, sync, login or storage:
 
 - `docs/plans/2026-11-10-system-redesign-design.md` - requirements, decisions and the target design
 - `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md` - build order, trials and clean-up
@@ -161,7 +161,7 @@ Hooks run:
 - `docs/BACKEND_API.md` - The server's protocol
 - `docs/LIMITS.md` - Every limit the server enforces, with its reason and what was measured. Change a number in `dirt_proto::api::limits` and its row here together
 - `docs/DEPLOY.md` - Running the server, backups, and what to do after a restore
-- `docs/OWNER_DECISIONS.md` - What only the owner can decide before the server is public: plans, storage, the sign-in service
+- `docs/OWNER_DECISIONS.md` - What only the owner could decide, what was decided, and what is still the owner's: plans, storage, the sign-in service
 - `docs/feature-parity.md` - What each client does. Change a client's row in the pull request that changes the client
 - `docs/MANUAL_CHECKLIST.md` - What to try by hand on real devices
 - `docs/plans/` - The redesign and its implementation plan

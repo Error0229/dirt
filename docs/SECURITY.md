@@ -165,6 +165,9 @@ Nothing here protects it after that. What the apps do see to:
 thirty days. A dump holds what the server holds, so it holds no note that
 anyone but the account's devices can read. It is encrypted to a key the
 operator keeps off every server, and the storage it sits in cannot read it.
+The key the daily job stores dumps with can add a dump and cannot read,
+list or delete one, and the storage keeps each dump for thirty days
+whatever is done to its name.
 Two things follow from having backups at all:
 
 - A deleted account stays in the dumps taken before it was deleted until
@@ -348,7 +351,9 @@ device that did it keeps its copies of the notes, outside any account.
 
 ## Reporting a problem
 
-Open an issue on the repository. There is no private channel yet: GitHub's
-private vulnerability reporting is not switched on for it. Step 8 of the
-redesign, the hardening step, decides how reports are taken before anyone
-relies on a public server.
+Report a weakness privately. On the repository's Security tab, choose
+"Report a vulnerability": GitHub's private vulnerability reporting is
+switched on, and only the maintainers see what is sent that way. Please do
+not open a public issue for a weakness.
+
+For anything that is not a weakness, open an issue.

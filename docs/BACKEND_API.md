@@ -601,5 +601,5 @@ marker to the note's document, so this rule is what lets deletes through.
 ## Not built yet
 
 Nothing: every call the redesign's nine steps planned is above. What the
-owner has still to decide before the server is public is in
-`docs/OWNER_DECISIONS.md`.
+owner decided for the server that runs them, and what is still the owner's,
+is in `docs/OWNER_DECISIONS.md`.

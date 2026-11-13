@@ -798,6 +798,13 @@ was written.
 ### Details not yet decided
 
 - Whether to pad blobs so their sizes reveal less.
+- Whether the CLI signs in by device code on a computer with no browser.
+  Clerk offers the grant for an OAuth application (seen in its dashboard on
+  2026-11-13; it is off). Today `dirt auth login --no-browser` needs the
+  browser to reach a port on the computer the CLI runs on, which over SSH
+  means a forwarded port. If it is built it belongs with the clients, after
+  step 9: the core's sign-in gains a second way to get the ID token, and the
+  server does not change.
 - The flows a gap check found unspecified, such as what a pending device may
   do and how key rotation treats offline devices. The implementation plan
   lists them under the build step that must settle each one.

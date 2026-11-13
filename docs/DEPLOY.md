@@ -49,6 +49,37 @@ and client ID to sign in with.
 
 ## Production: Vercel and Neon
 
+### What exists
+
+Two servers run from this repository. Neither deploys by itself: each is
+deployed by hand, after its migrations.
+
+| | Production | Trial |
+|---|---|---|
+| Address | `https://api.dirt.catjam.dev` | `https://dirt-trial.vercel.app` |
+| For | Real use | Trying a change. Its data is thrown away |
+| Vercel project | `dirt-server` | `dirt-trial` |
+| Database | Neon project `dirt-prod`, free plan | Neon project `dirt-trial`, free plan |
+| Sign-in | The Clerk application's production instance, `https://clerk.dirt.catjam.dev`. An email code | Its development instance. An email code, or Google |
+| Files | R2 bucket `dirt-files` | R2 bucket `dirt-trial-files` |
+| Dumps | Daily, to Backblaze B2 | None |
+| Firewall | The rate limit below | The same |
+
+The production server was made on 2026-11-13, from the decisions in
+`docs/OWNER_DECISIONS.md`. The Clerk application and both databases were
+made through Vercel's marketplace, so they are managed and billed through
+the Vercel account. That is a tie to Vercel the design's portability rule
+would rather not have: moving the server to another host means moving the
+Clerk application and the database out of Vercel's hands first.
+
+Neither server has its file settings yet. The buckets exist; the token
+each server needs is made in Cloudflare's dashboard
+(`docs/OWNER_DECISIONS.md`, decision 6). Until then both sync notes and
+refuse files.
+
+A third Vercel project, `dirt-api`, is the server from before the redesign.
+Nothing here uses it.
+
 ### One-time set-up
 
 1. **Neon:** create a project in AWS US West 2 (Oregon), on Postgres 18. A
@@ -56,9 +87,26 @@ and client ID to sign in with.
 2. **Clerk:** create an OAuth application that is a public client with PKCE
    required, scopes `openid email`, and redirect targets
    `http://127.0.0.1/callback` and `dev.dirt.app://callback`.
+
+   For production this is done in the production instance, which needs a
+   domain. An application made through Vercel's marketplace already has a
+   production instance, on a placeholder address, and its domain is set in
+   Vercel and not in Clerk: the Clerk integration's page, the product's
+   Settings, "Change Configuration", "Production domain". Give it a name
+   under a domain you hold, such as `dirt.example.com`. Clerk's Domains page
+   then lists five CNAME records under that name, for `clerk`, `accounts`,
+   `clkmail`, `clk._domainkey` and `clk2._domainkey`. Add them unproxied.
+   The issuer is then `https://clerk.<that name>`.
+
+   Nothing is copied from the development instance. Make the OAuth
+   application again, and switch passwords off under "User &
+   authentication": a new instance has them on. Google sign-in needs the
+   application's own Google credentials in production.
 3. **Vercel:** create a project whose Root Directory is the repository root.
    `vercel.json` sends every path to the one function and pins it to `pdx1`,
-   the region beside the database.
+   the region beside the database. Give it the server's address with
+   `vercel domains add api.<your name> <project>`; `vercel domains verify`
+   then prints the CNAME record to add, unproxied.
 4. Set `DATABASE_URL` (pooled), `CLERK_ISSUER` and `CLERK_CLIENT_ID` on the
    Vercel project.
 5. **Files.** Make a Cloudflare R2 bucket and a token limited to it, and
@@ -138,19 +186,24 @@ What has to be true before anyone but the owner is given the server's
 address. The first three are the owner's decisions, written up in
 `docs/OWNER_DECISIONS.md`.
 
+As of 2026-11-13, for the production server:
+
 - [ ] The database is on a plan that cannot be suspended by use (Neon's
-      Launch plan), with seven days of history.
-- [ ] Sign-in goes through a Clerk production instance on a domain the
-      owner holds, and the server runs on that domain.
-- [ ] Dumps are being stored: the "Database backup" workflow has run and a
+      Launch plan), with seven days of history. **The owner chose the free
+      plan for now.**
+- [x] Sign-in goes through a Clerk production instance on a domain the
+      owner holds, and the server runs on that domain. The server names
+      the instance and the sign-in page opens; **nobody has signed in
+      through it yet.**
+- [x] Dumps are being stored: the "Database backup" workflow has run and a
       dump from it has been restored once, as below.
-- [ ] The firewall's rate limit is set (step 6 of the one-time set-up).
+- [x] The firewall's rate limit is set (step 6 of the one-time set-up).
 - [ ] The file storage is set up (step 5), and a file attached on one device
       has been opened on another through it.
-- [ ] Migrations are applied and `/healthz` answers.
+- [x] Migrations are applied and `/healthz` answers.
 - [ ] `docs/MANUAL_CHECKLIST.md` has been run against this server, on a real
       phone as well as the emulator.
-- [ ] GitHub's private vulnerability reporting is switched on, and
+- [x] GitHub's private vulnerability reporting is switched on, and
       `docs/SECURITY.md` says to use it.
 
 ## Backups
@@ -197,6 +250,29 @@ How long dumps are kept is a rule on the bucket, not something the workflow
 does: a job that can delete dumps could delete all of them. Thirty days is
 enough to notice a problem and short enough that a deleted account does not
 stay in the dumps for long.
+
+The production dumps are in Backblaze B2. Its bucket, rule and key were
+made with the `b2` command:
+
+```bash
+b2 bucket create --file-lock-enabled \
+  --lifecycle-rule '{"daysFromUploadingToHiding": 30, "daysFromHidingToDeleting": 1, "fileNamePrefix": ""}' \
+  <bucket> allPrivate
+b2 bucket update <bucket> \
+  --default-retention-mode governance --default-retention-period "30 days"
+b2 key create --bucket <bucket> dirt-backup-workflow writeFiles
+```
+
+The last prints the key's ID and the key, once. `BACKUP_S3_ENDPOINT` is the
+`s3endpoint` that `b2 account get` prints.
+
+**The lock is not optional.** A key that may only write can still hide a
+dump and upload another file under its name, and the rule deletes a hidden
+or replaced file a day later. With the lock, every file is kept for thirty
+days from its upload whatever is done to its name, and the rule removes it
+the day after. The workflow's key can add a file and cannot list, read or
+delete: that was tried. The owner's own login can pass a governance lock,
+so `b2 rm --bypass-governance` still deletes a dump that has to go.
 
 A dump holds every account's encrypted notes, its device records and its
 e-mail address. Request counts and sign-in nonces are left out. It is
