@@ -159,7 +159,9 @@ pub fn Editor() -> Element {
 
     rsx! {
         div {
-            style: "padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; height: 100vh;",
+            // At least the height of the screen, with the buttons at the
+            // foot of it, and longer when the note's files need the room.
+            style: "padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; min-height: 100vh; box-sizing: border-box;",
 
             div {
                 style: "display: flex; align-items: center; justify-content: space-between;",

@@ -119,6 +119,35 @@ pub fn note_text(text: &str, files: &[Incoming]) -> String {
         .join("\n")
 }
 
+/// A line for each file the activity could not copy into the app: too
+/// large, or not to be read.
+pub fn not_copied_in(files: &[Incoming]) -> Vec<String> {
+    files
+        .iter()
+        .filter_map(|file| {
+            let problem = file.copy.as_ref().err()?;
+            let name = safe_file_name(&file.name);
+            Some(if problem == TOO_LARGE {
+                let most = u64::try_from(limits::MAX_FILE_BYTES).unwrap_or_default();
+                format!(
+                    "{name} is too large to attach. A file may be {} at most.",
+                    size_words(most)
+                )
+            } else {
+                format!("{name} could not be read: {}", as_sentence(problem))
+            })
+        })
+        .collect()
+}
+
+/// Whether what another app shared has anything to make a note of: some
+/// text, or a file that came in whole. A share of files alone, none of
+/// which could be read, makes no note: it would be a note called after a
+/// file it does not have.
+pub fn worth_a_note(text: &str, files: &[Incoming]) -> bool {
+    !text.trim().is_empty() || files.iter().any(|file| file.copy.is_ok())
+}
+
 /// Attaches files that came in to a note, one after another, and returns a
 /// line for each that could not be attached. Each copy in the cache is
 /// removed, attached or not.
@@ -126,28 +155,13 @@ pub fn note_text(text: &str, files: &[Incoming]) -> String {
 /// Run as a task of its own: turning away from the note must not drop
 /// files the person has already chosen.
 pub async fn attach_incoming(store: Store, note: NoteId, files: Vec<Incoming>) -> Vec<String> {
-    let mut failed = Vec::new();
+    let mut failed = not_copied_in(&files);
     for file in files {
+        let Ok(copy) = file.copy else {
+            continue;
+        };
         // The name goes into the note as a name, never as a path.
         let name = safe_file_name(&file.name);
-        let copy = match file.copy {
-            Ok(copy) => copy,
-            Err(problem) if problem == TOO_LARGE => {
-                let most = u64::try_from(limits::MAX_FILE_BYTES).unwrap_or_default();
-                failed.push(format!(
-                    "{name} is too large to attach. A file may be {} at most.",
-                    size_words(most)
-                ));
-                continue;
-            }
-            Err(problem) => {
-                failed.push(format!(
-                    "{name} could not be read: {}",
-                    as_sentence(&problem)
-                ));
-                continue;
-            }
-        };
         let media_type = if file.media_type.trim().is_empty() {
             media_type_for(&name).to_owned()
         } else {
@@ -231,6 +245,38 @@ mod tests {
         };
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].media_type, "");
+    }
+
+    #[test]
+    fn a_share_with_nothing_readable_makes_no_note() {
+        let lost = Incoming {
+            name: "22".to_owned(),
+            media_type: "image/png".to_owned(),
+            copy: Err("no access".to_owned()),
+        };
+        let huge = Incoming {
+            name: "film.mp4".to_owned(),
+            media_type: "video/mp4".to_owned(),
+            copy: Err("too_large".to_owned()),
+        };
+        let whole = Incoming {
+            name: "a.jpg".to_owned(),
+            media_type: String::new(),
+            copy: Ok(PathBuf::from("/cache/incoming/1/file")),
+        };
+        assert!(!worth_a_note("", &[lost.clone(), huge.clone()]));
+        assert!(!worth_a_note("  ", &[]));
+        // Some text, or one file that came in, is worth a note.
+        assert!(worth_a_note("see this", std::slice::from_ref(&lost)));
+        assert!(worth_a_note("", &[lost.clone(), whole]));
+        // What did not come in is said either way.
+        assert_eq!(
+            not_copied_in(&[lost, huge]),
+            [
+                "22 could not be read: No access.",
+                "film.mp4 is too large to attach. A file may be 10.0 MiB at most.",
+            ]
+        );
     }
 
     #[test]

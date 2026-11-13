@@ -24,6 +24,21 @@
 //! curl -sL "<the address>&as=alice"
 //! ```
 //!
+//! **A phone or an emulator** opens the sign-in address in its own
+//! browser, where nobody can add a name to it. Start this with
+//! `SIGN_IN_AS=alice` and everybody who signs in is alice; and with
+//! `SIGN_IN_PORT` to have the sign-in on a port that is known. An emulator
+//! reaches this machine's own ports as its own once they are forwarded:
+//!
+//! ```text
+//! adb reverse tcp:<SIGN_IN_PORT> tcp:<SIGN_IN_PORT>
+//! adb reverse tcp:59000 tcp:59000      # the file storage
+//! ```
+//!
+//! The server itself needs no forwarding: build the app with
+//! `DIRT_MOBILE_API_BASE_URL=http://127.0.0.1:<port>`, which the app reads
+//! as the emulator's name for this machine.
+//!
 //! **Two devices on one computer** use the two addresses, one each, and a
 //! data folder each. The keychain keeps one device's keys for each server
 //! address, port included. (`localhost` will not do for the second: the
@@ -50,10 +65,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dirt_api::MIGRATOR.run(&pool).await?;
     file_bucket().await;
 
-    let server = Server::with_sign_in(pool).await;
-    let port: Option<u16> = std::env::var("PORT")
+    let number = |name: &str| -> Option<u16> { std::env::var(name).ok()?.parse().ok() };
+    let everyone_is = std::env::var("SIGN_IN_AS")
         .ok()
-        .and_then(|port| port.parse().ok());
+        .filter(|name| !name.is_empty());
+    let issuer =
+        dirt_sim::provider::start_on(number("SIGN_IN_PORT").unwrap_or(0), everyone_is).await;
+    let server = Server::with_provider(pool, issuer);
+    let port = number("PORT");
     // This machine only: see the last paragraph above.
     let bind = |port: u16| tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port)));
     let first = bind(port.unwrap_or(0)).await?;

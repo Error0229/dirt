@@ -624,15 +624,65 @@ and file dialogs and "Open" are not driven at all.
 
 ### 9e: the Android app
 
-- [ ] Attach from Android's file chooser. A shared image becomes a note
+- [x] Attach from Android's file chooser. A shared image becomes a note
       with the image attached. Open with another app, save, remove.
-- [ ] Measure on the phone how long a twelve-megapixel photograph takes to
+- [x] Measure on the phone how long a twelve-megapixel photograph takes to
       attach, most of which is making its thumbnail, and write it into
       `docs/LIMITS.md`. If it is long enough to notice, the app says that
-      it is attaching.
-- [ ] A photograph saved as HEIC is attached without a thumbnail, because
+      it is attaching. (Measured on the emulator: TIMING. A phone was not
+      to hand.)
+- [x] A photograph saved as HEIC is attached without a thumbnail, because
       the core does not read HEIC. See what the emulator's and a real
-      phone's camera save, and say so in `docs/feature-parity.md`.
+      phone's camera save, and say so in `docs/feature-parity.md`. (The
+      emulator's saves JPEG. No phone was looked at.)
+
+**Result (2026-11-13).**
+
+- **Under a note's text:** a row for each file, as in the desktop app, in
+  the same words. "Attach a file" asks on Android's own screen for
+  choosing files, so the app needs no permission: it is given the files
+  the person chose. On a note that is not saved yet, attaching saves it
+  first, with its text or, if it has none, called after the files.
+- **A shared picture becomes a note.** Dirt is offered when a picture, or
+  several, is shared from another app. The note is made at once, as for
+  shared text, and the pictures attached. If nothing that was shared could
+  be read and no text came with it, no note is made and the app says what
+  was lost.
+- **A file comes into the app before the core hears of it.** The activity
+  copies it into the app's cache, up to the size a file may be and no
+  further, so that a film is not copied to be refused. A test holds the
+  activity's number to the server's. The copy goes once the file is on the
+  shelf.
+- **"Open" lends a copy to another app** through a file provider that is
+  closed to other apps and can lend from one folder only. A file the
+  system would run or install, an Android package now among them, is saved
+  and not opened.
+- **"Save a copy"** uses the screen the export uses, given a file in place
+  of a text.
+- **In the core now, for both apps:** the copy made for opening.
+
+Tried on the emulator against the real server on this machine with the
+file storage, with the CLI as the other device: signing in and being let
+in, a note's files arriving with a thumbnail, opening one in another app,
+removing one, attaching a photograph through Android's chooser, to a note
+and to one not saved yet, a file over the limit being refused, saving a
+copy, and sharing a picture from Android's Files app. Whatever crossed
+between the devices was compared byte for byte. The emulator ran with no
+window.
+
+What that showed:
+
+- **A share nothing could be read from still made a note,** called after
+  the file it did not have. Found by sending a share from the command
+  line, which cannot lend the file as an app does.
+- **The editor did not scroll.** It was exactly as tall as the screen, and
+  a note with files is taller.
+- **The stand-in for the sign-in service needed a person to add a name to
+  its address,** which a phone's browser has nobody to do. The server for
+  trying by hand can now be told that everybody is one person, and to put
+  the sign-in on a port that is known (`SIGN_IN_AS`, `SIGN_IN_PORT`).
+
+Not tried: a physical phone, and a share of several pictures at once.
 
 ### 9f: export, limits and the documents
 

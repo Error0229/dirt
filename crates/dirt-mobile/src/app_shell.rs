@@ -32,7 +32,9 @@ use dirt_core::Store;
 use crate::bootstrap_config::load_bootstrap_config;
 use crate::config::default_mobile_data_directory;
 use crate::data::{MobileNoteStore, NOTES_PAGE};
-use crate::incoming::{attach_incoming, discard_all, note_text, Capture};
+use crate::incoming::{
+    attach_incoming, discard_all, not_copied_in, note_text, worth_a_note, Capture,
+};
 use crate::services::activity::{take_capture, take_redirect};
 use crate::services::secure_storage::EncryptedPrefs;
 use crate::state::{AppState, View};
@@ -110,6 +112,11 @@ async fn receive_capture(
                 }
             }
             Capture::Shared { text, files } => {
+                if !worth_a_note(&text, &files) {
+                    // Nothing came in to make a note of. Say what was lost.
+                    startup_issue.set(Some(not_copied_in(&files).join(" ")));
+                    continue;
+                }
                 let Some(note_store) = store.peek().clone() else {
                     discard_all(&files);
                     startup_issue.set(Some(
