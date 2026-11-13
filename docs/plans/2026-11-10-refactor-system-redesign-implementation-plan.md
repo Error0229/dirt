@@ -927,8 +927,11 @@ Android app (9e), and export, the limits and the documents (9f). Every
 client attaches, lists, opens, saves and removes files, and exports them
 with the notes. It was tried with real clients against the real server on
 one machine, with an S3-compatible store beside it. Trying it against
-`dirt-trial` needs object storage in an account that only the owner can
-open (`docs/OWNER_DECISIONS.md`, decision 6), and a phone was not tried.
+`dirt-trial` needed object storage in an account that only the owner can
+open (`docs/OWNER_DECISIONS.md`, decision 6). The owner chose it on
+2026-11-13, and a computer and the Android emulator then exchanged files
+through `dirt-trial` and R2 in both directions. A phone that is not an
+emulator was not tried.
 
 Carried forward, for a decision: recording a voice memo inside an app,
 which the design names and no step builds (the step 9 plan, review item

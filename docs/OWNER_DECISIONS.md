@@ -16,7 +16,7 @@ change: check them again before paying.
 | [The hosting plan](#3-the-hosting-plan) | Stay on Vercel's Hobby plan | Hobby | Nothing |
 | [The sign-in service](#4-the-sign-in-service-for-production) | A Clerk production instance on a domain | Done, on `dirt.catjam.dev` | Nothing more: the owner had the domain |
 | [How security reports are taken](#5-how-security-reports-are-taken) | Switch on GitHub's private reporting | Switched on | Nothing |
-| [The storage for attachments](#6-the-storage-for-attachments) | Cloudflare R2 | Cloudflare R2 | Nothing |
+| [The storage for attachments](#6-the-storage-for-attachments) | Cloudflare R2 | Cloudflare R2. Running | Nothing |
 
 What the decisions made is one more server, for real use, beside the trial
 server. `docs/DEPLOY.md`, "What exists", lists both.
@@ -262,17 +262,23 @@ already had R2. Two private buckets were made in it, in western North
 America beside the servers: `dirt-files` for the production server and
 `dirt-trial-files` for the trial server.
 
-**Not done yet: the two tokens.** Each server needs a token that may read
-and write objects in its own bucket and nothing else. Cloudflare's
-command-line program made the buckets and cannot make tokens: its sign-in
-is not allowed to. They are made in Cloudflare's dashboard, under R2,
-"Manage API Tokens", and that needs the owner signed in. Until each
-server has its token it syncs notes and answers `files_unavailable` to
-anything about files, as before.
+**Each server has a token of its own,** made the same day in Cloudflare's
+dashboard, under R2, "Manage API Tokens": an account token with "Object
+Read & Write" on its one bucket. Cloudflare's command-line program made
+the buckets and cannot make tokens: its sign-in is not allowed to. Tried
+with each token: it could write, read, list and delete in its own bucket,
+and was refused in the other server's bucket and in a third.
 
-**Until then:** attachments are built and tested against a store on the
-developer's machine that speaks the same protocol. They cannot be tried on
-a phone.
+**Tried against the trial server,** with a computer and an Android
+emulator as two devices of one account. Three files attached on the
+computer reached the phone: the picture's thumbnail by itself, and the
+whole picture when it was opened. A file attached on the phone was fetched
+on the computer and was the same as the original, byte for byte. The
+bucket held five objects, none with a name or a size that is a file's
+own. `docs/MANUAL_CHECKLIST.md` has the run.
+
+**Not tried:** files on the production server, where nobody has signed in
+yet, and a phone that is not an emulator.
 
 ## What is still the owner's
 
@@ -281,7 +287,6 @@ Nothing here blocks the owner's own use of the production server.
 | What | Why it is the owner's | When |
 |---|---|---|
 | Keep the dumps' private key | It is one file on the owner's computer. Without it no dump can be read | Now |
-| Sign in to Cloudflare's dashboard for the two R2 tokens | Only the dashboard makes them | Before attachments work on either server |
 | Sign in to the production server for the first time | The first device of an account makes its key and should be the owner's own | When the owner starts using it |
 | Google sign-in on the production server | Needs credentials from a Google Cloud account | If it is wanted |
 | Neon's Launch plan | Costs money | Before the address is given to others |
