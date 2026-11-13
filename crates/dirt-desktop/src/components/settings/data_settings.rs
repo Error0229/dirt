@@ -45,7 +45,7 @@ pub(super) fn DataSettingsTab(
                     // thing to say about files that were not.
                     div {
                         class: "auth-message",
-                        style: "white-space: pre-line;",
+                        style: "white-space: pre-wrap;",
                         "{message}"
                     }
                 }

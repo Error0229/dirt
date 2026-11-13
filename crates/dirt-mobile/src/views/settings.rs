@@ -640,7 +640,7 @@ fn MessageBanner(kind: MessageKind, text: String) -> Element {
                 border-radius: 10px;
                 font-size: 13px;
                 line-height: 1.4;
-                white-space: pre-line;
+                white-space: pre-wrap;
             ",
             "{text}"
         }
