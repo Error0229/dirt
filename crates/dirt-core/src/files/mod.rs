@@ -11,9 +11,12 @@
 //! encrypted ([`seal`]), where a device keeps them ([`shelf`]) and how a
 //! picture gets its small preview ([`thumbnail`]).
 
+pub mod copy;
 pub mod seal;
 pub mod shelf;
 pub mod thumbnail;
+
+pub use copy::{runs_as_a_program, save_copy};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;

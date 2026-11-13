@@ -19,6 +19,9 @@ tracing-subscriber.workspace = true
 chrono.workspace = true
 dirs = "6"
 tokio = { version = "1", features = ["time"] }
+uuid.workspace = true
+# Hands a file to the system to open with whatever shows files of its kind.
+open = "5"
 global-hotkey = "0.6"
 tray-icon = "0.19"
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }

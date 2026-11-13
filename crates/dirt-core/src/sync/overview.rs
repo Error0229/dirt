@@ -7,8 +7,9 @@
 //! each file that could not be sent, with the reason and what would
 //! release it. The words are here so that the three cannot drift apart.
 
-use dirt_proto::api::ErrorClass;
+use dirt_proto::api::{ErrorClass, ErrorCode};
 
+use super::engine::FileError;
 use super::worker::{SyncFailure, SyncStatus};
 use crate::store::{AttachedFile, FileProblem, FileStanding, NoteProblem, ProblemKind};
 use crate::util::as_sentence;
@@ -181,6 +182,48 @@ impl AttachedFile {
             (FileStanding::NotTaken, true) => Some("waiting to be sent".to_owned()),
             (_, false) => Some("not on this device; fetched when it is wanted".to_owned()),
             (FileStanding::Taken, true) => None,
+        }
+    }
+}
+
+impl FileError {
+    /// Why a file could not be had, as sentences for the person, with
+    /// what can be done. `can_fetch` says whether this device is signed in
+    /// and so could have fetched the file.
+    #[must_use]
+    pub fn advice(&self, can_fetch: bool) -> String {
+        match self {
+            Self::NotAttached => "The note has no such file.".to_owned(),
+            Self::Missing if can_fetch => {
+                "The file is not on this device and the server does not have it. A device \
+                 that holds it sends it when it next syncs."
+                    .to_owned()
+            }
+            Self::Missing => {
+                "The file is not on this device, and this device is not signed in to fetch it."
+                    .to_owned()
+            }
+            Self::Damaged => {
+                "The server's copy of the file could not be decrypted, and nothing was kept. \
+                 A device that holds the file still has it."
+                    .to_owned()
+            }
+            Self::Api(error) if error.code() == Some(ErrorCode::FilesUnavailable) => {
+                "The server has no storage for files just now.".to_owned()
+            }
+            Self::Api(error) => match error.class() {
+                ErrorClass::TryAgainLater => {
+                    "The file could not be fetched: the server or the file storage could not \
+                     be reached."
+                        .to_owned()
+                }
+                ErrorClass::StopUntilSignedIn => "This device has to sign in again.".to_owned(),
+                ErrorClass::UpdateTheApp => {
+                    "This version of Dirt is too old to sync. Update it.".to_owned()
+                }
+                ErrorClass::ProblemWithOneNote => as_sentence(error),
+            },
+            Self::Store(error) => as_sentence(error),
         }
     }
 }
@@ -456,6 +499,32 @@ mod tests {
             .unwrap(),
             "could not be sent: the account's storage for files is full"
         );
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_had_is_explained() {
+        use crate::api::ApiError;
+
+        assert!(FileError::Missing
+            .advice(true)
+            .contains("A device that holds it sends it"));
+        assert!(FileError::Missing
+            .advice(false)
+            .contains("not signed in to fetch it"));
+        assert!(FileError::Damaged.advice(true).contains("nothing was kept"));
+        let no_storage = FileError::Api(ApiError::Server {
+            code: ErrorCode::FilesUnavailable,
+            message: "the file storage could not be reached".to_owned(),
+            retry_after_secs: None,
+        });
+        assert_eq!(
+            no_storage.advice(true),
+            "The server has no storage for files just now."
+        );
+        let offline = FileError::Api(ApiError::Network("no route".to_owned()));
+        assert!(offline.advice(true).contains("could not be reached"));
+        // A link to the storage is never part of what is said.
+        assert!(!offline.advice(true).contains("no route"));
     }
 
     #[test]

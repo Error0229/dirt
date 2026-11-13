@@ -85,11 +85,12 @@ data folder and the keychain entry, so signing in with either signs in both.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Attach a file to a note | Not yet: step 9d | Not yet: step 9e | `dirt attach <note> <file>`; `--name` and `--type` say what the path does not |
-| List a note's files | Not yet | Not yet | `dirt files <note>`, with each file's size and kind, and where it is if it is not both here and on the server; `--json` |
-| Save a copy of a file | Not yet | Not yet | `dirt save <note> <file> [path]`. Fetches the file first if this device does not hold it. Does not replace a file that is there unless `--force` |
-| Remove a file from a note | Not yet | Not yet | `dirt detach <note> <file>` |
-| See a picture's thumbnail | Not yet | Not yet | Not applicable |
+| Attach a file to a note | "Attach a file" under the note, in a file dialog that takes several; or drop files on the note | Not yet: step 9e | `dirt attach <note> <file>`; `--name` and `--type` say what the path does not |
+| List a note's files | Under the open note: each file's name, size and kind, and where it is if it is not both here and on the server | Not yet | `dirt files <note>`, the same; `--json` |
+| Open a file | "Open" hands a copy to whatever the system uses for files of its kind, fetching the file first if need be. Not offered for a file the system would run | Not yet | No: `dirt save`, then open it |
+| Save a copy of a file | "Save a copy", in a file dialog that proposes the file's name | Not yet | `dirt save <note> <file> [path]`. Does not replace a file that is there unless `--force` |
+| Remove a file from a note | "Remove" | Not yet | `dirt detach <note> <file>` |
+| See a picture's thumbnail | In the file's row. Fetched by itself, without the picture | Not yet | Not applicable |
 
 A file is named by the start of its ID or by its name. A picture gets a
 thumbnail when it is attached, whichever client attaches it. A file's name
@@ -131,7 +132,7 @@ which come from `dirt_core::sync::overview`.
 
 | What | Where it stands |
 |---|---|
-| Attachments in the desktop and Android apps | The core and the CLI have them. Steps 9d and 9e of the build order |
+| Attachments in the Android app | The core, the CLI and the desktop app have them. Step 9e of the build order |
 | Files in an export | Step 9f |
 | Bringing a deleted note back | The store can; no design document asks for a way to do it from a client. Needs a decision |
 | `dirt tui` | A stub that prints "Opening TUI..." and does nothing. No design document mentions a terminal interface. Needs a decision: remove it or plan it |

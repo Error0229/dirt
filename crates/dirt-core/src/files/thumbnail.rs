@@ -76,6 +76,17 @@ fn make_within(path: &Path, most_bytes: u64) -> Option<Vec<u8>> {
     Some(jpeg)
 }
 
+/// A thumbnail as an address a web view can show without a file: the
+/// picture itself, written out in the address. Both apps draw their
+/// screens in a web view, which cannot read the store's folder.
+#[must_use]
+pub fn as_data_uri(jpeg: &[u8]) -> String {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+
+    format!("data:image/jpeg;base64,{}", STANDARD.encode(jpeg))
+}
+
 /// The picture with what is see-through in it shown on white. A JPEG has
 /// no transparency, and left alone a see-through background comes out
 /// black.
@@ -144,6 +155,11 @@ mod tests {
         let tall = RgbaImage::from_pixel(300, 1_200, Rgba([0, 0, 0, 255]));
         let thumbnail = opened(&make(&saved(&folder, &tall, ImageFormat::Png)).unwrap());
         assert_eq!((thumbnail.width(), thumbnail.height()), (64, 256));
+    }
+
+    #[test]
+    fn a_thumbnail_is_written_out_as_an_address() {
+        assert_eq!(as_data_uri(b"jpeg!"), "data:image/jpeg;base64,anBlZyE=");
     }
 
     #[test]
