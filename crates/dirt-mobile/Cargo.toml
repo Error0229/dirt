@@ -20,6 +20,10 @@ tracing-subscriber.workspace = true
 serde_json.workspace = true
 dirs = "6"
 thiserror.workspace = true
+# The IDs of a note's files.
+uuid.workspace = true
+# Attaching files runs as a task of its own.
+tokio = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 dioxus = { workspace = true, features = ["mobile"] }
@@ -32,8 +36,6 @@ jni = "0.21"
 ndk-context = "0.1"
 # Opens the system browser on the sign-in page.
 webbrowser = "1"
-# The pause between looks for the sign-in redirect.
-tokio = { workspace = true }
 
 [build-dependencies]
 dotenvy = "0.15"

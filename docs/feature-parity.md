@@ -56,6 +56,7 @@ answer with 20,000 notes in it.
 |---|---|---|---|
 | Quick capture | Global hotkey, Ctrl+Alt+N, and "New Note" in the tray menu | Home-screen widget, which opens a blank note | The command itself |
 | Take text from another app | No | "Share" to Dirt saves the text as a note at once | A pipe: `some-command \| dirt add` |
+| Take a picture from another app | No | "Share" a picture, or several, to Dirt: a note at once, with the pictures attached, called after them if no text came along | No |
 | Run in the background | Tray icon, with Open and Quit | No | No |
 
 The hotkey is shown in Settings and cannot be changed there.
@@ -85,12 +86,17 @@ data folder and the keychain entry, so signing in with either signs in both.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Attach a file to a note | "Attach a file" under the note, in a file dialog that takes several; or drop files on the note | Not yet: step 9e | `dirt attach <note> <file>`; `--name` and `--type` say what the path does not |
-| List a note's files | Under the open note: each file's name, size and kind, and where it is if it is not both here and on the server | Not yet | `dirt files <note>`, the same; `--json` |
-| Open a file | "Open" hands a copy to whatever the system uses for files of its kind, fetching the file first if need be. Not offered for a file the system would run | Not yet | No: `dirt save`, then open it |
-| Save a copy of a file | "Save a copy", in a file dialog that proposes the file's name | Not yet | `dirt save <note> <file> [path]`. Does not replace a file that is there unless `--force` |
-| Remove a file from a note | "Remove" | Not yet | `dirt detach <note> <file>` |
-| See a picture's thumbnail | In the file's row. Fetched by itself, without the picture | Not yet | Not applicable |
+| Attach a file to a note | "Attach a file" under the note, in a file dialog that takes several; or drop files on the note | "Attach a file" under the note, on Android's screen for choosing files, which takes several. On a note not saved yet, it saves the note first | `dirt attach <note> <file>`; `--name` and `--type` say what the path does not |
+| List a note's files | Under the open note: each file's name, size and kind, and where it is if it is not both here and on the server | The same | `dirt files <note>`, the same; `--json` |
+| Open a file | "Open" hands a copy to whatever the system uses for files of its kind, fetching the file first if need be. Not offered for a file the system would run | "Open" lends a copy to another app, which Android lets the person choose. Not offered for a file the system would run or install | No: `dirt save`, then open it |
+| Save a copy of a file | "Save a copy", in a file dialog that proposes the file's name | "Save a copy", on Android's screen for choosing a place | `dirt save <note> <file> [path]`. Does not replace a file that is there unless `--force` |
+| Remove a file from a note | "Remove" | "Remove" | `dirt detach <note> <file>` |
+| See a picture's thumbnail | In the file's row. Fetched by itself, without the picture | The same | Not applicable |
+
+A photograph gets a thumbnail if it is a JPEG, a PNG, a GIF or a WebP. One
+saved as HEIC is attached without: the core does not read HEIC. The
+emulator's camera saves JPEG. What a given phone's camera saves has not
+been looked at; many offer both.
 
 A file is named by the start of its ID or by its name. A picture gets a
 thumbnail when it is attached, whichever client attaches it. A file's name
@@ -132,7 +138,6 @@ which come from `dirt_core::sync::overview`.
 
 | What | Where it stands |
 |---|---|
-| Attachments in the Android app | The core, the CLI and the desktop app have them. Step 9e of the build order |
 | Files in an export | Step 9f |
 | Bringing a deleted note back | The store can; no design document asks for a way to do it from a client. Needs a decision |
 | `dirt tui` | A stub that prints "Opening TUI..." and does nothing. No design document mentions a terminal interface. Needs a decision: remove it or plan it |

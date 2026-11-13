@@ -161,10 +161,16 @@ copies of about 105 bytes, 96 messages of 1 KiB, and a day of request counts.
 ### Files
 
 Step 9 of the redesign. These numbers are proposals: the server enforces
-them, and no client attaches a file yet, so nothing has been measured
-against use. Part 9f of the step 9 plan measures them. Storage past the
-free allowance is paid for, so they are also the owner's to change
-(`docs/OWNER_DECISIONS.md`, decision 6).
+them, and little has been measured against use yet. Part 9f of the step 9
+plan measures them. Storage past the free allowance is paid for, so they
+are also the owner's to change (`docs/OWNER_DECISIONS.md`, decision 6).
+
+Measured so far: attaching a photograph of twelve million pixels (8 MB as
+a JPEG) on the Android emulator took TIMING from choosing it to seeing it
+under the note, most of it making the thumbnail. That was an x86 emulator
+with optimised code; a phone was not measured. On a computer a 4.4 MiB
+picture took under two seconds with unoptimised code, the sync included.
+The app says "Attaching..." meanwhile.
 
 | Limit | Number | Why this number |
 |---|---|---|

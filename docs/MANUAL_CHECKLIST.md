@@ -83,6 +83,14 @@ somebody is using.
 | A17 | With the device offline, change the account's key on another device and write a note there; write a note here; go online and sync | Both notes are on both devices. Nothing is asked of the person |
 | A18 | Settings → Devices → Change the account's key | As D15 |
 | A15 | A sign-in on a physical device | As A2 |
+| A20 | Open a note and press "Attach a file"; choose a photograph | Android's screen for choosing files. The photograph appears under the note with its thumbnail, and after a moment does not say it is waiting to be sent |
+| A21 | On another device attach a picture and a text file to a note; open the note here | Both are listed as not on this device, the picture with its thumbnail |
+| A22 | Press "Open" on the text file | Android offers the apps that show such a file. The one chosen shows it, under its own name |
+| A23 | Press "Save a copy" | Android's screen for choosing a place, with the file's name. The saved copy is the same as the original |
+| A24 | Press "Remove"; sync the other device | The file is gone from the note on both |
+| A25 | In another app, share a picture to Dirt | Dirt is among the apps offered. A note appears at the top of the list, called after the picture, with the picture attached |
+| A26 | Start a new note and press "Attach a file" before saving | The note is saved with the file attached, and stays open |
+| A27 | Attach a file larger than 10 MiB | It is not attached, and the app says how large a file may be |
 
 ## CLI
 
@@ -140,6 +148,7 @@ account, A and B:
 
 | Date | Server | Desktop | Android | CLI | Not run |
 |---|---|---|---|---|---|
+| 2026-11-13, for step 9e | The real server on this machine (`dirt-sim`'s `serve`), with the local file storage, reached from the emulator through `adb reverse` | Not run | Emulator, with no window. A2 and A4's joining again on the way, against the stand-in sign-in. A20 to A27 passed: the photograph attached on the phone, the copy saved on the phone and the picture shared from Android's Files app were each compared byte for byte with the original. A twelve-megapixel photograph took TIMING to attach | The first device, and the check on what the phone sent | A physical phone, and so what its camera saves. A share of several pictures at once |
 | 2026-11-13, for step 9d | The real server on this machine (`dirt-sim`'s `serve`), with the local file storage | D17 passed, through the file dialog, with one file. D19 passed: the thumbnail came by itself and the picture stayed away. D22's "Remove" passed, checked against `dirt files` on the same device. D23 passed: a file named `setup.exe` had no "Open". The rows were looked at in a capture of the window | Not run | Used as the second device, and to check the desktop's store | D18: needs a hand to drop a file. D20: "Open" was pressed once, by a person at the machine and not by the script; the file was fetched and a copy made under its own name, and what the viewer showed was not seen. D21: the dialog opened with the right title and was not answered, because it had one of the person's own files selected |
 | 2026-11-12, for step 9c | The real server on this machine (`dirt-sim`'s `serve`), with the local file storage | Not run | Not run | C13 to C17 passed, with two devices on one computer. A 4.4 MiB picture attached, with its thumbnail and the sync, in 1.8 s in a debug build. C5 again on the way | Against Cloudflare R2, and against `dirt-trial`: neither has storage for files yet |
 | 2026-11-12, for step 8c | None: not signed in | D16 passed, driven through UI Automation, and the same under a tag. D11's tag row | Emulator. A19 passed, and the same under a tag | Used to write the 230 notes | D16's "an open note stays open", which a test covers. Search typed into either app |

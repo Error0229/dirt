@@ -37,12 +37,23 @@ struct Grant {
 struct Provider {
     address: String,
     grants: Arc<Mutex<HashMap<String, Grant>>>,
+    /// Who a request that names nobody is taken to be, if anybody.
+    everyone_is: Option<String>,
 }
 
 /// Starts a provider and returns its issuer address. It runs until the test
 /// that started it ends.
 pub async fn start() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+    start_on(0, None).await
+}
+
+/// Starts a provider on `port` of this machine, or any free port for zero.
+///
+/// With `everyone_is`, a request that does not say who signs in is taken
+/// to be that person: a browser on a phone opens the sign-in address as it
+/// was given, and has nobody to add a name to it.
+pub async fn start_on(port: u16, everyone_is: Option<String>) -> String {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
         .expect("bind the provider");
     let address = format!(
@@ -52,6 +63,7 @@ pub async fn start() -> String {
     let provider = Provider {
         address: address.clone(),
         grants: Arc::new(Mutex::new(HashMap::new())),
+        everyone_is,
     };
     let app = Router::new()
         .route("/.well-known/openid-configuration", get(discovery))
@@ -84,13 +96,20 @@ struct Authorize {
     code_challenge_method: String,
     /// Who signs in. A real provider learns this from its sign-in page.
     #[serde(rename = "as")]
-    user: String,
+    user: Option<String>,
 }
 
 async fn authorize(State(provider): State<Provider>, Query(request): Query<Authorize>) -> Response {
     if request.response_type != "code" || request.code_challenge_method != "S256" {
         return (StatusCode::BAD_REQUEST, "unsupported request").into_response();
     }
+    let Some(user) = request.user.or_else(|| provider.everyone_is.clone()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "add &as=<a name> to say who signs in",
+        )
+            .into_response();
+    };
     let code = dirt_core::crypto::random_token();
     let location = format!(
         "{}?code={code}&state={}&iss={}",
@@ -99,7 +118,7 @@ async fn authorize(State(provider): State<Provider>, Query(request): Query<Autho
     provider.grants.lock().expect("grants").insert(
         code,
         Grant {
-            user: request.user,
+            user,
             nonce: request.nonce,
             challenge: request.code_challenge,
             redirect_uri: request.redirect_uri,

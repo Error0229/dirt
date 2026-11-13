@@ -25,6 +25,13 @@ impl MobileNoteStore {
         Self { db }
     }
 
+    /// The store this wraps, for what it has no word of its own for:
+    /// a note's files.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub const fn core(&self) -> &Store {
+        &self.db
+    }
+
     /// The file of the store this wraps, which tells two stores apart.
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub fn path(&self) -> &Path {

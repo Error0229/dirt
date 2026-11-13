@@ -3,12 +3,17 @@
 //! Single textarea for the full note body. Save runs the appropriate
 //! create/update against `MobileNoteStore`, then refreshes the list
 //! signal so the new state is visible immediately.
+//!
+//! Under the text are the note's files. A note that has not been saved yet
+//! has none to show, and attaching a file to it saves it first: a file is
+//! attached to a note, and there has to be one.
 
 use dioxus::prelude::*;
 
 use crate::data::MobileNoteStore;
 use crate::state::{AppState, View};
 use crate::ui::{ButtonVariant, UiButton, UiTextarea};
+use crate::views::attachments::{choose_and_attach, AttachmentPanel, Target};
 
 #[component]
 pub fn Editor() -> Element {
@@ -111,11 +116,53 @@ pub fn Editor() -> Element {
         });
     };
 
+    // A file for a note that is not saved yet. The files are chosen first,
+    // so that backing out of choosing saves nothing. Then the note is
+    // saved, with its text or, if it has none, with what the files are
+    // called; the files are attached; and the editor is on a saved note.
+    //
+    // The choosing, the saving and the attaching run apart from this
+    // screen, so that leaving it does not drop files already chosen. What
+    // is done here is only what the screen shows of it.
+    let attach_to_new = move |_| {
+        let written = draft();
+        let attaching = choose_and_attach(
+            state,
+            Target::New {
+                text: written.clone(),
+            },
+        );
+        spawn(async move {
+            busy.set(true);
+            error.set(None);
+            let attached = attaching.await.ok().flatten();
+            busy.set(false);
+            let Some(attached) = attached else {
+                return;
+            };
+            if !attached.failed.is_empty() {
+                error.set(Some(attached.failed.join(" ")));
+            }
+            if let Some((note, text)) = attached.note {
+                // The note was saved with the text as it stood when the
+                // files were asked for. Whatever the person has written
+                // since is theirs and stays in the editor, to be saved
+                // with the Save button like any other edit.
+                if draft() == written {
+                    draft.set(text);
+                }
+                state.selected_note_id.set(Some(note));
+            }
+        });
+    };
+
     let header_label = if is_existing { "Edit note" } else { "New note" };
 
     rsx! {
         div {
-            style: "padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; height: 100vh;",
+            // At least the height of the screen, with the buttons at the
+            // foot of it, and longer when the note's files need the room.
+            style: "padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; min-height: 100vh; box-sizing: border-box;",
 
             div {
                 style: "display: flex; align-items: center; justify-content: space-between;",
@@ -132,8 +179,25 @@ pub fn Editor() -> Element {
             UiTextarea {
                 value: "{draft_value}",
                 placeholder: "What's on your mind?",
-                rows: 14,
+                rows: 10,
                 oninput: move |event: FormEvent| draft.set(event.value()),
+            }
+
+            if let Some(note_id) = selected {
+                // One panel for each note, made afresh for another.
+                for note_id in [note_id] {
+                    AttachmentPanel { key: "{note_id}", note_id }
+                }
+            } else {
+                div {
+                    UiButton {
+                        r#type: "button",
+                        variant: ButtonVariant::Outline,
+                        disabled: busy(),
+                        onclick: attach_to_new,
+                        "Attach a file"
+                    }
+                }
             }
 
             if let Some(message) = error() {

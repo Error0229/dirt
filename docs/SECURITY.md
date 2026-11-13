@@ -105,6 +105,15 @@ own folder, closed to other users of the computer, and not in the system's
 shared place for temporary files. It is removed when the app next starts,
 and with the account's folder at sign-out.
 
+On Android a file is lent to another app through a file provider that is
+closed to other apps, hands out one address at a time for reading only,
+and can lend from one folder: the one a copy is put in to be opened. It
+cannot reach the notes or the files themselves. A file that comes into the
+app, chosen by the person or shared by another app, is copied into the
+app's cache up to the size a file may be and no further, under a name of
+the app's own; what the other app calls it travels beside it and is only
+ever used as a name.
+
 The store's folder itself is made with the permissions the system gives a
 new folder. On Linux and macOS, where a person's home may be open to other
 users of the computer, that can leave the notes and files readable by them.

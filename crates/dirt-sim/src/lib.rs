@@ -120,6 +120,14 @@ impl Server {
         Self::trusting(pool, provider::start().await, true)
     }
 
+    /// A server for trying a client by hand, whose identity provider is
+    /// one already started: on a port that is known, and perhaps taking
+    /// everybody for one person (`provider::start_on`).
+    #[must_use]
+    pub fn with_provider(pool: PgPool, issuer: String) -> Self {
+        Self::trusting(pool, issuer, true)
+    }
+
     /// The same, given no file storage: what `dirt-api` is until its
     /// owner has opened a storage account.
     pub async fn without_file_storage(pool: PgPool) -> Self {

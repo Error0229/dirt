@@ -16,6 +16,16 @@ const QUICK_CAPTURE_WIDGET_XML: &str = r#"<?xml version="1.0" encoding="utf-8"?>
     android:widgetCategory="home_screen" />
 "#;
 
+/// The one folder the app's file provider may lend a file from: where a
+/// note's file is copied to be opened by another app. `files-path` is the
+/// app's own files folder, and `dirt/opened/` is the folder of copies
+/// under the app's data folder (`services::files::opened_folder`).
+const FILE_PATHS_XML: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <files-path name="opened" path="dirt/opened/" />
+</paths>
+"#;
+
 #[derive(Debug, Default, Serialize)]
 struct MobileBootstrapConfig {
     dirt_api_base_url: Option<String>,
@@ -52,6 +62,7 @@ fn write_android_widget_resources() -> io::Result<()> {
         xml_dir.join("dirt_quick_capture_widget_info.xml"),
         QUICK_CAPTURE_WIDGET_XML,
     )?;
+    fs::write(xml_dir.join("dirt_file_paths.xml"), FILE_PATHS_XML)?;
 
     Ok(())
 }

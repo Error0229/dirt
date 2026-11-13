@@ -7,17 +7,40 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.webkit.WebView
 import android.widget.RemoteViews
 import androidx.annotation.Keep
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.core.content.FileProvider
+import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
 import java.lang.ref.WeakReference
+import org.json.JSONArray
+import org.json.JSONObject
 
 private const val ACTION_QUICK_CAPTURE = "dev.dioxus.main.action.QUICK_CAPTURE"
 private const val EXTRA_QUICK_CAPTURE_CONTENT = "dev.dioxus.main.extra.QUICK_CAPTURE_CONTENT"
 
 // Marks the answer to the request for a place to save a file.
 private const val REQUEST_SAVE_FILE = 4401
+
+// Marks the answer to the request for files to attach.
+private const val REQUEST_PICK_FILES = 4402
+
+// The most bytes a file may have and still be attached. It is the server's
+// limit for a file (`dirt_proto::api::limits::MAX_FILE_BYTES`), which a
+// test of the Rust side holds this line to. A file is copied into the app
+// before the Rust side sees it, and a film of two gigabytes is not copied
+// to be refused afterwards.
+private const val MOST_FILE_BYTES = 10485760L
+
+// Where files are copied to on their way into the app, inside its cache.
+private const val INCOMING_FOLDER = "incoming"
+
+// What the file provider in the manifest is called, after the app's name.
+private const val FILE_PROVIDER_SUFFIX = ".files"
 
 // The address scheme the sign-in service sends the browser back to.
 private const val SIGN_IN_REDIRECT_SCHEME = "dev.dirt.app"
@@ -47,16 +70,40 @@ class MainActivity : WryActivity() {
         // authorization code, so it is given up once.
         private var signInRedirect: String? = null
 
-        // Texts to start notes with, until the Rust side takes them, oldest
+        // What to start notes with, until the Rust side takes them, oldest
         // first: what another app shared, or nothing at all from the
         // home-screen widget, which asks for a blank note. Two may arrive
-        // before either is taken.
+        // before either is taken. Each is a JSON object with a "text" and
+        // a list of "files", as `fileEntry` writes them.
         private val captures = ArrayDeque<String>()
 
-        // The text of a file the person is choosing a place for, and how
-        // saving it went, until the Rust side takes that.
-        private var fileToSave: String? = null
-        private var saveOutcome: String? = null
+        // How each save went, under the name the Rust side gave the request
+        // to save, as the files chosen to attach are kept: a save may still
+        // be writing when the person starts another.
+        private val saveOutcomes = HashMap<String, String>()
+
+        // The save the screen for choosing a place is up for, if it is up:
+        // the request's name, and what is to be written, which is a text or
+        // the path of a file. They are one thing, set together and taken
+        // together, so that what one save writes can never be another's.
+        private class Saving(val request: String, val text: String?, val copy: String?)
+
+        private var saving: Saving? = null
+
+        // The files the person chose to attach, for each request to choose
+        // some, under the name the Rust side gave the request: a JSON list
+        // once they have all been copied into the app, or "cancelled" if
+        // none was chosen. A request has no entry while the person is
+        // choosing or the copying goes on.
+        //
+        // Each request has its own answer because two can overlap: files
+        // chosen for one note may still be on their way in when the person
+        // goes to another note and chooses again. One shared answer would
+        // let either note take the other's files.
+        private val picked = HashMap<String, String>()
+
+        // The request the chooser on screen is for, if it is on screen.
+        private var pickingFor: String? = null
 
         // The activity on screen, for opening other screens over it.
         private var current = WeakReference<MainActivity>(null)
@@ -76,16 +123,96 @@ class MainActivity : WryActivity() {
         }
 
         @Synchronized
-        private fun keepCapture(text: String) {
-            captures.addLast(text)
+        private fun keepCapture(text: String, files: JSONArray) {
+            captures.addLast(JSONObject().put("text", text).put("files", files).toString())
         }
 
-        // The next text to start a note with, or an empty text for a blank
-        // note, or null when nothing is waiting.
+        // The next thing to start a note with, as JSON: a text, which is
+        // empty for a blank note, and the files that came with it. Null
+        // when nothing is waiting.
         @Keep
         @JvmStatic
         @Synchronized
         fun takeCapture(): String? = captures.removeFirstOrNull()
+
+        @Synchronized
+        private fun setPicked(request: String, files: String) {
+            picked[request] = files
+        }
+
+        // Says the chooser is on screen for `request`, unless it is already
+        // on screen for another.
+        @Synchronized
+        private fun beginPicking(request: String): Boolean {
+            if (pickingFor != null) return false
+            pickingFor = request
+            return true
+        }
+
+        // The request the chooser was on screen for, now that it is not.
+        @Synchronized
+        private fun endPicking(): String? {
+            val request = pickingFor
+            pickingFor = null
+            return request
+        }
+
+        // Asks the person which files to attach, with Android's own screen
+        // for that. The app needs no permission: it is given the files the
+        // person chose. `request` is a name the caller made up, under which
+        // it collects what was chosen with takePicked. Returns false when
+        // the screen could not be asked for, or is already up for another
+        // request.
+        @Keep
+        @JvmStatic
+        fun pickFiles(request: String): Boolean {
+            val activity = current.get() ?: return false
+            if (!beginPicking(request)) return false
+            activity.runOnUiThread {
+                runCatching {
+                    val choose = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "*/*"
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                    }
+                    activity.startActivityForResult(choose, REQUEST_PICK_FILES)
+                }.onFailure {
+                    endPicking()
+                    setPicked(request, "cancelled")
+                }
+            }
+            return true
+        }
+
+        // The files the person chose for `request`, once, as a JSON list of
+        // entries each with a "name", a "mime" and either the "path" of a
+        // copy inside the app or a "problem"; or "cancelled". Null while
+        // the person is still choosing or the files are still being copied.
+        @Keep
+        @JvmStatic
+        @Synchronized
+        fun takePicked(request: String): String? = picked.remove(request)
+
+        // Hands a file inside the app to whatever other app shows files of
+        // its kind, for reading only. The other app is given this one file
+        // and nothing else of this app's. Returns false if no app took it.
+        @Keep
+        @JvmStatic
+        fun openFile(path: String, mimeType: String): Boolean {
+            val activity = current.get() ?: return false
+            return runCatching {
+                val address = FileProvider.getUriForFile(
+                    activity,
+                    activity.packageName + FILE_PROVIDER_SUFFIX,
+                    File(path),
+                )
+                val view = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(address, mimeType)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                activity.startActivity(Intent.createChooser(view, null))
+            }.isSuccess
+        }
 
         // Opens the sign-in page in a custom tab: a browser tab laid over
         // the app, which closes when the redirect brings the app forward. A
@@ -100,21 +227,63 @@ class MainActivity : WryActivity() {
             }.isSuccess
         }
 
-        @Synchronized
-        private fun setFileToSave(text: String?) {
-            fileToSave = text
+        // Asks the person where to save a copy of the file at `path`, which
+        // is inside the app, and writes it there. Returns false when the
+        // screen could not be asked for. How it went is collected with
+        // takeSaveOutcome, as for saveFile.
+        @Keep
+        @JvmStatic
+        fun saveCopy(request: String, name: String, mimeType: String, path: String): Boolean {
+            val activity = current.get() ?: return false
+            if (!beginSaving(Saving(request, null, path))) return false
+            activity.runOnUiThread { askForAPlace(activity, request, name, mimeType) }
+            return true
+        }
+
+        // Puts up Android's screen for choosing where a file goes.
+        private fun askForAPlace(
+            activity: MainActivity,
+            request: String,
+            name: String,
+            mimeType: String,
+        ) {
+            runCatching {
+                val choose = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = mimeType
+                    putExtra(Intent.EXTRA_TITLE, name)
+                }
+                activity.startActivityForResult(choose, REQUEST_SAVE_FILE)
+            }.onFailure { failure ->
+                endSaving()
+                setSaveOutcome(
+                    request,
+                    "failed:" + (failure.message ?: failure.javaClass.simpleName),
+                )
+            }
         }
 
         @Synchronized
-        private fun takeFileToSave(): String? {
-            val text = fileToSave
-            fileToSave = null
-            return text
+        private fun setSaveOutcome(request: String, outcome: String) {
+            saveOutcomes[request] = outcome
         }
 
+        // Says the screen for choosing a place is up for this save, unless
+        // it is already up for another.
         @Synchronized
-        private fun setSaveOutcome(outcome: String?) {
-            saveOutcome = outcome
+        private fun beginSaving(save: Saving): Boolean {
+            if (saving != null) return false
+            saving = save
+            return true
+        }
+
+        // The save that screen was up for, now that it is not: its request
+        // and what it writes, taken in one step.
+        @Synchronized
+        private fun endSaving(): Saving? {
+            val save = saving
+            saving = null
+            return save
         }
 
         // Asks the person where to save a file, with Android's own screen
@@ -124,36 +293,20 @@ class MainActivity : WryActivity() {
         // takeSaveOutcome.
         @Keep
         @JvmStatic
-        fun saveFile(name: String, mimeType: String, text: String): Boolean {
+        fun saveFile(request: String, name: String, mimeType: String, text: String): Boolean {
             val activity = current.get() ?: return false
-            setFileToSave(text)
-            setSaveOutcome(null)
-            activity.runOnUiThread {
-                runCatching {
-                    val request = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        type = mimeType
-                        putExtra(Intent.EXTRA_TITLE, name)
-                    }
-                    activity.startActivityForResult(request, REQUEST_SAVE_FILE)
-                }.onFailure { failure ->
-                    setFileToSave(null)
-                    setSaveOutcome("failed:" + (failure.message ?: failure.javaClass.simpleName))
-                }
-            }
+            if (!beginSaving(Saving(request, text, null))) return false
+            activity.runOnUiThread { askForAPlace(activity, request, name, mimeType) }
             return true
         }
 
-        // "saved", "cancelled" or "failed:" and why, once, or null while
-        // the person is still choosing.
+        // How the save asked for as `request` went: "saved", "cancelled" or
+        // "failed:" and why, once. Null while the person is still choosing
+        // or the file is still being written.
         @Keep
         @JvmStatic
         @Synchronized
-        fun takeSaveOutcome(): String? {
-            val outcome = saveOutcome
-            saveOutcome = null
-            return outcome
-        }
+        fun takeSaveOutcome(request: String): String? = saveOutcomes.remove(request)
     }
 
     // A cold start. If it is the sign-in redirect, the app was stopped while
@@ -165,6 +318,8 @@ class MainActivity : WryActivity() {
         // activity went away: its sign-in code is spent, and what it shared
         // is already a note.
         if (savedInstanceState == null) {
+            // Copies left from files that came in and were never taken.
+            File(cacheDir, INCOMING_FOLDER).deleteRecursively()
             saveSignInRedirect(intent)
             saveCapture(intent)
         }
@@ -206,7 +361,7 @@ class MainActivity : WryActivity() {
     // note, for the Rust side.
     private fun saveCapture(intent: Intent?) {
         when (intent?.action) {
-            Intent.ACTION_SEND -> {
+            Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE -> {
                 val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
                 // A shared page comes as its address with its title beside
                 // it. The title makes the first line of the note.
@@ -216,33 +371,177 @@ class MainActivity : WryActivity() {
                     subject.isEmpty() || text.contains(subject) -> text
                     else -> subject + "\n" + text
                 }
-                if (note.isNotEmpty()) keepCapture(note)
+                val shared = sharedFiles(intent)
+                if (shared.isEmpty()) {
+                    if (note.isNotEmpty()) keepCapture(note, JSONArray())
+                    return
+                }
+                // The files are read now, while this activity may: the
+                // other app lent them for as long as the activity lives.
+                // Off the main thread, because a photograph takes a moment.
+                Thread {
+                    keepCapture(note, copyAllIn(shared))
+                    runOnUiThread { tellThePage() }
+                }.start()
             }
             ACTION_QUICK_CAPTURE ->
-                keepCapture(intent.getStringExtra(EXTRA_QUICK_CAPTURE_CONTENT)?.trim().orEmpty())
+                keepCapture(
+                    intent.getStringExtra(EXTRA_QUICK_CAPTURE_CONTENT)?.trim().orEmpty(),
+                    JSONArray(),
+                )
         }
     }
 
-    // The person chose where to save a file, or backed out.
+    // The files another app shared with the intent, if any.
+    @Suppress("DEPRECATION")
+    private fun sharedFiles(intent: Intent): List<Uri> {
+        val many = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+        if (many != null) return many.filterNotNull()
+        return listOfNotNull(intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
+    }
+
+    // Copies files that came from outside into the app's cache, and says
+    // of each what it is called, what kind it is and where the copy is, or
+    // why there is none.
+    //
+    // Whatever goes wrong with one file is that file's own problem: it
+    // gets an entry that says so, and the rest are still copied. This runs
+    // on a thread of its own, where a failure nothing caught would end the
+    // app, and would leave the Rust side waiting for an answer.
+    private fun copyAllIn(files: List<Uri>): JSONArray {
+        val entries = JSONArray()
+        files.forEach { file ->
+            entries.put(
+                runCatching { copyIn(file) }.getOrElse { failure ->
+                    JSONObject()
+                        .put("name", file.lastPathSegment.orEmpty())
+                        .put("mime", "")
+                        .put("problem", failure.message ?: failure.javaClass.simpleName)
+                },
+            )
+        }
+        return entries
+    }
+
+    private fun copyIn(file: Uri): JSONObject {
+        val entry = JSONObject()
+        val name = displayName(file)
+        entry.put("name", name)
+        // The app that has the file is asked what kind it is, and may fail
+        // at that as at anything: the file was taken back, or the app is
+        // gone. Then the kind is left out, and read from the name later.
+        entry.put("mime", runCatching { contentResolver.getType(file) }.getOrNull() ?: "")
+        runCatching {
+            // A folder for each file, so that two of one name do not meet.
+            val folder = File(File(cacheDir, INCOMING_FOLDER), System.nanoTime().toString())
+            folder.mkdirs()
+            // Kept under a name of the app's own. What the file is called
+            // is carried beside it and never used as a path here.
+            val copy = File(folder, "file")
+            val whole = contentResolver.openInputStream(file)?.use { from ->
+                copy.outputStream().use { to -> copyUpTo(from, to, MOST_FILE_BYTES) }
+            } ?: error("the file could not be opened")
+            if (whole) {
+                entry.put("path", copy.absolutePath)
+            } else {
+                folder.deleteRecursively()
+                entry.put("problem", "too_large")
+            }
+        }.onFailure { failure ->
+            entry.put("problem", failure.message ?: failure.javaClass.simpleName)
+        }
+        return entry
+    }
+
+    // Copies at most `most` bytes. Returns false if there were more, in
+    // which case what was copied is of no use.
+    private fun copyUpTo(from: InputStream, to: OutputStream, most: Long): Boolean {
+        val buffer = ByteArray(64 * 1024)
+        var copied = 0L
+        while (true) {
+            val read = from.read(buffer)
+            if (read < 0) return true
+            copied += read
+            if (copied > most) return false
+            to.write(buffer, 0, read)
+        }
+    }
+
+    // What the person would call the file, as the app that has it says.
+    private fun displayName(file: Uri): String {
+        val named = runCatching {
+            contentResolver.query(file, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { row -> if (row.moveToFirst()) row.getString(0) else null }
+        }.getOrNull()
+        return named?.takeIf { it.isNotBlank() } ?: file.lastPathSegment.orEmpty()
+    }
+
+    // The person chose files to attach, or where to save a file, or backed
+    // out of either.
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_SAVE_FILE) return
-        val text = takeFileToSave()
+        when (requestCode) {
+            REQUEST_PICK_FILES -> filesPicked(resultCode, data)
+            REQUEST_SAVE_FILE -> placeChosen(resultCode, data)
+        }
+    }
+
+    private fun filesPicked(resultCode: Int, data: Intent?) {
+        // The chooser is off the screen, and another may be asked for
+        // while these files are copied in. They stay this request's.
+        val request = endPicking() ?: return
+        val chosen = mutableListOf<Uri>()
+        if (resultCode == RESULT_OK && data != null) {
+            // Several files come as a list, one comes by itself.
+            val several = data.clipData
+            if (several != null) {
+                for (index in 0 until several.itemCount) chosen.add(several.getItemAt(index).uri)
+            } else {
+                data.data?.let { chosen.add(it) }
+            }
+        }
+        if (chosen.isEmpty()) {
+            setPicked(request, "cancelled")
+            return
+        }
+        Thread {
+            setPicked(request, copyAllIn(chosen).toString())
+            runOnUiThread { tellThePage() }
+        }.start()
+    }
+
+    private fun placeChosen(resultCode: Int, data: Intent?) {
+        // The screen is down, and another save may be asked for while this
+        // one is written. What is written, and how it went, stay this
+        // request's.
+        val save = endSaving() ?: return
+        val (request, text, copy) = Triple(save.request, save.text, save.copy)
         val place = data?.data
-        val outcome = if (resultCode != RESULT_OK || place == null || text == null) {
-            "cancelled"
-        } else {
-            runCatching {
+        if (resultCode != RESULT_OK || place == null || (text == null && copy == null)) {
+            setSaveOutcome(request, "cancelled")
+            return
+        }
+        // Off the main thread: a file may be ten megabytes, and the place
+        // may be slow.
+        Thread {
+            val outcome = runCatching {
                 val file = contentResolver.openOutputStream(place)
                     ?: error("the file could not be opened")
-                file.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                file.use { to ->
+                    if (copy != null) {
+                        File(copy).inputStream().use { from -> from.copyTo(to) }
+                    } else {
+                        to.write(text.orEmpty().toByteArray(Charsets.UTF_8))
+                    }
+                }
                 "saved"
             }.getOrElse { failure ->
                 "failed:" + (failure.message ?: failure.javaClass.simpleName)
             }
-        }
-        setSaveOutcome(outcome)
+            setSaveOutcome(request, outcome)
+            runOnUiThread { tellThePage() }
+        }.start()
     }
 }
 
