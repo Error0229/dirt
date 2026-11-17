@@ -60,6 +60,7 @@ Step 1 and step 2 do not wait for them.
 | Must a thought captured from the widget reach other devices without opening the app | Yes, if trial 2 finds a way. Otherwise it syncs the next time the app is opened |
 | Chinese: search, tags, voice | Not in this work. English first. Recorded as later work in the system design, section 16.3 |
 | Who settles what the design leaves open or gets wrong | Whoever builds it, writing the answer into the design document |
+| Words on screen while the person speaks (decided 2026-11-17, after trial 1's first result) | Given up. What matters is that the words kept are accurate, and a larger model is welcome for that. Nothing is written while listening; the recording is kept at once as a note and its words are made afterwards. Trial 1's second measurement chooses the engine and the model |
 
 ## Still the owner's
 
@@ -814,9 +815,11 @@ flying to the tray.
 
 ### Step 9: voice
 
-The engine trial 1 chose, listening on the page and in quick capture, the
-held hotkey, Android's dock and capture sheet, the Talk entry,
-Settings → Voice. `docs/SECURITY.md` gains voice. The model is put in
+The engine and model that trial 1's second measurement chooses, listening
+on the page and in quick capture, the held hotkey, Android's dock and
+capture sheet, the Talk entry, Settings → Voice. A recording is kept as a
+note at once, and its words are made afterwards in the background by the
+device that recorded it (design 6.18). `docs/SECURITY.md` gains voice. The model is put in
 Dirt's own storage, which is a change to production's storage and waits
 for the owner's word.
 

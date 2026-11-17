@@ -209,8 +209,8 @@ How the counts were brought down, compared with the current apps:
 │ ┌──────────────────┐ │   │                      │   │ ┌──────────────────┐ │
 │ │ Ask Jordan…      │ │   │ What's on your mind? │   │ │ Ask Jordan…      │ │
 │ │ 4m         #work │ │   │                      │   ╭──────────────────────╮
-│ └──────────────────┘ │   │                      │   │ Ask the landlord     │
-│ This week · · · · ·  │   │                      │   │ about the boi        │
+│ └──────────────────┘ │   │                      │   │                      │
+│ This week · · · · ·  │   │                      │   │                      │
 │ ┌──────────────────┐ │   │                      │   │ ·˙·.˙·˙.·˙·.     🔒  │
 │ │ Sourdough…       │ │   ├──────────────────────┤   │                      │
 │ └──────────────────┘ │   │       keyboard       │   │ ‹ Cancel  0:03  (🎙) │
@@ -415,7 +415,6 @@ passing.
 | Screen title (Android "Notes", "Settings") | Inter | 27 / 32 | 700, −0.025em |
 | Note text in the editor | Inter | 15 / 1.65 (desktop), 16 / 1.6 (Android). Text size setting: 13–20 | 400 |
 | Find, and the bar "What's on your mind?" | Inter | 15 / 22 (desktop), 16 / 22 (Android) | 400 |
-| Words while listening | Inter | 21 / 1.45 (Android), note size + 3 (desktop) | 400 |
 | Quick capture | Inter | 17 / 24 | 400 |
 | Note title in the list (its first line) | Inter | 14 desktop, 15 Android | 560 |
 | Note preview (the rest) | Inter | 13 / 13.5, two or three lines | 400 |
@@ -660,10 +659,11 @@ this document are approximate; the tokens here are the real ones.
 | Moment | Motion |
 |---|---|
 | Pressing the mic | It grows to 132% (pop) as a sheet rises behind it (glide), with the lock above the mic |
-| Listening | A row of grains moves with the voice, like sand on a drum: still in silence, most in the middle, higher as it gets louder. A soft ring around the mic breathes with it. Each word fades in from a 4 px blur as it is heard (280 ms); the word still being heard is grey |
+| Listening | A row of grains moves with the voice, like sand on a drum: still in silence, most in the middle, higher as it gets louder. A soft ring around the mic breathes with it. No words are shown |
 | Sliding up | The lock follows the finger halfway; past 60 px it drops away as the mic turns into ✓ (pop) |
-| Sliding left | "Cancel" follows the finger and fades. Past 90 px the words blow off to the left, blurring (260 ms, exit), and the sheet sinks |
-| Letting go, or ✓ | The words gather into a grain and settle onto the pile, as a typed thought does; the sheet sinks (glide) |
+| Sliding left | "Cancel" follows the finger and fades. Past 90 px the grains blow off to the left, blurring (260 ms, exit), and the sheet sinks |
+| Letting go, or ✓ | The row of grains gathers into one grain, which settles onto the pile as a typed thought's does; the sheet sinks (glide) |
+| A voice note gets its words | They fade in where its name was (280 ms, standard). Nothing else moves |
 | Nothing heard | The sheet shakes once (320 ms) and sinks; nothing is made |
 
 **Android gestures**
@@ -1075,27 +1075,38 @@ any other, its words as text, with the recording on it as a file.
 
 | Do | Happens |
 |---|---|
-| **Hold** the mic, speak, **let go** | Kept: the words settle onto the pile as a grain. One action |
+| **Hold** the mic, speak, **let go** | Kept: the thought settles onto the pile as a grain, and its words follow. One action |
 | **Tap** the mic | Hands-free: it listens until ✓ (or <kbd>Enter</kbd>); ✕ (or <kbd>Esc</kbd>) throws it away |
 | Hold, then **slide up** | Locks into hands-free without letting go first, for a long thought |
 | Hold, then **slide left** | Throws it away |
 | Started by a hardware key, with no hand on the screen | Ends with no hand too: 1.6 s of quiet after speech keeps it |
 
-**While listening** the words appear as they are heard: the word still being
-heard in grey, the settled ones in the text colour. A word shows about a
-second after it is said (0.5 to 1.1 s on a laptop in the plan's first
-trial; a phone is not yet measured), and a settled word is not changed.
-Where a second model reads each stretch again at a pause, the words of the
-stretch stay grey until it has, and settle together then.
-Under them a row of grains moves with the voice. A timer shows from the
-first second. Nothing else: no "Listening…", no level meter, no waveform of
-what was said.
+**While listening** nothing is written. A row of grains moves with the
+voice, and a timer shows from the first second. Nothing else: no words, no
+"Listening…", no level meter, no waveform of what was said.
+
+Words that appear as they are spoken were given up on 2026-11-17 for words
+that are right. A model that reads a whole recording once, after it ends,
+makes fewer mistakes than one that has to write while it hears, and what
+is kept matters more than what is watched. The mockup still shows words
+appearing; this document holds.
+
+**Afterwards.** Letting go keeps the thought at once. The recording
+becomes a note, which settles onto the pile as a grain and is named by its
+length ("Voice · 0:12") until it has its words. The device that recorded
+it turns the recording into text in the background, and the words take the
+name's place in the list, fading in, with no other sign. A short thought
+should have its words within a few seconds; how long each model takes is
+the plan's second voice measurement. Opened before then, the note shows
+its recording and a page that can be typed on, and the words, when they
+come, are put at the start of the note. If Dirt is closed first, the words
+are made the next time it runs.
 
 | | Desktop | Android |
 |---|---|---|
-| In the app | 🎙 in the blank page's gutter. The page itself listens: words at the top, the grains, ✕ and ✓ at the bottom | The mic in the dock. A sheet rises over the lower half of the screen |
+| In the app | 🎙 in the blank page's gutter. The page itself listens: the grains and the timer, ✕ and ✓ at the bottom | The mic in the dock. A sheet rises over the lower half of the screen |
 | From anywhere | **Hold** <kbd>Ctrl Alt N</kbd>: quick capture opens listening, and letting go keeps it. A tap still opens it for typing | The widget's mic (hands-free, ✓ to keep). Where the phone lets a hardware key open an app (double-press the side key on Samsung; Quick Tap on Pixel), Dirt's **Talk** opens straight into listening, over the lock screen too, and ends on a pause |
-| Into a note being written | Not offered: type, or use the system's own dictation | 🎙 in the note's top bar adds what is said at the end of the note |
+| Into a note being written | Not offered: type, or use the system's own dictation | 🎙 in the note's top bar adds what is said at the end of the note, once its words are made, and the recording to the note's files |
 
 **Heard on the device, always.** Speech is turned into text on the device
 that heard it and is never sent anywhere: not to Dirt's server, not to a
@@ -1107,18 +1118,21 @@ Text only); **Language** (Auto, or one chosen); and on the desktop the held
 hotkey, on Android a word about the side key.
 
 **Failing well.** Nothing heard: the sheet shakes once and goes, and
-nothing is made. Heard, but the words could not be made out (the speech
-engine missing or failing): the note is kept with the recording alone,
-named by its length ("Voice · 0:12"), and gets its words when they can be
-made, from the device that recorded it and from no other: two devices
-adding the words would add them twice. No microphone permission yet: the first press asks, in the system's
+nothing is made. The words cannot be made (the model not fetched yet, or
+the engine failing): the note stays as it was kept, a recording named by
+its length, and gets its words when they can be made. Only the device that
+recorded it makes them: two devices doing so would add them twice. No
+microphone permission yet: the first press asks, in the system's
 own dialog; refused, the mic shows a slash, and its tooltip or long press
 says where to allow it.
 
 **The recording** is one file on the note, marked in the note's document
 as its voice recording; that mark is what puts the mic on its card (6.2).
-With **Text only** chosen there is no file and no mic: the note is a note
-like any other. A recording is compressed speech: Ogg Opus, 16 kHz mono at
+With **Text only** chosen the recording is taken off the note once its
+words are made, and the mic with it: the note is then a note like any
+other. Until then it is a file like any other and may reach the server,
+encrypted; if the words cannot be made it stays, so that nothing said is
+lost. A recording is compressed speech: Ogg Opus, 16 kHz mono at
 24 kbit/s, which the plan's first trial settled. Ten minutes is about
 1.6 MiB, well inside the limit on one file, and listening stops at ten
 minutes, keeping what was said. Every platform writes it the same way, from
@@ -1425,7 +1439,7 @@ where starting the app and its web view takes a second or more.
 |---|---|
 | Opens | The sheet rises from the bottom as the screen behind dims (400 ms, `--e-out`); the keyboard rises with it |
 | Typing | The ✓ springs in when there is text. Return is a new line |
-| 🎙 | Listens, in the same sheet; what is said is added (6.18) |
+| 🎙 | Listens, in the same sheet. ✓ keeps what was said as a voice note, whose words are made afterwards (6.18) |
 | ✓ | Keeps the note. The sheet lifts 24 dp and fades (240 ms, `--e-in`); nothing says "Saved", and if the pile widget is on the home screen, it gains the grain. The person is back where they were: two actions plus typing |
 | Back, a tap above the sheet, Home | Closes it; what was written stays as a draft and is there next time |
 | Its words | Only the placeholder. No title, no buttons but 🎙 and ✓ |
@@ -1560,9 +1574,9 @@ Android's WebView on the phone), so the whole system is CSS.
   settings do not cover them (WebKitGTK, macOS), are stopped by a short
   script in the page's head, which lets each key go on to the app.
 - **Voice:** each app reads the microphone (Android's `AudioRecord`, the
-  desktop through `cpal`) and hands the sound to `dirt-voice`, which turns
-  it into words, streams them back as they settle, says when the speaker
-  has stopped, and writes the recording. The settling grain and the
+  desktop through `cpal`) and hands the sound to `dirt-voice`, which says
+  when the speaker has stopped, writes the recording, and afterwards turns
+  it into words. The settling grain and the
   listening grains are small scripts beside the list's FLIP.
 - Rules from CLAUDE.md still hold: the words about sync come from
   `dirt_core::sync::overview`; no SQL, HTTP or cryptography in the client
@@ -1609,8 +1623,8 @@ built.
 | **Grains, layers and the pile** (6.17) | 積沙成塔: the list as a pile, newest on top, and the pile drawn as a heap of sand, one grain per thought. Derived from the notes; nothing new is stored | Both apps |
 | **Archive** (6.19): an `archived` value in each note's CRDT document, derived into its row like the deleted flag. The list leaves archived notes out; search and export keep them | Clearing a done thought without losing it. In the note's document it syncs and merges like any edit, and the server sees nothing new | `dirt-core` notes and store, every client, the CLI (`dirt archive`, `dirt unarchive`, `dirt list --archived`), feature-parity.md. Archiving is not an edit (6.19) |
 | **Tags: counts for the notes left** (6.3): how many notes match the current words and tags plus each other tag, and "any of them" as well as "all of them" | The tag list that stays open, and never offers a tag that would empty the list | `dirt-core` store: one grouped query over the tag table |
-| **Voice: speech to text on the device** (6.18). One engine used by both apps, giving words as they are heard: sherpa-onnx with a streaming model, and Silero's voice-activity model for the end of a thought. The plan's first trial chose it over whisper.cpp read through a sliding window and over Android's own on-device recogniser (implementation plan, "Trial 1 result"); a phone is still to be measured. Its model is fetched once on first use from Dirt's own storage, and its hash is checked against one built into the app | Voice without anyone's voice leaving the device. The engine is native code: prebuilt libraries of 21 MiB on Windows and 25 MiB for each Android ABI, fetched when it builds and shipped beside the app. So it sits in a crate of its own: the CLI, the server's tests and most CI jobs must not build it | `dirt-voice`, a new crate, kept out of the workspace's members and built only when an app's `voice` feature asks for it; both apps; `dirt-core` fetches the model |
-| **Which speech model, downloaded or shipped** | English comes first (decided 2026-11-16), so the smallest model that hears English well is enough. The trial found two that fit (implementation plan, "Trial 1 result"): one model of 68 MiB under CC BY-SA, or two under Apache-2.0 and MIT that come to 110 MiB. Downloading on first use keeps the apps small; shipping makes voice work offline from the first second | Owner's decisions: which of the two, and downloaded or shipped |
+| **Voice: speech to text on the device** (6.18). One engine used by both apps that reads a finished recording once and gives its words, as accurately as a phone allows, and Silero's voice-activity model for the end of a thought. Words as they are heard were given up on 2026-11-17, so the streaming model the plan's first trial chose no longer holds; the trial's second measurement chooses the engine and the model (implementation plan, "Trial 1"). A phone is still to be measured. Its model is fetched once on first use from Dirt's own storage, and its hash is checked against one built into the app | Voice without anyone's voice leaving the device. The engine is native code: prebuilt libraries of 21 MiB on Windows and 25 MiB for each Android ABI, fetched when it builds and shipped beside the app. So it sits in a crate of its own: the CLI, the server's tests and most CI jobs must not build it | `dirt-voice`, a new crate, kept out of the workspace's members and built only when an app's `voice` feature asks for it; both apps; `dirt-core` fetches the model |
+| **Which speech model, downloaded or shipped** | English comes first (decided 2026-11-16), and accuracy before size and speed (decided 2026-11-17). The plan's second voice measurement puts a default, a smaller and a larger model to the owner, each with its size, its mistakes and how long it takes. Downloading on first use keeps the apps small; shipping makes voice work offline from the first second | Owner's decisions: which model, and downloaded or shipped |
 | **Microphone access**: Android's `RECORD_AUDIO`, asked on first use; the desktop's microphone, with macOS's usage string | Voice | `dirt-desktop`, `dirt-mobile` |
 | **A held hotkey**: <kbd>Ctrl Alt N</kbd> must report its release as well as its press | Hold to talk from any app. The `global-hotkey` crate reports both; Linux under Wayland offers no global hotkeys at all, held or not | `dirt-desktop` |
 | **Android: a Talk entry** the hardware shortcuts can open, straight into listening, over the lock screen | Capture without touching the screen | `dirt-mobile` |
@@ -1649,8 +1663,9 @@ built.
 - Voice is never the only way: everywhere there is a mic, typing works too.
   Holding has a tap alternative (tap to start, ✓ to stop), so no one has to
   keep a finger down.
-- The words being heard are a live region: a screen reader reads them as
-  they settle. The grains carry nothing a person needs to see.
+- A screen reader is told when listening starts and when it ends, and
+  when a voice note's words have arrived. The grains carry nothing a
+  person needs to see.
 - Text size from 13 to 20 px, and the apps follow the system font scale on
   Android.
 - Reduced motion: section 5.5.
