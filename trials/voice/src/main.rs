@@ -14,9 +14,11 @@ mod mem;
 mod ogg_opus;
 #[cfg(feature = "sherpa")]
 mod sherpa_engine;
+#[cfg(feature = "sherpa")]
+mod sliding;
 #[cfg(feature = "whisper")]
 mod whisper_engine;
-#[cfg(feature = "whisper")]
+#[cfg(any(feature = "whisper", feature = "sherpa"))]
 mod words;
 
 use std::collections::HashMap;
@@ -51,10 +53,11 @@ fn main() {
 }
 
 const USAGE: &str = "\
-voice-trial hear --engine whisper|sherpa --model PATH --set MANIFEST --out FILE
+voice-trial hear --engine whisper|sherpa|moonshine --model PATH --set MANIFEST --out FILE
     [--threads 4] [--chunk-ms 100] [--tail 3.0] [--pretend-clock] [--only ID,ID]
     [--high-priority] [--lead 0.0]
     whisper: [--step-ms 500] [--short-window] [--trim 20]
+    moonshine: [--step-ms 300]
     sherpa:  [--fp32] [--decoding greedy_search] [--end-after 1.6]
              [--vad silero_vad.onnx] [--second-pass MOONSHINE_FOLDER]
 voice-trial whisper-vad --model ggml-silero.bin --set MANIFEST --out FILE
@@ -174,6 +177,10 @@ fn load_engine(flags: &Flags) -> Result<Box<dyn Live>, String> {
                 second_pass: flags.get("second-pass").map(PathBuf::from),
             };
             Ok(Box::new(sherpa_engine::Streaming::load(&model, &options)?))
+        }
+        #[cfg(feature = "sherpa")]
+        "moonshine" => {
+            sherpa_engine::sliding_moonshine(&model, threads, flags.number("step-ms", 300))
         }
         other => Err(format!("this build has no engine called {other:?}")),
     }

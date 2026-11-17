@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the measurements on this machine: every config three times, taking
 # turns, so that a change in the machine's load falls on all of them.
-#   bash scripts/run-windows.sh sherpa    (or: whisper, real, pauses)
+#   bash scripts/run-windows.sh sherpa    (or: whisper, moonshine, real, pauses)
 # The binaries are the ones built with one engine each, copied to data/.
 set -u
 cd "$(dirname "$0")/.."
@@ -39,9 +39,16 @@ whisper)
     run whisper whisper-base.en-q5-short $n --engine whisper --model $W/ggml-base.en-q5_1.bin --short-window --pretend-clock
     run whisper whisper-small.en-short $n --engine whisper --model $W/ggml-small.en.bin --short-window --pretend-clock
   done ;;
+moonshine)
+  # Moonshine read as a sliding window: one model for live words and kept text.
+  for n in 1 2 3; do
+    run sherpa moonshine-tiny-sliding $n --engine moonshine --model $S/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27 --pretend-clock
+    run sherpa moonshine-tiny-sliding-500 $n --engine moonshine --model $S/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27 --step-ms 500 --pretend-clock
+    run sherpa moonshine-base-sliding-500 $n --engine moonshine --model $S/sherpa-onnx-moonshine-base-en-quantized-2026-02-27 --step-ms 500 --pretend-clock
+  done ;;
 real)
   # The same on the wall clock, once each, to check the pretend clock.
-  run sherpa real-sherpa-kroko 1 --engine sherpa --model $S/sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06 --vad $S/silero_vad.onnx
+  run sherpa real-sherpa-zipformer-2023-06-26 1 --engine sherpa --model $S/sherpa-onnx-streaming-zipformer-en-2023-06-26 --vad $S/silero_vad.onnx
   run whisper real-whisper-tiny.en-short 1 --engine whisper --model $W/ggml-tiny.en.bin --short-window
   ;;
 pauses)
@@ -51,5 +58,5 @@ pauses)
   run sherpa pauses-nemo 1 --engine sherpa --model $S/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-480ms-int8 --pretend-clock
   ./data/voice-trial-whisper.exe whisper-vad --model $W/ggml-silero-v5.1.2.bin --set data/pauses/manifest.tsv --out $out/pauses-whisper-vad.jsonl 2> data/logs/pauses-whisper-vad.err
   ;;
-*) echo "which: sherpa, whisper, real or pauses"; exit 2 ;;
+*) echo "which: sherpa, whisper, moonshine, real or pauses"; exit 2 ;;
 esac

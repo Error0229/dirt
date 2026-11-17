@@ -12,6 +12,9 @@ Four ways are compared, each asked for 1.6 seconds of quiet:
   - the same model as whisper.cpp runs it (over the finished sound),
   - loudness alone: quiet is anything under a level 8 dB above the room's.
 
+One file's pause really is 1.8 s (the speaker's own gap at a comma plus the
+1.4 s put in); ending there is right and is not counted as a mistake.
+
     python -I scripts/analyse-pauses.py
 """
 import json
@@ -34,9 +37,17 @@ def judge(meta, quiet_runs, total):
     false_end = any(a < meta["pause_ends"] - 0.05 and b - a >= QUIET for a, b in quiet_runs
                     if a >= meta["pause_starts"] - 0.5)
     early = any(b - a >= QUIET and a + QUIET < meta["speech_ends"] for a, b in quiet_runs)
+    if long_pause(meta):
+        # The speaker's own gap and the pause put in add up to 1.6 s or
+        # nearly: ending there is what was asked for, not a mistake.
+        false_end = early = False
     final = [a for a, b in quiet_runs if b >= total - 0.05 and b - a >= QUIET]
     delay = final[0] + QUIET - meta["speech_ends"] if final else None
     return false_end or early, delay
+
+
+def long_pause(meta):
+    return meta["pause_ends"] - meta["pause_starts"] >= QUIET - 0.1
 
 
 def runs_from_flags(flags, frame):
@@ -60,9 +71,10 @@ def loudness_runs(path):
     n = len(samples) // 160
     level = 10 * np.log10((samples[: n * 160].reshape(n, 160) ** 2).mean(axis=1) + 1e-12)
     # The room's level is taken from the quietest tenth of the first two seconds heard so far.
-    flags = []
+    flags, floor = [], level[0]
     for i in range(n):
-        floor = np.percentile(level[: max(i + 1, 30)], 10)
+        if i % 25 == 0:
+            floor = np.percentile(level[: max(i + 1, 30)], 10)
         flags.append(level[i] > floor + 8)
     # A single loud frame is not speech: ask for three in five.
     smooth = [sum(flags[max(0, i - 4): i + 1]) >= 3 for i in range(n)]
@@ -83,8 +95,8 @@ def main():
                 marks = record["marks"]
                 # The recogniser's own rule fires once the quiet has lasted.
                 ends = [m["heard"] for m in marks if m["what"] == "engine-endpoint"]
-                inside = any(meta["pause_starts"] < t < meta["pause_ends"] + 0.3 for t in ends)
-                early = any(t < meta["speech_ends"] for t in ends)
+                inside = any(meta["pause_starts"] < t < meta["pause_ends"] + 0.3 for t in ends) and not long_pause(meta)
+                early = any(t < meta["speech_ends"] for t in ends) and not long_pause(meta)
                 after = [t for t in ends if t >= meta["speech_ends"]]
                 name = path.name.split(".")[0].replace("pauses-", "recogniser's rule, ")
                 table[name][condition].append((inside or early, after[0] - meta["speech_ends"] if after else None))

@@ -16,11 +16,12 @@ ignored: nothing of them is committed.
 | `src/live.rs` | Feeds an engine recorded speech in 100 ms pieces at the speed of speech (or on a clock that only counts the engine's working time), and writes down every change to what would be on screen |
 | `src/whisper_engine.rs` | whisper.cpp through `whisper-rs`, made to give words as they are heard: the sound so far is read again and again, and a word is settled once two readings agree on it |
 | `src/sherpa_engine.rs` | sherpa-onnx: a streaming transducer, its own rule for the end of a thought, Silero's voice-activity model beside it, and Moonshine as a second reading of the finished thought |
+| `src/sliding.rs` | The same sliding window for any quick model that reads finished sound; used with Moonshine |
 | `src/ogg_opus.rs` | The recording written as Ogg Opus |
 | `scripts/fetch-models.sh` | Fetches the models |
 | `scripts/make-speech.ps1`, `scripts/make-set.py` | Make the test set: ten utterances of LibriSpeech test-clean with word timings, twelve thoughts spoken by Windows' synthesiser, and the pause set |
 | `scripts/run-windows.sh` | Runs every configuration three times |
-| `scripts/analyse.py`, `scripts/analyse-pauses.py` | Turn the runs into the figures |
+| `scripts/analyse.py`, `scripts/analyse-pauses.py`, `scripts/tables.py` | Turn the runs into the figures and the result's tables |
 | `scripts/env-windows-whisper.sh` | What whisper needs to build properly on Windows |
 | `scripts/build-android.sh`, `scripts/android.toolchain.cmake` | Cross-compile for Android with NDK 26.3 |
 | `scripts/can-play.html`, `scripts/can-play.py` | Ask a headless browser which recording formats it really plays |
@@ -44,7 +45,18 @@ cp target/release/voice-trial.exe data/voice-trial-whisper.exe
 
 bash scripts/run-windows.sh sherpa
 bash scripts/run-windows.sh whisper
+bash scripts/run-windows.sh moonshine
 bash scripts/run-windows.sh pauses
 python -I scripts/analyse.py data/results
+python -I scripts/tables.py
 python -I scripts/analyse-pauses.py
+
+cargo build --release --features opus
+target/release/voice-trial opus --in data/set/synth-05.wav --out data/play/trial.opus
+python -I scripts/can-play.py "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" data/play
 ```
+
+`run-windows.sh` must not be edited while it runs, and the computer must
+not sleep during a run: the program asks Windows to stay awake while it
+measures (`--high-priority`), and a run that a sleep did cut through has to
+be thrown away.

@@ -225,8 +225,10 @@ def analyse_run(path, texts=False):
                     grew += 1
                     continue
                 changed += 1
-                if index < previous_settled:
-                    settled_changed += 1
+            # A settled word is one the engine promised not to change, so
+            # it is checked where it stands, not by alignment.
+            settled_changed += sum(1 for index in range(previous_settled)
+                                   if index >= len(words) or words[index] != previous[index])
             previous, previous_settled = words, n_settled
         shown_words += len(final)
 

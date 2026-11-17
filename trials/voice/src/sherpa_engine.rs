@@ -184,3 +184,23 @@ impl Live for Streaming {
             .map(|result| result.text.trim().to_owned())
     }
 }
+
+/// Moonshine reading the sound so far again and again (`sliding`), instead
+/// of a streaming model: one small model for the words as they are heard
+/// and for the text that is kept.
+pub fn sliding_moonshine(
+    folder: &Path,
+    threads: i32,
+    step_ms: usize,
+) -> Result<Box<dyn Live>, String> {
+    let recognizer = load_moonshine(folder, threads)?;
+    let read = move |samples: &[f32]| {
+        let stream = recognizer.create_stream();
+        stream.accept_waveform(RATE as i32, samples);
+        recognizer.decode(&stream);
+        stream
+            .get_result()
+            .map(|result| result.text.trim().to_owned())
+    };
+    Ok(Box::new(crate::sliding::Sliding::new(read, step_ms)))
+}
