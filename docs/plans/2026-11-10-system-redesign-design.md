@@ -753,6 +753,8 @@ integration uses a Postgres service container.
 8. **Hardening:** backups, key rotation, and the hosting and database plan
    decisions.
 9. **Attachments.**
+10. **The interface redesign** (added 2026-11-16): section 16, built in the
+    order of its own plan.
 
 The app has no sync between steps 3 and 5. That is acceptable only because
 there is no existing data to preserve. If real notes or a live deployment turn
@@ -835,3 +837,58 @@ the transcription and media code, which nothing depends on, goes in step 2.
 - Cloudflare: [Workers limits](https://developers.cloudflare.com/workers/platform/limits),
   [Containers pricing](https://developers.cloudflare.com/containers/pricing/),
   [Hyperdrive with Postgres](https://developers.cloudflare.com/hyperdrive/configuration/connect-to-postgres)
+
+## 16. The interface redesign (added 2026-11-16)
+
+The nine steps above are built. The next work is a new interface for the
+desktop and Android apps, designed in [`docs/ui/design.md`](../ui/design.md)
+and built in the order of
+[its plan](2026-11-16-interface-redesign-implementation-plan.md). This
+section records what it changes in the system. The interface itself is
+specified there, not here.
+
+### 16.1 What does not change
+
+The server, its tables and the protocol. Everything below is inside a
+note's encrypted document or on the device, so the server stores and sees
+nothing new.
+
+### 16.2 What it adds
+
+| Addition | Where it sits in this design |
+|---|---|
+| **Archive.** A note's document gains an `archived` value. It is not an edit: it raises no edit count and writes no edit time, so it does not bring back a note that another device deleted (section 6.2). When two devices choose differently, one choice holds on every device. A build from before archive ignores the value and keeps it | Sections 6.1 and 6.5: a derived column in the local row, as the deleted flag is |
+| **Undo of a delete.** The store's restore, which is an ordinary edit (section 6.2), offered by every client | Section 8 |
+| **A note from its first character.** A note emptied again, with no files, is removed from the device if it was never pushed, and deleted like any other if it was | Section 6.5 |
+| **A voice recording.** One of a note's files, marked in the document as its recording. Speech becomes text on the device that heard it; a device that could not make the words adds them later, and no other device does | Section 10: a file like any other to the server |
+| **A speech engine**, behind a feature of `dirt-core` or in a crate of its own, so that the CLI, the server's tests and most of CI do not build it. Its model is fetched once from Dirt's own storage and checked against a hash built into the app | Section 8.2 |
+| **`dirt-ui`**, a crate of what the two apps share: style sheet, fonts, icons, the motion script, components. It is a client crate: no SQL, HTTP or cryptography | Section 8.1 |
+| **Capture on Android without the app.** A native screen keeps a thought, and a short piece of background work makes it a note and syncs once. That is an event, so section 8.3's rule of no timer holds. Over the lock screen it can add and can show nothing | Section 8.3, and `docs/SECURITY.md` |
+| **Smaller asks of the core:** counts of the tags that would narrow a search further, every note's ID and edit time in one call, a short form of each sync state, a file's bytes in memory | Section 8.2 |
+
+Decided against on 2026-11-16: a system notification on Android when a
+device asks to join. It would need the server to push to a phone, or the
+phone to ask on a timer, and the banner inside the app is enough.
+
+### 16.3 Later: other languages
+
+The interface, search, tags and voice are built for English. The owner
+decided on 2026-11-16 that other languages are a later feature. It comes
+after the last step of the interface plan. What it would touch, so that
+nothing built before then makes it harder:
+
+- **Search.** The full-text index uses SQLite's default tokenizer, which
+  takes a run of Chinese, Japanese or Korean characters as one word, so
+  only the start of the run can be found. Changing the tokenizer rebuilds
+  an index that is derived from the notes; nothing synced changes.
+- **Tags.** A tag is `#` and ASCII letters, digits, `_` and `-`. Widening
+  that changes which words of an existing note are tags, on every client
+  and in the CLI at once, so it goes out as one version.
+- **The interface's words.** They are written in the components today.
+  The sync words already come from one place, `dirt_core::sync::overview`,
+  and stay there.
+- **Voice.** One language first; the setting lists only languages that
+  have been tried.
+- **Typing.** Keys pressed while an input method composes a character are
+  already left to it (design 7.4). That is built with the interface, not
+  later.
