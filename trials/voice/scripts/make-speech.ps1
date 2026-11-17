@@ -26,7 +26,32 @@ $thoughts = @(
     "Maybe the sync indicator should stay quiet unless something actually went wrong.",
     "Pick up the parcel from the post office, it closes at half past five.",
     "Look into why the garage door opens by itself when it rains.",
-    "Gift idea for Dad: a decent pair of noise cancelling headphones, under 200 dollars."
+    "Gift idea for Dad: a decent pair of noise cancelling headphones, under 200 dollars.",
+    # The second measurement added these, for a set large enough to rank models.
+    "Tell Maya the demo moved to Thursday at half past two.",
+    "Password reset emails are landing in spam, check the DKIM record.",
+    "Try the ramen place on Fifth Street before it closes for renovation.",
+    "Note to self: the meeting notes belong in the shared folder, not in my inbox.",
+    "Refund for the headphones should arrive within 5 to 7 business days.",
+    "Could the archive view show a count of how many notes are hidden?",
+    "Water the plants on Tuesday and Friday while Sam is away.",
+    "Read chapter 4 of the database book before the study group on the 12th.",
+    "Ask the landlord whether the heating can be fixed before December.",
+    "The quarterly report needs two more charts and a shorter summary.",
+    "Bring a charger, the passport, and the printed tickets to the airport.",
+    "What if search matched tags even when the hash sign is left out?",
+    "Dinner with Aunt Rosa on Saturday, bring the lemon cake.",
+    "Cancel the gym membership before the 1st, it renews automatically.",
+    "The bike needs new brake pads and the rear tire is losing air.",
+    "Remind Chen that the invoice for October is still unpaid.",
+    "Back up the laptop tonight, the disk has been making a clicking noise.",
+    "Podcast idea: interview people who quit their phones for a month.",
+    "Move the standup to 9:30 so the team in Lisbon can join.",
+    "Buy batteries, dish soap, coffee filters, and a birthday card for Leo.",
+    "The error only happens when two devices sync at the same moment.",
+    "Schedule the flu shot for next week, mornings are better.",
+    "Thank Nadia for covering my shift on Sunday.",
+    "It would be nice if the widget remembered whether I was typing or talking."
 )
 $voices = @("Microsoft David Desktop", "Microsoft Zira Desktop")
 

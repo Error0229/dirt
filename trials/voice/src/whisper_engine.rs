@@ -249,3 +249,69 @@ pub fn vad_probabilities(model: &Path, threads: i32, samples: &[f32]) -> Result<
     vad.detect_speech(samples).map_err(|e| e.to_string())?;
     Ok(vad.probabilities().to_vec())
 }
+
+/// whisper.cpp as it was made to be used: a finished recording, read once.
+/// It moves through a long recording thirty seconds at a time by itself,
+/// each window told what the one before it said, as its own command-line
+/// program does.
+pub struct Finished {
+    context: WhisperContext,
+    threads: i32,
+    /// Keep the five likeliest readings going (the program's default), or
+    /// only the likeliest.
+    beam: bool,
+}
+
+impl Finished {
+    pub fn load(model: &Path, threads: i32, beam: bool) -> Result<Self, String> {
+        let mut params = WhisperContextParameters::default();
+        params.use_gpu(false);
+        let context = WhisperContext::new_with_params(model, params)
+            .map_err(|e| format!("{}: {e}", model.display()))?;
+        Ok(Self {
+            context,
+            threads,
+            beam,
+        })
+    }
+}
+
+impl crate::finished::Reader for Finished {
+    fn read(&mut self, samples: &[f32]) -> Result<String, String> {
+        // A fresh state for every recording: the state remembers the last
+        // words it wrote, and one recording must not prompt the next.
+        let mut state = self.context.create_state().map_err(|e| e.to_string())?;
+        let strategy = if self.beam {
+            SamplingStrategy::BeamSearch {
+                beam_size: 5,
+                patience: -1.0,
+            }
+        } else {
+            SamplingStrategy::Greedy { best_of: 1 }
+        };
+        let mut params = FullParams::new(strategy);
+        params.set_n_threads(self.threads);
+        params.set_language(Some("en"));
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        params.set_no_context(false);
+        let padded;
+        let samples = if samples.len() < RATE + RATE / 10 {
+            let mut copy = samples.to_vec();
+            copy.resize(RATE + RATE / 10, 0.0);
+            padded = copy;
+            &padded[..]
+        } else {
+            samples
+        };
+        state.full(params, samples).map_err(|e| e.to_string())?;
+        let mut text = String::new();
+        for segment in state.as_iter() {
+            text.push_str(&segment.to_str_lossy().map_err(|e| e.to_string())?);
+        }
+        // What whisper writes for sounds that are not speech is left out.
+        Ok(spoken_words(&text).join(" "))
+    }
+}

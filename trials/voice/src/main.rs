@@ -8,6 +8,7 @@
 //! those lines into the trial's figures.
 
 mod audio;
+mod finished;
 mod live;
 mod mem;
 #[cfg(feature = "opus")]
@@ -36,6 +37,7 @@ fn main() {
     let options = Flags::parse(args);
     let result = match command.as_str() {
         "hear" => hear(&options),
+        "read" => read(&options),
         #[cfg(feature = "whisper")]
         "whisper-vad" => whisper_vad(&options),
         #[cfg(feature = "opus")]
@@ -60,6 +62,12 @@ voice-trial hear --engine whisper|sherpa|moonshine --model PATH --set MANIFEST -
     moonshine: [--step-ms 300]
     sherpa:  [--fp32] [--decoding greedy_search] [--end-after 1.6]
              [--vad silero_vad.onnx] [--second-pass MOONSHINE_FOLDER]
+voice-trial read --engine whisper|sherpa --model PATH --set MANIFEST --out FILE
+    [--threads 4] [--repeat 1] [--only ID,ID] [--high-priority]
+    [--vad silero_vad.onnx --window 25]   cut a longer recording at pauses
+    [--turn FILE [--timing]]              take turns with another copy
+    whisper: [--greedy]
+    sherpa:  --kind whisper|moonshine|nemo-transducer|transducer|canary|nemo-ctc [--fp32]
 voice-trial whisper-vad --model ggml-silero.bin --set MANIFEST --out FILE
 voice-trial opus --in FILE.wav --out FILE.opus [--bitrate 24000]
 
@@ -288,4 +296,98 @@ fn whisper_vad(flags: &Flags) -> Result<(), String> {
         writeln!(out, "{line}").map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+fn load_reader(flags: &Flags) -> Result<Box<dyn finished::Reader>, String> {
+    let model = PathBuf::from(flags.need("model"));
+    let threads: i32 = flags.number("threads", 4);
+    match flags.need("engine").as_str() {
+        #[cfg(feature = "whisper")]
+        "whisper" => Ok(Box::new(whisper_engine::Finished::load(
+            &model,
+            threads,
+            !flags.has("greedy"),
+        )?)),
+        #[cfg(feature = "sherpa")]
+        "sherpa" => Ok(Box::new(sherpa_engine::Finished::load(
+            &model,
+            &flags.need("kind"),
+            threads,
+            !flags.has("fp32"),
+        )?)),
+        other => Err(format!("this build has no engine called {other:?}")),
+    }
+}
+
+/// Reads every recording of a set once it is finished, `--repeat` times
+/// each, and writes a line for each: its text and how long each reading took.
+fn read(flags: &Flags) -> Result<(), String> {
+    let set = read_set(Path::new(&flags.need("set")), flags.get("only"))?;
+    let out_path = flags.need("out");
+    let mut out = std::fs::File::create(&out_path).map_err(|e| format!("{out_path}: {e}"))?;
+    if flags.has("high-priority") {
+        mem::run_ahead_of_other_work();
+    }
+    let before = Instant::now();
+    let mut reader = load_reader(flags)?;
+    let load_seconds = before.elapsed().as_secs_f64();
+    let mut cutter = match flags.get("vad") {
+        Some(model) => Some(finished::Cutter::load(
+            Path::new(model),
+            flags.number("window", 25.0),
+        )?),
+        None => None,
+    };
+    let turn = flags
+        .get("turn")
+        .map(|file| finished::Turn::new(Path::new(file)));
+    let timing = flags.has("timing");
+    if let (Some(turn), true) = (&turn, timing) {
+        turn.take();
+    }
+    let line = json!({
+        "kind": "run",
+        "flags": flags.0,
+        "target": format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
+        "load_seconds": load_seconds,
+        "peak_bytes_after_load": mem::peak_bytes(),
+        "calibration_seconds": calibrate(),
+    });
+    writeln!(out, "{line}").map_err(|e| e.to_string())?;
+    let repeat: usize = flags.number("repeat", 1);
+    let mut result = Ok(());
+    for (id, samples) in &set {
+        if let (Some(turn), false) = (&turn, timing) {
+            turn.wait_then_busy();
+        }
+        let read = finished::read_recording(reader.as_mut(), cutter.as_mut(), id, samples, repeat);
+        if let (Some(turn), false) = (&turn, timing) {
+            turn.idle();
+        }
+        match read {
+            Ok(read) => {
+                eprintln!(
+                    "{id}: {:.1} s in {:.2} s, {} piece(s): {}",
+                    read.audio_seconds,
+                    read.read_seconds.last().copied().unwrap_or(0.0),
+                    read.pieces.len(),
+                    read.text.chars().take(100).collect::<String>()
+                );
+                let mut line = serde_json::to_value(&read).map_err(|e| e.to_string())?;
+                line["kind"] = json!("read");
+                line["peak_bytes"] = json!(mem::peak_bytes());
+                writeln!(out, "{line}").map_err(|e| e.to_string())?;
+            }
+            Err(error) => {
+                result = Err(format!("{id}: {error}"));
+                break;
+            }
+        }
+    }
+    if let (Some(turn), true) = (&turn, timing) {
+        turn.give_back();
+    }
+    let line = json!({ "kind": "end", "peak_bytes": mem::peak_bytes(), "calibration_seconds": calibrate() });
+    writeln!(out, "{line}").map_err(|e| e.to_string())?;
+    result
 }
