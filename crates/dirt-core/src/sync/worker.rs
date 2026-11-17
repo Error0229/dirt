@@ -79,6 +79,9 @@ pub struct SyncStatus {
     pub files_unsent: usize,
     /// Files that could not be sent. Each has a reason in the store.
     pub file_problems: usize,
+    /// The last cycle completed, but a file did not get through and is
+    /// being tried again. Not a failure, and not yet synced either.
+    pub files_delayed: bool,
 }
 
 /// How long the worker waits in each situation.
@@ -271,6 +274,9 @@ async fn run(
         let outcome = engine.run_once().await;
         last_cycle = Some(Instant::now());
 
+        let files_delayed = outcome
+            .as_ref()
+            .is_ok_and(|report| report.files_failed && report.files_unsent > 0);
         let failure = match &outcome {
             Ok(report) => {
                 tracing::info!(
@@ -349,6 +355,7 @@ async fn run(
             status.files_unsent = files_unsent;
             status.problems = problems;
             status.file_problems = file_problems;
+            status.files_delayed = files_delayed;
             status.failure = failure;
             status.pulled = pulled;
         });

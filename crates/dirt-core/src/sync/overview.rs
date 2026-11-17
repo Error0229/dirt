@@ -32,6 +32,9 @@ pub struct SyncOverview {
     pub unsent: usize,
     /// Files this device holds that the server has not taken.
     pub files_unsent: usize,
+    /// The last cycle completed, but a file did not get through and is
+    /// being tried again.
+    pub files_delayed: bool,
     /// Why the last cycle failed, if it did.
     pub failure: Option<SyncFailure>,
     /// Each note that could not be synced.
@@ -54,6 +57,7 @@ impl From<&SyncStatus> for SyncOverview {
             last_synced_ms: status.last_synced_ms,
             unsent: status.unsent,
             files_unsent: status.files_unsent,
+            files_delayed: status.files_delayed,
             failure: status.failure.clone(),
             problems: Vec::new(),
             file_problems: Vec::new(),
@@ -218,6 +222,7 @@ impl SyncIndicator {
             last_synced_ms: overview.last_synced_ms,
             unsent: overview.unsent,
             files_unsent: overview.files_unsent,
+            files_delayed: overview.files_delayed,
             failure: overview.failure.as_ref().map(|failure| failure.class),
             problems: overview.problems.len(),
             file_problems: overview.file_problems.len(),
@@ -234,6 +239,7 @@ impl SyncIndicator {
             last_synced_ms: status.last_synced_ms,
             unsent: status.unsent,
             files_unsent: status.files_unsent,
+            files_delayed: status.files_delayed,
             failure: status.failure.as_ref().map(|failure| failure.class),
             problems: status.problems,
             file_problems: status.file_problems,
@@ -249,16 +255,21 @@ impl SyncIndicator {
             notes: figures.problems,
             files: figures.file_problems,
         };
-        match figures.failure {
-            Some(ErrorClass::TryAgainLater) => Self::Offline {
-                waiting: if figures.unsent > 0 {
-                    figures.unsent
-                } else {
-                    figures.files_unsent
-                },
+        let waiting = Self::Offline {
+            waiting: if figures.unsent > 0 {
+                figures.unsent
+            } else {
+                figures.files_unsent
             },
+        };
+        match figures.failure {
+            Some(ErrorClass::TryAgainLater) => waiting,
             // Waiting will not cure it, whether or not a note is named.
             Some(_) => problem,
+            // The notes went and a file did not. The cycle completed, so
+            // there is no failure to read, but the file is on this device
+            // alone until the next try gets it through.
+            None if figures.files_delayed && figures.files_unsent > 0 => waiting,
             None => {
                 let since = figures
                     .last_synced_ms
@@ -326,6 +337,7 @@ struct Figures {
     last_synced_ms: Option<i64>,
     unsent: usize,
     files_unsent: usize,
+    files_delayed: bool,
     failure: Option<ErrorClass>,
     problems: usize,
     file_problems: usize,
@@ -739,6 +751,7 @@ mod tests {
             last_synced_ms: Some(NOW - 100),
             unsent: 4,
             files_unsent: 1,
+            files_delayed: false,
             failure: Some(failed(ErrorClass::TryAgainLater)),
             problems: vec![problem(None, ProblemKind::Held)],
             file_problems: Vec::new(),
@@ -777,6 +790,36 @@ mod tests {
         assert_eq!(
             SyncIndicator::of(&completed, NOW - 5_000),
             SyncIndicator::Problem { notes: 1, files: 0 }
+        );
+    }
+
+    /// A cycle that sent the notes and not a file has completed, and has
+    /// not synced: the file waits for the next try.
+    #[test]
+    fn a_file_that_did_not_get_through_is_waiting_not_synced() {
+        const NOW: i64 = 1_800_000_000_000;
+        let delayed = SyncStatus {
+            last_synced_ms: Some(NOW - 200),
+            files_unsent: 1,
+            files_delayed: true,
+            ..SyncStatus::default()
+        };
+        assert_eq!(
+            SyncIndicator::from_status(&delayed, NOW),
+            SyncIndicator::Offline { waiting: 1 }
+        );
+        assert_eq!(
+            SyncIndicator::of(&SyncOverview::from(&delayed), NOW + 60_000),
+            SyncIndicator::Offline { waiting: 1 }
+        );
+        // Once it has gone there is nothing delayed, whatever the mark says.
+        let gone = SyncStatus {
+            files_unsent: 0,
+            ..delayed
+        };
+        assert_eq!(
+            SyncIndicator::from_status(&gone, NOW),
+            SyncIndicator::JustSynced
         );
     }
 
@@ -1072,6 +1115,7 @@ mod tests {
             last_synced_ms: Some(0),
             unsent: 2,
             files_unsent: 0,
+            files_delayed: false,
             failure: Some(SyncFailure {
                 class: ErrorClass::TryAgainLater,
                 message: "connection refused".to_owned(),

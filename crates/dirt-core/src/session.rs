@@ -937,6 +937,7 @@ impl Session {
             last_synced_ms: store.last_synced_ms().await?,
             unsent: store.unsent_count().await?,
             files_unsent: store.unsent_file_count().await?,
+            files_delayed: status.files_delayed,
             failure: status.failure,
             problems: store.note_problems().await?,
             file_problems: store.file_problems().await?,
