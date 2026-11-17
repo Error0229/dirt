@@ -42,6 +42,9 @@ jni = "0.21"
 ndk-context = "0.1"
 # Opens the system browser on the sign-in page.
 webbrowser = "1"
+# TRIAL 2: declares the Gradle module of native code to `dx`
+# (`#[manganis::ffi]` in main.rs). The same version dioxus brings.
+manganis = "0.7"
 
 [build-dependencies]
 dotenvy = "0.15"

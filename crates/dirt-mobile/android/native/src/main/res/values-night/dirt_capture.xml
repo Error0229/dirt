@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="dirt_surface">#FF24201C</color>
+    <color name="dirt_border">#FF3D362F</color>
+    <color name="dirt_text">#FFEDE6DD</color>
+    <color name="dirt_text_quiet">#FFA2978B</color>
+    <color name="dirt_accent">#FFD98A6E</color>
+</resources>

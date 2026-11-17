@@ -257,6 +257,27 @@ pub(super) fn create(
     Ok(note)
 }
 
+/// TRIAL 2: makes a note whose ID was made elsewhere (by the capture
+/// sheet, at the moment of capture), edited at `at_ms`. Returns `None`,
+/// and changes nothing, if a note with this ID is here already, deleted or
+/// not: taking the same thought in twice makes one note.
+pub(super) fn create_if_absent(
+    connection: &mut Connection,
+    id: NoteId,
+    text: &str,
+    at_ms: i64,
+) -> Result<Option<Note>> {
+    let tx = write_transaction(connection)?;
+    if load(&tx, &id)?.is_some() {
+        return Ok(None);
+    }
+    let doc = NoteDoc::new(client_id(&tx)?);
+    doc.set_text(text, at_ms);
+    let note = save(&tx, &id, &doc, None, Origin::Local)?.ok_or_else(|| not_found(&id))?;
+    tx.commit()?;
+    Ok(Some(note))
+}
+
 pub(super) fn update(
     connection: &mut Connection,
     id: &NoteId,

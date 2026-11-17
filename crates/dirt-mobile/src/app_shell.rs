@@ -237,6 +237,15 @@ pub fn AppShell() -> Element {
                 Ok(initial) => notes.set(initial),
                 Err(error) => tracing::warn!("Initial note listing failed: {error}"),
             }
+            // TRIAL 2: thoughts the capture sheet left waiting become notes
+            // now, if its job has not made them already.
+            let taken =
+                crate::capture::take_in(note_store.core(), &default_mobile_data_directory()).await;
+            if taken.made > 0 {
+                if let Ok(with_them) = note_store.list_notes(listed).await {
+                    notes.set(with_them);
+                }
+            }
             store.set(Some(note_store));
 
             if let Some(opened) = &opened_session {
@@ -371,6 +380,24 @@ pub fn AppShell() -> Element {
             "#,
         );
         while became_visible.recv::<bool>().await.is_ok() {
+            // TRIAL 2: the capture sheet, or its job, may have written
+            // while the app was away. Take in what still waits, and read
+            // the list again either way: a note the job made is in the
+            // store already, and nothing else tells this list of it.
+            let open = store.peek().clone();
+            if let Some(open) = open {
+                let taken =
+                    crate::capture::take_in(open.core(), &default_mobile_data_directory()).await;
+                let listed = *listed_notes.peek();
+                if let Ok(latest) = open.list_notes(listed).await {
+                    tracing::info!(
+                        "TRIAL returned: took in {}, list has {}",
+                        taken.made,
+                        latest.len()
+                    );
+                    notes.set(latest);
+                }
+            }
             if let Some(current) = session.peek().clone() {
                 current.notify(Trigger::Returned);
             }

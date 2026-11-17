@@ -162,6 +162,9 @@ pub fn UiTextarea(
     rsx! {
         textarea {
             class: "ui-textarea",
+            // TRIAL 2: the page says when the field exists, for timing the
+            // full app against the capture sheet.
+            onmounted: move |_| tracing::info!("TRIAL textarea mounted"),
             oninput: move |event| _ = oninput.map(|handler| handler(event)),
             onchange: move |event| _ = onchange.map(|handler| handler(event)),
             ..attributes,

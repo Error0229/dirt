@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TRIAL 2. Merged into the app's manifest by Gradle: everything native
+     that is not the web view's activity is declared here, beside its code. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- A job that waits for a network may not be asked for without this
+         (found on Android 16: SecurityException from schedule()). It is a
+         normal permission: nobody is asked. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application>
+        <!-- The capture sheet. A task of its own (no affinity with the
+             app's), so that opening it never brings the app's screen
+             forward under it, and never listed among recent apps.
+             showWhenLocked is also set in code. -->
+        <activity
+            android:name="dev.dirt.capture.CaptureActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:noHistory="false"
+            android:showWhenLocked="true"
+            android:taskAffinity=""
+            android:theme="@style/DirtCapture"
+            android:windowSoftInputMode="stateAlwaysVisible|adjustResize" />
+
+        <!-- The same sheet in a process of its own, to compare. -->
+        <activity
+            android:name="dev.dirt.capture.CaptureActivityOwn"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:process=":capture"
+            android:showWhenLocked="true"
+            android:taskAffinity=""
+            android:theme="@style/DirtCapture"
+            android:windowSoftInputMode="stateAlwaysVisible|adjustResize" />
+
+        <!-- What makes the thought a note and syncs once. -->
+        <service
+            android:name="dev.dirt.capture.CaptureJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+        <service
+            android:name="dev.dirt.capture.CaptureJobServiceOwn"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:process=":capture" />
+
+        <!-- The Quick Settings tile. -->
+        <service
+            android:name="dev.dirt.capture.CaptureTileService"
+            android:exported="true"
+            android:icon="@drawable/dirt_tile"
+            android:label="@string/dirt_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- The bar widget, with a layout of its own. -->
+        <receiver
+            android:name="dev.dirt.capture.CaptureWidgetProvider"
+            android:exported="true"
+            android:label="@string/dirt_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/dirt_capture_widget_info" />
+        </receiver>
+
+        <!-- Tried: does Android tell an app that is not running that the
+             phone was unlocked? -->
+        <receiver
+            android:name="dev.dirt.capture.UnlockedReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.USER_PRESENT" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

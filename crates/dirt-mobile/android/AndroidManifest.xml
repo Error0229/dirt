@@ -21,6 +21,9 @@
             android:name="dev.dioxus.main.MainActivity">
             <meta-data android:name="android.app.func_name" android:value="ANativeActivity_onCreate" />
             <meta-data android:name="android.app.lib_name" android:value="dioxusmain" />
+            <!-- TRIAL 2: long press on the icon, New note. The file is in
+                 the module of native code (android/native). -->
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/dirt_shortcuts" />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

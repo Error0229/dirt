@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TRIAL 2. Stand-ins for the tokens of design 4.1; step 8 takes the
+     real ones from dirt_ui::tokens. -->
+<resources>
+    <string name="dirt_capture_hint">What\u2019s on your mind?</string>
+    <string name="dirt_capture_keep">Keep</string>
+    <string name="dirt_capture_locked">Adds a note. Your notes stay locked.</string>
+    <string name="dirt_widget_label">Dirt: write a thought</string>
+    <string name="dirt_widget_bar">Write a thought</string>
+    <string name="dirt_tile_label">New note</string>
+    <string name="dirt_shortcut_new_note">New note</string>
+
+    <color name="dirt_surface">#FFFBF7F2</color>
+    <color name="dirt_border">#FFD9CFC2</color>
+    <color name="dirt_text">#FF2B2520</color>
+    <color name="dirt_text_quiet">#FF7A6F64</color>
+    <color name="dirt_accent">#FFB5553A</color>
+
+    <style name="DirtCapture" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.4</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:colorAccent">@color/dirt_accent</item>
+    </style>
+</resources>

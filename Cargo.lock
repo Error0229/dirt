@@ -2104,6 +2104,7 @@ dependencies = [
  "dirt-ui",
  "dotenvy",
  "jni",
+ "manganis",
  "ndk-context",
  "serde",
  "serde_json",

@@ -324,6 +324,14 @@ class MainActivity : WryActivity() {
         tellThePage()
     }
 
+    // TRIAL 2: back in front. The capture sheet is translucent, so when it
+    // closes over the app the page was never hidden and hears nothing by
+    // itself; this tells it to look at the store again.
+    override fun onResume() {
+        super.onResume()
+        tellThePage()
+    }
+
     // The web view the interface runs in, once the runtime has made it.
     private var page: WebView? = null
 
@@ -542,10 +550,9 @@ class QuickCaptureWidgetProvider : AppWidgetProvider() {
     }
 
     private fun buildViews(context: Context, appWidgetId: Int): RemoteViews {
-        val launchIntent = Intent(context, MainActivity::class.java).apply {
-            action = ACTION_QUICK_CAPTURE
-            putExtra(EXTRA_QUICK_CAPTURE_CONTENT, "")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        // TRIAL 2: the widget opens the capture sheet, not the app.
+        val launchIntent = Intent(context, dev.dirt.capture.CaptureActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
         val pendingIntent = PendingIntent.getActivity(

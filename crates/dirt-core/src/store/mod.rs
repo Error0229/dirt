@@ -217,6 +217,18 @@ impl Store {
             .await
     }
 
+    /// TRIAL 2: creates a note under an ID made elsewhere, as written at
+    /// the time the ID carries (never later than now). `None` if a note
+    /// with this ID is here already, which makes taking a captured thought
+    /// in safe to repeat.
+    pub async fn create_note_with_id(&self, id: NoteId, content: &str) -> Result<Option<Note>> {
+        let content = content.to_owned();
+        let now = now_ms();
+        let at = id.created_at_ms().map_or(now, |made| made.min(now));
+        self.write(move |c| notes::create_if_absent(c, id, &content, at))
+            .await
+    }
+
     /// Where this store keeps the files attached to its notes.
     #[must_use]
     pub fn shelf(&self) -> Shelf {
