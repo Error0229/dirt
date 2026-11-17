@@ -3,7 +3,7 @@
 use rusqlite::{Connection, OptionalExtension};
 
 use super::schema::write_transaction;
-use crate::models::Settings;
+use crate::models::{Accent, Settings};
 use crate::{Error, Result};
 
 fn get(connection: &Connection, key: &str) -> Result<Option<String>> {
@@ -31,6 +31,11 @@ pub(super) fn load(connection: &Connection) -> Result<Settings> {
         settings.theme = serde_json::from_value(serde_json::Value::String(value))
             .map_err(|error| invalid("theme", error))?;
     }
+    // An accent this build has no colours for, written by a later one, reads
+    // as the default: the app must still start.
+    if let Some(value) = get(connection, "accent")? {
+        settings.accent = Accent::from_name(&value).unwrap_or_default();
+    }
     if let Some(value) = get(connection, "capture_hotkey")? {
         settings.capture_hotkey = value;
     }
@@ -47,6 +52,7 @@ pub(super) fn save(connection: &mut Connection, settings: &Settings) -> Result<(
         ("font_family", settings.font_family.clone()),
         ("font_size", settings.font_size.to_string()),
         ("theme", theme),
+        ("accent", settings.accent.name().to_owned()),
         ("capture_hotkey", settings.capture_hotkey.clone()),
     ] {
         tx.execute(

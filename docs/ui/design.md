@@ -299,6 +299,7 @@ Everything else is neutral.
 | `--warning` | `#9A5D10` | `#E0A045` | A note that can't sync |
 | `--danger` | `#BE3A2B` | `#E86A5A` | Delete, remove, swipe background |
 | `--danger-soft` | `#F9E3E0` | `#3A1E1A` | Delete hover, confirmations |
+| `--on-danger` | `#FFFFFF` | `#1A0F0A` | Text on the red fill of a final confirm |
 | `--mark` | `#F7DDB0` | `#5A3F1C` | Search matches |
 | `--inverse` | `#2A2520` | `#EDE8E1` | Toasts and tooltips |
 | `--on-inverse` | `#F5F1EB` | `#1E1B18` | Text on them |
@@ -316,11 +317,28 @@ passes WCAG AA for normal text, 4.5:1, in both themes:
 | `--accent`: tags, links | 4.6 on `--accent-soft` | 4.8 on `--accent-soft` |
 | `--on-accent` on `--accent` | 5.6 | 6.3 |
 | `--warning`: "1 note can't sync" | 4.7 on `--surface-2` | 6.9 on `--surface-2` |
+| `--danger`: **Remove**, **Delete the account** | 4.8 on `--surface-2` | 4.9 on `--surface-2` |
+| `--on-danger` on `--danger` | 5.5 | 5.9 |
+| `--text` on `--mark`: a search match | 13.0 | 8.0 |
 
 Controls that are not text need 3:1: an unchecked checkbox or switch is
 outlined in `--border-control` (3.1 on `--surface-2`, light), not in a
 hairline colour. `--border` and `--border-strong` only separate things that
-are already told apart another way.
+are already told apart another way. An icon is a control too, and needs
+the same 3:1: the bin under the pointer is `--danger` on `--danger-soft`,
+which is over 4.4 in both themes. That pair is not used for words.
+
+Two pairs were found when the tokens were built. The red fill of a final
+confirm had white text in both themes, and white on the dark theme's
+lighter red is 3.2; `--on-danger` is dark there, as `--on-accent` is. A
+search match kept the colour of the text around it, and the preview's
+`--text-2` on the dark theme's `--mark` is 3.8; a match is drawn in
+`--text` whatever is around it.
+
+A test in `dirt-ui` computes every pair named here and in 4.1.1 from the
+values the style sheet is made from, and fails under these ratios. It also
+holds the table above to its own numbers, so a colour cannot change
+without the table changing with it.
 
 A first version checked clay on white alone and passed; on the list's own
 background it was 4.3, on a tag token 3.8, and `--text-3` was 2.9. Those
@@ -330,6 +348,15 @@ layer names are 11–12 px.
 
 **Theme:** Auto (follows the system), Light or Dark, on both platforms.
 Switching cross-fades every colour over 320 ms instead of snapping.
+
+Auto is the style sheet's own: with no theme chosen, the dark colours are
+under `prefers-color-scheme: dark`. WebView2 answers that from the
+system's setting. Android's WebView answers it from the theme of the
+activity it is in, and the app's is a light one today, so on Android Auto
+is light whatever the system says. Android's main screen (plan, step 4)
+gives the activity a theme that follows the system, and lets the app stay
+open when the system changes: today Android restarts the activity, and
+the app with it.
 
 #### 4.1.1 Accent
 
@@ -422,7 +449,9 @@ run time. Fall back to the system UI font.
 
 - Line icons on a 24 px grid, 1.75 px stroke, round caps and joins
   (Lucide's style). Drawn at 18 px; 15 px in small buttons; 22 px for
-  empty states.
+  empty states. They are Lucide's drawings, some simplified, under its ISC
+  licence, drawn inline so that they take the colour of the text around
+  them; the licence is in `crates/dirt-ui/assets`, with the fonts'.
 - One icon, one meaning, everywhere:
 
 | Icon | Meaning |
@@ -461,7 +490,10 @@ Tooltips replace on-screen labels and explanations.
   rising 3 px. Hide on press, scroll or leave.
 - Above the element; below it when there's no room. Never wider than 280 px.
 - On Android, a long press on an icon shows the same text, as Android's own
-  tooltips do.
+  tooltips do: when Android itself takes the press for a long one, and for
+  1.5 s. The press that showed it does not also press the button.
+- Keyboard focus shows it as a hover does, since a shortcut is written
+  nowhere else.
 
 ---
 
@@ -527,6 +559,15 @@ Tokens: `--sp-snap`, `--sp-pop`, `--sp-glide` (the easing) and `--d-snap`,
 `--d-pop`, `--d-glide` (the duration it takes to settle). `--e-spring`, used
 by the smaller components in section 6, is the pop spring.
 
+"Reaches 90%" is the first of a spring's 48 steps at or past nine tenths of
+the way.
+
+A spring's curve is sometimes run over a shorter time than it takes to
+settle, where the thing moving is small: the pop curve over 280 ms
+(`--d-3`) for a tag token and the ring of an accent dot, over 400 ms
+(`--d-4`) for the seven pictures and a tick; the glide curve over 560 ms
+for a new page on Android. The catalogue says where.
+
 ### 5.4 Curves
 
 | Curve | Value | Duration | For |
@@ -535,15 +576,22 @@ by the smaller components in section 6, is the pop spring.
 | **enter** | `cubic-bezier(.05,.7,.1,1)` | 200–400 ms | Fades that travel a little: a toast's first rise, a tooltip |
 | **exit** | `cubic-bezier(.3,0,.8,.15)` | 140–300 ms | Everything that leaves: slow to start, quick to go |
 | **toss** | `cubic-bezier(.25,.7,.5,1)` | the first 42% of a flight | A grain thrown up: quick off the hand, slowing to the top of its arc |
-| **gravity** | `cubic-bezier(.55,0,.9,.45)` | the rest of the flight | Falling: slow at the top, fastest as it lands. Also words gathering into a grain |
+| **gravity** | `cubic-bezier(.55,0,.9,.45)` | the rest of the flight | Falling: slow at the top, fastest as it lands |
 
 The curves are tokens: `--e-std` (standard), `--e-out` (enter: an
 ease-out, so it arrives softly), `--e-in` (exit: an ease-in, so it leaves
 quickly), with toss and gravity in the one script that throws grains.
+Their durations are tokens too: `--d-1` 120 ms, `--d-2` 200 ms, `--d-3`
+280 ms, `--d-4` 400 ms.
 
-Hover and press feedback stays at 120 ms on the standard curve. Durations
-mentioned elsewhere in this document are approximate; the tokens here are
-the real ones.
+Two things that gather use curves of their own, close to gravity: the
+words of a settled thought shrink on `cubic-bezier(.5,0,.75,.3)`, and an
+Android page closes to its grain on `cubic-bezier(.5,0,.75,.2)`.
+
+Hover and press feedback stays at 120 ms: the press itself (a button
+shrinking a little) on the standard curve, the change of colour under the
+pointer on the web view's own `ease`. Durations mentioned elsewhere in
+this document are approximate; the tokens here are the real ones.
 
 ### 5.5 Catalogue
 
@@ -552,21 +600,21 @@ the real ones.
 | Moment | Motion |
 |---|---|
 | The first word on the blank page | Nothing jumps: the page simply becomes a note, and the list starts to leave (focus, 7.7) |
-| A new thought is let go (<kbd>Esc</kbd>, ✓) | **Settling**, in four beats. The words shrink toward where they began and fade (280 ms, gravity), and the note's grain, in its own shade, pops out there (150 ms). The grain is tossed: up 46 px on the toss curve, then down onto the top of the list on gravity, moving across on a curve all the while (480–640 ms by distance). Where it lands the row appears (snap, from 96%), the rows below give 3 px and come back one after another, 24 ms apart, and seven specks of dust puff out and fall. The blank page is ready from the first beat; only its placeholder fades back in. A sync arriving mid-flight does not show the row early |
-| A new page is let go on Android (⌄, Back) | The page closes to a 7 px circle where its words began (300 ms, gravity); the grain is tossed from there onto the top card, as above |
+| A new thought is let go (<kbd>Esc</kbd>, ✓) | **Settling**, in four beats. The words shrink toward where they began and fade (280 ms, on their own curve, 5.4), and the note's grain, in its own shade, pops out there (150 ms). The grain is tossed: up 46 px on the toss curve, then down onto the top of the list on gravity, moving across on a curve all the while (480–640 ms by distance). Where it lands the row appears (snap, from 96%), the rows below give 3 px and come back one after another, 24 ms apart, and seven specks of dust puff out and fall. The blank page is ready from the first beat; only its placeholder fades back in. A sync arriving mid-flight does not show the row early |
+| A new page is let go on Android (⌄, Back) | The page closes to a 7 px circle where its words began (300 ms, on its own curve, 5.4); the grain is tossed from there onto the top card, as above |
 | An old note is let go | No grain: the list comes back and the note is in its place |
 | A note arrives from another device | It settles into place from 8 px above (snap) and its row flashes clay-soft for 1.6 s |
-| The list narrows or reorders | Rows that stay slide to their new places (snap); new ones settle in, staggered 24 ms |
+| The list narrows or reorders | Rows that stay slide to their new places (snap); new ones settle in from 8 px above (snap), staggered 24 ms, the seventh and later together |
 | Selecting a note | One highlight, with its clay bar, slides from the old row to the new one, stretching to the new row's height (snap). Nothing fades |
 | A note opens in the editor | Its text and then its files come from the direction of the list: from below if the note is further down, from above if further up, 18 px (snap, the files 50 ms behind) |
 | A note is archived | It sinks into the pile: its grain appears at the row's left edge and falls on gravity's curve, fading (720 ms), while the row folds shut and the rows below rise into its place (snap) |
-| A note is deleted | The row tears away to the left: 28 px, shrinking to 96%, fading (170 ms, exit). Then the gap closes on snap, and the rows below rise into it |
+| A note is deleted | The row tears away to the left: 28 px, shrinking to 96%, fading (170 ms, exit). The rows below rise into the gap on snap, starting 110 ms after it began to tear |
 | Undo | The row drops back into its place from 90% with a bounce (pop) |
-| A tag token appears | It pops into the field from 70% (pop) |
+| A tag token appears | It pops into the field from 70% (the pop curve over 280 ms) |
 | A tag token is removed | It shrinks to nothing sideways while fading (200 ms, exit), and the field closes up |
 | The tag list opens | It opens in place under Find (glide), pushing the notes down rather than covering them; its rows arrive top to bottom, 26 ms apart. On Android the pills pop in left to right (pop) |
 | A tag is picked | Its tick pops in (pop) and the row stays where it is; the notes below narrow (snap) |
-| The pile grows | The new grain drops onto the top of the heap (gravity). Nothing else moves |
+| The pile grows | The new grain drops 46 px onto the top of the heap (640 ms, `cubic-bezier(.55,0,1,.45)`). Nothing else moves |
 
 **Panels, sheets, toasts**
 
@@ -575,10 +623,10 @@ the real ones.
 | Settings opens (desktop) | It grows out of the gear: from the gear's centre and 6% of its size, corners from round to 14 px (480 ms, snap). The rail's entries slide in from the left, 30 ms apart; the sections rise 14 px, 40 ms apart |
 | Settings closes | It shrinks back into the gear (240 ms, exit) |
 | Settings opens (Android) | The sheet rises (glide) while the screen behind steps back: 93%, rounded corners, a little darker. The sections rise 28 px in turn, 45 ms apart |
-| A toast | A 44 px pill rises 16 px (enter), then opens sideways into the message (snap); the words fade in after it, 50 ms apart. Going, it closes back to a pill and drops away (300 ms, exit). A new toast opens while the old one closes, so one seems to turn into the other |
-| A device asks to join | The banner drops from the top edge with a bounce (pop). Dismissed, it flicks back up |
-| Menus and tooltips | Menus grow from their button (snap from 96%); tooltips fade in on the enter curve while moving 3 px from their element |
-| A segmented control | The thumb travels on snap and stretches 16% wide at the start of its travel, settling back as it arrives |
+| A toast | 560 ms in all: a 44 px pill rises 16 px (enter, the first third), then opens sideways into the message (snap); the words fade in after it, from 230 ms, 50 ms apart (220 ms each, enter). Going, it closes back to a pill and drops away (300 ms, exit). A new toast opens while the old one closes, so one seems to turn into the other |
+| A device asks to join | The banner drops from the top edge with a bounce (pop), fading in over 180 ms. Dismissed, it flicks back up the same way |
+| Menus and tooltips | Menus grow from their button (snap from 96%); tooltips fade in over 120 ms (standard) while moving 3 px from their element (snap) |
+| A segmented control | The thumb travels on snap and stretches 16% wide a third of the way into its travel, settling back as it arrives |
 
 **Theme and accent**
 
@@ -622,10 +670,10 @@ the real ones.
 
 | Moment | Motion |
 |---|---|
-| Swiping a card | The card follows the finger exactly. Let go past 96 px: it flies off and the list closes up (snap). Let go before: it springs back (pop) |
-| Pulling the list down | It follows with resistance; let go past 62 px and it holds while the arrow spins, then settles back (glide) |
-| Opening and closing a note | The note grows out of its card and shrinks back into it, wherever the card now is (glide in, standard out) |
-| A new page | It grows out of the bar at the bottom (glide); nothing written, it goes back into the bar |
+| Swiping a card | The card follows the finger exactly. Let go past 96 px: it flies off (180 ms, exit) and the list closes up (snap). Let go before: it springs back (pop) |
+| Pulling the list down | It follows with resistance; let go past 62 px and it holds at 58 px while the arrow spins, then settles back (400 ms, enter) |
+| Opening and closing a note | The note grows out of its card (440 ms, enter; its text rises 14 px behind it, 380 ms from 60 ms) and shrinks back into it, wherever the card now is (340 ms, standard) |
+| A new page | It grows out of the bar at the bottom (the glide curve over 560 ms); nothing written, it goes back into the bar (320 ms, standard) |
 | Find | Slides down under the title (glide); closing it slides it back |
 | Keyboard | Rises on glide, and the field rides up with it |
 
@@ -633,8 +681,8 @@ the real ones.
 
 | Moment | Motion |
 |---|---|
-| The code appears | The seven pictures pop in, 45 ms apart (pop) |
-| They match | The seven gather to the middle, from the outside in, shrinking (300 ms, exit), and where they meet the tick pops in and draws itself (pop) |
+| The code appears | The seven pictures pop in, 45 ms apart (the pop curve over 400 ms) |
+| They match | The seven gather to the middle, from the outside in, shrinking (300 ms, exit), and where they meet the tick pops in (the pop curve over 400 ms) and draws itself (450 ms, enter, from 120 ms) |
 
 **Static on purpose:** characters as they are typed, the caret, selection,
 native scrolling, and anything following a finger while it is still down.
@@ -642,9 +690,12 @@ native scrolling, and anything following a finger while it is still down.
 ### 5.6 Reduced motion
 
 When the system asks for reduced motion, every spring becomes a 90 ms
-`ease` and every travel, growth, arc and stagger is dropped. What remains
-is fading: a toast fades in, Settings fades in where it is, the theme
-cross-fades, a settled thought's row fades in with no grain. While
+`ease` and every travel, growth, arc and stagger is dropped. The curves'
+durations shorten with them: `--d-1` to 1 ms, the other three to 90 ms.
+What remains is fading: a toast fades in, Settings fades in where it is,
+the theme cross-fades (still over 320 ms, with no circle), a settled
+thought's row fades in with no grain. What follows a finger still follows
+it. While
 listening the grains stay in a still row, and only their strength changes.
 Spinners still turn, because they carry information.
 
@@ -652,18 +703,27 @@ Spinners still turn, because they carry information.
 
 - The springs are CSS `linear()` easings, written out from the simulation
   (48 steps each). WebView2 and Android's WebView (Chromium) support them;
-  WebKitGTK does from its 2.44 releases. On an older WebKitGTK the tokens
-  fall back to `cubic-bezier` approximations: snap
+  WebKitGTK does from its 2.44 releases. A web view without `linear()`
+  gets `cubic-bezier` approximations: snap
   `cubic-bezier(.2,.9,.3,1.02)`, pop `cubic-bezier(.34,1.4,.64,1)`, glide
-  `cubic-bezier(.2,0,0,1)`.
+  `cubic-bezier(.2,0,0,1)`. Which it gets is found by asking the web view
+  (`@supports` in the style sheet, `CSS.supports` in the script), never by
+  its name.
 - Movement that depends on where things are (the settling grain,
   Settings from the gear, a tile from the drop point, the gathering
   pictures) uses the Web Animations API from one small shared script, as
   the list's FLIP does.
 - The circle reveal uses the View Transitions API. Where it is missing
-  (WebKitGTK today), the theme cross-fades.
+  (WebKitGTK today), the theme cross-fades. That too is found by asking:
+  the script looks for `document.startViewTransition`.
 - Every animation reads the reduced-motion setting when it starts, so
-  changing the setting takes effect at once.
+  changing the setting takes effect at once. That holds wherever the web
+  view passes the system's setting on as it changes. Android's WebView
+  reads "Remove animations" once, when it starts: changed while Dirt is
+  open, it is honoured from the next start. Reading it again each time the
+  person returns to the app needs a few lines of native code, which come
+  with Android's main screen (plan, step 4); the root component already
+  takes the answer.
 
 ---
 
@@ -816,7 +876,14 @@ state added for this indicator (section 11).
 Dark on light (and light on dark), bottom centre, above the Android field.
 One at a time: a new one replaces the old. Carries at most one action.
 Lasts 2.6 s, or 6 s when it has **Undo**, with a draining bar along its
-bottom so the time left is visible. Hovering it pauses the timer.
+bottom so the time left is visible. Hovering it pauses the timer, and so
+does keyboard focus inside it. The bar is the timer: it stops while the
+toast is held and goes on from where it was, so what it shows is what is
+left.
+
+On the desktop <kbd>Ctrl Z</kbd> is written beside **Undo**. A toast can
+be told to stay until it is dismissed, with a close icon in place of the
+bar; that is for Android while a screen reader is on (section 12).
 
 ### 6.8 Banner
 
@@ -846,9 +913,12 @@ control on the right.
 | Primary | Clay fill, 34 px | The one main action of a flow: **Sign in**, **They match**, **Review** |
 | Quiet | `--surface-2` fill | Secondary actions in Settings: **Make one**, **Export** |
 | Ghost | Hairline outline | The other choice beside a primary: **They don't**, **Sign out** |
-| Danger | Red text; red fill only for the final confirm | **Delete the account**, **Remove** |
+| Danger | Red text; red fill, with `--on-danger` text, only for the final confirm | **Delete the account**, **Remove** |
 
 A flow has at most one primary button on screen.
+
+On Android a button with words is 40 dp high (36 dp for the small one in
+a row), and every icon button is 40 dp whatever size the desktop gives it.
 
 ### 6.11 Segmented control, slider, switch
 
@@ -861,12 +931,27 @@ on Android) gives its name, and Clay's says "(default)".
 Checkboxes only inside a flow ("Bring the 12 notes on this device into the
 account", checked by default).
 
+A switch is 40 × 24 px. Off, it is an outline in `--border-control` with a
+thumb of the same colour; on, it is filled with the accent and its thumb,
+in `--on-accent`, has moved across (snap).
+
+The segmented control and the accent dots are groups of exclusive choices:
+one stop for <kbd>Tab</kbd>, and the arrow keys move the choice. On
+Android a segment is 40 dp high and a dot, still 24 px, is 16 px from the
+next so that each has a 40 dp target. While the text-size slider's thumb
+is held, the text on the page follows it; the size is kept when the thumb
+is let go.
+
 ### 6.12 Confirmation in place
 
 For the few things that can't be undone, the row itself turns pale red and
 asks: "Remove Pixel 8? It stops getting notes." with **Cancel** and
 **Remove**. No modal dialog. Deleting the account also asks for the word
 DELETE to be typed in the real app.
+
+Focus goes to **Cancel** as the row asks, <kbd>Tab</kbd> stays between its
+two buttons, <kbd>Esc</kbd> is **Cancel**, and focus goes back to the row
+afterwards.
 
 ### 6.13 Code comparison
 
@@ -1444,21 +1529,30 @@ Android's WebView on the phone), so the whole system is CSS.
 - **Transitions and keyframes in CSS** for hover, press, tooltips, sheets,
   panels, toasts, segmented controls and disclosures. Components only add and
   remove classes.
-- **FLIP for the list.** Measure rows before a change, let Dioxus render,
-  measure again, and play the difference with the Web Animations API through
-  `document::eval`. One small script, shared by both apps.
+- **FLIP for the list.** The script remembers where each row was laid
+  out. It watches the page (a `MutationObserver`), and when the rows under
+  a list change it measures them again, before the change is drawn, and
+  plays the difference with the Web Animations API. Rust only changes the
+  page: it cannot measure the page before it changes it, so it is not
+  asked to. Only rows that were in sight or come into it are moved: a list
+  may hold hundreds. One small script, shared by both apps.
 - **The note growing from its card** is a `clip-path` animation from the
   card's rectangle to the screen, also one small script.
 - **Gestures** (swipe, pull, sheet drag) with pointer events, writing
   `transform` directly while the finger is down and handing back to CSS on
-  release.
-- **Reduced motion:** read `prefers-reduced-motion` (which Android's "Remove
-  animations" sets in WebView) and shorten the duration tokens. Components
-  need no special cases.
+  release. They run in the script from first touch to release. Rust is
+  told once, how it ended.
+- **Reduced motion:** read `prefers-reduced-motion` and shorten the duration
+  tokens. Components need no special cases. Android's "Remove animations"
+  reaches the WebView only when it starts (5.7).
 - **Fonts** bundled as assets.
 - **The web view's keys, zoom and context menu off** in release builds
-  (7.4): WebView2's `AreBrowserAcceleratorKeysEnabled`, `IsZoomControlEnabled`
-  and `AreDefaultContextMenusEnabled`, and the same in WebKitGTK's settings.
+  (7.4). On Windows the web view's settings do it: wry turns WebView2's
+  `AreBrowserAcceleratorKeysEnabled` and `IsZoomControlEnabled` off, and
+  Dioxus keeps the developer tools out of a build that turns the context
+  menu off. The menu itself, and the same keys on a web view whose
+  settings do not cover them (WebKitGTK, macOS), are stopped by a short
+  script in the page's head, which lets each key go on to the app.
 - **Voice:** each app reads the microphone (Android's `AudioRecord`, the
   desktop through `cpal`) and hands the sound to `dirt-core`, which turns
   it into words and streams them back as they settle. The settling grain
@@ -1466,6 +1560,15 @@ Android's WebView on the phone), so the whole system is CSS.
 - Rules from CLAUDE.md still hold: the words about sync come from
   `dirt_core::sync::overview`; no SQL, HTTP or cryptography in the client
   crates.
+
+What is shared is the crate `dirt-ui`. Its classes begin with `dui-`, so
+that they cannot meet a class of a screen not yet replaced, and its base
+styles reach only what is drawn inside its root component. The script
+finds what Rust renders by attribute (`data-dui-list`, `data-key`,
+`data-tip`), so no component calls it. The style sheet is in the page
+beside what it styles, so that it arrives with the first render and
+nothing is drawn unstyled. A gallery of every component is built with each
+app's `gallery` feature, for development only.
 
 ---
 

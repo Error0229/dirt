@@ -1,0 +1,56 @@
+/* The gallery's own layout. Nothing an app uses is here. */
+html,body{margin:0;height:100%;background:var(--bg);overflow:hidden}
+.gal{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column}
+.android .gal{padding-top:env(safe-area-inset-top,0px)}
+.gal-top{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;padding:12px 24px;border-bottom:1px solid var(--border);flex:none}
+.android .gal-top{padding:10px 16px;gap:8px 14px}
+.gal h1{font-size:27px;line-height:32px;font-weight:700;letter-spacing:-.025em;margin:0 8px 0 0}
+.gal h2,.dui-panel h3,.dui-sheet h3{font-size:11.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;margin:26px 0 8px 2px}
+.gal-page{flex:1}
+.gal-in{padding:0 24px 96px;max-width:880px;margin:0 auto;width:100%}
+.android .gal-in{padding:0 16px 140px}
+.gal-card{border:1px solid var(--border);border-radius:var(--r-m);background:var(--surface);padding:14px;margin-bottom:8px}
+.android .gal-card{border-radius:var(--r-card)}
+.gal-line{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.gal-gap{margin-top:10px}
+.gal-quiet,.gal-s{font-size:12.5px;color:var(--text-3)}
+.gal-t{font-size:14px;font-weight:500}
+.gal-switch{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;font-weight:500;color:var(--text-2)}
+.gal-rows{padding:0;overflow:hidden}
+.gal-flush>*+*{border-top:1px solid var(--border)}
+.gal-setting{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:54px;padding:9px 14px}
+.gal-rows>.gal-setting+.gal-setting{border-top:1px solid var(--border)}
+.gal-grow{flex:1;min-width:0}
+.gal-ic{width:32px;height:32px;border-radius:9px;background:var(--surface-2);display:grid;place-items:center;color:var(--text-2);flex:none}
+.gal-fill{flex:1}
+.gal-settings{padding:4px 28px 28px}
+.android .gal-settings{padding:0 16px 40px}
+.gal-frames{font-size:12.5px;color:var(--text-2);margin:8px 2px;font-variant-numeric:tabular-nums}
+.gal-frames b{color:var(--text);font-weight:600}
+.gal-list{height:320px;border:1px solid var(--border);border-radius:var(--r-m);background:var(--bg)}
+.gal-list-in{padding:2px 8px 10px}
+.gal-item{display:flex;align-items:baseline;gap:10px;padding:10px 12px 10px 14px;border-radius:var(--r-m);transition:background var(--d-1)}
+.gal-item:hover{background:var(--surface-2)}
+.gal-item-t{flex:1;min-width:0;font-weight:560;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.android .gal-item-t{font-size:15px}
+.gal-item-r{font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.gal-cards{display:flex;flex-direction:column;gap:8px}
+.gal-swipe-card{padding:12px 14px 10px}
+.gal-icons{display:flex;flex-wrap:wrap;gap:6px}
+.gal-icon{width:40px;height:40px;display:grid;place-items:center;border-radius:10px;color:var(--text-2)}
+.gal-icon:hover{background:var(--surface-2);color:var(--text)}
+.gal-wait{width:7px;height:7px;border-radius:50%;border:1.5px solid var(--text-3)}
+.gal-type>*{margin:0 0 10px}
+.gal-title{font-size:27px;line-height:32px;font-weight:700;letter-spacing:-.025em}
+.gal-note{font-size:var(--note-size);line-height:1.65;max-width:680px}
+.android .gal-note{font-size:calc(var(--note-size) + 1px);line-height:1.6}
+.gal-tag{color:var(--accent)}
+.gal-row-t{font-weight:560;font-size:14px}
+.android .gal-row-t{font-size:15px}
+.gal-row-s{font-size:13px;color:var(--text-2)}
+.gal-ui{font-size:13.5px;font-weight:550}
+.gal-label{font-size:11.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em}
+.gal-mono{font:500 12px var(--mono);color:var(--text-2)}
+.gal-swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.gal-swatch{display:flex;align-items:center;gap:8px;font:500 11px var(--mono);color:var(--text-2)}
+.gal-swatch span{width:28px;height:28px;border-radius:8px;box-shadow:inset 0 0 0 1px var(--border);flex:none}

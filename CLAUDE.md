@@ -39,12 +39,16 @@ Rules it sets:
 - What the design leaves open or gets wrong is settled by whoever builds it, and written into the design document.
 - The interface is built for English. Other languages are later work (system design, section 16.3).
 - Each app works after every pull request. The pull request that replaces a screen deletes the old one.
+- What the two apps share of the interface is in `dirt-ui`: the tokens, the fonts, the icons, the motion script and the components. A component both apps need goes there, not into an app. It is a client crate: no SQL, HTTP or cryptography in it.
+- The colours are written once, in `dirt_ui::tokens`, and the style sheet is made from them. A colour that changes is checked by `dirt_ui::contrast`'s tests, and the table in design section 4.1 changes with it.
+- Anything that follows a finger or a pointer runs in `dirt-ui`'s script (`crates/dirt-ui/src/js/dirt-ui.js`) from first touch to release, and tells Rust only how it ended (`dirt_ui::events`). The script that animates a list watches the page; it is not called from Rust.
+- `dirt-ui`'s classes begin with `dui-`. A screen being replaced does not reuse a class of the old interface.
 
 ## Tech Stack
 
 What the code on `main` uses today:
 
-- **UI Framework**: Dioxus 0.7 (desktop and Android)
+- **UI Framework**: Dioxus 0.7 (desktop and Android). The new interface's tokens, fonts (Inter and JetBrains Mono, bundled), icons, motion and components are in `dirt-ui`, which both apps use
 - **CLI**: clap
 - **Notes**: one `yrs` CRDT document per note (`dirt-core::notes`)
 - **Local database**: SQLite through `rusqlite` with the bundled build, FTS5 for full-text search (`dirt-core::store`)
@@ -67,6 +71,7 @@ crates/
 ├── dirt-core/     # Notes as CRDT documents, the local store, files, encryption, sign-in, the session, sync, export
 ├── dirt-api/      # The server: device registry and encrypted note blobs on Postgres
 ├── dirt-sim/      # Tests only: real client cores syncing through the real server in one process
+├── dirt-ui/       # What the two apps share of the interface: tokens, fonts, icons, motion, components, and a gallery of them
 ├── dirt-desktop/  # Dioxus desktop application
 ├── dirt-mobile/   # Dioxus Android application
 └── dirt-cli/      # Command-line interface (`dirt`)
@@ -87,6 +92,13 @@ cargo build
 cd crates/dirt-desktop && dx serve
 # For a quick check that it starts:
 cargo run -p dirt-desktop
+
+# Show the interface's gallery: every component of dirt-ui on one screen, in
+# place of the app. For development only. It reads and writes the theme, the
+# accent and the text size in the app's own settings; set DIRT_DATA_DIR to
+# keep a real installation's settings out of it
+make run-gallery-desktop     # dx serve --platform desktop --package dirt-desktop --features gallery
+make run-gallery-android     # dx serve --platform android --package dirt-mobile --features gallery
 
 # Run CLI
 cargo run -p dirt-cli

@@ -14,6 +14,8 @@ mod config;
 mod data;
 #[cfg(any(target_os = "android", test))]
 mod export;
+#[cfg(all(target_os = "android", feature = "gallery"))]
+mod gallery;
 #[cfg(any(target_os = "android", test))]
 mod incoming;
 #[cfg(target_os = "android")]
@@ -33,6 +35,13 @@ fn main() {
                 .add_directive("dirt=info".parse().unwrap()),
         )
         .init();
+
+    // Built to show the interface's gallery, this is not the app.
+    #[cfg(feature = "gallery")]
+    if cfg!(feature = "gallery") {
+        dioxus::LaunchBuilder::mobile().launch(gallery::GalleryApp);
+        return;
+    }
 
     tracing::info!("Starting Dirt mobile shell...");
     dioxus::LaunchBuilder::mobile().launch(app::App);

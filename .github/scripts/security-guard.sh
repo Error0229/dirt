@@ -32,6 +32,7 @@ fi
 CLIENT_CRATES=(
   crates/dirt-core
   crates/dirt-cli
+  crates/dirt-ui
   crates/dirt-desktop
   crates/dirt-mobile
 )

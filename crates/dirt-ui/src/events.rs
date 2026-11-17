@@ -1,0 +1,110 @@
+//! How the script tells Rust that something ended.
+//!
+//! What follows a finger runs in the script from first touch to release
+//! (the plan's rule: a call into Rust for every movement is too slow on a
+//! phone). When it ends in a way the app must know about, the script says
+//! so once, over one channel that [`crate::UiRoot`] opens. A component
+//! that wants to hear gives its element an ID with [`use_outcome`].
+
+use std::collections::HashMap;
+
+use dioxus::prelude::*;
+use serde::Deserialize;
+
+/// How something the script ran ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Outcome {
+    /// A card was swiped past the mark and has flown off.
+    Swipe,
+    /// A panel or sheet was closed from the script: Esc, or a sheet
+    /// dragged down past the mark.
+    Dismiss,
+    /// A toast's time ran out and it has closed.
+    Expired,
+}
+
+/// One message from the script: which element, and how it ended.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Message {
+    /// The element's `data-dui-id`.
+    pub id: String,
+    /// How it ended.
+    pub kind: Outcome,
+}
+
+/// Who is listening for which element. [`crate::UiRoot`] provides one.
+#[derive(Clone, Copy)]
+pub struct Bus {
+    listeners: CopyValue<HashMap<String, Callback<Outcome>>>,
+    next: CopyValue<u64>,
+    received: Signal<u64>,
+}
+
+impl Bus {
+    pub(crate) fn new() -> Self {
+        Self {
+            listeners: CopyValue::new(HashMap::new()),
+            next: CopyValue::new(0),
+            received: Signal::new(0),
+        }
+    }
+
+    fn listen(mut self, listener: Callback<Outcome>) -> String {
+        let serial = {
+            let mut next = self.next.write();
+            *next += 1;
+            *next
+        };
+        let id = format!("dui-{serial}");
+        self.listeners.write().insert(id.clone(), listener);
+        id
+    }
+
+    fn forget(mut self, id: &str) {
+        // The root may have gone first, taking the listeners with it.
+        if let Ok(mut listeners) = self.listeners.try_write() {
+            listeners.remove(id);
+        }
+    }
+
+    /// Hands a message to whoever listens for its element.
+    pub(crate) fn deliver(mut self, message: &Message) {
+        *self.received.write() += 1;
+        let listener = self.listeners.read().get(&message.id).copied();
+        if let Some(listener) = listener {
+            listener.call(message.kind);
+        }
+    }
+
+    /// How many messages the script has sent since the app started. The
+    /// gallery shows it, to show that a finger moving sends none.
+    #[must_use]
+    pub fn received(self) -> u64 {
+        (self.received)()
+    }
+}
+
+/// Listens for how the script's work on one element ends. Returns the ID
+/// to put on that element as `data-dui-id`.
+///
+/// Outside a [`crate::UiRoot`] nothing is heard, and the ID is empty.
+pub fn use_outcome(mut on_outcome: impl FnMut(Outcome) + 'static) -> String {
+    let listener = use_callback(move |outcome: Outcome| on_outcome(outcome));
+    let bus = try_use_context::<Bus>();
+    let id = use_hook(|| bus.map(|bus| bus.listen(listener)).unwrap_or_default());
+    use_drop({
+        let id = id.clone();
+        move || {
+            if let Some(bus) = bus {
+                bus.forget(&id);
+            }
+        }
+    });
+    id
+}
+
+/// The channel's Rust end: the script's messages, one at a time, for as
+/// long as the page lives.
+pub(crate) const CONNECT: &str =
+    "DirtUi.connect(message => dioxus.send(message)); await new Promise(() => {});";

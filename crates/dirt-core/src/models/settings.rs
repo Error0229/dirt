@@ -15,6 +15,71 @@ pub enum ThemeMode {
     System,
 }
 
+/// The one colour of the interface the person chooses (interface design,
+/// section 4.1.1). Kept on the device and not synced: a phone and a laptop
+/// may want different ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Accent {
+    /// The colour of soil, and the default.
+    #[default]
+    Clay,
+    /// Green.
+    Moss,
+    /// Blue.
+    Lake,
+    /// Violet.
+    Plum,
+    /// Amber.
+    Honey,
+    /// No colour at all.
+    Graphite,
+}
+
+impl Accent {
+    /// Every accent, in the order the interface offers them.
+    pub const ALL: [Self; 6] = [
+        Self::Clay,
+        Self::Moss,
+        Self::Lake,
+        Self::Plum,
+        Self::Honey,
+        Self::Graphite,
+    ];
+
+    /// The name the accent is stored under and the style sheet knows it by.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Clay => "clay",
+            Self::Moss => "moss",
+            Self::Lake => "lake",
+            Self::Plum => "plum",
+            Self::Honey => "honey",
+            Self::Graphite => "graphite",
+        }
+    }
+
+    /// The name a person reads.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Clay => "Clay",
+            Self::Moss => "Moss",
+            Self::Lake => "Lake",
+            Self::Plum => "Plum",
+            Self::Honey => "Honey",
+            Self::Graphite => "Graphite",
+        }
+    }
+
+    /// The accent stored under `name`, if this build has one of that name.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|accent| accent.name() == name)
+    }
+}
+
 /// Application settings
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
@@ -24,6 +89,8 @@ pub struct Settings {
     pub font_size: u32,
     /// Theme mode
     pub theme: ThemeMode,
+    /// The accent colour
+    pub accent: Accent,
     /// Global capture hotkey (e.g., "Ctrl+Shift+D")
     pub capture_hotkey: String,
 }
@@ -34,6 +101,7 @@ impl Default for Settings {
             font_family: "system-ui".to_string(),
             font_size: 14,
             theme: ThemeMode::System,
+            accent: Accent::Clay,
             capture_hotkey: "Ctrl+Shift+D".to_string(),
         }
     }
@@ -48,5 +116,14 @@ mod tests {
         let settings = Settings::default();
         assert_eq!(settings.font_size, 14);
         assert_eq!(settings.theme, ThemeMode::System);
+        assert_eq!(settings.accent, Accent::Clay);
+    }
+
+    #[test]
+    fn an_accent_is_found_by_the_name_it_is_stored_under() {
+        for accent in Accent::ALL {
+            assert_eq!(Accent::from_name(accent.name()), Some(accent));
+        }
+        assert_eq!(Accent::from_name("wallpaper"), None);
     }
 }

@@ -289,3 +289,6 @@ jobs:
           export CXX_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android${ANDROID_API}-clang++"
           export AR_x86_64_linux_android="$TOOLCHAIN/llvm-ar"
           cargo build -p dirt-mobile --target x86_64-linux-android
+          # The interface's gallery replaces the app when its feature is
+          # on, and no other job compiles it for Android.
+          cargo check -p dirt-mobile --target x86_64-linux-android --features gallery

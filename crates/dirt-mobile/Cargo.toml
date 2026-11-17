@@ -10,6 +10,11 @@ description = "Android shell application for Dirt"
 name = "dirt-mobile"
 path = "src/main.rs"
 
+[features]
+# Shows the interface's gallery (`dirt_ui::gallery`) in place of the app.
+# For development only: see CLAUDE.md, Development Commands.
+gallery = ["dirt-ui/gallery"]
+
 [dependencies]
 # Without dirt-core's `keyring-store`: the app is Android-only, and on
 # Android the account's keys are kept in the platform's encrypted
@@ -27,6 +32,7 @@ tokio = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 dioxus = { workspace = true, features = ["mobile"] }
+dirt-ui = { path = "../dirt-ui" }
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
 # JNI bridge for the device's secure storage. `ndk-context` exposes the
 # JavaVM and Activity handles the Dioxus mobile runtime publishes; `jni`

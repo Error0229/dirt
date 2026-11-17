@@ -10,8 +10,14 @@ description = "Desktop application for Dirt"
 name = "dirt-desktop"
 path = "src/main.rs"
 
+[features]
+# Shows the interface's gallery (`dirt_ui::gallery`) in place of the app.
+# For development only: see CLAUDE.md, Development Commands.
+gallery = ["dirt-ui/gallery"]
+
 [dependencies]
 dirt-core = { path = "../dirt-core" }
+dirt-ui = { path = "../dirt-ui" }
 dioxus = { workspace = true, features = ["desktop"] }
 serde_json.workspace = true
 tracing.workspace = true

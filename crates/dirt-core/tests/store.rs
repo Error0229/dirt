@@ -1,6 +1,6 @@
 //! The local store, through its public interface, on a real file.
 
-use dirt_core::models::{NoteId, Settings, ThemeMode};
+use dirt_core::models::{Accent, NoteId, Settings, ThemeMode};
 use dirt_core::notes::NoteDoc;
 use dirt_core::store::{store_path, StoreName};
 use dirt_core::{Error, Store};
@@ -308,10 +308,36 @@ async fn settings_default_until_saved_and_then_round_trip() {
         font_family: "JetBrains Mono".to_owned(),
         font_size: 18,
         theme: ThemeMode::Dark,
+        accent: Accent::Moss,
         capture_hotkey: "Ctrl+Alt+N".to_owned(),
     };
     store.save_settings(&chosen).await.unwrap();
     assert_eq!(store.load_settings().await.unwrap(), chosen);
+}
+
+#[tokio::test]
+async fn an_accent_this_build_does_not_know_reads_as_the_default() {
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("notes.db");
+    let store = Store::open(&path).unwrap();
+    store
+        .save_settings(&Settings {
+            accent: Accent::Lake,
+            ..Settings::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(store.load_settings().await.unwrap().accent, Accent::Lake);
+
+    // A later build may offer an accent this one has no colours for.
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute(
+            "UPDATE settings SET value = 'wallpaper' WHERE key = 'accent'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(store.load_settings().await.unwrap().accent, Accent::Clay);
 }
 
 // ---- Durability and sharing ----

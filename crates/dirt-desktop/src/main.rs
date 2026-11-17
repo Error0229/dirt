@@ -10,6 +10,8 @@
 mod app;
 mod bootstrap_config;
 mod components;
+#[cfg(feature = "gallery")]
+mod gallery;
 mod hotkey;
 mod queries;
 mod services;
@@ -44,6 +46,14 @@ fn main() {
                 .add_directive("dirt=debug".parse().unwrap()),
         )
         .init();
+
+    // Built to show the interface's gallery, this is not the app: it has
+    // no tray, no hotkey and no notes.
+    #[cfg(feature = "gallery")]
+    if cfg!(feature = "gallery") {
+        gallery::launch();
+        return;
+    }
 
     tracing::info!("Starting Dirt...");
 
@@ -89,12 +99,40 @@ fn main() {
 
     // Configure Dioxus to hide window on close instead of exiting
     // Hide window instead of exiting when closed - keeps app running in tray
-    let config = Config::new().with_close_behaviour(WindowCloseBehaviour::WindowHides);
+    let config = without_the_web_views_own_keys(
+        Config::new().with_close_behaviour(WindowCloseBehaviour::WindowHides),
+    );
 
     // Launch the app
     dioxus::LaunchBuilder::new()
         .with_cfg(config)
         .launch(app::App);
+}
+
+/// Turns off what the web view would do with a browser's keys (interface
+/// design, sections 7.4 and 10): reload, find, print, zoom, developer
+/// tools, and a browser's menu on a right click. Release builds only; a
+/// development build keeps reload and the developer tools.
+///
+/// Most of it is the web view's settings, which Dioxus and wry set:
+///
+/// - On Windows wry turns the web view's browser accelerator keys off for every
+///   build (`AreBrowserAcceleratorKeysEnabled`: Ctrl R and F5, Ctrl F,
+///   Ctrl P, Ctrl + and Ctrl -, F12), and leaves zoom by Ctrl and the
+///   wheel off unless asked (`IsZoomControlEnabled`).
+/// - Turning the context menu off here also keeps the developer tools out
+///   (`AreDevToolsEnabled` on Windows, the inspector on Linux).
+///
+/// The script in the page's head stops the same keys for a web view whose
+/// settings do not, which is the case on Linux and on a Mac for some of
+/// them, and lets each key go on to the app.
+fn without_the_web_views_own_keys(config: Config) -> Config {
+    if !dirt_ui::webview::own_keys_off() {
+        return config;
+    }
+    config
+        .with_disable_context_menu(true)
+        .with_custom_head(dirt_ui::webview::guard_head())
 }
 
 fn initialize_hotkey_manager() -> Result<HotkeyManager, String> {
