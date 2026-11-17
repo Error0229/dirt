@@ -1082,9 +1082,12 @@ any other, its words as text, with the recording on it as a file.
 | Started by a hardware key, with no hand on the screen | Ends with no hand too: 1.6 s of quiet after speech keeps it |
 
 **While listening** the words appear as they are heard: the word still being
-heard in grey, the settled ones in the text colour. Under them a row of
-grains moves with the voice. A timer shows from the first second. Nothing
-else: no "Listening…", no level meter, no waveform of what was said.
+heard in grey, the settled ones in the text colour. A word shows about a
+second after it is said (0.5 to 1.1 s on a laptop in the plan's first
+trial; a phone is not yet measured), and a settled word is not changed.
+Under them a row of grains moves with the voice. A timer shows from the
+first second. Nothing else: no "Listening…", no level meter, no waveform of
+what was said.
 
 | | Desktop | Android |
 |---|---|---|
@@ -1113,11 +1116,12 @@ says where to allow it.
 **The recording** is one file on the note, marked in the note's document
 as its voice recording; that mark is what puts the mic on its card (6.2).
 With **Text only** chosen there is no file and no mic: the note is a note
-like any other. A recording is compressed speech, small enough that ten
-minutes fit well inside the limit on one file, and listening stops at ten
-minutes, keeping what was said. Its format is settled by the voice trial
-in the implementation plan, since it has to be written on every platform
-and played by every web view.
+like any other. A recording is compressed speech: Ogg Opus, 16 kHz mono at
+24 kbit/s, which the plan's first trial settled. Ten minutes is about
+1.6 MiB, well inside the limit on one file, and listening stops at ten
+minutes, keeping what was said. Every platform writes it the same way, from
+Rust. A web view that cannot play Ogg Opus (by its documentation, macOS's
+before 15.4) is handed the same sound decoded, from memory.
 
 **Languages.** Voice is built and tried for English first (decided
 2026-11-16). Other languages come with the languages work recorded in the
@@ -1554,9 +1558,10 @@ Android's WebView on the phone), so the whole system is CSS.
   settings do not cover them (WebKitGTK, macOS), are stopped by a short
   script in the page's head, which lets each key go on to the app.
 - **Voice:** each app reads the microphone (Android's `AudioRecord`, the
-  desktop through `cpal`) and hands the sound to `dirt-core`, which turns
-  it into words and streams them back as they settle. The settling grain
-  and the listening grains are small scripts beside the list's FLIP.
+  desktop through `cpal`) and hands the sound to `dirt-voice`, which turns
+  it into words, streams them back as they settle, says when the speaker
+  has stopped, and writes the recording. The settling grain and the
+  listening grains are small scripts beside the list's FLIP.
 - Rules from CLAUDE.md still hold: the words about sync come from
   `dirt_core::sync::overview`; no SQL, HTTP or cryptography in the client
   crates.
@@ -1602,8 +1607,8 @@ built.
 | **Grains, layers and the pile** (6.17) | 積沙成塔: the list as a pile, newest on top, and the pile drawn as a heap of sand, one grain per thought. Derived from the notes; nothing new is stored | Both apps |
 | **Archive** (6.19): an `archived` value in each note's CRDT document, derived into its row like the deleted flag. The list leaves archived notes out; search and export keep them | Clearing a done thought without losing it. In the note's document it syncs and merges like any edit, and the server sees nothing new | `dirt-core` notes and store, every client, the CLI (`dirt archive`, `dirt unarchive`, `dirt list --archived`), feature-parity.md. Archiving is not an edit (6.19) |
 | **Tags: counts for the notes left** (6.3): how many notes match the current words and tags plus each other tag, and "any of them" as well as "all of them" | The tag list that stays open, and never offers a tag that would empty the list | `dirt-core` store: one grouped query over the tag table |
-| **Voice: speech to text on the device** (6.18). One engine used by both apps, giving words as they are heard. Which engine is the plan's first trial: whisper.cpp does not give words as they are heard, so it is measured against a streaming recogniser (sherpa-onnx) and Android's own on-device one, on a laptop and on a phone. Its model is fetched once on first use from Dirt's own storage, and its hash is checked against one built into the app | Voice without anyone's voice leaving the device. The engine is native code that takes minutes to compile, so it sits behind a feature or in a crate of its own: the CLI, the server's tests and most CI jobs must not build it | A `voice` feature of `dirt-core`, or a `dirt-voice` crate, as the trial finds; both apps |
-| **Which speech model, downloaded or shipped** | English comes first (decided 2026-11-16), so the smallest model that hears English well is enough; the trial names it and its size. Downloading on first use keeps the apps small; shipping makes voice work offline from the first second | Owner's decision, once the trial has the sizes |
+| **Voice: speech to text on the device** (6.18). One engine used by both apps, giving words as they are heard: sherpa-onnx with a streaming model, and Silero's voice-activity model for the end of a thought. The plan's first trial chose it over whisper.cpp read through a sliding window and over Android's own on-device recogniser (implementation plan, "Trial 1 result"); a phone is still to be measured. Its model is fetched once on first use from Dirt's own storage, and its hash is checked against one built into the app | Voice without anyone's voice leaving the device. The engine is native code: prebuilt libraries of 21 MiB on Windows and 25 MiB for each Android ABI, fetched when it builds and shipped beside the app. So it sits in a crate of its own: the CLI, the server's tests and most CI jobs must not build it | `dirt-voice`, a new crate, kept out of the workspace's members and built only when an app's `voice` feature asks for it; both apps; `dirt-core` fetches the model |
+| **Which speech model, downloaded or shipped** | English comes first (decided 2026-11-16), so the smallest model that hears English well is enough. The trial found two that fit (implementation plan, "Trial 1 result"): one model of 68 MiB under CC BY-SA, or two under Apache-2.0 and MIT that come to 110 MiB. Downloading on first use keeps the apps small; shipping makes voice work offline from the first second | Owner's decisions: which of the two, and downloaded or shipped |
 | **Microphone access**: Android's `RECORD_AUDIO`, asked on first use; the desktop's microphone, with macOS's usage string | Voice | `dirt-desktop`, `dirt-mobile` |
 | **A held hotkey**: <kbd>Ctrl Alt N</kbd> must report its release as well as its press | Hold to talk from any app. The `global-hotkey` crate reports both; Linux under Wayland offers no global hotkeys at all, held or not | `dirt-desktop` |
 | **Android: a Talk entry** the hardware shortcuts can open, straight into listening, over the lock screen | Capture without touching the screen | `dirt-mobile` |
