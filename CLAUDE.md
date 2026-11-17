@@ -26,6 +26,20 @@ Rules the redesign set, which still hold:
 - A program opens its own store with `Store::open_in`, which closes the data folder to the computer's other users first. `Store::open` is for a database file the person named, whose folder is theirs.
 - When a document goes out of date, archive it under `docs/archive/` with a banner; do not leave it in place.
 
+## Now: the interface redesign
+
+The work in hand is a new interface for the desktop and Android apps, with the features it adds: archive, undo, voice, capture from outside the app, the file preview, the pile. The owner approved the design on 2026-11-16. Read these before changing anything a person sees or touches:
+
+- `docs/ui/design.md` - the design: principles, tokens, motion, components, flows. `docs/ui/mockup.html` shows it working
+- `docs/plans/2026-11-16-interface-redesign-implementation-plan.md` - the trials, the steps and their order, what is decided and what is still the owner's
+
+Rules it sets:
+
+- Where the mockup and the design document disagree, the mockup holds for how long a movement takes and on which curve, and the document for everything else. Correct the document in the pull request that finds the disagreement.
+- What the design leaves open or gets wrong is settled by whoever builds it, and written into the design document.
+- The interface is built for English. Other languages are later work (system design, section 16.3).
+- Each app works after every pull request. The pull request that replaces a screen deletes the old one.
+
 ## Tech Stack
 
 What the code on `main` uses today:
@@ -157,6 +171,7 @@ Hooks run:
 ## Design Documents
 
 - `docs/DESIGN.md` - Product vision, non-goals and standing product decisions
+- `docs/ui/design.md` - The design system for the desktop and Android apps: tokens, motion, components, flows. `docs/ui/mockup.html` shows it working
 - `docs/SECURITY.md` - What is protected, from whom, and what is not
 - `docs/BACKEND_API.md` - The server's protocol
 - `docs/LIMITS.md` - Every limit the server enforces, with its reason and what was measured. Change a number in `dirt_proto::api::limits` and its row here together
@@ -164,7 +179,7 @@ Hooks run:
 - `docs/OWNER_DECISIONS.md` - What only the owner could decide, what was decided, and what is still the owner's: plans, storage, the sign-in service
 - `docs/feature-parity.md` - What each client does. Change a client's row in the pull request that changes the client
 - `docs/MANUAL_CHECKLIST.md` - What to try by hand on real devices
-- `docs/plans/` - The redesign and its implementation plan
+- `docs/plans/` - The redesign and its implementation plan, and the interface redesign's plan
 - `docs/brainstorms/` - Feature brainstorms
 - `docs/archive/` - Superseded documents, kept as a record
 
