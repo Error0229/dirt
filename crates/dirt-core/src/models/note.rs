@@ -26,6 +26,10 @@ pub struct Note {
     pub created_at: i64,
     /// When the note was last edited on any device (Unix ms), for display
     pub updated_at: i64,
+    /// Whether the note is archived: out of the list, still found by a
+    /// search and kept in an export
+    #[serde(default)]
+    pub archived: bool,
 }
 
 impl Note {
@@ -42,6 +46,7 @@ impl Note {
             content: content.into(),
             created_at: now,
             updated_at: now,
+            archived: false,
         }
     }
 

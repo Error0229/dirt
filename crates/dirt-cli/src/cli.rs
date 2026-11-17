@@ -35,11 +35,14 @@ pub enum Commands {
         /// Filter notes by tag name
         #[arg(long)]
         tag: Option<String>,
+        /// List the archived notes, and not the others
+        #[arg(long)]
+        archived: bool,
         /// Output as JSON
         #[arg(long)]
         json: bool,
     },
-    /// Search notes
+    /// Search notes. Archived notes are found too, after the rest
     Search {
         /// Search query
         query: String,
@@ -57,6 +60,23 @@ pub enum Commands {
     },
     /// Delete an existing note
     Delete {
+        /// Note ID or unique ID prefix
+        id: String,
+    },
+    /// Bring a deleted note back, with the text it had. A deleted note is
+    /// kept for thirty days
+    Restore {
+        /// The ID that `dirt delete` printed, or a unique prefix of it
+        id: String,
+    },
+    /// Archive a note: take it out of the list. It is still found by
+    /// search, synced and exported
+    Archive {
+        /// Note ID or unique ID prefix
+        id: String,
+    },
+    /// Bring an archived note back to the list
+    Unarchive {
         /// Note ID or unique ID prefix
         id: String,
     },

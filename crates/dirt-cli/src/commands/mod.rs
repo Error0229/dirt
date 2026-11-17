@@ -1,5 +1,6 @@
 pub mod account;
 pub mod add;
+pub mod archive;
 pub mod common;
 pub mod completions;
 pub mod delete;
@@ -8,5 +9,6 @@ pub mod edit;
 pub mod export;
 pub mod files;
 pub mod list;
+pub mod restore;
 pub mod search;
 pub mod sync;

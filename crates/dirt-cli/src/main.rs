@@ -58,14 +58,26 @@ async fn run() -> Result<(), CliError> {
     let store = &context.store;
     match command {
         Some(Commands::Add { content }) => commands::add::run_add(&content, &context).await?,
-        Some(Commands::List { limit, tag, json }) => {
-            commands::list::run_list(limit, tag.as_deref(), json, store).await?;
+        Some(Commands::List {
+            limit,
+            tag,
+            archived,
+            json,
+        }) => {
+            commands::list::run_list(limit, tag.as_deref(), archived, json, store).await?;
         }
         Some(Commands::Search { query, limit, json }) => {
             commands::search::run_search(&query, limit, json, store).await?;
         }
         Some(Commands::Edit { id }) => commands::edit::run_edit(&id, &context).await?,
         Some(Commands::Delete { id }) => commands::delete::run_delete(&id, &context).await?,
+        Some(Commands::Restore { id }) => commands::restore::run_restore(&id, &context).await?,
+        Some(Commands::Archive { id }) => {
+            commands::archive::run_archive(&id, &context).await?;
+        }
+        Some(Commands::Unarchive { id }) => {
+            commands::archive::run_unarchive(&id, &context).await?;
+        }
         Some(Commands::Attach {
             note,
             file,

@@ -152,6 +152,39 @@ and in `dirt-sim` where two devices are involved.
 **Settle first:** how a change that is not an edit is noticed as unsent and
 pushed; what a note's document from before archive reads as.
 
+**Settled**, with the pull request that built archive, undo and the note
+emptied again:
+
+- *A change that is not an edit* is noticed by the row, not by the
+  document. Each note's row has a revision that rises with every write
+  made on the device, and the note is unsent while that differs from the
+  revision last pushed (`dirt-core::store::sync_state`). A delete is not
+  an edit either, and has always been sent this way. Archiving saves
+  through the same path, so an archive made offline is unsent and the next
+  cycle pushes it, and one that arrives from another device is merged and
+  derived into the row without making the note unsent. Nothing in the
+  protocol or on the server changes.
+- *A document from before archive* reads as not archived: the mark is
+  `archived` in a map `marks` of the document, and such a document has no
+  such map. A build from before archive keeps the mark in a document it
+  merges, edits and sends on, because yrs stores and writes out what it
+  merged under a name the program never asked for.
+  `crates/dirt-core/tests/notes_archive.rs` plays such a build. For the
+  same reason a store from before archive reads its documents once when it
+  is upgraded, to find the notes that are already archived.
+
+Two things followed from these and are in the system design (6.2, 6.5 and
+16.2). The row also keeps the revision of the note's last edit, so that a
+copy that is unsent only for having been archived is not kept as a new note
+when the server has purged the note. And "never reached the server" is a
+mark of its own, set before a push leaves and not when its answer arrives,
+because the answer can be lost.
+
+Left open by the design and settled here, in `docs/ui/design.md` 6.1 and
+6.19: a note of spaces and line breaks alone is empty; narrowing to a tag
+is finding, so it keeps archived notes after the rest, and the count beside
+a tag counts them.
+
 **Done when:** two simulated devices that archive, bring back, edit and
 delete the same note in every order end the same; a store from the
 previous schema opens and keeps its notes; the CLI's new commands are in

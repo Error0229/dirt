@@ -648,6 +648,29 @@ impl SyncEngine {
         }
     }
 
+    /// Marks the notes of a batch that have never been sent as offered to
+    /// the server, and leaves out any that the store no longer holds.
+    ///
+    /// Once a push has left, the server may hold its notes whatever answer
+    /// comes back. A note emptied again is taken off this device without a
+    /// trace only if it was never offered, so the mark is written before
+    /// the request goes. A note that was let go in the moment between being
+    /// read and being marked is not sent: sending it would bring back, on
+    /// every device, a note the person had taken back.
+    async fn offered(&self, mut batch: Vec<UnsentNote>) -> Result<Vec<UnsentNote>, SyncError> {
+        let new: Vec<NoteId> = batch
+            .iter()
+            .filter(|note| !note.offered)
+            .map(|note| note.id)
+            .collect();
+        if new.is_empty() {
+            return Ok(batch);
+        }
+        let held = self.store.offer_notes(new).await?;
+        batch.retain(|note| note.offered || held.contains(&note.id));
+        Ok(batch)
+    }
+
     /// Pushes every unsent note once and returns how many came back stale.
     async fn push(&self, report: &mut SyncReport) -> Result<usize, SyncError> {
         let mut stale = 0;
@@ -663,6 +686,7 @@ impl SyncEngine {
                 return Ok(stale);
             };
             after = last.position;
+            let batch = self.offered(batch).await?;
             // Read for each batch: the key may change between two.
             let ring = self.ring();
             let mut key_changed = false;

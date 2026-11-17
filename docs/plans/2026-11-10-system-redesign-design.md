@@ -345,6 +345,9 @@ up for ever. They are purged like this (built in step 8):
 - A device whose copy holds an unsent edit, and on which the note is not
   deleted, keeps the text as a new note. The delete never covered that
   edit, and with the note purged there is nothing left to merge it into.
+  Archiving is not an edit (section 16.2): a copy that is unsent only
+  because it was archived, or brought back from the archive, goes like any
+  other.
 - The markers are never removed. Dropping one would need the server to know
   that every device had seen it, and a device that came back afterwards
   would bring the note back from its own copy. An account may have 100,000
@@ -398,6 +401,13 @@ note and refuses a lower one, which stops the server replaying an old version.
   and a local revision counter. A successful push marks the note as synced
   only if the counter has not moved since the push began, so an edit made
   during a push is never skipped.
+- The counter rises with every write made on the device, not only with
+  edits: a delete and an archive are not edits in the document (sections 6.2
+  and 16.2) and are unsent, and pushed, like one. Since section 16 the row
+  also holds whether the note is archived, derived from the document as the
+  deleted flag is; the counter's value at the note's last edit, which tells
+  an unsent edit from an unsent archive when the note is purged; and
+  whether the note was ever offered to the server.
 - Tags, the tag index, the full-text index, settings and the sync cursor, as
   today.
 - Notes created before sign-in live in a local store and are uploaded to the
@@ -857,9 +867,9 @@ nothing new.
 
 | Addition | Where it sits in this design |
 |---|---|
-| **Archive.** A note's document gains an `archived` value. It is not an edit: it raises no edit count and writes no edit time, so it does not bring back a note that another device deleted (section 6.2). When two devices choose differently, one choice holds on every device. A build from before archive ignores the value and keeps it | Sections 6.1 and 6.5: a derived column in the local row, as the deleted flag is |
+| **Archive.** A note's document gains an `archived` value, in a map `marks` beside the text. It is not an edit: it raises no edit count and writes no edit time, so it does not bring back a note that another device deleted (section 6.2), by a merge or after a purge. When two devices choose differently, one choice holds on every device. A build from before archive ignores the value and keeps it. A deleted note that was archived is restored archived | Sections 6.1 and 6.5: a derived column in the local row, as the deleted flag is. A store from before archive derives it from its documents when it is upgraded |
 | **Undo of a delete.** The store's restore, which is an ordinary edit (section 6.2), offered by every client | Section 8 |
-| **A note from its first character.** A note emptied again, with no files, is removed from the device if it was never pushed, and deleted like any other if it was | Section 6.5 |
+| **A note from its first character.** A note emptied again, with no files, is removed from the device if it was never pushed, and deleted like any other if it was. "Never pushed" is kept per note as "never offered": a push marks its notes before it sends them, and leaves out one that was let go in that moment, because the answer to a push can be lost and the server may hold the note all the same. A note that came from the server, or was ever sent, stays offered through a new account epoch | Section 6.5 |
 | **A voice recording.** One of a note's files, marked in the document as its recording. Speech becomes text on the device that heard it; a device that could not make the words adds them later, and no other device does | Section 10: a file like any other to the server |
 | **A speech engine**, behind a feature of `dirt-core` or in a crate of its own, so that the CLI, the server's tests and most of CI do not build it. Its model is fetched once from Dirt's own storage and checked against a hash built into the app | Section 8.2 |
 | **`dirt-ui`**, a crate of what the two apps share: style sheet, fonts, icons, the motion script, components. It is a client crate: no SQL, HTTP or cryptography | Section 8.1 |

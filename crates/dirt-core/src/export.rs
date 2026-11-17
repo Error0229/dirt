@@ -13,6 +13,10 @@
 //! none: the text alone was asked for, or the device did not have the file
 //! and could not fetch it. So an export never lets a file go unsaid.
 //!
+//! An archived note is exported like any other, after the notes of the
+//! list, and marked: `"archived": true` in JSON, and a line `archived: true`
+//! in the block at the head of the note in Markdown.
+//!
 //! This module is the text. [`Export`] gathers the notes and their files
 //! from a store and writes them.
 
@@ -51,6 +55,10 @@ pub struct ExportNote {
     pub created_at: i64,
     pub updated_at: i64,
     pub tags: Vec<String>,
+    /// Whether the note is archived. `false` for an export made before
+    /// notes could be.
+    #[serde(default)]
+    pub archived: bool,
     /// The files attached to the note, in the order they were attached.
     /// Empty for a note with none, and for an export made before notes
     /// had files.
@@ -87,6 +95,7 @@ pub fn note_to_export_item(note: &Note) -> ExportNote {
         created_at: note.created_at,
         updated_at: note.updated_at,
         tags,
+        archived: note.archived,
         files: Vec::new(),
     }
 }
@@ -97,6 +106,9 @@ pub fn render_json_export(notes: &[ExportNote]) -> serde_json::Result<String> {
 }
 
 /// Render notes in Markdown with frontmatter blocks.
+///
+/// An archived note says so in its frontmatter, with `archived: true`. A
+/// note that is not archived has no such line.
 ///
 /// A note with files has them listed in its frontmatter. Each value there
 /// that a person typed, a file's name above all, is written as a JSON
@@ -118,6 +130,9 @@ pub fn render_markdown_export(notes: &[ExportNote]) -> String {
         let _ = writeln!(output, "tags:");
         for tag in &note.tags {
             let _ = writeln!(output, "  - {tag}");
+        }
+        if note.archived {
+            let _ = writeln!(output, "archived: true");
         }
         if !note.files.is_empty() {
             let _ = writeln!(output, "files:");
@@ -194,6 +209,7 @@ mod tests {
             created_at: 123,
             updated_at: 456,
             tags: vec!["tag".to_owned()],
+            archived: false,
             files,
         }
     }
@@ -219,6 +235,31 @@ mod tests {
              ---\n\n\
              Hello export #tag\n"
         );
+    }
+
+    #[test]
+    fn an_archived_note_is_marked_in_markdown_and_in_json() {
+        let mut archived = note_with_files(Vec::new());
+        archived.archived = true;
+        let listed = note_with_files(Vec::new());
+
+        let markdown = render_markdown_export(&[listed.clone(), archived.clone()]);
+        // The mark is in the archived note's block, after its tags, and in
+        // no other.
+        assert_eq!(markdown.matches("archived: true\n").count(), 1);
+        assert!(markdown.ends_with(
+            "tags:\n  - tag\n\
+             archived: true\n\
+             ---\n\n\
+             Hello export #tag\n"
+        ));
+
+        let json = render_json_export(&[listed, archived.clone()]).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed[0]["archived"], false);
+        assert_eq!(parsed[1]["archived"], true);
+        let read: Vec<ExportNote> = serde_json::from_str(&json).unwrap();
+        assert_eq!(read[1], archived);
     }
 
     #[test]
@@ -292,6 +333,7 @@ mod tests {
         )
         .unwrap();
         assert!(before[0].files.is_empty());
+        assert!(!before[0].archived);
     }
 
     #[test]

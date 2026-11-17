@@ -12,11 +12,27 @@
 //!   name, type, size and key (`crate::files::Attachment`). A file never
 //!   changes, so an entry is written once and at most removed. Two devices
 //!   that each attach a file write two entries, and both are kept.
+//! - `marks`: single values that say something about the note and are not
+//!   part of what it holds. There is one, `archived`: `true` while the note
+//!   is archived. A document written before archive has no such map and
+//!   reads as not archived.
 //!
 //! Attaching a file and removing one are edits, like a change to the text:
 //! each raises the device's count. A device that deleted the note without
 //! having seen a file attached has not deleted that, and the note comes
 //! back with the file.
+//!
+//! Setting a mark is not an edit. It raises no count and records no time,
+//! so archiving a note changes neither its edit time nor whether it is
+//! deleted: a note that another device deleted stays deleted when this one
+//! archives it. When two devices set a mark differently without having seen
+//! each other's choice, yrs keeps one of the two, the same one on every
+//! device.
+//!
+//! A version of Dirt from before a map was added never asks yrs for it, and
+//! keeps it all the same: yrs stores what it merges under the name it came
+//! with, whether or not this program has asked for that name, and writes it
+//! out again. `tests/notes_archive.rs` shows it for `marks`.
 //!
 //! The note counts as deleted while at least one deletion marker covers the
 //! whole current version vector. An edit the deleter had not seen raises a
@@ -59,6 +75,7 @@ pub struct NoteDoc {
     edits: MapRef,
     deletions: MapRef,
     files: MapRef,
+    marks: MapRef,
     client_id: u64,
 }
 
@@ -74,12 +91,14 @@ impl NoteDoc {
         let edits = doc.get_or_insert_map("edits");
         let deletions = doc.get_or_insert_map("deletions");
         let files = doc.get_or_insert_map("files");
+        let marks = doc.get_or_insert_map("marks");
         Self {
             doc,
             body,
             edits,
             deletions,
             files,
+            marks,
             client_id,
         }
     }
@@ -212,6 +231,28 @@ impl NoteDoc {
         self.record_edit(&mut txn, now_ms);
     }
 
+    /// Archives the note, or brings it back to the list.
+    ///
+    /// This is not an edit: the note keeps its edit time, and a note that
+    /// another device has deleted stays deleted.
+    ///
+    /// Returns `false`, and writes nothing, when the note is already as
+    /// asked.
+    pub fn set_archived(&self, archived: bool) -> bool {
+        let mut txn = self.doc.transact_mut();
+        if read_archived(&self.marks, &txn) == archived {
+            return false;
+        }
+        self.marks.insert(&mut txn, ARCHIVED, archived);
+        true
+    }
+
+    /// Whether the note is archived: out of the list, and still a note.
+    #[must_use]
+    pub fn is_archived(&self) -> bool {
+        read_archived(&self.marks, &self.doc.transact())
+    }
+
     /// Whether the note is deleted: some marker covers every edit made so far.
     #[must_use]
     pub fn is_deleted(&self) -> bool {
@@ -288,6 +329,14 @@ impl NoteDoc {
         self.edits
             .insert(txn, key, format!("{}:{now_ms}", count + 1));
     }
+}
+
+/// The key of the archive mark in `marks`.
+const ARCHIVED: &str = "archived";
+
+/// A mark that is missing, or is anything but `true`, reads as not archived.
+fn read_archived<T: ReadTxn>(marks: &MapRef, txn: &T) -> bool {
+    matches!(marks.get(txn, ARCHIVED), Some(Out::Any(Any::Bool(true))))
 }
 
 /// Whether `marker` has seen every edit in `current`.

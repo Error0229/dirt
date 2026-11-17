@@ -381,11 +381,12 @@ impl Names {
     }
 }
 
-/// Every note that is not deleted, as the store lists them.
+/// Every note that is not deleted: the notes of the list as the store
+/// lists them, then the archived ones.
 async fn all_notes(store: &Store) -> Result<Vec<Note>, crate::Error> {
     let mut notes = Vec::new();
     loop {
-        let page = store.list_notes(PAGE, notes.len()).await?;
+        let page = store.list_every_note(PAGE, notes.len()).await?;
         let read = page.len();
         notes.extend(page);
         if read < PAGE {

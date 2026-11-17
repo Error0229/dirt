@@ -36,8 +36,9 @@ pub fn NoteList() -> Element {
     _ = timestamp_tick();
 
     // Read from the store, and again when the notes change: the tags in
-    // use with how many notes carry each, how many notes there are, and,
-    // while a search or a tag narrows the list, the notes that match.
+    // use with how many notes carry each, how many notes the list holds
+    // (an archived note is not in it), and, while a search or a tag narrows
+    // the list, the notes that match.
     let tags = use_resource(move || {
         let store = state.db_service.read().clone();
         let _ = (state.notes)();
@@ -45,7 +46,7 @@ pub fn NoteList() -> Element {
             let store = store?;
             let mut tags = store.list_tags().await.ok()?;
             tags.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-            let total = store.note_count().await.ok()?;
+            let total = store.note_counts().await.ok()?.listed;
             Some((tags, total))
         }
     });
