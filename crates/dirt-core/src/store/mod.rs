@@ -15,6 +15,7 @@ mod notes;
 mod schema;
 mod settings;
 mod sync_state;
+mod tags;
 
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
@@ -29,12 +30,13 @@ pub use notes::{LetGo, NoteCounts};
 pub use sync_state::{
     NoteProblem, ProblemKind, PurgeApplied, PurgeCandidate, SyncProgress, UnsentNote,
 };
+pub use tags::{TagCount, TagRule};
 
 use dirt_proto::api::limits;
 
 use crate::files::shelf::Shelf;
 use crate::files::{seal, thumbnail, Attachment, FileKey, FilePart, Thumbnail};
-use crate::models::{Note, NoteId, Settings};
+use crate::models::{Note, NoteId, PileNote, Settings};
 use crate::notes::NoteDoc;
 use crate::{Error, Result};
 
@@ -360,6 +362,32 @@ impl Store {
         .await
     }
 
+    /// The bytes of a file this device holds, whole and in memory, read
+    /// on the store's own thread. `None` if the device does not hold it.
+    ///
+    /// For showing a file inside the app without making a copy of it for
+    /// another program. A file is 10 MiB at most, and one on the shelf
+    /// that is larger is not a file a note could name: it is refused,
+    /// not read.
+    pub async fn file_bytes(&self, file_id: uuid::Uuid) -> Result<Option<Vec<u8>>> {
+        let shelf = self.shelf();
+        self.read(move |_| {
+            let path = shelf.path(file_id);
+            let most = u64::try_from(limits::MAX_FILE_BYTES).unwrap_or(u64::MAX);
+            match std::fs::metadata(&path) {
+                Ok(found) if !found.is_file() => Ok(None),
+                Ok(found) if found.len() > most => Err(Error::InvalidInput(format!(
+                    "the file on this device is {} bytes, more than a file may be",
+                    found.len()
+                ))),
+                Ok(_) => Ok(Some(std::fs::read(&path)?)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(error.into()),
+            }
+        })
+        .await
+    }
+
     // ---- Files and the server ----
 
     /// One file that a note names: an attachment or a thumbnail, with the
@@ -392,6 +420,12 @@ impl Store {
     /// The files that could not be sent, and why.
     pub async fn file_problems(&self) -> Result<Vec<FileProblem>> {
         self.read(|c| files::problems(c)).await
+    }
+
+    /// How many files could not be sent: the length of
+    /// [`Self::file_problems`], for a status that shows only the number.
+    pub async fn file_problem_count(&self) -> Result<usize> {
+        self.read(|c| files::problem_count(c)).await
     }
 
     /// References to tell the server to drop: a note has been without the
@@ -642,8 +676,7 @@ impl Store {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<Note>> {
-        let tag = tag.to_owned();
-        self.read(move |c| notes::list_by_tag(c, notes::Which::Listed, &tag, limit, offset))
+        self.list_by_one_tag(notes::Which::Listed, tag, limit, offset)
             .await
     }
 
@@ -654,8 +687,53 @@ impl Store {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<Note>> {
-        let tag = tag.to_owned();
-        self.read(move |c| notes::list_by_tag(c, notes::Which::Archived, &tag, limit, offset))
+        self.list_by_one_tag(notes::Which::Archived, tag, limit, offset)
+            .await
+    }
+
+    /// Notes carrying one tag. A tag that is empty is no tag at all, and
+    /// no note carries it.
+    async fn list_by_one_tag(
+        &self,
+        which: notes::Which,
+        tag: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Note>> {
+        let chosen = tags::Chosen::new(&[tag], TagRule::All);
+        if chosen.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.read(move |c| notes::list_by_tags(c, which, &chosen, limit, offset))
+            .await
+    }
+
+    /// Notes of the list that carry every one of `tags`, or under
+    /// [`TagRule::Any`] at least one of them, most recently edited first.
+    /// Archived notes are left out. A tag may have its `#` or not, and
+    /// with no tags this is [`Self::list_notes`].
+    pub async fn list_notes_by_tags(
+        &self,
+        tags: &[String],
+        rule: TagRule,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Note>> {
+        let chosen = tags::Chosen::new(tags, rule);
+        self.read(move |c| notes::list_by_tags(c, notes::Which::Listed, &chosen, limit, offset))
+            .await
+    }
+
+    /// The archived notes narrowed in the same way.
+    pub async fn list_archived_notes_by_tags(
+        &self,
+        tags: &[String],
+        rule: TagRule,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Note>> {
+        let chosen = tags::Chosen::new(tags, rule);
+        self.read(move |c| notes::list_by_tags(c, notes::Which::Archived, &chosen, limit, offset))
             .await
     }
 
@@ -667,6 +745,8 @@ impl Store {
     /// With neither, it is the list, and archived notes are left out. With
     /// either, the archived notes that match come after the rest, and
     /// [`Note::archived`] says which they are.
+    ///
+    /// [`Self::find_notes_by_tags`] takes several tags.
     pub async fn find_notes(
         &self,
         query: &str,
@@ -674,8 +754,72 @@ impl Store {
         limit: usize,
     ) -> Result<Vec<Note>> {
         let query = query.to_owned();
-        let tag = tag.map(str::to_owned);
-        self.read(move |c| notes::find(c, &query, tag.as_deref(), limit))
+        let chosen = tags::Chosen::new(tag.as_slice(), TagRule::All);
+        self.read(move |c| notes::find(c, &query, &chosen, limit))
+            .await
+    }
+
+    /// What Find shows for the words typed and the tags chosen: notes that
+    /// contain every word of `query` and carry every one of `tags`, or
+    /// under [`TagRule::Any`] at least one of them. Words and tags may
+    /// each be left out.
+    ///
+    /// With neither, it is the list, and archived notes are left out. With
+    /// either, the archived notes that match come after the rest. With
+    /// words the best match comes first, and without the most recently
+    /// edited.
+    pub async fn find_notes_by_tags(
+        &self,
+        query: &str,
+        tags: &[String],
+        rule: TagRule,
+        limit: usize,
+    ) -> Result<Vec<Note>> {
+        let query = query.to_owned();
+        let chosen = tags::Chosen::new(tags, rule);
+        self.read(move |c| notes::find(c, &query, &chosen, limit))
+            .await
+    }
+
+    /// The tags that could be chosen next in Find, each with how many
+    /// notes there would be with that tag chosen too. The most notes
+    /// first, and tags with as many in the order of their names; at most
+    /// `limit` of them.
+    ///
+    /// `query` holds the words typed and `chosen` the tags already picked,
+    /// combined by `rule`. The chosen tags themselves are not among the
+    /// answers. `starting` is what was typed after a `#`: only tags whose
+    /// names start so are given.
+    ///
+    /// **The count is the number of notes that
+    /// [`Self::find_notes_by_tags`] gives for the same words and the
+    /// chosen tags with this one added.** Finding keeps archived notes,
+    /// after the rest, so they are counted, and a tag that only archived
+    /// notes carry is offered. Deleted notes are not.
+    ///
+    /// Under [`TagRule::All`] a tag is given when a note that matches the
+    /// words and carries every chosen tag carries it too. A tag that would
+    /// leave no note is not given, so no choice can empty the list.
+    ///
+    /// Under [`TagRule::Any`] another tag takes nothing away: the count is
+    /// the notes there are already and those the tag would add. A tag is
+    /// given when a note that matches the words carries it. One whose
+    /// notes are all there already is given with the number there is now.
+    ///
+    /// A query with text and no letter or digit finds nothing, so nothing
+    /// is given for it.
+    pub async fn tags_to_narrow(
+        &self,
+        query: &str,
+        chosen: &[String],
+        rule: TagRule,
+        starting: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<TagCount>> {
+        let query = query.to_owned();
+        let chosen = tags::Chosen::new(chosen, rule);
+        let starting = starting.map(str::to_owned);
+        self.read(move |c| tags::narrowing(c, &query, &chosen, starting.as_deref(), limit))
             .await
     }
 
@@ -715,6 +859,22 @@ impl Store {
     /// How many notes the list holds, and how many are archived.
     pub async fn note_counts(&self) -> Result<NoteCounts> {
         self.read(|c| notes::counts(c)).await
+    }
+
+    /// Every note that is not deleted, archived ones among them, as the
+    /// pile needs it: its ID, when it was last edited and whether it is
+    /// archived. Oldest first, by when each was made.
+    ///
+    /// An app holds only the notes its list shows, and the pile has a
+    /// grain for every note. This reads no text and no document, however
+    /// long the notes are, and [`PileNote`] is 32 bytes: 20,000 notes are
+    /// 640 KB and take about 20 ms (`docs/LIMITS.md`).
+    ///
+    /// The shade of each grain ([`crate::models::Grain`]), the layer it
+    /// lies in ([`crate::models::Layer`]) and the line under the pile
+    /// ([`crate::models::PileSummary`]) are worked out from the answer.
+    pub async fn pile(&self) -> Result<Vec<PileNote>> {
+        self.read(|c| notes::pile(c)).await
     }
 
     // ---- Documents ----

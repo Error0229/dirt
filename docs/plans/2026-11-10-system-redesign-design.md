@@ -874,7 +874,7 @@ nothing new.
 | **A speech engine**, behind a feature of `dirt-core` or in a crate of its own, so that the CLI, the server's tests and most of CI do not build it. Its model is fetched once from Dirt's own storage and checked against a hash built into the app | Section 8.2 |
 | **`dirt-ui`**, a crate of what the two apps share: style sheet, fonts, icons, the motion script, components. It is a client crate: no SQL, HTTP or cryptography | Section 8.1 |
 | **Capture on Android without the app.** A native screen keeps a thought, and a short piece of background work makes it a note and syncs once. That is an event, so section 8.3's rule of no timer holds. Over the lock screen it can add and can show nothing | Section 8.3, and `docs/SECURITY.md` |
-| **Smaller asks of the core:** counts of the tags that would narrow a search further, every note's ID and edit time in one call, a short form of each sync state, a file's bytes in memory | Section 8.2 |
+| **Smaller asks of the core:** counts of the tags that would narrow a search further, every note's ID and edit time in one call, a short form of each sync state, a file's bytes in memory. All four read what the device already holds: no table, column or index was added for them, and the sync worker's status gained one count, of the files the server refused | Section 8.2 |
 
 Decided against on 2026-11-16: a system notification on Android when a
 device asks to join. It would need the server to push to a phone, or the

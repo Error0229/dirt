@@ -708,6 +708,49 @@ Left open by the design and settled here, in `docs/ui/design.md` 6.1 and
 is finding, so it keeps archived notes after the rest, and the count beside
 a tag counts them.
 
+**Settled**, with the pull request that built the other four rows. Each is
+written into `docs/ui/design.md` where it belongs (6.3, 6.6, 6.16, 6.17):
+
+- *Tags.* The number beside a tag is the number of notes Find then gives
+  for the same words and the chosen tags with that tag added, under the
+  rule in force, archived notes among them. A test holds the two to each
+  other for every pair of tags and both rules. Under "any of them" a tag
+  takes nothing away: its count is what there is and what it would add,
+  and it is offered when a note that matches the words carries it. The
+  order is the most notes first, then by name. `find_notes` and the lists
+  by one tag are as they were; `find_notes_by_tags`, `list_notes_by_tags`
+  and `list_archived_notes_by_tags` take several tags and a rule.
+- *Layers.* "This week" is the six days before today, not the calendar's
+  week, so that no layer depends on where a week starts and yesterday is
+  never "Earlier this month". It may reach into last month or last year.
+  An edit time later than now is today. Dates are local, by the one
+  offset from UTC the caller gives for now.
+- *The pile.* Oldest first, by when each note was made. A thought is any
+  note that is not deleted; archived notes are counted among them and
+  again by themselves. It is read by the index the list already has,
+  which holds the edit time and the archived mark, so that only the ID is
+  taken from each note's row and long notes cost no more than short ones
+  (`docs/LIMITS.md`). No index was added for it.
+- *A grain* is the mockup's own hash of the note's ID, with the mockup's
+  shifts made unsigned so that every shade is in the design's range.
+- *Sync, in short.* Six states and no seventh: a file the server refused
+  and a sync that waiting does not cure (sign in again, update the app)
+  are both "a problem", with words of their own ("1 file can't sync",
+  "Can't sync"). "Offline" is any failure sync tries again by itself.
+  "2 waiting" counts notes, and files only when no note waits. A device
+  waiting to be let in shows as signed out. The worker's status now
+  counts refused files, so that an app has the state without reading the
+  store.
+- *A file in memory.* The device's own copy of a file was never
+  encrypted (`docs/SECURITY.md`), so "not written to disk" can only mean
+  that no further copy is made. A file fetched to be shown is kept as any
+  fetched file is, and read into memory from there; the design's 6.16
+  said more than that and is corrected.
+- *The desktop's `time_format`* stays where it is. It makes the label of
+  the old note row ("2d", "1w"), which step 3 replaces with the design's
+  ("Thu", "Oct 3") and deletes. The core took only what both apps need
+  the same answer to: which layer a time falls in.
+
 **Done when:** two simulated devices that archive, bring back, edit and
 delete the same note in every order end the same; a store from the
 previous schema opens and keeps its notes; the CLI's new commands are in

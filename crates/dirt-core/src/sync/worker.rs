@@ -77,6 +77,11 @@ pub struct SyncStatus {
     pub old_key_notes: u64,
     /// Files this device holds that the server has not taken.
     pub files_unsent: usize,
+    /// Files that could not be sent. Each has a reason in the store.
+    pub file_problems: usize,
+    /// The last cycle completed, but a file did not get through and is
+    /// being tried again. Not a failure, and not yet synced either.
+    pub files_delayed: bool,
 }
 
 /// How long the worker waits in each situation.
@@ -269,6 +274,9 @@ async fn run(
         let outcome = engine.run_once().await;
         last_cycle = Some(Instant::now());
 
+        let files_delayed = outcome
+            .as_ref()
+            .is_ok_and(|report| report.files_failed && report.files_unsent > 0);
         let failure = match &outcome {
             Ok(report) => {
                 tracing::info!(
@@ -318,6 +326,7 @@ async fn run(
         let unsent = store.unsent_count().await.unwrap_or(0);
         let files_unsent = store.unsent_file_count().await.unwrap_or(0);
         let problems = store.note_problems().await.map_or(0, |list| list.len());
+        let file_problems = store.file_problem_count().await.unwrap_or(0);
         let last_synced_ms = store.last_synced_ms().await.unwrap_or(None);
         // Read from the engine and not from the cycle's report: a cycle that
         // failed has no report, but may have merged documents first.
@@ -345,6 +354,8 @@ async fn run(
             status.unsent = unsent;
             status.files_unsent = files_unsent;
             status.problems = problems;
+            status.file_problems = file_problems;
+            status.files_delayed = files_delayed;
             status.failure = failure;
             status.pulled = pulled;
         });
@@ -356,15 +367,18 @@ async fn refresh_counts(store: &Store, status: &watch::Sender<SyncStatus>) {
     let unsent = store.unsent_count().await.unwrap_or(0);
     let files_unsent = store.unsent_file_count().await.unwrap_or(0);
     let problems = store.note_problems().await.map_or(0, |list| list.len());
+    let file_problems = store.file_problem_count().await.unwrap_or(0);
     let last_synced_ms = store.last_synced_ms().await.unwrap_or(None);
     status.send_if_modified(|status| {
         let changed = status.unsent != unsent
             || status.files_unsent != files_unsent
             || status.problems != problems
+            || status.file_problems != file_problems
             || status.last_synced_ms != last_synced_ms;
         status.unsent = unsent;
         status.files_unsent = files_unsent;
         status.problems = problems;
+        status.file_problems = file_problems;
         status.last_synced_ms = last_synced_ms;
         changed
     });

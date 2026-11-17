@@ -8,14 +8,16 @@
 //! `BEGIN IMMEDIATE` transaction, so the derived values can never disagree
 //! with the document, and two processes can never interleave on one note.
 
-use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
+use rusqlite::types::Value;
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row, Transaction};
 
 use dirt_proto::api::limits;
 
 use super::schema::{client_id, write_transaction};
 use super::sync_state::remove_row;
+use super::tags::{Chosen, TagRule};
 use crate::files::Attachment;
-use crate::models::{extract_tags, Note, NoteId};
+use crate::models::{extract_tags, Note, NoteId, PileNote};
 use crate::notes::NoteDoc;
 use crate::{Error, Result};
 
@@ -665,26 +667,31 @@ pub(super) fn list(
     collect(rows)
 }
 
-/// Live notes that carry `tag`, most recently edited first.
-pub(super) fn list_by_tag(
+/// Live notes that pass the chosen tags' rule, most recently edited
+/// first. With no tag chosen, [`list`].
+pub(super) fn list_by_tags(
     connection: &Connection,
     which: Which,
-    tag: &str,
+    chosen: &Chosen,
     limit: usize,
     offset: usize,
 ) -> Result<Vec<Note>> {
+    if chosen.is_empty() {
+        return list(connection, which, limit, offset);
+    }
+    let after = chosen.len();
     let mut statement = connection.prepare(&format!(
-        "SELECT {NOTE_COLUMNS} FROM notes n \
-           JOIN note_tags t ON t.note_id = n.id \
-          WHERE t.tag = ?1 AND n.deleted = 0 {} \
-          ORDER BY n.archived, n.edited_at DESC, n.id DESC LIMIT ?2 OFFSET ?3",
-        which.narrows()
+        "SELECT {NOTE_COLUMNS} {} AND n.deleted = 0 {} \
+          ORDER BY n.archived, n.edited_at DESC, n.id DESC LIMIT ?{} OFFSET ?{}",
+        chosen.notes_from_tags(),
+        which.narrows(),
+        after + 1,
+        after + 2
     ))?;
-    let tag = tag.trim().trim_start_matches('#').to_lowercase();
-    let rows = statement.query_map(
-        params![tag, to_sql_count(limit), to_sql_count(offset)],
-        note_from_row,
-    )?;
+    let mut parameters = chosen.parameters();
+    parameters.push(Value::Integer(to_sql_count(limit)));
+    parameters.push(Value::Integer(to_sql_count(offset)));
+    let rows = statement.query_map(params_from_iter(parameters), note_from_row)?;
     collect(rows)
 }
 
@@ -740,7 +747,7 @@ pub(super) fn ids_by_prefix(
 ///
 /// Each word is quoted, so punctuation in the input is never read as query
 /// syntax. Returns `None` when the input holds no letter or digit.
-fn full_text_query(input: &str) -> Option<String> {
+pub(super) fn full_text_query(input: &str) -> Option<String> {
     let terms: Vec<String> = input
         .split_whitespace()
         .filter(|word| word.chars().any(char::is_alphanumeric))
@@ -753,8 +760,25 @@ fn full_text_query(input: &str) -> Option<String> {
     }
 }
 
-/// Notes matching a full-text query, best match first. An archived note is
-/// found too, after every note that is not archived.
+/// Live notes matching every word of `query`, best match first, the
+/// archived ones after the rest. A query with no letter or digit matches
+/// nothing.
+pub(super) fn search(connection: &Connection, query: &str, limit: usize) -> Result<Vec<Note>> {
+    if full_text_query(query).is_none() {
+        return Ok(Vec::new());
+    }
+    find(
+        connection,
+        query,
+        &Chosen::new::<&str>(&[], TagRule::All),
+        limit,
+    )
+}
+
+/// The statement that finds the notes matching a full-text query and
+/// passing the chosen tags' rule, best match first. An archived note is
+/// found too, after every note that is not archived. Its parameters are
+/// the chosen tags, then the query, then the limit.
 ///
 /// `CROSS JOIN` is SQLite's way of fixing the order of a join: the table
 /// on its left is read first. Left to choose, SQLite reads `notes` first
@@ -762,36 +786,33 @@ fn full_text_query(input: &str) -> Option<String> {
 /// walks the whole list of notes that hold the word. With 20,000 notes
 /// holding the word typed, that took 22 seconds. Read first, the index
 /// answers once.
-const SEARCH_SQL: &str = "SELECT n.id, n.text, n.edited_at, n.archived FROM notes_fts f \
-       CROSS JOIN notes n ON n.rowid = f.rowid \
-      WHERE notes_fts MATCH ?1 AND n.deleted = 0 \
-      ORDER BY n.archived, f.rank, n.edited_at DESC LIMIT ?2";
-
-/// The same, for notes that also carry a tag. The index is read first here
-/// too, then the note, then its tags.
-const SEARCH_WITH_TAG_SQL: &str = "SELECT n.id, n.text, n.edited_at, n.archived FROM notes_fts f \
-       CROSS JOIN notes n ON n.rowid = f.rowid \
-       CROSS JOIN note_tags t ON t.note_id = n.id AND t.tag = ?2 \
-      WHERE notes_fts MATCH ?1 AND n.deleted = 0 \
-      ORDER BY n.archived, f.rank, n.edited_at DESC LIMIT ?3";
-
-/// Live notes matching every word of `query`, best match first, the
-/// archived ones after the rest.
-pub(super) fn search(connection: &Connection, query: &str, limit: usize) -> Result<Vec<Note>> {
-    let Some(query) = full_text_query(query) else {
-        return Ok(Vec::new());
+///
+/// The index is read first with tags chosen too, then the note, then its
+/// tags: each chosen tag is one look into the tags' table by its key.
+fn search_sql(chosen: &Chosen) -> String {
+    let after = chosen.len();
+    let tagged = if chosen.is_empty() {
+        String::new()
+    } else {
+        format!("AND {} ", chosen.holds("n.id"))
     };
-    let mut statement = connection.prepare(SEARCH_SQL)?;
-    let rows = statement.query_map(params![query, to_sql_count(limit)], note_from_row)?;
-    collect(rows)
+    format!(
+        "SELECT {NOTE_COLUMNS} FROM notes_fts f \
+           CROSS JOIN notes n ON n.rowid = f.rowid \
+          WHERE notes_fts MATCH ?{} AND n.deleted = 0 {tagged}\
+          ORDER BY n.archived, f.rank, n.edited_at DESC LIMIT ?{}",
+        after + 1,
+        after + 2
+    )
 }
 
-/// Live notes that match every word of `query` and carry `tag`. Either may
-/// be left out: an empty query matches every note, and no tag means any.
+/// Live notes that match every word of `query` and pass the chosen tags'
+/// rule. Either may be left out: an empty query matches every note, and no
+/// tag means any.
 ///
 /// With words to match, the best match comes first; without, the most
 /// recently edited. A query with text but no letter or digit matches
-/// nothing, as it does in [`search`].
+/// nothing.
 ///
 /// With neither words nor a tag this is the list, which leaves archived
 /// notes out. With either, something is being found, and the archived
@@ -799,27 +820,64 @@ pub(super) fn search(connection: &Connection, query: &str, limit: usize) -> Resu
 pub(super) fn find(
     connection: &Connection,
     query: &str,
-    tag: Option<&str>,
+    chosen: &Chosen,
     limit: usize,
 ) -> Result<Vec<Note>> {
-    let tag = tag
-        .map(|tag| tag.trim().trim_start_matches('#').to_lowercase())
-        .filter(|tag| !tag.is_empty());
     let Some(words) = full_text_query(query) else {
         if !query.trim().is_empty() {
             return Ok(Vec::new());
         }
-        return tag.map_or_else(
-            || list(connection, Which::Listed, limit, 0),
-            |tag| list_by_tag(connection, Which::Every, &tag, limit, 0),
-        );
+        return if chosen.is_empty() {
+            list(connection, Which::Listed, limit, 0)
+        } else {
+            list_by_tags(connection, Which::Every, chosen, limit, 0)
+        };
     };
-    let Some(tag) = tag else {
-        return search(connection, query, limit);
-    };
-    let mut statement = connection.prepare(SEARCH_WITH_TAG_SQL)?;
-    let rows = statement.query_map(params![words, tag, to_sql_count(limit)], note_from_row)?;
+    let mut statement = connection.prepare(&search_sql(chosen))?;
+    let mut parameters = chosen.parameters();
+    parameters.push(Value::Text(words));
+    parameters.push(Value::Integer(to_sql_count(limit)));
+    let rows = statement.query_map(params_from_iter(parameters), note_from_row)?;
     collect(rows)
+}
+
+/// The statement behind [`pile`].
+///
+/// It is read by the index that serves the list, and the index is named
+/// so that this does not rest on SQLite choosing it. The index holds the
+/// edit time and whether the note is archived. Only the ID is taken from
+/// the note's own row, where it comes first, before the document and the
+/// text, so neither of those is read however long it is. Read from end
+/// to end instead, the table gives up the edit time only after the whole
+/// of each note: for 20,000 notes of 2,000 characters that took fifteen
+/// times as long (`docs/LIMITS.md`).
+const PILE_SQL: &str =
+    "SELECT id, edited_at, archived FROM notes INDEXED BY notes_by_edit WHERE deleted = 0";
+
+/// Every live note, archived or not, as the pile needs it: oldest first,
+/// which for IDs that begin with their time is the order of the IDs.
+///
+/// The documents and the text are neither asked for nor read: see
+/// [`PILE_SQL`].
+pub(super) fn pile(connection: &Connection) -> Result<Vec<PileNote>> {
+    let mut statement = connection.prepare(PILE_SQL)?;
+    let mut rows = statement.query([])?;
+    let mut notes = Vec::new();
+    while let Some(row) = rows.next()? {
+        // Read as it is stored, without a copy: there may be 20,000.
+        let id = row.get_ref(0)?.as_str().map_err(rusqlite::Error::from)?;
+        let id: NoteId = id
+            .parse()
+            .map_err(|_| Error::Database(format!("the store holds an invalid note ID: {id}")))?;
+        notes.push(PileNote {
+            id,
+            edited_at: row.get(1)?,
+            archived: row.get(2)?,
+        });
+    }
+    // They come in the order of the list, newest edit first.
+    notes.sort_unstable_by_key(|note| note.id);
+    Ok(notes)
 }
 
 /// The local revision counter of a note, deleted or not. Step 5's sync reads
@@ -839,14 +897,13 @@ mod tests {
     use super::*;
 
     /// The tables a statement reads, in the order SQLite reads them.
-    fn read_order(connection: &Connection, sql: &str) -> Vec<String> {
+    fn read_order(connection: &Connection, sql: &str, parameters: usize) -> Vec<String> {
         let mut statement = connection
             .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
             .unwrap();
+        let values = vec![Value::Text("\"word\"*".to_owned()); parameters];
         let steps = statement
-            .query_map(params!["\"word\"*", "tag", 100], |row| {
-                row.get::<_, String>(3)
-            })
+            .query_map(params_from_iter(values), |row| row.get::<_, String>(3))
             .unwrap();
         steps
             .map(|step| step.expect("a step of the plan"))
@@ -854,30 +911,94 @@ mod tests {
             .collect()
     }
 
+    fn empty_database() -> (tempfile::TempDir, Connection) {
+        let folder = tempfile::tempdir().unwrap();
+        let mut connection =
+            super::super::schema::open_connection(&folder.path().join("notes.db")).unwrap();
+        super::super::schema::set_up(&mut connection).unwrap();
+        (folder, connection)
+    }
+
     /// A search has to begin at the full-text index. Begun at the notes,
     /// it asks the index once for every note, which with many notes takes
     /// many seconds.
     #[test]
     fn a_search_reads_the_full_text_index_first() {
-        let folder = tempfile::tempdir().unwrap();
-        let mut connection =
-            super::super::schema::open_connection(&folder.path().join("notes.db")).unwrap();
-        super::super::schema::set_up(&mut connection).unwrap();
+        let (_folder, connection) = empty_database();
 
-        let plain = read_order(&connection, &SEARCH_SQL.replace("?2", "?3"));
+        let none = Chosen::new::<&str>(&[], TagRule::All);
+        let plain = read_order(&connection, &search_sql(&none), 2);
         assert!(
             plain[0].contains("SCAN f VIRTUAL TABLE"),
             "the search reads in this order: {plain:?}"
         );
         assert!(plain[1].starts_with("SEARCH n "), "{plain:?}");
+        assert_eq!(plain.len(), 2, "{plain:?}");
 
-        let tagged = read_order(&connection, SEARCH_WITH_TAG_SQL);
-        assert!(
-            tagged[0].contains("SCAN f VIRTUAL TABLE"),
-            "the search with a tag reads in this order: {tagged:?}"
+        // With tags chosen, under either rule: the index, the note, and
+        // then the note's tags by their key.
+        for chosen in [
+            Chosen::new(&["a"], TagRule::All),
+            Chosen::new(&["a", "b"], TagRule::All),
+            Chosen::new(&["a", "b"], TagRule::Any),
+        ] {
+            let tagged = read_order(&connection, &search_sql(&chosen), chosen.len() + 2);
+            assert!(
+                tagged[0].contains("SCAN f VIRTUAL TABLE"),
+                "the search with {chosen:?} reads in this order: {tagged:?}"
+            );
+            assert!(tagged[1].starts_with("SEARCH n "), "{tagged:?}");
+            assert!(
+                tagged[2..]
+                    .iter()
+                    .all(|step| step.starts_with("SEARCH note_tags ")),
+                "{tagged:?}"
+            );
+            assert!(tagged.len() > 2, "{tagged:?}");
+        }
+    }
+
+    /// A list narrowed to tags is read in the order of the list, so that
+    /// it stops at its limit, and each note is looked up among the tags
+    /// by key. No table is read from end to end to answer it.
+    #[test]
+    fn a_list_narrowed_to_tags_is_read_in_its_own_order() {
+        let (_folder, connection) = empty_database();
+        for chosen in [
+            Chosen::new(&["a"], TagRule::All),
+            Chosen::new(&["a", "b"], TagRule::All),
+            Chosen::new(&["a", "b"], TagRule::Any),
+        ] {
+            let sql = format!(
+                "SELECT {NOTE_COLUMNS} {} AND n.deleted = 0 \
+                  ORDER BY n.archived, n.edited_at DESC, n.id DESC LIMIT 5",
+                chosen.notes_from_tags()
+            );
+            let plan = read_order(&connection, &sql, chosen.len());
+            let said = format!("{chosen:?} reads in this order: {plan:?}");
+            assert!(
+                plan[0].starts_with("SEARCH n USING INDEX notes_by_edit"),
+                "{said}"
+            );
+            assert!(!plan.iter().any(|step| step.starts_with("SCAN")), "{said}");
+            assert!(
+                plan[1..]
+                    .iter()
+                    .all(|step| step.contains("note_tags_by_tag (tag=?")),
+                "{said}"
+            );
+        }
+    }
+
+    /// The pile is read by the list's index, which has all it needs but
+    /// the ID.
+    #[test]
+    fn the_pile_is_read_by_the_lists_index() {
+        let (_folder, connection) = empty_database();
+        assert_eq!(
+            read_order(&connection, PILE_SQL, 0),
+            ["SEARCH notes USING INDEX notes_by_edit (deleted=?)"]
         );
-        assert!(tagged[1].starts_with("SEARCH n "), "{tagged:?}");
-        assert!(tagged[2].starts_with("SEARCH t "), "{tagged:?}");
     }
 
     #[test]

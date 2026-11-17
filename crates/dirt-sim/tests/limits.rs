@@ -17,8 +17,10 @@ use std::time::Instant;
 use dirt_core::export::{Export, ExportFormat};
 use dirt_core::files::seal::sealed_size;
 use dirt_core::files::Attachment;
+use dirt_core::models::{Layer, PileSummary};
 use dirt_core::notes::NoteDoc;
 use dirt_core::session::{Approval, ExchangeStep, Join, SessionState};
+use dirt_core::store::TagRule;
 use dirt_proto::api::limits;
 use dirt_sim::{file_bucket, Client, Server};
 use sqlx::PgPool;
@@ -304,6 +306,226 @@ async fn an_account_at_the_note_limit(pool: PgPool) {
     let began = Instant::now();
     let count = store.note_count().await.unwrap();
     println!("counting the {count} notes: {:.1?}", began.elapsed());
+}
+
+/// Asks once, so that reading the file into memory is not counted, and
+/// then five times more. Says how many things came back, the fastest of
+/// the five and the slowest: the fastest is what the answer costs, and the
+/// slowest shows how much else the machine was doing.
+macro_rules! timed {
+    ($what:expr, $ask:expr) => {{
+        let answer = $ask.await.unwrap();
+        let mut times = Vec::new();
+        for _ in 0..5 {
+            let began = Instant::now();
+            let again = $ask.await.unwrap();
+            times.push(began.elapsed());
+            assert_eq!(again.len(), answer.len());
+        }
+        times.sort();
+        println!(
+            "{}: {} in {:.1?} (at the slowest {:.1?})",
+            $what,
+            answer.len(),
+            times[0],
+            times[4]
+        );
+        answer
+    }};
+}
+
+/// What the interface redesign asks of the local store, holding as many
+/// notes as an account may: the tags that could be chosen next, finding
+/// by several tags, and the pile. Nothing here needs the server.
+///
+/// Every note has one of 50 tags and one of 400 topics, and a third of
+/// them are urgent: 451 tags, the commonest on 6,667 notes. A tenth of
+/// the notes are archived.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "a measurement, not a check"]
+async fn the_store_at_the_note_limit_for_the_interface() {
+    let notes = usize::try_from(limits::MAX_NOTES_PER_ACCOUNT).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let store = dirt_core::Store::open(folder.path().join("notes.db")).unwrap();
+    for number in 0..notes {
+        let urgent = if number % 3 == 0 { " #urgent" } else { "" };
+        let note = store
+            .create_note(&format!(
+                "note {number}: something worth remembering, about a line long #tag{} #topic{}{urgent}",
+                number % 50,
+                number % 400
+            ))
+            .await
+            .unwrap();
+        if number % 10 == 0 {
+            store.archive_note(&note.id).await.unwrap();
+        }
+    }
+    let chosen =
+        |tags: &[&str]| -> Vec<String> { tags.iter().map(|tag| (*tag).to_owned()).collect() };
+
+    // What `docs/LIMITS.md` already has for this store, asked again here
+    // so that the new figures can be read against them on any machine.
+    println!("\nwhat the store was asked before, with {notes} notes:");
+    timed!(
+        "the 100 most recently edited notes",
+        store.list_notes(100, 0)
+    );
+    timed!("all of the list", store.list_notes(notes, 0));
+    timed!("the tags in use, with their counts", store.list_tags());
+    timed!(
+        "up to 100 notes holding a word that every note holds",
+        store.find_notes("remembering", None, 100)
+    );
+    timed!(
+        "up to 100 notes holding that word and carrying a tag",
+        store.find_notes("remembering", Some("tag7"), 100)
+    );
+    timed!(
+        "up to 100 notes carrying a tag",
+        store.find_notes("", Some("tag7"), 100)
+    );
+
+    println!("\nthe tags that could be chosen next, the first 6:");
+    for (what, query, tags, rule, start) in [
+        ("nothing typed or chosen", "", &[][..], TagRule::All, None),
+        ("the start of a name", "", &[], TagRule::All, Some("to")),
+        ("a tag chosen", "", &["tag7"], TagRule::All, None),
+        (
+            "the commonest tag chosen",
+            "",
+            &["urgent"],
+            TagRule::All,
+            None,
+        ),
+        ("two tags, all", "", &["urgent", "tag7"], TagRule::All, None),
+        ("two tags, any", "", &["tag7", "tag8"], TagRule::Any, None),
+        (
+            "two tags, any, one the commonest",
+            "",
+            &["urgent", "tag8"],
+            TagRule::Any,
+            None,
+        ),
+        (
+            "a word every note holds",
+            "remembering",
+            &[],
+            TagRule::All,
+            None,
+        ),
+        (
+            "the start of that word and of a name",
+            "rem",
+            &[],
+            TagRule::All,
+            Some("ta"),
+        ),
+        (
+            "that word and a tag",
+            "remembering",
+            &["tag7"],
+            TagRule::All,
+            None,
+        ),
+        (
+            "that word and two tags, all",
+            "remembering",
+            &["urgent", "tag7"],
+            TagRule::All,
+            None,
+        ),
+        (
+            "that word and two tags, any",
+            "remembering",
+            &["tag7", "tag8"],
+            TagRule::Any,
+            None,
+        ),
+        ("a word one note holds", "19999", &[], TagRule::All, None),
+    ] {
+        let tags = chosen(tags);
+        timed!(what, store.tags_to_narrow(query, &tags, rule, start, 6));
+    }
+
+    println!("\nfinding up to 100 notes by several tags:");
+    for (what, query, tags, rule) in [
+        ("one tag", "", &["tag7"][..], TagRule::All),
+        ("the commonest tag", "", &["urgent"], TagRule::All),
+        ("two tags, all", "", &["urgent", "tag7"], TagRule::All),
+        ("two tags, any", "", &["tag7", "tag8"], TagRule::Any),
+        (
+            "a word every note holds and one tag",
+            "remembering",
+            &["tag7"],
+            TagRule::All,
+        ),
+        (
+            "that word and two tags, all",
+            "remembering",
+            &["urgent", "tag7"],
+            TagRule::All,
+        ),
+        (
+            "that word and two tags, any",
+            "remembering",
+            &["tag7", "tag8"],
+            TagRule::Any,
+        ),
+    ] {
+        let tags = chosen(tags);
+        timed!(what, store.find_notes_by_tags(query, &tags, rule, 100));
+    }
+    let two = chosen(&["urgent", "tag7"]);
+    timed!(
+        "the list narrowed to two tags, all",
+        store.list_notes_by_tags(&two, TagRule::All, 100, 0)
+    );
+
+    println!("\nthe pile:");
+    let pile = timed!("every live note's ID and edit time", store.pile());
+    let began = Instant::now();
+    let now = dirt_core::util::now_ms();
+    let summary = PileSummary::of(&pile, 8 * 3600);
+    let mut hues = 0_u64;
+    let mut today = 0_usize;
+    for note in &pile {
+        hues += u64::from(note.grain().hue);
+        today += usize::from(Layer::of(note.edited_at, now, 8 * 3600) == Layer::Today);
+    }
+    println!(
+        "its count line, and each note's grain and layer: {:.1?} \
+         ({} thoughts, {} archived, {today} of today, hues adding up to {hues})",
+        began.elapsed(),
+        summary.thoughts,
+        summary.archived
+    );
+    println!(
+        "the pile in memory: {} bytes",
+        pile.len() * std::mem::size_of_val(&pile[0])
+    );
+
+    // The pile takes only the ID from a note's own row, where it comes
+    // before the text and the document, so long notes should cost it no
+    // more than short ones.
+    let long = dirt_core::Store::open(folder.path().join("long.db")).unwrap();
+    let page = "a sentence of a long note, forty chars. ".repeat(50);
+    for number in 0..notes {
+        long.create_note(&format!("note {number}\n{page}"))
+            .await
+            .unwrap();
+    }
+    drop(timed!(
+        "the same for notes of 2,000 characters each",
+        long.pile()
+    ));
+    drop(long);
+    println!(
+        "their database is {} bytes",
+        std::fs::metadata(folder.path().join("long.db"))
+            .unwrap()
+            .len()
+    );
 }
 
 /// The largest file that may be attached: the limit is on the file as it

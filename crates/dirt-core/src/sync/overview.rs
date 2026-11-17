@@ -6,6 +6,10 @@
 //! why the last cycle failed, and each note that could not be synced and
 //! each file that could not be sent, with the reason and what would
 //! release it. The words are here so that the three cannot drift apart.
+//!
+//! [`SyncIndicator`] is the same in short: which of six states sync is
+//! in, for the small status an app always shows (interface design 6.6),
+//! with one to three words for it.
 
 use dirt_proto::api::{ErrorClass, ErrorCode};
 
@@ -28,6 +32,9 @@ pub struct SyncOverview {
     pub unsent: usize,
     /// Files this device holds that the server has not taken.
     pub files_unsent: usize,
+    /// The last cycle completed, but a file did not get through and is
+    /// being tried again.
+    pub files_delayed: bool,
     /// Why the last cycle failed, if it did.
     pub failure: Option<SyncFailure>,
     /// Each note that could not be synced.
@@ -50,6 +57,7 @@ impl From<&SyncStatus> for SyncOverview {
             last_synced_ms: status.last_synced_ms,
             unsent: status.unsent,
             files_unsent: status.files_unsent,
+            files_delayed: status.files_delayed,
             failure: status.failure.clone(),
             problems: Vec::new(),
             file_problems: Vec::new(),
@@ -152,6 +160,207 @@ impl SyncOverview {
             lines.push(format!("    {}", problem.release()));
         }
         lines
+    }
+}
+
+/// How long after a cycle completes the status shows that it has just
+/// synced, in milliseconds. An app that shows [`SyncIndicator::JustSynced`]
+/// asks again when this has passed.
+pub const JUST_SYNCED_MS: i64 = 1_400;
+
+/// Which state sync is in, for the status an app always shows.
+///
+/// The status is an icon, and for three of the states a few words beside
+/// it (interface design 6.6). An app chooses the icon by the state and
+/// takes the words from [`Self::short`] and [`Self::tooltip`].
+/// [`crate::session::Session::sync_indicator`] gives it for a session.
+/// Where two states hold at once, the first of these wins: signed out,
+/// syncing, just synced, offline, a problem, synced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncIndicator {
+    /// Nothing is wrong and nothing is happening.
+    Synced {
+        /// When a cycle last completed, as Unix milliseconds. Nothing if
+        /// none ever has.
+        last_synced_ms: Option<i64>,
+    },
+    /// A cycle is running now.
+    Syncing,
+    /// A cycle completed within the last [`JUST_SYNCED_MS`].
+    JustSynced,
+    /// The last cycle could not reach the server, or was told to come
+    /// back later. Sync tries again by itself.
+    Offline {
+        /// How many notes wait to be sent. A note with a new file is one
+        /// thing that waits, not two, so files are counted only when no
+        /// note waits and files do.
+        waiting: usize,
+    },
+    /// Something will not sync until the person does something about it:
+    /// notes that could not be synced, files the server refused, or a
+    /// cycle that failed for a reason that waiting does not cure (this
+    /// device has to sign in again, or the app is too old). Settings →
+    /// Sync says which, in the overview's sentences.
+    Problem {
+        /// Notes that could not be synced.
+        notes: usize,
+        /// Files that could not be sent.
+        files: usize,
+    },
+    /// This device is not syncing: nobody is signed in, or the device has
+    /// not been let into the account yet. Its notes are on it alone.
+    SignedOut,
+}
+
+impl SyncIndicator {
+    /// The state of a device that is signed in and let in, from the whole
+    /// overview.
+    #[must_use]
+    pub fn of(overview: &SyncOverview, now_ms: i64) -> Self {
+        Self::from_figures(&Figures {
+            syncing: overview.syncing,
+            last_synced_ms: overview.last_synced_ms,
+            unsent: overview.unsent,
+            files_unsent: overview.files_unsent,
+            files_delayed: overview.files_delayed,
+            failure: overview.failure.as_ref().map(|failure| failure.class),
+            problems: overview.problems.len(),
+            file_problems: overview.file_problems.len(),
+            now_ms,
+        })
+    }
+
+    /// The same from the worker's own figures, which an app has at every
+    /// change without reading the store.
+    #[must_use]
+    pub fn from_status(status: &SyncStatus, now_ms: i64) -> Self {
+        Self::from_figures(&Figures {
+            syncing: status.syncing,
+            last_synced_ms: status.last_synced_ms,
+            unsent: status.unsent,
+            files_unsent: status.files_unsent,
+            files_delayed: status.files_delayed,
+            failure: status.failure.as_ref().map(|failure| failure.class),
+            problems: status.problems,
+            file_problems: status.file_problems,
+            now_ms,
+        })
+    }
+
+    fn from_figures(figures: &Figures) -> Self {
+        if figures.syncing {
+            return Self::Syncing;
+        }
+        let problem = Self::Problem {
+            notes: figures.problems,
+            files: figures.file_problems,
+        };
+        let waiting = Self::Offline {
+            waiting: if figures.unsent > 0 {
+                figures.unsent
+            } else {
+                figures.files_unsent
+            },
+        };
+        match figures.failure {
+            Some(ErrorClass::TryAgainLater) => waiting,
+            // Waiting will not cure it, whether or not a note is named.
+            Some(_) => problem,
+            // The notes went and a file did not. The cycle completed, so
+            // there is no failure to read, but the file is on this device
+            // alone until the next try gets it through.
+            None if figures.files_delayed && figures.files_unsent > 0 => waiting,
+            None => {
+                let since = figures
+                    .last_synced_ms
+                    .map(|at| figures.now_ms.saturating_sub(at));
+                if since.is_some_and(|since| (0..JUST_SYNCED_MS).contains(&since)) {
+                    Self::JustSynced
+                } else if figures.problems + figures.file_problems > 0 {
+                    problem
+                } else {
+                    Self::Synced {
+                        last_synced_ms: figures.last_synced_ms,
+                    }
+                }
+            }
+        }
+    }
+
+    /// The state in one to three words: "Synced", "Syncing", "Offline · 2
+    /// waiting", "1 note can't sync", "This device only".
+    ///
+    /// Every state has them, for a screen reader and wherever the icon
+    /// needs a name. [`Self::is_quiet`] says whether they are shown.
+    #[must_use]
+    pub fn short(&self) -> String {
+        let cannot = |count: usize, one: &str| match count {
+            1 => format!("1 {one} can't sync"),
+            count => format!("{count} {one}s can't sync"),
+        };
+        match *self {
+            Self::Synced { .. } | Self::JustSynced => "Synced".to_owned(),
+            Self::Syncing => "Syncing".to_owned(),
+            Self::Offline { waiting: 0 } => "Offline".to_owned(),
+            Self::Offline { waiting } => format!("Offline \u{b7} {waiting} waiting"),
+            Self::Problem { notes: 0, files: 0 } => "Can't sync".to_owned(),
+            Self::Problem { notes: 0, files } => cannot(files, "file"),
+            Self::Problem { notes, .. } => cannot(notes, "note"),
+            Self::SignedOut => "This device only".to_owned(),
+        }
+    }
+
+    /// Whether the state is shown as its icon alone. Synced, syncing and
+    /// just synced need no words; the other three are said.
+    #[must_use]
+    pub const fn is_quiet(&self) -> bool {
+        matches!(self, Self::Synced { .. } | Self::Syncing | Self::JustSynced)
+    }
+
+    /// The longer line shown when the status is pointed at, or nothing
+    /// for the two states that pass in a moment.
+    #[must_use]
+    pub fn tooltip(&self, now_ms: i64) -> Option<String> {
+        match *self {
+            Self::Synced { last_synced_ms } => Some(last_synced_in_full(last_synced_ms, now_ms)),
+            Self::Syncing | Self::JustSynced => None,
+            Self::Offline { .. } => Some("Notes wait here and go when you're back".to_owned()),
+            Self::Problem { .. } => Some("See why".to_owned()),
+            Self::SignedOut => Some("Not syncing. Sign in to sync".to_owned()),
+        }
+    }
+}
+
+/// What [`SyncIndicator`] is worked out from.
+struct Figures {
+    syncing: bool,
+    last_synced_ms: Option<i64>,
+    unsent: usize,
+    files_unsent: usize,
+    files_delayed: bool,
+    failure: Option<ErrorClass>,
+    problems: usize,
+    file_problems: usize,
+    now_ms: i64,
+}
+
+/// When the last sync was, as a line of its own: "Last synced 2 minutes
+/// ago". The units change where [`SyncOverview::last_synced`] changes
+/// its, so the two never say different things.
+fn last_synced_in_full(last_synced_ms: Option<i64>, now_ms: i64) -> String {
+    let Some(at) = last_synced_ms else {
+        return "Not synced yet".to_owned();
+    };
+    let ago = |count: i64, unit: &str| {
+        let s = if count == 1 { "" } else { "s" };
+        format!("Last synced {count} {unit}{s} ago")
+    };
+    let minutes = now_ms.saturating_sub(at).max(0) / 60_000;
+    match minutes {
+        0 => "Last synced just now".to_owned(),
+        1..=59 => ago(minutes, "minute"),
+        60..=1439 => ago(minutes / 60, "hour"),
+        _ => ago(minutes / 1440, "day"),
     }
 }
 
@@ -377,6 +586,331 @@ mod tests {
         assert_eq!(running.last_synced(1_000_000_000), "Syncing...");
     }
 
+    fn failed(class: ErrorClass) -> SyncFailure {
+        SyncFailure {
+            class,
+            message: "the cause, in an error's words".to_owned(),
+        }
+    }
+
+    /// The six states of the status, with the words the design gives each
+    /// (interface design 6.6).
+    #[test]
+    fn the_status_is_one_of_six_states_with_a_few_words_each() {
+        const NOW: i64 = 1_800_000_000_000;
+        let minute = 60_000;
+        let synced = SyncOverview {
+            last_synced_ms: Some(NOW - 2 * minute),
+            ..SyncOverview::default()
+        };
+
+        let state = SyncIndicator::of(&synced, NOW);
+        assert_eq!(
+            state,
+            SyncIndicator::Synced {
+                last_synced_ms: Some(NOW - 2 * minute)
+            }
+        );
+        assert_eq!(state.short(), "Synced");
+        assert!(state.is_quiet());
+        assert_eq!(
+            state.tooltip(NOW).as_deref(),
+            Some("Last synced 2 minutes ago")
+        );
+
+        let state = SyncIndicator::of(
+            &SyncOverview {
+                syncing: true,
+                ..synced.clone()
+            },
+            NOW,
+        );
+        assert_eq!(state, SyncIndicator::Syncing);
+        assert_eq!(state.short(), "Syncing");
+        assert!(state.is_quiet());
+        assert_eq!(state.tooltip(NOW), None);
+
+        let state = SyncIndicator::of(
+            &SyncOverview {
+                last_synced_ms: Some(NOW - 900),
+                ..SyncOverview::default()
+            },
+            NOW,
+        );
+        assert_eq!(state, SyncIndicator::JustSynced);
+        assert_eq!(state.short(), "Synced");
+        assert!(state.is_quiet());
+        assert_eq!(state.tooltip(NOW), None);
+
+        let offline = SyncOverview {
+            unsent: 2,
+            failure: Some(failed(ErrorClass::TryAgainLater)),
+            ..synced.clone()
+        };
+        let state = SyncIndicator::of(&offline, NOW);
+        assert_eq!(state, SyncIndicator::Offline { waiting: 2 });
+        assert_eq!(state.short(), "Offline · 2 waiting");
+        assert!(!state.is_quiet());
+        assert_eq!(
+            state.tooltip(NOW).as_deref(),
+            Some("Notes wait here and go when you're back")
+        );
+
+        let state = SyncIndicator::of(
+            &SyncOverview {
+                problems: vec![problem(Some("too long"), ProblemKind::RetryAfterEdit)],
+                ..synced
+            },
+            NOW,
+        );
+        assert_eq!(state, SyncIndicator::Problem { notes: 1, files: 0 });
+        assert_eq!(state.short(), "1 note can't sync");
+        assert!(!state.is_quiet());
+        assert_eq!(state.tooltip(NOW).as_deref(), Some("See why"));
+
+        let state = SyncIndicator::SignedOut;
+        assert_eq!(state.short(), "This device only");
+        assert!(!state.is_quiet());
+        assert_eq!(
+            state.tooltip(NOW).as_deref(),
+            Some("Not syncing. Sign in to sync")
+        );
+    }
+
+    #[test]
+    fn the_status_counts_what_waits_and_what_cannot_sync() {
+        const NOW: i64 = 1_800_000_000_000;
+        let offline = |unsent, files_unsent| {
+            SyncIndicator::of(
+                &SyncOverview {
+                    unsent,
+                    files_unsent,
+                    failure: Some(failed(ErrorClass::TryAgainLater)),
+                    ..SyncOverview::default()
+                },
+                NOW,
+            )
+        };
+        assert_eq!(offline(0, 0).short(), "Offline");
+        assert_eq!(offline(1, 0).short(), "Offline · 1 waiting");
+        // A note and the picture attached to it, with its thumbnail, are
+        // one thing that waits.
+        assert_eq!(offline(1, 2).short(), "Offline · 1 waiting");
+        // Only files are left to go.
+        assert_eq!(offline(0, 2).short(), "Offline · 2 waiting");
+
+        let note = || problem(Some("held"), ProblemKind::Held);
+        let file = || FileProblem {
+            file_id: uuid::Uuid::from_u128(1),
+            note_id: NoteId::new(),
+            reason: "the account's storage for files is full".to_owned(),
+            name: None,
+            note_text: String::new(),
+        };
+        let trouble = |notes: usize, files: usize, failure| {
+            SyncIndicator::of(
+                &SyncOverview {
+                    last_synced_ms: Some(NOW - 600_000),
+                    problems: (0..notes).map(|_| note()).collect(),
+                    file_problems: (0..files).map(|_| file()).collect(),
+                    failure,
+                    ..SyncOverview::default()
+                },
+                NOW,
+            )
+        };
+        assert_eq!(trouble(3, 0, None).short(), "3 notes can't sync");
+        assert_eq!(trouble(2, 5, None).short(), "2 notes can't sync");
+        assert_eq!(trouble(0, 1, None).short(), "1 file can't sync");
+        assert_eq!(trouble(0, 2, None).short(), "2 files can't sync");
+        // A cycle that failed for a reason waiting does not cure is a
+        // problem, with or without a note to name.
+        for class in [
+            ErrorClass::StopUntilSignedIn,
+            ErrorClass::UpdateTheApp,
+            ErrorClass::ProblemWithOneNote,
+        ] {
+            let state = trouble(0, 0, Some(failed(class)));
+            assert_eq!(state, SyncIndicator::Problem { notes: 0, files: 0 });
+            assert_eq!(state.short(), "Can't sync");
+            assert_eq!(state.tooltip(NOW).as_deref(), Some("See why"));
+            assert_eq!(
+                trouble(1, 0, Some(failed(class))).short(),
+                "1 note can't sync"
+            );
+        }
+    }
+
+    /// Where two states hold at once: syncing, then just synced, then
+    /// offline, then a problem.
+    #[test]
+    fn the_status_shows_the_state_that_matters_most() {
+        const NOW: i64 = 1_800_000_000_000;
+        let everything = SyncOverview {
+            syncing: true,
+            last_synced_ms: Some(NOW - 100),
+            unsent: 4,
+            files_unsent: 1,
+            files_delayed: false,
+            failure: Some(failed(ErrorClass::TryAgainLater)),
+            problems: vec![problem(None, ProblemKind::Held)],
+            file_problems: Vec::new(),
+            old_key_notes: 0,
+        };
+        assert_eq!(SyncIndicator::of(&everything, NOW), SyncIndicator::Syncing);
+        let stopped = SyncOverview {
+            syncing: false,
+            ..everything
+        };
+        // A cycle that failed has not just synced, whenever the last one
+        // that completed was.
+        assert_eq!(
+            SyncIndicator::of(&stopped, NOW),
+            SyncIndicator::Offline { waiting: 4 }
+        );
+        let completed = SyncOverview {
+            failure: None,
+            ..stopped
+        };
+        assert_eq!(
+            SyncIndicator::of(&completed, NOW),
+            SyncIndicator::JustSynced
+        );
+        // The tick passes, and the note that cannot sync is still there.
+        for (later, state) in [
+            (JUST_SYNCED_MS - 101, SyncIndicator::JustSynced),
+            (
+                JUST_SYNCED_MS - 100,
+                SyncIndicator::Problem { notes: 1, files: 0 },
+            ),
+        ] {
+            assert_eq!(SyncIndicator::of(&completed, NOW + later), state);
+        }
+        // A clock that went backwards has not just synced.
+        assert_eq!(
+            SyncIndicator::of(&completed, NOW - 5_000),
+            SyncIndicator::Problem { notes: 1, files: 0 }
+        );
+    }
+
+    /// A cycle that sent the notes and not a file has completed, and has
+    /// not synced: the file waits for the next try.
+    #[test]
+    fn a_file_that_did_not_get_through_is_waiting_not_synced() {
+        const NOW: i64 = 1_800_000_000_000;
+        let delayed = SyncStatus {
+            last_synced_ms: Some(NOW - 200),
+            files_unsent: 1,
+            files_delayed: true,
+            ..SyncStatus::default()
+        };
+        assert_eq!(
+            SyncIndicator::from_status(&delayed, NOW),
+            SyncIndicator::Offline { waiting: 1 }
+        );
+        assert_eq!(
+            SyncIndicator::of(&SyncOverview::from(&delayed), NOW + 60_000),
+            SyncIndicator::Offline { waiting: 1 }
+        );
+        // Once it has gone there is nothing delayed, whatever the mark says.
+        let gone = SyncStatus {
+            files_unsent: 0,
+            ..delayed
+        };
+        assert_eq!(
+            SyncIndicator::from_status(&gone, NOW),
+            SyncIndicator::JustSynced
+        );
+    }
+
+    /// The worker's figures give the state the whole overview gives.
+    #[test]
+    fn the_status_is_the_same_from_the_workers_figures() {
+        const NOW: i64 = 1_800_000_000_000;
+        let status = SyncStatus {
+            last_synced_ms: Some(NOW - 60_000),
+            unsent: 1,
+            problems: 2,
+            file_problems: 1,
+            ..SyncStatus::default()
+        };
+        assert_eq!(
+            SyncIndicator::from_status(&status, NOW),
+            SyncIndicator::Problem { notes: 2, files: 1 }
+        );
+        let offline = SyncStatus {
+            failure: Some(failed(ErrorClass::TryAgainLater)),
+            ..status
+        };
+        assert_eq!(
+            SyncIndicator::from_status(&offline, NOW),
+            SyncIndicator::Offline { waiting: 1 }
+        );
+        let running = SyncStatus {
+            syncing: true,
+            ..offline
+        };
+        assert_eq!(
+            SyncIndicator::from_status(&running, NOW),
+            SyncIndicator::Syncing
+        );
+        assert_eq!(
+            SyncIndicator::from_status(&SyncStatus::default(), NOW),
+            SyncIndicator::Synced {
+                last_synced_ms: None
+            }
+        );
+        // Whatever the figures, the overview made from them agrees, as
+        // far as it knows: it has the counts of what waits, and no list
+        // of what cannot sync.
+        let plain = SyncStatus {
+            problems: 0,
+            file_problems: 0,
+            ..status
+        };
+        assert_eq!(
+            SyncIndicator::from_status(&plain, NOW),
+            SyncIndicator::of(&SyncOverview::from(&plain), NOW)
+        );
+    }
+
+    #[test]
+    fn the_tooltip_says_when_the_last_sync_was_in_whole_words() {
+        const NOW: i64 = 1_800_000_000_000;
+        let minute = 60_000;
+        let said = |ago: Option<i64>| {
+            SyncIndicator::Synced {
+                last_synced_ms: ago.map(|ago| NOW - ago),
+            }
+            .tooltip(NOW)
+            .unwrap()
+        };
+        assert_eq!(said(None), "Not synced yet");
+        assert_eq!(said(Some(1_500)), "Last synced just now");
+        assert_eq!(said(Some(minute)), "Last synced 1 minute ago");
+        assert_eq!(said(Some(59 * minute)), "Last synced 59 minutes ago");
+        assert_eq!(said(Some(60 * minute)), "Last synced 1 hour ago");
+        assert_eq!(said(Some(23 * 60 * minute)), "Last synced 23 hours ago");
+        assert_eq!(said(Some(24 * 60 * minute)), "Last synced 1 day ago");
+        assert_eq!(said(Some(72 * 60 * minute)), "Last synced 3 days ago");
+        assert_eq!(said(Some(-5 * minute)), "Last synced just now");
+        // It changes its unit where the sentence in Settings does.
+        for ago in [0, minute - 1, minute, 60 * minute - 1, 60 * minute] {
+            let sentence = SyncOverview {
+                last_synced_ms: Some(NOW - ago),
+                ..SyncOverview::default()
+            }
+            .last_synced(NOW);
+            let number = |words: &str| {
+                words
+                    .chars()
+                    .filter(char::is_ascii_digit)
+                    .collect::<String>()
+            };
+            assert_eq!(number(&sentence), number(&said(Some(ago))), "{ago}");
+        }
+    }
+
     #[test]
     fn what_waits_is_counted_in_notes_and_files() {
         let waiting = |unsent, files_unsent| {
@@ -581,6 +1115,7 @@ mod tests {
             last_synced_ms: Some(0),
             unsent: 2,
             files_unsent: 0,
+            files_delayed: false,
             failure: Some(SyncFailure {
                 class: ErrorClass::TryAgainLater,
                 message: "connection refused".to_owned(),
