@@ -1,3 +1,4 @@
 # Models, test speech and results are fetched or made locally and never committed.
 /data/
 /target/
+__pycache__/
