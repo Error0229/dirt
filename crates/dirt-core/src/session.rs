@@ -38,7 +38,7 @@ use crate::key_change::KeyRing;
 use crate::secrets::{DeviceSecrets, SecretError, SecretStore};
 use crate::store::{store_path, StoreName};
 use crate::sync::engine::{FileError, KeyKeeper, StoredKeys, SyncEngine, SyncError, SyncReport};
-use crate::sync::overview::SyncOverview;
+use crate::sync::overview::{SyncIndicator, SyncOverview};
 use crate::sync::worker::{SyncStatus, SyncWorker, Timing, Trigger};
 use crate::{Error, Store};
 
@@ -880,6 +880,47 @@ impl Session {
         // Signed out, or waiting to be let in: the device has the files it
         // holds and no way to fetch another.
         crate::sync::engine::file_on_device(&self.store(), note, file_id).await
+    }
+
+    /// The bytes of a file that `note` names, in memory, for showing the
+    /// file inside the app. The file is fetched first if the device does
+    /// not hold it and is signed in, exactly as [`Self::fetch_file`]
+    /// fetches it, and fails for the same reasons.
+    ///
+    /// Nothing is written for this but the device's own copy of a file it
+    /// had to fetch, which is kept as any fetched file is. No copy is made
+    /// for another program to be handed: that is what opening a file in
+    /// another app does, and this is the way not to. See
+    /// [`crate::sync::engine::file_bytes_on_device`] for what the answer
+    /// may weigh.
+    pub async fn file_bytes(
+        &self,
+        note: &crate::models::NoteId,
+        file_id: uuid::Uuid,
+    ) -> Result<Vec<u8>, FileError> {
+        if let Some(engine) = self.engine() {
+            return engine.fetch_file_bytes(note, file_id).await;
+        }
+        crate::sync::engine::file_bytes_on_device(&self.store(), note, file_id).await
+    }
+
+    /// Which state sync is in, for the status an app always shows: one of
+    /// the six of [`SyncIndicator`], with its short words.
+    ///
+    /// It is worked out from what the session already holds, so it is
+    /// asked for whenever [`Self::watch_state`] or [`Self::watch_sync`]
+    /// says something changed, and again [`JUST_SYNCED_MS`] after a
+    /// [`SyncIndicator::JustSynced`]. A device that is not ready, signed
+    /// out or waiting to be let in, is [`SyncIndicator::SignedOut`].
+    ///
+    /// [`JUST_SYNCED_MS`]: crate::sync::overview::JUST_SYNCED_MS
+    #[must_use]
+    pub fn sync_indicator(&self, now_ms: i64) -> SyncIndicator {
+        if self.state().is_ready() {
+            SyncIndicator::from_status(&self.sync_status(), now_ms)
+        } else {
+            SyncIndicator::SignedOut
+        }
     }
 
     /// How sync stands for the account, with each note that could not be

@@ -73,6 +73,29 @@ pub async fn file_on_device(
     }
 }
 
+/// The bytes of a file that `note` names, read into memory from this
+/// device's copy, for a device that cannot fetch. The errors are those of
+/// [`file_on_device`].
+///
+/// This is how a file is shown inside the app. The device's own copy
+/// lies in the store's folder as it is ([`crate::files::shelf`]), and
+/// nothing more is written: no copy for another program to open, which is
+/// what [`crate::files::copy_for_opening`] makes.
+///
+/// The whole file is returned at once. A file may be 10 MiB at most
+/// (`limits::MAX_FILE_BYTES`), so that is the most this takes, for as
+/// long as the caller keeps the answer.
+pub async fn file_bytes_on_device(
+    store: &Store,
+    note: &NoteId,
+    file_id: Uuid,
+) -> Result<Vec<u8>, FileError> {
+    if store.file_part(note, file_id).await?.is_none() {
+        return Err(FileError::NotAttached);
+    }
+    store.file_bytes(file_id).await?.ok_or(FileError::Missing)
+}
+
 /// What became of one file the engine tried to send.
 enum Sent {
     Yes,
@@ -342,5 +365,24 @@ impl SyncEngine {
             .keep_fetched_file(self.account_id, part, sealed)
             .await?
             .ok_or(FileError::Damaged)
+    }
+
+    /// The bytes of a file that `note` names, in memory, fetching the
+    /// file first if the device does not hold it: [`Self::fetch_file`],
+    /// and then [`file_bytes_on_device`]. A fetched file is kept on the
+    /// device as any is, so it is fetched once, and no other copy of it
+    /// is written.
+    pub async fn fetch_file_bytes(
+        &self,
+        note: &NoteId,
+        file_id: Uuid,
+    ) -> Result<Vec<u8>, FileError> {
+        self.fetch_file(note, file_id).await?;
+        // Missing here means the file left the device in the moment
+        // between: the note stopped naming it and it was cleared.
+        self.store
+            .file_bytes(file_id)
+            .await?
+            .ok_or(FileError::Missing)
     }
 }

@@ -1128,3 +1128,132 @@ async fn nothing_of_a_file_but_its_size_reaches_the_server_or_the_storage(pool: 
         .windows(b"quarterly-figures-unreleased".len())
         .any(|window| window == b"quarterly-figures-unreleased"));
 }
+
+/// A file is shown inside the app from memory (interface design 6.16). A
+/// device that does not hold it fetches it first, as it would to open it,
+/// keeps it as any fetched file, and writes nothing else.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_file_is_fetched_to_be_shown_from_memory(pool: PgPool) {
+    file_bucket().await;
+    let server = Server::with_sign_in(pool.clone()).await;
+    let (laptop, phone) = two_devices(&server).await;
+    let photo = photograph();
+    let (note, attachment) = note_with_file(&laptop, "the whiteboard", &photo).await;
+    let file = attachment.file_id;
+    sync(&laptop).await;
+    sync(&phone).await;
+    assert!(!holds(&phone, file));
+    let on_the_phone = || -> Vec<PathBuf> {
+        std::fs::read_dir(phone.session.store().shelf().path(file).parent().unwrap())
+            .map(|entries| entries.map(|entry| entry.unwrap().path()).collect())
+            .unwrap_or_default()
+    };
+
+    // Offline, it cannot be fetched, and that is said as it is for a file
+    // that was to be opened.
+    phone.transport.set_offline(true);
+    let error = phone.session.file_bytes(&note, file).await.unwrap_err();
+    assert!(matches!(error, FileError::Api(_)), "{error}");
+    assert!(
+        error.advice(true).contains("could not be reached"),
+        "{}",
+        error.advice(true)
+    );
+    assert!(on_the_phone().is_empty());
+    phone.transport.set_offline(false);
+
+    let before = phone.transport.storage_requests();
+    let shown = phone.session.file_bytes(&note, file).await.unwrap();
+    assert_eq!(shown, photo);
+    assert_eq!(phone.transport.storage_requests(), before + 1);
+    // What was fetched is the phone's own copy now, and the one thing
+    // that was written.
+    assert_eq!(on_the_phone(), [phone.session.store().shelf().path(file)]);
+
+    // Shown again, it is read from the device: nothing is fetched, with
+    // or without a network.
+    let asked = phone.transport.requests();
+    assert_eq!(phone.session.file_bytes(&note, file).await.unwrap(), photo);
+    phone.transport.set_offline(true);
+    assert_eq!(phone.session.file_bytes(&note, file).await.unwrap(), photo);
+    phone.transport.set_offline(false);
+    assert_eq!(phone.transport.requests(), asked);
+    assert_eq!(on_the_phone().len(), 1);
+    // The device that attached it never asks anybody.
+    let asked = laptop.transport.requests();
+    assert_eq!(laptop.session.file_bytes(&note, file).await.unwrap(), photo);
+    assert_eq!(laptop.transport.requests(), asked);
+
+    // A file the note does not name is not fetched.
+    let error = phone
+        .session
+        .file_bytes(&note, Uuid::now_v7())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, FileError::NotAttached), "{error}");
+
+    // A file that has not reached the storage yet is said to be missing.
+    let (second, late) = note_with_file(&laptop, "the other wall", &photo).await;
+    laptop.transport.fail_storage(1);
+    sync(&laptop).await;
+    sync(&phone).await;
+    let error = phone
+        .session
+        .file_bytes(&second, late.file_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, FileError::Missing), "{error}");
+    assert_eq!(on_the_phone().len(), 1);
+
+    // What the storage returns in a file's place is not shown as the file.
+    sync(&laptop).await;
+    let mut object = stored(&pool, late.file_id).await.unwrap();
+    let middle = object.len() / 2;
+    object[middle] ^= 1;
+    let link = file_store().upload_link(&object_key(&pool, late.file_id).await, sealed(&photo));
+    let answer = reqwest::Client::new()
+        .put(link)
+        .body(object)
+        .send()
+        .await
+        .unwrap();
+    assert!(answer.status().is_success(), "{}", answer.status());
+    let error = phone
+        .session
+        .file_bytes(&second, late.file_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, FileError::Damaged), "{error}");
+    assert_eq!(on_the_phone().len(), 1);
+}
+
+/// A device that is signed out shows the files it holds, from memory too.
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_signed_out_device_shows_a_file_it_holds(pool: PgPool) {
+    file_bucket().await;
+    let server = Server::with_sign_in(pool.clone()).await;
+    let laptop = Client::new(&server, "Laptop", false);
+    let photo = photograph();
+    let (note, attachment) = note_with_file(&laptop, "written signed out", &photo).await;
+
+    let asked = laptop.transport.requests();
+    assert_eq!(
+        laptop
+            .session
+            .file_bytes(&note, attachment.file_id)
+            .await
+            .unwrap(),
+        photo
+    );
+    assert_eq!(laptop.transport.requests(), asked);
+
+    // One it does not hold it cannot fetch.
+    std::fs::remove_file(laptop.session.store().shelf().path(attachment.file_id)).unwrap();
+    let error = laptop
+        .session
+        .file_bytes(&note, attachment.file_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, FileError::Missing), "{error}");
+    assert!(error.advice(false).contains("not signed in to fetch it"));
+}

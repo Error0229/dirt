@@ -813,6 +813,24 @@ emptying it.
 The same tokens do two jobs: while `#work` is in Find, the list shows
 `#work` notes, and a page started then is written with `#work`.
 
+The tags and their counts come from the store in one call
+(`Store::tags_to_narrow`), given the words in Find, the tags picked, the
+rule, and what was typed after `#`. Settled when it was built:
+
+- **A count is what picking the tag then shows.** It is the number of
+  notes Find gives for the same words and the picked tags with that tag
+  added, archived notes among them (6.19). The store's tests hold the two
+  to each other.
+- **The order** is by count, the most first, and by name among equals.
+  The six shown are the first six.
+- **Under "any of them"** another tag takes nothing away, so its count is
+  the notes there are already and those it would add. A tag is offered
+  when a note that matches the words carries it. One whose notes are all
+  in the list already is offered with the number there is now; one that no
+  matching note carries is not offered, since it would add nothing.
+- **Typing after `#`** narrows by the start of the name, in lower case. A
+  character a tag cannot hold matches no tag.
+
 ### 6.4 Editor
 
 An open note is the same page (6.1): its text, its files under it, and
@@ -868,8 +886,35 @@ interrupts with a dialog.
 
 The short words here and the full sentences in Settings → Sync must come
 from `dirt_core::sync::overview`, so all three clients say the same thing.
-The overview has the full sentences today; it needs a short form of each
-state added for this indicator (section 11).
+The overview has the full sentences, and since step 1 of the plan the short
+form: `SyncIndicator` says which of the six states holds, with its words
+and its tooltip, and `Session::sync_indicator` gives it for a session. An
+app chooses the icon by the state and writes no words of its own.
+
+What the table leaves open, settled when that was built:
+
+- **Which state, when two hold:** signed out, then syncing, then just
+  synced, then offline, then a problem, then synced.
+- **Offline** is any failure that sync tries again by itself: no network,
+  a server that cannot be reached, or one that asks to be left alone for a
+  while. With nothing waiting it says "Offline" alone.
+- **"2 waiting"** counts notes. A note with a new picture is one thing
+  that waits, though its picture and its thumbnail wait too, so files are
+  counted only when no note waits and files do.
+- **A problem** is a note that could not be synced ("1 note can't sync",
+  "3 notes can't sync"); or, with no such note, a file the server refused
+  ("1 file can't sync"); or a sync that failed for a reason waiting does
+  not cure, which today is that this device has to sign in again or that
+  the app is too old ("Can't sync"). Settings → Sync says which.
+- **Signed out** is also a device that has signed in and is waiting to be
+  let in: its notes are on it alone until then.
+- **Just synced** holds for 1.4 s after a sync completes, and only if it
+  completed: a sync that failed has not just synced.
+- **The tooltip of Synced** counts as the sentence in Settings does: "Last
+  synced just now" within the first minute, then whole minutes, hours and
+  days ("Last synced 1 minute ago", "Last synced 3 hours ago"), and "Not
+  synced yet" before the first sync. Syncing and Just synced have no
+  tooltip. Each state has its short word for a screen reader, shown or not.
 
 ### 6.7 Toast
 
@@ -994,10 +1039,18 @@ app's own.
 
 ### 6.16 File preview
 
-A file is looked at inside Dirt. Its decrypted bytes are held in memory to
-be shown and never written to disk, so no other app sees it. **Open in
-another app**, which does write a decrypted copy and hand it over, stays
-for when the person wants that.
+A file is looked at inside Dirt. Its bytes are read into memory to be
+shown and no copy of it is written to be shown from, so no other app is
+handed it. **Open in another app**, which does write a copy under the
+file's own name and hand it over, stays for when the person wants that.
+
+This paragraph said first that the decrypted bytes are never written to
+disk. That was more than is true: a file the device holds lies beside the
+notes' database as it was attached, not encrypted, as the notes themselves
+lie there (`docs/SECURITY.md`), and a file fetched to be previewed is kept
+there like any other, so it is fetched once. What the preview spares is
+the second copy, in the folder another app can be lent from. The core
+gives the bytes with `Session::file_bytes`; a file is 10 MiB at most.
 
 | Kind | Shown as |
 |---|---|
@@ -1034,13 +1087,49 @@ already on the device, is shown at once while the whole file is decrypted.
 | | |
 |---|---|
 | A grain | One note. Its shade of sand is taken from its ID (hue 20–44°, saturation 30–62%, lightness 48–72%), so neighbours differ a little, as sand does. Drawn as a slightly irregular round, 7–12 px |
-| Layers | The list is grouped by when each note was last edited: today (no label; it is the surface), This week, Earlier this month, then each month by name, with the year when it is not this one. A layer starts with its name in 11 px `--text-3` and a line of dots, 7 px apart, to the edge |
+| Layers | The list is grouped by when each note was last edited: today (no label; it is the surface), This week, Earlier this month, then each month by name, with the year when it is not this one. A layer starts with its name in 11 px `--text-3` and a line of dots, 7 px apart, to the edge. Where each begins is below |
 | The pile | Under the last note, when nothing is being found: the heap (below). Under it one line, "1,254 thoughts since Nov 2025", and, if any, "3 archived", which lists them |
 | Elsewhere | The Rail's dots (7.7); the pile on Android's home screen (8.5) |
 | Never | Counts down, sets goals, keeps streaks, celebrates a number, or shows while a note is being written |
 
 The pile is drawn from the notes the device already has and stores nothing
 of its own.
+
+**Where a layer begins.** `dirt_core::models::Layer` names the layer of an
+edit time, given the time now and how far local time is from UTC.
+
+| Layer | Holds notes last edited |
+|---|---|
+| Today | On today's date, by the device's clock. And later than now, which a device whose clock is ahead can send |
+| This week | On one of the six days before today |
+| Earlier this month | Before that, in this month |
+| October | In that month of this year |
+| December 2025 | In that month of another year |
+
+"This week" is not the calendar's week. Where a week starts differs from
+country to country, and on its first day a calendar week would be empty, so
+that yesterday's notes would lie under "Earlier this month". Six days back
+from today is the same rule every day: on a Monday the layer reaches back
+to the Tuesday before. It may reach into last month, and in the first days
+of January into last year, and then those days are "This week" and not
+"December 2026". In the first week of a month nothing is "Earlier this
+month".
+
+**A grain's shade** is `dirt_core::models::Grain`: the 32-bit FNV-1a hash
+of the note's ID, written as text in lower case, gives the hue (20 and its
+remainder by 24), the saturation (30 and the remainder by 32 of the hash
+shifted right five bits) and the lightness (48 and the remainder by 24 of
+the hash shifted right ten). That is the mockup's function with one
+correction: the mockup's shifts keep the sign, so half of its IDs get a
+saturation or a lightness below the range given here. The hash itself is
+handed on, for whatever else about a grain must be the same everywhere.
+
+**The line under the pile** counts every note that is not deleted as a
+thought, the archived ones among them, since an archived note stays a
+grain; "3 archived" says how many of those are archived. "Since" is the
+month in which the oldest of them was made, by its ID, in local time.
+`Store::pile` gives every such note's ID, edit time and whether it is
+archived in one call, and `PileSummary` the numbers of the line.
 
 **How the pile is drawn: as sand piles up.**
 
@@ -1580,7 +1669,7 @@ built.
 | Ask | Why | Where |
 |---|---|---|
 | **Bring a deleted note back.** Expose the store's existing restore to the clients, for **Undo** | Undo replaces the confirmation dialog, which is what makes delete one action. The CLI has it since step 1 of the plan; the apps get it with their main screens | `dirt-core` store, the desktop and Android apps, the CLI (`dirt restore <ID>`), feature-parity.md |
-| **Short words for each sync state** in `dirt_core::sync::overview` ("Synced", "Offline · 2 waiting", "1 note can't sync") beside the full sentences | The sync status shows one or three words; CLAUDE.md says the words come from the overview, not from a client | `dirt-core::sync::overview` |
+| **Short words for each sync state** in `dirt_core::sync::overview` ("Synced", "Offline · 2 waiting", "1 note can't sync") beside the full sentences | The sync status shows one or three words; CLAUDE.md says the words come from the overview, not from a client. The core has them since step 1 of the plan (`SyncIndicator`, 6.6); the apps show them with their main screens | `dirt-core::sync::overview` |
 | **Android: save as you type** | Removes the Save button and an action from every edit | `dirt-mobile` |
 | **Android: theme and text size** | Parity with the desktop | `dirt-mobile`, feature-parity.md |
 | **Android: the capture sheet** (8.5), a native screen kept outside the web view so that it opens at once, with a place on the phone where a thought waits until the app makes it a note | Capture in three actions from outside the app, without waiting for the app to start | `dirt-mobile` |
@@ -1590,7 +1679,7 @@ built.
 | **Android: share saves at once** with **Undo**, for text as well as pictures | Already true; keep it, and add the toast | `dirt-mobile` |
 | **Desktop: drop files to make a new note**, and paste a picture | Attach in one action | `dirt-desktop`, `dirt-core::files` |
 | **Load more on scroll** instead of "Show older notes" | One less button; the store already pages | Both apps |
-| **A file's decrypted bytes in memory**, from `dirt-core`, not only as a file on disk | The preview shows a file without writing it out (6.16). Decryption stays in the core: no cryptography in a client crate | `dirt-core::files`, both apps |
+| **A file's decrypted bytes in memory**, from `dirt-core`, not only as a file on disk | The preview shows a file without writing a copy out (6.16). Decryption stays in the core: no cryptography in a client crate. The core has it since step 1 of the plan (`Session::file_bytes`) | `dirt-core::files`, both apps |
 | **PDF in the preview: bundle a renderer or not** | WebView2 draws PDFs; WebKitGTK and Android's WebView do not. Bundling pdf.js (a few MB) makes it the same everywhere; not bundling means PDFs open in another app on Linux and Android | Owner's decision |
 | **SECURITY.md: the preview** | A previewed file stays in the app's memory; **Open in another app** writes a decrypted copy and lends it. The document should say which does which | `docs/SECURITY.md` |
 | **Drawn scrollbars** (6.15) | One look on every platform, and none of the space a system scrollbar takes. One small script shared by both apps, as the list's FLIP is | Both apps |
@@ -1599,9 +1688,9 @@ built.
 | **Focus while writing** (7.7): Slide, Rail and Zen, chosen in Settings, Slide by default | Only the note while it is written, three ways | `dirt-desktop` |
 | **The page: a new note from its first word** (6.1) | The note exists before it is "done". One emptied again, with no files, must be let go without a word: taken off the device altogether if it never reached the server, deleted like any other note if it did | `dirt-core` store, both apps |
 | **The note's icons beside its column, shown by nearness** (6.4) | The icons belong to the note; nothing comes back on a stray mouse move | `dirt-desktop` |
-| **Grains, layers and the pile** (6.17) | 積沙成塔: the list as a pile, newest on top, and the pile drawn as a heap of sand, one grain per thought. Derived from the notes; nothing new is stored | Both apps |
+| **Grains, layers and the pile** (6.17) | 積沙成塔: the list as a pile, newest on top, and the pile drawn as a heap of sand, one grain per thought. Derived from the notes; nothing new is stored. The core gives every note in one call, each grain's shade, the layer of an edit time and the numbers of the count line since step 1 of the plan | `dirt-core` store and models, both apps |
 | **Archive** (6.19): an `archived` value in each note's CRDT document, derived into its row like the deleted flag. The list leaves archived notes out; search and export keep them | Clearing a done thought without losing it. In the note's document it syncs and merges like any edit, and the server sees nothing new | `dirt-core` notes and store, every client, the CLI (`dirt archive`, `dirt unarchive`, `dirt list --archived`), feature-parity.md. Archiving is not an edit (6.19) |
-| **Tags: counts for the notes left** (6.3): how many notes match the current words and tags plus each other tag, and "any of them" as well as "all of them" | The tag list that stays open, and never offers a tag that would empty the list | `dirt-core` store: one grouped query over the tag table |
+| **Tags: counts for the notes left** (6.3): how many notes match the current words and tags plus each other tag, and "any of them" as well as "all of them" | The tag list that stays open, and never offers a tag that would empty the list. The store has it since step 1 of the plan (`Store::tags_to_narrow`, `find_notes_by_tags`) | `dirt-core` store: one grouped query, which starts at the full-text index when there are words and at the tag table when there are none |
 | **Voice: speech to text on the device** (6.18). One engine used by both apps, giving words as they are heard. Which engine is the plan's first trial: whisper.cpp does not give words as they are heard, so it is measured against a streaming recogniser (sherpa-onnx) and Android's own on-device one, on a laptop and on a phone. Its model is fetched once on first use from Dirt's own storage, and its hash is checked against one built into the app | Voice without anyone's voice leaving the device. The engine is native code that takes minutes to compile, so it sits behind a feature or in a crate of its own: the CLI, the server's tests and most CI jobs must not build it | A `voice` feature of `dirt-core`, or a `dirt-voice` crate, as the trial finds; both apps |
 | **Which speech model, downloaded or shipped** | English comes first (decided 2026-11-16), so the smallest model that hears English well is enough; the trial names it and its size. Downloading on first use keeps the apps small; shipping makes voice work offline from the first second | Owner's decision, once the trial has the sizes |
 | **Microphone access**: Android's `RECORD_AUDIO`, asked on first use; the desktop's microphone, with macOS's usage string | Voice | `dirt-desktop`, `dirt-mobile` |

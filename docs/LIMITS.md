@@ -90,6 +90,110 @@ about 360 bytes a note, twice the blob.
 | The tags in use, with their counts | 2.5 ms |
 | How many notes there are | 1 ms |
 
+### What the interface redesign asks of the local store
+
+Measured on 2026-11-17 for step 1 of the interface plan
+(`docs/plans/2026-11-16-interface-redesign-implementation-plan.md`), by
+`the_store_at_the_note_limit_for_the_interface` in the same file. It needs
+no server:
+
+```bash
+cargo test --release -p dirt-sim --test limits the_store_at_the_note_limit_for_the_interface -- --ignored --nocapture
+```
+
+The store holds 20,000 notes of a line each. Every note has one of 50
+tags and one of 400 topics, and a third of them are also `#urgent`: 451
+tags, 46,667 pairs of a note and a tag, the commonest tag on 6,667 notes.
+A tenth of the notes are archived.
+
+Each thing was asked six times, and the time given is the fastest of the
+last five. The laptop was doing other work throughout, which it was not
+when the table above was measured: other builds kept a third of its
+processors busy, and the same call asked twice in one run came out at 3 ms
+and at 6 ms. So some of the rows above were asked again in the same run.
+They took about twice as long as above, and the new figures are to be read
+against them and not against the table above.
+
+| Asked before, and again in this run | Above | In this run |
+|---|---|---|
+| The 100 most recently edited notes | 0.2 ms | 0.1 ms |
+| All of the list: 18,000 notes | 15 ms for 20,000 | 31 ms |
+| The tags in use, with their counts | 2.5 ms for 50 tags | 2.6 ms for 451 |
+| Up to 100 notes holding a word that every note holds | 27 ms | 55 ms |
+| Up to 100 notes holding that word and carrying a tag | 9 ms | 25 ms |
+| Up to 100 notes carrying a tag | 2 ms | 3 ms |
+
+The tags that could be chosen next, the first six, each with the number of
+notes it would leave (`Store::tags_to_narrow`):
+
+| In Find | Time |
+|---|---|
+| Nothing typed and nothing chosen | 5 ms |
+| The start of a tag's name | 2 ms |
+| A tag chosen, which 400 notes carry | 0.6 ms |
+| The commonest tag chosen | 14 ms |
+| Two tags chosen, all of them: the commonest and another | 0.8 ms |
+| Two tags chosen, any of them, 400 notes each | 15 ms |
+| Two tags chosen, any of them, one the commonest | 37 ms |
+| A word every note holds | 46 ms |
+| The start of that word, and the start of a tag's name | 47 ms |
+| That word and a tag | 25 ms |
+| That word and two tags, all of them | 39 ms |
+| That word and two tags, any of them | 91 ms |
+| A word one note holds | 0.2 ms |
+
+With words typed the count costs about what the search for those words
+costs, because it reads the same matches: the search for the word every
+note holds took 55 ms in this run. "Any of them" with such a word is the
+dearest, at not quite twice the search. Without words it reads tags and no
+notes.
+
+Finding up to 100 notes by several tags (`Store::find_notes_by_tags`,
+`list_notes_by_tags`):
+
+| What | Time |
+|---|---|
+| Two tags, all of them, which 133 notes carry together | 24 ms |
+| Two tags, any of them | 1.5 ms |
+| A word every note holds and two tags, all of them | 45 ms |
+| That word and two tags, any of them | 47 ms |
+| The list narrowed to two tags, all of them | 23 ms |
+
+Tags with no words are found by reading the notes in the order of the list
+and looking each one up among the tags, until there are a hundred. Tags
+that few notes share are therefore the dearest: every note is looked up.
+One tag was found the same way before this was built. That is what 24 ms
+is.
+
+The pile (`Store::pile`, and `dirt_core::models`):
+
+| What | Time |
+|---|---|
+| Every live note's ID, edit time and whether it is archived: 20,000 | 23 ms |
+| The same where every note is 2,000 characters long, in a database of 144 MB | 16 ms |
+| Each of the 20,000 notes' shade and layer, and the line under the pile | 1.2 ms |
+| The answer in memory | 640 KB |
+
+What the measuring changed:
+
+- **A chosen tag was looked up once for each tag of each note.** The first
+  version of the count joined the notes to their tags and then tested
+  each row. In a run where the search for the word every note holds took
+  122 ms, "any of them" with two tags took 757 ms with that word and
+  295 ms with no word. The notes are now gathered first and tested once
+  each, and with no words "any of them" counts each tag's notes in the
+  tags' own index and reads the chosen tags' notes only: 91 ms and 15 ms.
+- **With every chosen tag wanted, the first one's notes were read.** With
+  the commonest tag first that was 6,667 notes, and 67 ms. The tag fewest
+  notes carry is now put first: 0.8 ms.
+- **The pile read the notes' table from end to end.** For notes of a line
+  that is as quick as any way. For notes of 2,000 characters it took
+  266 ms: the edit time comes after the text in a note's row, so the whole
+  of every note was read to reach it. The pile is now read by the index
+  that serves the list, which holds the edit time, and takes only the ID
+  from the row, where it comes first. Tests read each statement's plan
+  and fail if it changes.
+
 ### Letting a device in
 
 | What | Measured | Allowed |

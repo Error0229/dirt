@@ -1114,3 +1114,113 @@ async fn a_notes_files_are_listed_with_where_they_stand() {
     // A note that is not there has no list.
     assert!(store.attached_files(&NoteId::new()).await.is_err());
 }
+
+/// Every file under a folder, with its size: what is on the disk.
+fn everything_under(folder: &Path) -> Vec<(PathBuf, u64)> {
+    let mut found = Vec::new();
+    let mut folders = vec![folder.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).unwrap() {
+            let entry = entry.unwrap();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                folders.push(entry.path());
+            } else if !entry.file_name().to_string_lossy().starts_with("notes.db") {
+                // The database and its log change with every write.
+                found.push((entry.path(), entry.metadata().unwrap().len()));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// A file is shown inside the app from memory. Reading it writes nothing:
+/// no copy for another program, as opening it in one makes.
+#[tokio::test]
+async fn a_file_is_read_into_memory_and_nothing_is_written() {
+    use dirt_core::sync::engine::{file_bytes_on_device, FileError};
+
+    let desk = desk();
+    let store = &desk.store;
+    let note = store.create_note("the whiteboard").await.unwrap().id;
+    // Longer than one piece of an encrypted file, and not all one byte.
+    let photo: Vec<u8> = (0..150_000_u32).map(|i| (i % 251) as u8).collect();
+    let source = desk.a_file("photo.jpg", &photo);
+    let attached = store
+        .attach_file(&note, &source, "photo.jpg", "image/jpeg")
+        .await
+        .unwrap();
+    let before = everything_under(desk.folder.path());
+
+    let read = file_bytes_on_device(store, &note, attached.file_id)
+        .await
+        .unwrap();
+    assert_eq!(read, photo);
+    assert_eq!(
+        store.file_bytes(attached.file_id).await.unwrap().as_deref(),
+        Some(photo.as_slice())
+    );
+    assert_eq!(everything_under(desk.folder.path()), before);
+
+    // A file the note does not name is not read, though the device
+    // holds a file of that name.
+    let other = store.create_note("another note").await.unwrap().id;
+    let error = file_bytes_on_device(store, &other, attached.file_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, FileError::NotAttached), "{error}");
+    let error = file_bytes_on_device(store, &note, Uuid::now_v7())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, FileError::NotAttached), "{error}");
+
+    // A deleted note has its files still, as it has for opening one.
+    store.delete_note(&note).await.unwrap();
+    assert_eq!(
+        file_bytes_on_device(store, &note, attached.file_id)
+            .await
+            .unwrap(),
+        photo
+    );
+
+    // A file that is not on the device cannot be read by a device that
+    // cannot fetch, and says so as opening it does.
+    std::fs::remove_file(store.shelf().path(attached.file_id)).unwrap();
+    let error = file_bytes_on_device(store, &note, attached.file_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, FileError::Missing), "{error}");
+    assert_eq!(store.file_bytes(attached.file_id).await.unwrap(), None);
+    assert_eq!(store.file_bytes(Uuid::now_v7()).await.unwrap(), None);
+}
+
+/// Nothing on the shelf is larger than a file may be. Something that is
+/// was not put there by Dirt, and is not read into memory whole.
+#[tokio::test]
+async fn something_too_large_to_be_a_file_is_not_read_into_memory() {
+    let desk = desk();
+    let store = &desk.store;
+    let file = Uuid::now_v7();
+    let path = store.shelf().path(file);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let large = std::fs::File::create(&path).unwrap();
+    // A file of this length with nothing written: it takes no room.
+    large
+        .set_len(u64::try_from(limits::MAX_FILE_BYTES).unwrap() + 1)
+        .unwrap();
+    drop(large);
+
+    let error = store.file_bytes(file).await.unwrap_err();
+    assert!(matches!(error, Error::InvalidInput(_)), "{error}");
+
+    // At the limit itself it is read.
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(u64::try_from(limits::MAX_FILE_BYTES).unwrap())
+        .unwrap();
+    let read = store.file_bytes(file).await.unwrap().unwrap();
+    assert_eq!(read.len(), usize::try_from(limits::MAX_FILE_BYTES).unwrap());
+}

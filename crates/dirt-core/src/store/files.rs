@@ -223,6 +223,18 @@ pub(super) fn set_problem(
     Ok(())
 }
 
+/// How many files could not be sent: as many as [`problems`] lists,
+/// without reading a note to name each.
+pub(super) fn problem_count(connection: &Connection) -> Result<usize> {
+    let count: i64 = connection.query_row(
+        "SELECT count(*) FROM file_links l JOIN notes n ON n.id = l.note_id \
+          WHERE l.problem IS NOT NULL AND l.unnamed_at IS NULL",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(usize::try_from(count).unwrap_or_default())
+}
+
 pub(super) fn problems(connection: &Connection) -> Result<Vec<FileProblem>> {
     let mut statement = connection.prepare(
         "SELECT l.file_id, l.note_id, l.problem, n.doc, n.text \
