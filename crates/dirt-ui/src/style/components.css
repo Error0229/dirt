@@ -1,0 +1,197 @@
+/* The components of the interface design, section 6, for both apps.
+   Every colour, time and curve is a token (tokens.rs, motion.rs). What
+   differs between the apps hangs on the root's class: .desktop or .android.
+   A component only adds and removes classes; what moves is here. */
+
+/* ---- Base ------------------------------------------------------------ */
+/* The resets are written with :where(), which weighs nothing, so that any
+   component's class wins over them. */
+.dui-root{color:var(--text);font:14px/1.45 var(--font);-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+.dui-root,.dui-root *,.dui-root *::before,.dui-root *::after{box-sizing:border-box}
+:where(.dui-root) button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+:where(.dui-root) textarea,:where(.dui-root) input{font:inherit;color:inherit}
+:where(.dui-root) :focus{outline:0}
+/* Focus is always visible: a 2 px ring of the accent. Text fields show it
+   with their border and halo instead (section 12). */
+:where(.dui-root) :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+:where(.dui-root) textarea:focus-visible,:where(.dui-root) input[type="text"]:focus-visible{outline:none}
+:where(.dui-root) kbd,.dui-tip kbd{font:500 10.5px/1 var(--mono);padding:3px 5px 2px;border-radius:4px;background:var(--surface);border:1px solid var(--border);border-bottom-width:2px;color:var(--text-2);white-space:nowrap}
+/* A search match is drawn in the text colour, whatever is around it, so
+   that it passes on --mark in both themes. */
+:where(.dui-root) mark{background:var(--mark);color:var(--text);border-radius:3px;padding:0 1px;margin:0 -1px}
+:where(.dui-root) [hidden]{display:none !important}
+.dui-noselect,.dui-noselect *{user-select:none;-webkit-user-select:none}
+.android :where(.dui-root) button{-webkit-touch-callout:none;user-select:none;-webkit-user-select:none}
+.dui-sr{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+
+/* Theme and accent: where the circle cannot be drawn, every colour
+   cross-fades (320 ms). */
+.dui-theme-fade,.dui-theme-fade *{transition:background-color .32s var(--e-std),border-color .32s var(--e-std),color .32s var(--e-std),fill .32s,box-shadow .32s !important}
+::view-transition-old(root),::view-transition-new(root){animation:none;mix-blend-mode:normal}
+::view-transition-old(root){z-index:1}
+::view-transition-new(root){z-index:2}
+
+/* ---- Icons (4.4) ----------------------------------------------------- */
+.dui-i{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.dui-i.s{width:15px;height:15px}
+.dui-i.l{width:22px;height:22px}
+
+/* ---- Icon button (6.10) ---------------------------------------------- */
+.dui-icon-btn{width:32px;height:32px;display:inline-grid;place-items:center;border-radius:8px;color:var(--text-2);transition:background var(--d-1),color var(--d-1),transform var(--d-1) var(--e-std);flex:none;position:relative}
+.dui-icon-btn:hover{background:var(--surface-2);color:var(--text)}
+.dui-icon-btn:active{transform:scale(.9)}
+.dui-icon-btn.sm{width:28px;height:28px;border-radius:7px}
+.dui-icon-btn.danger:hover{color:var(--danger);background:var(--danger-soft)}
+.dui-icon-btn[aria-pressed="true"]{color:var(--accent);background:var(--accent-soft)}
+.dui-icon-btn:disabled{opacity:.45;cursor:default;pointer-events:none}
+/* 40 dp on Android, whatever the size asked for: a finger needs it. */
+.android .dui-icon-btn,.android .dui-icon-btn.sm{width:40px;height:40px;border-radius:12px}
+
+/* ---- Buttons (6.10) -------------------------------------------------- */
+.dui-btn{height:34px;padding:0 14px;border-radius:var(--r-b);display:inline-flex;align-items:center;justify-content:center;gap:6px;font-weight:550;font-size:13.5px;background:var(--surface-2);color:var(--text);transition:background var(--d-1),color var(--d-1),transform var(--d-1) var(--e-std),box-shadow var(--d-1);white-space:nowrap;position:relative;overflow:hidden;flex:none}
+.dui-btn:hover{background:var(--surface-3)}
+.dui-btn:active{transform:scale(.97)}
+.dui-btn.primary{background:var(--accent);color:var(--on-accent)}
+.dui-btn.primary:hover{background:var(--accent-hover)}
+.dui-btn.ghost{background:transparent;box-shadow:inset 0 0 0 1px var(--border)}
+.dui-btn.ghost:hover{background:var(--surface-2)}
+.dui-btn.danger{color:var(--danger)}
+.dui-btn.danger:hover{background:var(--danger-soft)}
+.dui-btn.danger-fill{background:var(--danger);color:var(--on-danger)}
+.dui-btn.danger-fill:hover{background:color-mix(in srgb,var(--danger) 88%,var(--text))}
+.dui-btn.sm{height:28px;padding:0 10px;font-size:12.5px;border-radius:7px}
+.dui-btn:disabled{opacity:.5;cursor:default;pointer-events:none}
+.android .dui-btn{height:40px;padding:0 16px}
+.android .dui-btn.sm{height:36px;padding:0 12px}
+
+/* ---- Tooltip (4.5) --------------------------------------------------- */
+.dui-tip{position:fixed;z-index:1000;pointer-events:none;background:var(--inverse);color:var(--on-inverse);font:500 12px/1.45 var(--font);padding:5px 8px;border-radius:7px;display:flex;gap:7px;align-items:center;opacity:0;translate:0 3px;transition:opacity var(--d-1) var(--e-std),translate var(--d-snap) var(--sp-snap);width:max-content;max-width:280px;box-shadow:var(--shadow-2)}
+.dui-tip.on{opacity:1;translate:0 0}
+.dui-tip kbd{background:transparent;color:inherit;opacity:.7;border-color:color-mix(in srgb,var(--on-inverse) 30%,transparent)}
+.dui-tip-keys{display:flex;gap:3px;flex:none}
+
+/* ---- Toast (6.7) ----------------------------------------------------- */
+.dui-toast-layer{position:fixed;left:0;right:0;bottom:18px;display:grid;justify-items:center;pointer-events:none;z-index:900}
+.android .dui-toast-layer{bottom:calc(var(--dui-toast-lift,80px) + env(safe-area-inset-bottom,0px))}
+.dui-toasts{grid-area:1/1;display:grid;justify-items:center;max-width:100%;min-width:0}
+.dui-toast{grid-area:1/1;pointer-events:auto;display:flex;align-items:center;gap:10px;min-height:40px;padding:6px 6px 6px 14px;border-radius:12px;background:var(--inverse);color:var(--on-inverse);font-size:13px;box-shadow:var(--shadow-2);position:relative;overflow:hidden;max-width:calc(100vw - 32px)}
+.dui-toast-ghost{pointer-events:none}
+.dui-toast-words{display:flex;align-items:center;gap:8px;min-width:0}
+.dui-toast-words .dui-i{width:16px;height:16px}
+.dui-toast-act{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border-radius:7px;color:var(--accent-inverse);font-weight:600;font-size:13px;transition:background var(--d-1)}
+.dui-toast-act:hover{background:color-mix(in srgb,var(--on-inverse) 12%,transparent)}
+.dui-toast .dui-icon-btn{color:inherit;opacity:.75}
+.dui-toast .dui-icon-btn:hover{background:color-mix(in srgb,var(--on-inverse) 12%,transparent);color:inherit;opacity:1}
+.dui-toast kbd{background:transparent;color:inherit;opacity:.6;border-color:color-mix(in srgb,var(--on-inverse) 30%,transparent);margin-right:6px}
+.dui-toast-end{width:8px;flex:none}
+.dui-toast-bar{position:absolute;left:0;bottom:0;height:2px;width:100%;background:currentColor;opacity:.28}
+.android .dui-toast{min-height:48px;font-size:14px}
+.android .dui-toast-act{height:36px}
+
+/* ---- Banner (6.8) ---------------------------------------------------- */
+.dui-banner{position:fixed;top:12px;left:50%;translate:-50% 0;z-index:800;display:flex;align-items:center;gap:12px;padding:8px 8px 8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-l);box-shadow:var(--shadow-3);max-width:calc(100vw - 24px);transform:translateY(-160%);opacity:0;visibility:hidden;transition:transform var(--d-pop) var(--sp-pop),opacity 180ms var(--e-std),visibility 0s var(--d-pop)}
+.dui-banner.on{transform:none;opacity:1;visibility:visible;transition:transform var(--d-pop) var(--sp-pop),opacity 180ms var(--e-std),visibility 0s}
+.dui-banner-words{min-width:0}
+.dui-banner-title{font-size:13.5px;font-weight:550}
+.dui-banner-detail{font-size:12px;color:var(--text-3)}
+.dui-banner-icon{width:32px;height:32px;border-radius:9px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;flex:none}
+.android .dui-banner{top:calc(8px + env(safe-area-inset-top,0px));left:10px;right:10px;translate:none;max-width:none;border:0;border-radius:20px;box-shadow:var(--shadow-3),0 0 0 1px var(--border);padding:12px;transform:translateY(-150%)}
+.android .dui-banner.on{transform:none}
+.android .dui-banner-words{flex:1}
+.android .dui-banner-title{font-weight:600}
+
+/* ---- Segmented control (6.11) ---------------------------------------- */
+.dui-seg{position:relative;display:inline-grid;grid-template-columns:repeat(var(--n),1fr);background:var(--surface-2);border-radius:9px;padding:2px;flex:none}
+.dui-seg button{position:relative;z-index:1;height:28px;padding:0 12px;border-radius:7px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12.5px;font-weight:500;color:var(--text-2);transition:color var(--d-2)}
+.dui-seg button[aria-checked="true"]{color:var(--text)}
+.dui-seg-thumb{position:absolute;top:2px;bottom:2px;left:2px;width:calc((100% - 4px) / var(--n));background:var(--surface);border-radius:7px;box-shadow:var(--shadow-1),0 0 0 1px var(--border);transform:translateX(calc(var(--i) * 100%));transition:transform var(--d-snap) var(--sp-snap)}
+.dui-seg.sm button{height:24px;padding:0 10px;font-size:12px}
+.android .dui-seg button,.android .dui-seg.sm button{height:40px;padding:0 14px;font-size:13.5px}
+
+/* ---- Slider, with a small and a large A (6.11) ------------------------- */
+.dui-slider{display:inline-flex;align-items:center;gap:10px;color:var(--text-2);flex:none}
+.dui-slider input[type="range"]{accent-color:var(--accent);width:150px;margin:0;height:32px;cursor:pointer}
+.android .dui-slider input[type="range"]{height:40px;width:170px}
+.dui-slider-a{font-weight:600;line-height:1;flex:none}
+.dui-slider-a.small{font-size:12px}
+.dui-slider-a.large{font-size:18px}
+
+/* ---- Switch (6.11). Unchecked, it is outlined in --border-control ------ */
+.dui-switch{width:40px;height:24px;border-radius:999px;position:relative;flex:none;box-shadow:inset 0 0 0 1.5px var(--border-control);transition:background var(--d-2) var(--e-std),box-shadow var(--d-2) var(--e-std)}
+.dui-switch::after{content:"";position:absolute;top:4px;left:4px;width:16px;height:16px;border-radius:50%;background:var(--border-control);transition:transform var(--d-snap) var(--sp-snap),background var(--d-2) var(--e-std)}
+.dui-switch[aria-checked="true"]{background:var(--accent);box-shadow:inset 0 0 0 1.5px var(--accent)}
+.dui-switch[aria-checked="true"]::after{transform:translateX(16px);background:var(--on-accent)}
+.dui-switch:active::after{scale:1.1 .92}
+.dui-switch:disabled{opacity:.5;pointer-events:none}
+/* The switch keeps its size on Android; the row it sits in is the target,
+   and around it the button reaches 40 dp. */
+.android .dui-switch::before{content:"";position:absolute;inset:-8px 0}
+
+/* ---- Accent dots (6.11) ---------------------------------------------- */
+.dui-dots{display:inline-flex;gap:9px;flex:none}
+.dui-dot{width:24px;height:24px;border-radius:50%;background:var(--c);position:relative;box-shadow:inset 0 0 0 1px rgba(0,0,0,.1);transition:transform var(--d-1) var(--e-std)}
+.dui-dot:hover{transform:scale(1.12)}
+.dui-dot:active{transform:scale(.92)}
+/* The chosen one: a 2 px ring of its own colour, 2 px outside it. */
+.dui-dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;box-shadow:0 0 0 2px var(--c);opacity:0;transform:scale(.75);transition:opacity var(--d-2),transform var(--d-3) var(--e-spring)}
+.dui-dot[aria-checked="true"]::after{opacity:1;transform:none}
+.dui-dot:focus-visible{outline-offset:6px}
+/* A 40 dp target around a 24 px dot. */
+.android .dui-dots{gap:16px}
+.android .dui-dot::before{content:"";position:absolute;inset:-8px}
+
+/* ---- Panel (desktop) and sheet (Android) (6.9) ------------------------- */
+.dui-scrim{position:fixed;inset:0;background:rgba(20,16,12,.34);opacity:0;pointer-events:none;transition:opacity var(--d-3) var(--e-std);z-index:600}
+.dui-scrim.on{opacity:1;pointer-events:auto}
+.dui-panel{position:fixed;left:50%;top:50%;width:min(740px,92vw);height:min(540px,88vh);translate:-50% -50%;background:var(--surface);border-radius:var(--r-l);box-shadow:var(--shadow-3);display:flex;flex-direction:column;overflow:hidden;z-index:601;opacity:0;scale:.96;visibility:hidden;pointer-events:none;transition:opacity var(--d-2) var(--e-std),scale var(--d-3) var(--e-out),visibility 0s var(--d-3)}
+.dui-panel.on{opacity:1;scale:1;visibility:visible;pointer-events:auto;transition:opacity var(--d-2) var(--e-std),scale var(--d-3) var(--e-out),visibility 0s}
+.dui-panel-close{position:absolute;top:10px;right:10px;z-index:3}
+.dui-panel-body{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
+/* What scrolls inside a panel or sheet has the surface's colour itself.
+   Left see-through, WebView2 was seen to draw buttons of the screen behind
+   over the last 20 px of an open panel, in a window on the screen; with a
+   colour of its own it did not. */
+.dui-panel .dui-scroll,.dui-sheet .dui-scroll{background:var(--surface)}
+.dui-sheet{position:fixed;left:0;right:0;bottom:0;top:46px;background:var(--surface);border-radius:var(--r-sheet) var(--r-sheet) 0 0;z-index:601;transform:translateY(102%);visibility:hidden;transition:transform var(--d-glide) var(--sp-glide),visibility 0s var(--d-glide);display:flex;flex-direction:column;box-shadow:var(--shadow-3)}
+.dui-sheet.on{transform:none;visibility:visible;transition:transform var(--d-glide) var(--sp-glide),visibility 0s}
+/* While a finger holds it, it follows the finger and nothing else. */
+.dui-sheet.drag{transition:none}
+.dui-sheet-head{padding:8px 12px 4px 20px;display:flex;align-items:center;flex:none;cursor:grab;touch-action:none;position:relative}
+.dui-sheet-head::before{content:"";position:absolute;top:8px;left:50%;translate:-50% 0;width:36px;height:4px;border-radius:4px;background:var(--border-strong)}
+.dui-sheet-head h2{flex:1;margin:12px 0 0;font-size:20px;font-weight:700;letter-spacing:-.02em}
+.dui-sheet-body{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
+/* The screen behind a sheet steps back: mark it with .dui-steps-back. */
+.dui-steps-back{transform-origin:50% 0;transition:transform var(--d-glide) var(--sp-glide),border-radius var(--d-glide) var(--sp-glide),filter var(--d-glide) var(--e-std)}
+:root:has(.dui-sheet.on) .dui-steps-back{transform:scale(.93) translateY(12px);border-radius:28px;filter:brightness(.82);overflow:hidden}
+
+/* ---- Confirmation in place (6.12) ------------------------------------ */
+.dui-confirm{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--danger-soft);animation:dui-confirm-in var(--d-3) var(--e-out)}
+.dui-confirm-ask{flex:1;min-width:0;font-size:13px}
+@keyframes dui-confirm-in{from{opacity:0;transform:translateY(-6px)}}
+
+/* ---- Scrollbars (6.15): drawn by the app, over the content ------------- */
+:root{--sb:color-mix(in srgb,var(--text) 24%,transparent);--sb-hover:color-mix(in srgb,var(--text) 42%,transparent)}
+.dui-scroll-wrap{position:relative;min-height:0;display:flex;flex-direction:column}
+.dui-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+.dui-scroll::-webkit-scrollbar{display:none}
+.dui-sb{position:absolute;top:4px;bottom:4px;right:0;width:10px;z-index:15;opacity:0;pointer-events:none;transition:opacity var(--d-3) var(--e-std)}
+.dui-sb.on{opacity:1;pointer-events:auto}
+.dui-sb-thumb{position:absolute;right:2px;top:0;width:5px;border-radius:99px;background:var(--sb);transition:width var(--d-2) var(--e-std),background var(--d-1)}
+.dui-sb:hover .dui-sb-thumb,.dui-sb.drag .dui-sb-thumb{width:8px;background:var(--sb-hover)}
+.android .dui-sb{width:6px;pointer-events:none}
+.android .dui-sb-thumb{width:3px;right:1px}
+
+/* ---- Lists the script animates ---------------------------------------- */
+/* Rows are measured against their list, so the list is their frame. */
+[data-dui-list]{position:relative}
+.dui-ghost{position:absolute !important;margin:0 !important;pointer-events:none;z-index:0}
+
+/* ---- A card that can be swiped (8.2) ----------------------------------- */
+.dui-swipe{position:relative;border-radius:var(--r-card);overflow:hidden;flex:none}
+.dui-swipe-bg{position:absolute;inset:0;background:color-mix(in srgb,var(--text-2) 72%,var(--bg));color:var(--bg);display:flex;align-items:center;justify-content:flex-end;padding-right:24px;border-radius:var(--r-card)}
+.dui-swipe-bg.danger{background:var(--danger);color:var(--on-danger)}
+.dui-swipe-bg .dui-i{transition:transform var(--d-2) var(--e-spring)}
+.dui-swipe.armed .dui-swipe-bg .dui-i{transform:scale(1.3)}
+/* Let go before the mark, it springs back (pop). Vertical movement stays
+   the list's own scrolling. */
+.dui-swipe-in{position:relative;background:var(--surface);border-radius:var(--r-card);box-shadow:var(--shadow-1),0 0 0 1px var(--border);transition:transform var(--d-pop) var(--sp-pop),background var(--d-1);touch-action:pan-y;user-select:none;-webkit-user-select:none}

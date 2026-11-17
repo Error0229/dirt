@@ -1,0 +1,25 @@
+[package]
+name = "dirt-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "What Dirt's desktop and Android apps share of the interface: tokens, fonts, icons, motion and components"
+
+[features]
+# The gallery: every component on one screen, for looking at them while
+# they are built. Each app has a `gallery` feature that turns this on and
+# shows the gallery in place of the app.
+gallery = []
+
+[dependencies]
+# For the settings the interface applies (theme, accent). Without
+# `keyring-store`, which the Android app must not build.
+dirt-core = { path = "../dirt-core", default-features = false }
+dioxus.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

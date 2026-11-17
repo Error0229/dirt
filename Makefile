@@ -50,6 +50,9 @@ Dirt workspace commands
                            (Android targets use the JDK named by
                            DIRT_ANDROID_JAVA_HOME when it is set)
 
+  run-gallery-desktop      Show the interface's gallery in a desktop window
+  run-gallery-android      Show the interface's gallery on Android
+
   check-platforms          Check API + CLI + desktop + mobile
   test-platforms           Test core + API + CLI + desktop + mobile
   run-platforms            Print common local run commands
@@ -71,6 +74,7 @@ endef
 	check-api test-api run-api build-api \
 	check-desktop test-desktop run-desktop build-desktop \
 	check-mobile test-mobile run-mobile-android build-mobile-android \
+	run-gallery-desktop run-gallery-android \
 	check-platforms test-platforms run-platforms
 
 help: ## Show available targets
@@ -151,7 +155,7 @@ test-mobile: ## Test dirt-mobile
 	$(CARGO) test -p dirt-mobile
 
 ifneq ($(strip $(ANDROID_JAVA_HOME)),)
-run-mobile-android build-mobile-android: export JAVA_HOME := $(ANDROID_JAVA_HOME)
+run-mobile-android build-mobile-android run-gallery-android: export JAVA_HOME := $(ANDROID_JAVA_HOME)
 endif
 
 run-mobile-android: ## Run mobile app on Android (Dioxus)
@@ -159,6 +163,13 @@ run-mobile-android: ## Run mobile app on Android (Dioxus)
 
 build-mobile-android: ## Build Android APK/AAB (release)
 	$(DX) build --platform android --package dirt-mobile --release
+
+# The gallery of dirt-ui's components, in place of the app. Development only.
+run-gallery-desktop: ## Show the interface's gallery in a desktop window
+	$(DX) serve --platform desktop --package dirt-desktop --features gallery --port $(DESKTOP_DEV_PORT)
+
+run-gallery-android: ## Show the interface's gallery on Android
+	$(DX) serve --platform android --package dirt-mobile --features gallery --port $(MOBILE_DEV_PORT)
 
 check-platforms: check-api check-cli check-desktop check-mobile ## Check all app platforms
 

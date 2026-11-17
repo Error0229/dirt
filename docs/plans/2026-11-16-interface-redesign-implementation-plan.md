@@ -215,12 +215,29 @@ it reorders at the display's rate; a card follows a finger with no call
 into Rust until release; turning on reduced motion takes effect at once;
 the contrast test passes.
 
+**Left by this step for later ones**, each in the step that has what it
+needs:
+
+| What | Step |
+|---|---|
+| The text size's default becomes 15 px (design 4.2). The old desktop editor reads the same setting, at 14, until it is replaced | 3 |
+| <kbd>Ctrl Z</kbd> after the toast has gone. The script presses **Undo** on a toast that is showing; the key on its own is one of 7.4's | 3 |
+| The app's own context menu (Copy, Paste, Select all). Release builds show no menu until then, as they did before | 3 |
+| Back closes a sheet. The script closes it on <kbd>Esc</kbd> and on a drag; Android's Back is the app's to hand on | 4 |
+| Pull to sync, and the note growing out of its card: the two gestures of 5.5 the script does not have yet | 4 |
+| Auto on Android. The WebView takes light or dark from the activity's theme, which is a light one, so Auto is light there. The activity needs a theme that follows the system and `uiMode` among the changes it handles itself: without that, Android restarts the activity when the system's theme changes, and the app ends (seen on the emulator) | 4 |
+| Reduced motion on Android while the app is open. The WebView reads "Remove animations" only when it starts. Read `Settings.Global.ANIMATOR_DURATION_SCALE` each time the person returns, and give the answer to `UiRoot`'s `reduced_motion` | 4 |
+| Wallpaper, the seventh accent on Android 12 and later (design 4.1.1), with its contrast check. A stored accent a build does not know reads as Clay | 5 |
+| A toast that stays while a screen reader is on (design 12). `Toast::hold` does the staying; knowing that TalkBack is on needs native code | 10 |
+| Trying the fallbacks where they are used: a web view without `linear()` or without View Transitions (WebKitGTK), and the web view's keys in a release build on each system | The manual checklist, G1 to G9 |
+
 ### Step 3: the desktop's main screen
 
 The page, the list in its layers, Find and tags, archive, delete and undo,
 the sync status, focus while writing (Slide, then Rail and Zen), the window
 without a title bar, and every key in design 7.4. The old settings stay
-reachable until step 5.
+reachable until step 5. The app's root becomes `dirt_ui::UiRoot`, and the
+text size's default becomes 15 px.
 
 **Fallback written in advance:** a platform where the window without a
 title bar cannot be moved or resized keeps the system's title bar.
