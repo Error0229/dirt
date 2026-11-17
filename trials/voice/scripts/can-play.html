@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Which recordings this web view can play</title>
+<!-- Open in a web view, or run headless (scripts/can-play.py): the page
+     writes what it found into its own text and posts it to /report. For each candidate format it
+     asks canPlayType, then really loads a file of that format from the
+     same folder and plays it, muted, to see the clock move. -->
+<pre id="out">running</pre>
+<script>
+const candidates = [
+  ["Ogg Opus (.opus)", 'audio/ogg; codecs="opus"', "a.opus"],
+  ["Ogg Opus (.ogg)", 'audio/ogg; codecs="opus"', "a.ogg"],
+  ["Ogg Opus written by the trial", 'audio/ogg; codecs="opus"', "trial.opus"],
+  ["WebM Opus", 'audio/webm; codecs="opus"', "a.webm"],
+  ["MP4 Opus", 'audio/mp4; codecs="opus"', "a-opus.mp4"],
+  ["CAF Opus", 'audio/x-caf; codecs="opus"', "a.caf"],
+  ["FLAC", "audio/flac", "a.flac"],
+  ["M4A AAC-LC", 'audio/mp4; codecs="mp4a.40.2"', "a.m4a"],
+  ["MP3", "audio/mpeg", "a.mp3"],
+  ["WAV", "audio/wav", "a.wav"],
+];
+function tryFile(file) {
+  return new Promise((resolve) => {
+    const audio = new Audio();
+    const result = { loaded: false, duration: null, played: false, error: null };
+    const done = () => resolve(result);
+    audio.muted = true;
+    audio.onloadedmetadata = () => { result.loaded = true; result.duration = audio.duration; };
+    audio.onerror = () => { result.error = audio.error ? audio.error.code + " " + audio.error.message : "error"; done(); };
+    audio.ontimeupdate = () => { if (audio.currentTime > 0.3) { result.played = true; audio.pause(); done(); } };
+    setTimeout(done, 8000);
+    audio.src = file;
+    audio.play().catch((e) => { result.error = String(e); });
+  });
+}
+(async () => {
+  const lines = [navigator.userAgent, ""];
+  const probe = new Audio();
+  for (const [name, type, file] of candidates) {
+    const r = await tryFile(file);
+    lines.push(`${name.padEnd(32)} canPlayType: ${(probe.canPlayType(type) || "no").padEnd(9)} loaded: ${r.loaded}  seconds: ${r.duration === null ? "-" : r.duration.toFixed(2)}  played: ${r.played}${r.error ? "  error: " + r.error : ""}`);
+  }
+  // Ogg keeps its length at the end of the file, so a source that cannot be
+  // jumped about in has no length. The app hands the web view the whole
+  // file from memory; this is how that looks.
+  const blob = await (await fetch("trial.opus")).blob();
+  const fromMemory = await tryFile(URL.createObjectURL(blob));
+  lines.push(`${"the same, handed over from memory".padEnd(32)} loaded: ${fromMemory.loaded}  seconds: ${fromMemory.duration === null ? "-" : fromMemory.duration.toFixed(2)}  played: ${fromMemory.played}`);
+  lines.push("", "finished");
+  document.getElementById("out").textContent = lines.join("\n");
+  fetch("/report", { method: "POST", body: lines.join("\n") }).catch(() => {});
+})();
+</script>

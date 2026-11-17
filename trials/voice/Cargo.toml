@@ -1,0 +1,37 @@
+# Trial 1 of the interface redesign: the voice engine. Measuring code only,
+# kept for reference and never merged. It is its own workspace so that it
+# touches neither the main workspace nor its Cargo.lock.
+[workspace]
+
+[package]
+name = "voice-trial"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[features]
+# Each engine is a feature, so that what one adds to a build can be measured
+# against a build with none.
+whisper = ["dep:whisper-rs"]
+sherpa = ["dep:sherpa-onnx"]
+# The recording, written as Ogg Opus.
+opus = ["dep:opus", "dep:ogg"]
+
+[dependencies]
+hound = "3.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+whisper-rs = { version = "0.16", optional = true }
+# sherpa-onnx-sys downloads the project's prebuilt libraries when it builds.
+# Shared, not static: Android has only shared ones, and the static Windows
+# ones need the C runtime linked statically and a newer MSVC than 14.40
+# (they failed to link here with __std_search_1 and its kin unresolved).
+sherpa-onnx = { version = "2.0.1", optional = true, default-features = false, features = ["shared"] }
+opus = { version = "0.4", optional = true }
+ogg = { version = "0.9", optional = true }
+
+[profile.release]
+opt-level = 3
+debug = false
+strip = true
