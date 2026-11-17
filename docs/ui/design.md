@@ -1085,6 +1085,8 @@ any other, its words as text, with the recording on it as a file.
 heard in grey, the settled ones in the text colour. A word shows about a
 second after it is said (0.5 to 1.1 s on a laptop in the plan's first
 trial; a phone is not yet measured), and a settled word is not changed.
+Where a second model reads each stretch again at a pause, the words of the
+stretch stay grey until it has, and settle together then.
 Under them a row of grains moves with the voice. A timer shows from the
 first second. Nothing else: no "Listening…", no level meter, no waveform of
 what was said.

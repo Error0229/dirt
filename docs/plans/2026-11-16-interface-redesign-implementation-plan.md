@@ -551,8 +551,12 @@ nothing more.
   machine. The engine reads sound many times faster than it is spoken, so
   it catches up at once; kept loaded, there is no wait.
 - Ask Silero for the 1.6 seconds, not the recogniser.
-- The grey word is the last word of the recogniser's text; everything
-  before it is settled.
+- When a word is settled depends on the model, because a settled word
+  must never change (design 6.18). With one model that reads once (Kroko),
+  the grey word is the last word of the recogniser's text and everything
+  before it is settled. With the two models, the first one's words are all
+  grey until the pause at which the second reads the stretch again; what
+  the second gives replaces them and is settled then, corrections and all.
 - Fetch sherpa-onnx's libraries by a pinned hash, not as the crate's build
   script does.
 
