@@ -592,6 +592,31 @@ async fn a_note_that_was_pushed_and_then_emptied_is_deleted_like_any_other() {
     assert_eq!(store.let_go_if_empty(&note.id).await.unwrap(), LetGo::Gone);
 }
 
+/// A database put back from a copy made before the note's first push says
+/// the note was never offered, though the server has it. The server's copy
+/// arriving is proof enough that it was.
+#[tokio::test]
+async fn a_note_the_server_sends_back_has_been_offered() {
+    let (_folder, store) = temp_store();
+    let note = store.create_note("h").await.unwrap();
+    let batch = store.unsent_notes(0, 10, 1_000_000).await.unwrap();
+    assert!(!batch[0].offered, "a new note has not been offered");
+
+    let servers = elsewhere(&store, &note.id).await;
+    store
+        .apply_remote_note(&note.id, servers.encode(), 7)
+        .await
+        .unwrap();
+
+    store.update_note(&note.id, "").await.unwrap();
+    assert_eq!(
+        store.let_go_if_empty(&note.id).await.unwrap(),
+        LetGo::Deleted,
+        "the server holds it, so it is deleted and not simply forgotten"
+    );
+    assert!(document(&store, &note.id).await.unwrap().is_deleted());
+}
+
 /// The push that held the note went out and its answer never came. The
 /// server may have the note, so it is not simply forgotten.
 #[tokio::test]

@@ -110,13 +110,17 @@ pub(super) fn save(
     let now = crate::util::now_ms();
     let row = if let Some(row) = existing_row {
         // Every value on the right is the row's as it was, so `revision + 1`
-        // is the revision this very write gives the note.
+        // is the revision this very write gives the note. A document that
+        // came from the server shows that the server has the note, whatever
+        // the row said: a database put back from a copy made before the
+        // note's first push says it was never offered.
         tx.execute(
             "UPDATE notes SET doc = ?1, text = ?2, edited_at = ?3, deleted = ?4, \
                     revision = revision + ?6, \
                     edited_revision = CASE WHEN ?8 THEN revision + 1 ELSE edited_revision END, \
                     deleted_at = CASE WHEN ?4 THEN COALESCE(deleted_at, ?7) END, \
-                    archived = ?9 \
+                    archived = ?9, \
+                    offered = offered OR ?10 \
               WHERE rowid = ?5",
             params![
                 bytes,
@@ -127,7 +131,8 @@ pub(super) fn save(
                 i64::from(local),
                 now,
                 edit,
-                archived
+                archived,
+                !local
             ],
         )?;
         row
