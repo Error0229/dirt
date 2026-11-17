@@ -1,0 +1,17 @@
+built aarch64-linux-android opus in 85 s
+built aarch64-linux-android whisper sherpa in 181 s
+built aarch64-linux-android with no engine in 64 s
+built aarch64-linux-android sherpa in 168 s
+built aarch64-linux-android whisper in 133 s
+exit 0 after 61 s
+exit 0 after 35 s
+exit 101 after 369 s
+exit 101 after 27 s
+exit 101 after 20 s
+exit 0 after 21 s
+exit 0 after 159 s
+exit 101 after 92 s
+built x86_64-linux-android with no engine in 8 s
+built x86_64-linux-android sherpa in 33 s
+built x86_64-linux-android whisper in 123 s
+built x86_64-linux-android opus in 119 s

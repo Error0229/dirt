@@ -1,0 +1,15 @@
+Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/158.0.0.0 Safari/537.36 Edg/158.0.0.0
+
+Ogg Opus (.opus)                 canPlayType: probably  loaded: true  seconds: Infinity  played: true
+Ogg Opus (.ogg)                  canPlayType: probably  loaded: true  seconds: Infinity  played: true
+Ogg Opus written by the trial    canPlayType: probably  loaded: true  seconds: Infinity  played: true
+WebM Opus                        canPlayType: probably  loaded: true  seconds: 5.14  played: true
+MP4 Opus                         canPlayType: probably  loaded: true  seconds: 5.13  played: true
+CAF Opus                         canPlayType: no        loaded: false  seconds: -  played: false  error: 4 PipelineStatus::DEMUXER_ERROR_COULD_NOT_OPEN: FFmpegDemuxer: open context failed
+FLAC                             canPlayType: probably  loaded: true  seconds: 5.13  played: true
+M4A AAC-LC                       canPlayType: probably  loaded: true  seconds: 5.13  played: true
+MP3                              canPlayType: probably  loaded: true  seconds: 5.13  played: true
+WAV                              canPlayType: maybe     loaded: true  seconds: 5.13  played: true
+the same, handed over from memory loaded: true  seconds: 5.14  played: true
+
+finished

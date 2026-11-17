@@ -9,6 +9,17 @@ It is its own cargo workspace, so it touches neither the main workspace nor
 its `Cargo.lock`. Models, test speech and results live in `data/`, which is
 ignored: nothing of them is committed.
 
+## What was measured
+
+`results/` holds what the runs of 2026-11-16 and 17 gave, so that the
+figures in the plan can be traced: `tables.md` (the tables as printed),
+`analysis.txt`, `summary.json`, `pauses.txt`, `can-play-edge.txt`,
+`builds.txt`, the machine's load while they ran (`load.csv`,
+`load-first-batch.csv`), and every run's own lines in `runs.tar.gz`
+(`results` is the batch the tables come from; `results-throttled` the one
+before the laptop slept; `results-third` a later repeat of sherpa-onnx).
+No sound and no model is in it.
+
 ## What is here
 
 | | |
