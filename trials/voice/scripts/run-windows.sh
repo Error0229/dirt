@@ -7,7 +7,7 @@ set -u
 cd "$(dirname "$0")/.."
 W=data/models/whisper
 S=data/models/sherpa
-out=data/results
+out=${OUT:-data/results}
 mkdir -p "$out" data/pause-results
 common="--set data/set/manifest.tsv --high-priority --threads 4"
 
