@@ -35,6 +35,7 @@ use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior};
 
+use crate::notes::NoteDoc;
 use crate::Result;
 
 /// How long a connection waits for another process's write to finish.
@@ -60,7 +61,7 @@ fn wait_for_the_file(looks: i32) -> bool {
 }
 
 /// The version of the tables below, kept in SQLite's `user_version`.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE meta (
@@ -230,6 +231,63 @@ CREATE TABLE shelf_spare (
 ) WITHOUT ROWID;
 ";
 
+/// Version 6: three more things a note's row knows.
+///
+/// `archived` is derived from the note's document, as `deleted` is: the
+/// note is out of the list and still a note. The index that serves the
+/// list now leads with it, so that neither the list nor the archive reads
+/// past the other's notes.
+///
+/// `edited_revision` is the revision at which the note was last edited on
+/// this device. Archiving raises the revision without being an edit, so a
+/// note can be unsent and hold no unsent edit. The difference matters once:
+/// when the server has purged the note (`sync_state::apply_purge`). Notes
+/// already here count their last change as an edit, which is what every
+/// change was until now.
+///
+/// `offered` says whether the note may have reached the server: it came
+/// from there, or a push that held it was about to be sent. A note that
+/// was never offered exists on this device alone, and one emptied again
+/// can be taken off it altogether (`notes::let_go_if_empty`). Notes already
+/// here count as offered: this device cannot tell any more, and the other
+/// answer could leave a note on the server that was let go here.
+///
+/// The documents of the notes already here are read once more after this,
+/// in [`derive_archived`]: a version of Dirt from before archive keeps the
+/// mark in a document it merges, and has no column to show for it.
+const SCHEMA_V6: &str = "
+ALTER TABLE notes ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE notes ADD COLUMN edited_revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE notes ADD COLUMN offered INTEGER NOT NULL DEFAULT 0;
+UPDATE notes SET edited_revision = revision, offered = 1;
+DROP INDEX notes_by_edit;
+CREATE INDEX notes_by_edit ON notes (deleted, archived, edited_at DESC);
+";
+
+/// Sets `archived` on the notes whose documents say so. Run once, when the
+/// column is added.
+///
+/// A document that cannot be read says nothing, and its note stays as it
+/// was: not archived.
+fn derive_archived(tx: &Transaction<'_>) -> Result<()> {
+    let mut archived = Vec::new();
+    {
+        let mut statement = tx.prepare("SELECT rowid, doc FROM notes")?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            let document: Vec<u8> = row.get(1)?;
+            // Reading needs no client ID of its own: nothing is written.
+            if NoteDoc::from_bytes(0, &document).is_ok_and(|doc| doc.is_archived()) {
+                archived.push(row.get::<_, i64>(0)?);
+            }
+        }
+    }
+    for row in archived {
+        tx.execute("UPDATE notes SET archived = 1 WHERE rowid = ?1", [row])?;
+    }
+    Ok(())
+}
+
 /// The version is read inside the write transaction, so two processes that
 /// start together cannot both run the set-up.
 pub(super) fn set_up(connection: &mut Connection) -> Result<String> {
@@ -255,6 +313,10 @@ pub(super) fn set_up(connection: &mut Connection) -> Result<String> {
     }
     if version < 5 {
         tx.execute_batch(SCHEMA_V5)?;
+    }
+    if version < 6 {
+        tx.execute_batch(SCHEMA_V6)?;
+        derive_archived(&tx)?;
     }
     if version < SCHEMA_VERSION {
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -399,6 +461,123 @@ mod tests {
         let id_a = client_id(&write_transaction(&mut a).unwrap()).unwrap();
         let id_b = client_id(&write_transaction(&mut b).unwrap()).unwrap();
         assert_ne!(id_a, id_b);
+    }
+
+    /// Writes a note's row as the version before archive wrote it.
+    fn insert_v5(connection: &Connection, id: &str, doc: &NoteDoc, pushed: Option<i64>) {
+        connection
+            .execute(
+                "INSERT INTO notes (id, doc, text, edited_at, deleted, revision, \
+                                    pushed_revision, server_change, deleted_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, 3, ?6, ?7, ?8)",
+                rusqlite::params![
+                    id,
+                    doc.encode(),
+                    doc.text(),
+                    doc.edited_at_ms(),
+                    doc.is_deleted(),
+                    pushed,
+                    pushed.map_or(0, |_| 12),
+                    doc.is_deleted().then_some(1_000)
+                ],
+            )
+            .unwrap();
+        if !doc.is_deleted() {
+            connection
+                .execute(
+                    "INSERT INTO notes_fts (rowid, text) VALUES (last_insert_rowid(), ?1)",
+                    [doc.text()],
+                )
+                .unwrap();
+        }
+    }
+
+    /// A store written by the version before archive opens, and keeps its
+    /// notes. A note that the older version had merged from a device that
+    /// could archive is archived from then on: the older version kept the
+    /// mark in the document without knowing of it.
+    #[tokio::test]
+    async fn a_database_from_before_archive_opens_and_keeps_its_notes() {
+        let (_folder, path) = fresh();
+        let ids = [
+            "0192d3a8-0000-7000-8000-000000000001",
+            "0192d3a8-0000-7000-8000-000000000002",
+            "0192d3a8-0000-7000-8000-000000000003",
+            "0192d3a8-0000-7000-8000-000000000004",
+        ];
+        {
+            let connection = open_connection(&path).unwrap();
+            for schema in [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5] {
+                connection.execute_batch(schema).unwrap();
+            }
+            connection.pragma_update(None, "user_version", 5).unwrap();
+
+            let plain = NoteDoc::new(11);
+            plain.set_text("buy milk", 5_000);
+            insert_v5(&connection, ids[0], &plain, Some(3));
+            let unsent = NoteDoc::new(11);
+            unsent.set_text("written and not yet sent", 6_000);
+            insert_v5(&connection, ids[1], &unsent, Some(2));
+            let marked = NoteDoc::new(22);
+            marked.set_text("bread was bought", 4_000);
+            marked.set_archived(true);
+            insert_v5(&connection, ids[2], &marked, Some(3));
+            let deleted = NoteDoc::new(11);
+            deleted.set_text("thrown away", 3_000);
+            deleted.delete();
+            insert_v5(&connection, ids[3], &deleted, None);
+            // And a row whose document cannot be read at all.
+            connection
+                .execute(
+                    "INSERT INTO notes (id, doc, text, edited_at, deleted, revision, \
+                                        pushed_revision) \
+                     VALUES ('0192d3a8-0000-7000-8000-000000000005', x'00', '', 1, 1, 1, 1)",
+                    [],
+                )
+                .unwrap();
+        }
+
+        let store = crate::Store::open(&path).unwrap();
+
+        let texts = |notes: Vec<crate::Note>| -> Vec<String> {
+            notes.into_iter().map(|note| note.content).collect()
+        };
+        assert_eq!(
+            texts(store.list_notes(10, 0).await.unwrap()),
+            ["written and not yet sent", "buy milk"]
+        );
+        let archived = store.list_archived_notes(10, 0).await.unwrap();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].content, "bread was bought");
+        assert_eq!(archived[0].updated_at, 4_000);
+        assert_eq!(
+            texts(store.search_notes("milk", 10).await.unwrap()),
+            ["buy milk"]
+        );
+        // What was unsent is unsent, and nothing else became so.
+        let unsent = store.unsent_notes(0, 10, 1_000_000).await.unwrap();
+        let waiting: Vec<String> = unsent.iter().map(|note| note.id.to_string()).collect();
+        assert_eq!(waiting, [ids[1], ids[3]]);
+        // The deleted note is held still, and can come back.
+        let back = store.restore_note(&ids[3].parse().unwrap()).await.unwrap();
+        assert_eq!(back.content, "thrown away");
+        drop(store);
+
+        let connection = open_connection(&path).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        // A note already here counts its last change as an edit, and as
+        // one the server may have.
+        let kept: (i64, i64, bool, bool) = connection
+            .query_row(
+                "SELECT revision, edited_revision, offered, archived FROM notes WHERE id = ?1",
+                [ids[1]],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(kept, (3, 3, true, false));
     }
 
     /// A database written before files were sent anywhere. Each file a

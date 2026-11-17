@@ -138,8 +138,9 @@ Android builds run Gradle, which may need a different JDK from the machine's def
 - All IDs use UUID v7 (time-sortable, client-generated)
 - Timestamps stored as Unix milliseconds (i64)
 - A note's creation time is read from its ID and is not stored
-- A note's row holds its CRDT document plus values derived from it (text, edit time, deleted flag); tags and the search index are derived too. Every write updates all of them in one `BEGIN IMMEDIATE` transaction
+- A note's row holds its CRDT document plus values derived from it (text, edit time, deleted flag, archived flag); tags and the search index are derived too. Every write updates all of them in one `BEGIN IMMEDIATE` transaction
 - A deleted note keeps its row and document, marked deleted, so the delete can sync and be undone. Thirty days after a device saw it deleted, the device asks the server to purge it, and the row goes from every device (`dirt-core::sync`, design section 6.2)
+- Archiving a note is not an edit: it moves no edit time and does not bring back a note another device deleted. An archived note is left out of the list and kept by search, tag counts and export
 - Tests that need a store open one on a temporary file; in-memory databases do not support the store's connection model
 - FTS5 for full-text search
 

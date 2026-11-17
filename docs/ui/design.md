@@ -680,7 +680,7 @@ The most important component is the **page**: where a thought is written.
 | The first word | Makes the note. From then on it saves itself, as any note does, and the list leaves (7.7) | The same |
 | <kbd>Enter</kbd> | A new line. No key ever saves | The same |
 | Done | <kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd> or ✓: the thought settles onto the pile (5.5) and the page is blank again, the cursor still in it | ⌄ or Back: the page closes into a grain that drops onto the list |
-| Nothing written | Done does nothing. A note emptied again is let go without a word | The page goes back into the bar |
+| Nothing written | Done does nothing. A note emptied again is let go without a word. Spaces and line breaks alone are nothing written; a file with no words under it is a note | The page goes back into the bar |
 | Tags | With the list narrowed to `#work`, a new page gets `#work` at its end, where it can be seen and removed | The same |
 | Files | Drop one on the page, or 📎: the page becomes a note with the file | 📎 |
 
@@ -1059,6 +1059,8 @@ not exist at all.
 | Not an edit | Archiving, and bringing back, change neither the note's text nor its edit time, so the note keeps its layer. A note deleted on another device stays deleted: archiving does not bring it back, as an edit would | |
 | Editing an archived note | Leaves it archived. Only "back to the list" or **Undo** brings it back | |
 | Two devices choose differently | One choice holds, the same on every device, as for any single value in a note | |
+| Its tags | Narrowing to a tag is finding, so archived notes with the tag are shown, after the rest and under the same line "Archived". The count beside a tag counts them, and a tag that only archived notes carry is still offered: a thought put away can be found by its tag | |
+| Deleted, then brought back | Comes back archived, to where it was | |
 | A build from before archive | Shows archived notes in its list, and keeps the mark when it edits one | |
 
 Why both: with only delete, clearing a done thought loses it, so people
@@ -1474,7 +1476,7 @@ built.
 
 | Ask | Why | Where |
 |---|---|---|
-| **Bring a deleted note back.** Expose the store's existing restore to the clients, for **Undo** | Undo replaces the confirmation dialog, which is what makes delete one action. feature-parity.md lists this under "Not built: needs a decision" | `dirt-core` store, the desktop and Android apps, the CLI (`dirt restore <ID>`), feature-parity.md |
+| **Bring a deleted note back.** Expose the store's existing restore to the clients, for **Undo** | Undo replaces the confirmation dialog, which is what makes delete one action. The CLI has it since step 1 of the plan; the apps get it with their main screens | `dirt-core` store, the desktop and Android apps, the CLI (`dirt restore <ID>`), feature-parity.md |
 | **Short words for each sync state** in `dirt_core::sync::overview` ("Synced", "Offline · 2 waiting", "1 note can't sync") beside the full sentences | The sync status shows one or three words; CLAUDE.md says the words come from the overview, not from a client | `dirt-core::sync::overview` |
 | **Android: save as you type** | Removes the Save button and an action from every edit | `dirt-mobile` |
 | **Android: theme and text size** | Parity with the desktop | `dirt-mobile`, feature-parity.md |

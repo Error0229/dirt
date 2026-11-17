@@ -19,18 +19,23 @@ pub struct NoteListItem {
     pub updated_at: i64,
     pub relative_time: String,
     pub tags: Vec<String>,
+    pub archived: bool,
 }
 
+/// The list, or with `archived` the archived notes and not the others.
+/// Either can be narrowed to a tag.
 pub async fn list_notes(
     limit: usize,
     tag: Option<&str>,
+    archived: bool,
     db: &Store,
 ) -> Result<Vec<Note>, CliError> {
-    if let Some(tag_name) = tag {
-        Ok(db.list_notes_by_tag(tag_name, limit, 0).await?)
-    } else {
-        Ok(db.list_notes(limit, 0).await?)
-    }
+    Ok(match (tag, archived) {
+        (Some(tag), false) => db.list_notes_by_tag(tag, limit, 0).await?,
+        (Some(tag), true) => db.list_archived_notes_by_tag(tag, limit, 0).await?,
+        (None, false) => db.list_notes(limit, 0).await?,
+        (None, true) => db.list_archived_notes(limit, 0).await?,
+    })
 }
 
 pub async fn search_notes(query: &str, limit: usize, db: &Store) -> Result<Vec<Note>, CliError> {
@@ -45,19 +50,35 @@ pub async fn resolve_note_for_edit(note_query: &str, db: &Store) -> Result<Note,
     }
 
     let matching_ids = db.list_note_ids_by_prefix(note_query, 3).await?;
+    let resolved_id = the_one_of(&matching_ids, note_query)?;
+    db.get_note(&resolved_id)
+        .await?
+        .ok_or_else(|| CliError::NoteNotFound(note_query.to_string()))
+}
 
-    match matching_ids.len() {
-        0 => Err(CliError::NoteNotFound(note_query.to_string())),
-        1 => {
-            let resolved_id = matching_ids[0]
-                .parse::<NoteId>()
-                .map_err(|_| CliError::NoteNotFound(note_query.to_string()))?;
-            db.get_note(&resolved_id)
-                .await?
-                .ok_or_else(|| CliError::NoteNotFound(note_query.to_string()))
-        }
-        _ => {
-            let options = matching_ids
+/// The ID of the deleted note that `note_query` names, for bringing it
+/// back: a whole ID, or the start of the ID of one deleted note that this
+/// device still holds.
+///
+/// A whole ID is taken as it is. The store says if it holds no such note,
+/// and leaves alone a note that is not deleted.
+pub async fn resolve_deleted_note(note_query: &str, db: &Store) -> Result<NoteId, CliError> {
+    if let Ok(note_id) = note_query.parse::<NoteId>() {
+        return Ok(note_id);
+    }
+    let matching_ids = db.list_deleted_note_ids_by_prefix(note_query, 3).await?;
+    the_one_of(&matching_ids, note_query)
+}
+
+/// The one ID that a prefix matched, or why there is not exactly one.
+fn the_one_of(matching_ids: &[String], note_query: &str) -> Result<NoteId, CliError> {
+    match matching_ids {
+        [] => Err(CliError::NoteNotFound(note_query.to_string())),
+        [only] => only
+            .parse::<NoteId>()
+            .map_err(|_| CliError::NoteNotFound(note_query.to_string())),
+        several => {
+            let options = several
                 .iter()
                 .take(3)
                 .map(|id| id.chars().take(13).collect::<String>())
@@ -80,16 +101,27 @@ pub fn format_note_lines(notes: &[Note]) -> Vec<String> {
             let short_id = id.chars().take(13).collect::<String>();
             let preview = note_preview(note, 40);
             let relative_time = format_relative_time(note.updated_at, now_ms);
-            let tags = render_tags(note);
+            // After the time: the note's tags, and a word for an archived
+            // note, which a search lists among the others.
+            let mut rest = render_tags(note);
+            if note.archived {
+                if !rest.is_empty() {
+                    rest.push_str("  ");
+                }
+                rest.push_str(ARCHIVED_MARK);
+            }
 
-            if tags.is_empty() {
+            if rest.is_empty() {
                 format!("{short_id:<13}  {preview:<40}  {relative_time}")
             } else {
-                format!("{short_id:<13}  {preview:<40}  {relative_time:<10}  {tags}")
+                format!("{short_id:<13}  {preview:<40}  {relative_time:<10}  {rest}")
             }
         })
         .collect()
 }
+
+/// What a line of a list says of an archived note.
+pub const ARCHIVED_MARK: &str = "(archived)";
 
 pub fn note_to_list_item(note: &Note) -> NoteListItem {
     let now_ms = Utc::now().timestamp_millis();
@@ -104,6 +136,7 @@ pub fn note_to_list_item(note: &Note) -> NoteListItem {
         updated_at: note.updated_at,
         relative_time: format_relative_time(note.updated_at, now_ms),
         tags,
+        archived: note.archived,
     }
 }
 

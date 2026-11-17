@@ -20,30 +20,46 @@ pull request.
 | Write a note | Yes | Yes | `dirt add`, or `dirt "a thought"` |
 | Edit a note | Yes, saved as you type | Yes, with a Save button | `dirt edit <ID>`, in `$VISUAL` or `$EDITOR` |
 | Delete a note | Yes | Yes | `dirt delete <ID>` |
-| Bring a deleted note back | No | No | No |
-| List notes | The 100 most recently edited, and 100 more with each press of "Show older notes" | The same | `dirt list`, 10 unless `--limit` says otherwise |
+| Bring a deleted note back | Not yet: steps 3 and 4 of the interface plan | Not yet: steps 3 and 4 of the interface plan | `dirt restore <ID>`, by the ID that `dirt delete` printed or the start of it |
+| Archive a note, and bring it back to the list | Not yet: steps 3 and 4 of the interface plan | Not yet: steps 3 and 4 of the interface plan | `dirt archive <ID>`, `dirt unarchive <ID>` |
+| List the archived notes | Not yet: steps 3 and 4 of the interface plan | Not yet: steps 3 and 4 of the interface plan | `dirt list --archived`, which `--tag` narrows as it does the list |
+| List notes | The 100 most recently edited, and 100 more with each press of "Show older notes". Archived notes are left out | The same | `dirt list`, 10 unless `--limit` says otherwise. Archived notes are left out |
 | Use it before signing in | Yes | Yes | Yes |
 
-A deleted note keeps its document, so it can be brought back and the store
-has the operation for it. No client offers it. See "Not built" below.
+A deleted note keeps its document, so it can be brought back, with the text
+it had. `dirt restore` does it; the apps will, as **Undo**. A note that was
+archived when it was deleted comes back archived.
 
 In an account, a deleted note is purged thirty days after a device saw it
 deleted: its document goes from the server and from every device, and it
 can no longer be brought back. Notes kept on a device alone, with nobody
 signed in, are not purged: there is no limit for them to count against.
 
+An archived note is out of the list and is still a note: it syncs, is found
+by a search, opens and can be edited, and is exported. Archiving is not an
+edit. The note keeps its edit time, and a note that another device deleted
+stays deleted when this one archives it. The apps cannot archive yet. A
+note archived from the CLI, or on a device with a later version, leaves
+their lists all the same, and the number beside "All" on the desktop counts
+the list without it.
+
 ## Finding a note
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
 | Search | Every note, by words | Every note, by words | `dirt search`, every note, by words |
-| Narrow to a tag | Tag row above the list, every note | Tag row above the list, every note | `dirt list --tag` |
-| Tag counts | Of every note | Of every note | No |
+| Narrow to a tag | Tag row above the list, every note | Tag row above the list, every note | `dirt list --tag`, without the archived notes; `dirt list --archived --tag` for those |
+| Tag counts | Of every note, archived ones among them | Of every note, archived ones among them | No |
+| Archived notes among what is found | After the rest. Nothing marks them yet: steps 3 and 4 of the interface plan | The same | After the rest, with `(archived)` at the end of the line, and `"archived"` in `--json` |
 
 "By words" is the store's full-text search: a note matches when it holds
 every word typed, in any order, and each word also matches as the start of a
 longer one. The apps show up to 100 notes found, and 100 more with each
 press of "Show more notes".
+
+Finding keeps archived notes, by words or by a tag: they come after every
+note that is not archived, however well they match. So the number beside a
+tag counts them, and is the number of notes that narrowing to the tag shows.
 
 All three ask the store, which looks through every note. The apps hold only
 the notes their list shows, so the list starts at the 100 most recently
@@ -134,6 +150,10 @@ id>/<file name>` for each file. The text lists each note's files with the
 path of each, or no path for a file the export does not hold. It is made
 by `dirt_core::export`, the same for the three.
 
+Archived notes are exported, after the notes of the list, and marked:
+`"archived": true` in the JSON, and a line `archived: true` in the block at
+the head of the note in the Markdown.
+
 ## Appearance
 
 | | Desktop | Android | CLI |
@@ -146,7 +166,6 @@ by `dirt_core::export`, the same for the three.
 
 | What | Where it stands |
 |---|---|
-| Bringing a deleted note back | The store can; no design document asks for a way to do it from a client. Needs a decision |
 | `dirt tui` | A stub that prints "Opening TUI..." and does nothing. No design document mentions a terminal interface. Needs a decision: remove it or plan it |
 | Themes and fonts on Android | No design document asks for them |
 | iOS and web clients | Outside the design (section 3.3) |

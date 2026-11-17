@@ -125,6 +125,10 @@ somebody is using.
 | C21 | `dirt export`, and `dirt export --format markdown --output notes.md` | The notes' text, naming each note's files with no path. Standard error says how many files are named and not exported |
 | C22 | On Linux or macOS: any command, then `ls -ld` the data folder | `drwx------`. A folder that was open to others before is closed. With `--db-path` in another folder, that folder's permissions do not change |
 
+| C23 | `dirt archive <ID>`, then `dirt list`, `dirt list --archived` and `dirt search <a word of it>` | The note's ID. It is gone from the list, is in the archived list with the time it had, and is found, after the notes that are not archived, with `(archived)` at the end of its line |
+| C24 | After C23, on another device: `dirt sync`, then the desktop app or the Android app on that account | The note is out of the list there too, and the app's search still finds it. `dirt unarchive <ID>` on either device brings it back to both lists |
+| C25 | `dirt delete <ID>`, `dirt sync` on another device, then `dirt restore <the start of the ID>` on either | The note is gone from both, and back on both after the restore and a sync, with the text it had |
+
 ## Making a note that cannot be synced
 
 D7, A12 and C4 need a note the device cannot read. With two devices in one

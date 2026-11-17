@@ -25,6 +25,7 @@ use tokio::sync::oneshot;
 
 pub use files::{AttachedFile, FileLink, FileProblem, FileStanding};
 pub use location::{close_data_folder, store_path, StoreName};
+pub use notes::{LetGo, NoteCounts};
 pub use sync_state::{
     NoteProblem, ProblemKind, PurgeApplied, PurgeCandidate, SyncProgress, UnsentNote,
 };
@@ -552,33 +553,89 @@ impl Store {
         self.write(move |c| notes::delete(c, &id)).await
     }
 
-    /// Brings a deleted note back with the text it had.
+    /// Brings a deleted note back with the text it had: what undoes a
+    /// delete. It works for as long as this device holds the note, which is
+    /// until the note is purged, thirty days after the delete. A note that
+    /// was archived comes back archived.
+    ///
+    /// A note that is not deleted is returned as it is. One this device
+    /// does not hold is [`Error::NotFound`].
     pub async fn restore_note(&self, id: &NoteId) -> Result<Note> {
         let id = *id;
         self.write(move |c| notes::restore(c, &id, now_ms())).await
     }
 
+    /// Archives a note: takes it out of the list. It is still a note, found
+    /// by a search, synced and exported.
+    ///
+    /// Archiving is not an edit. The note keeps its edit time, and a note
+    /// that another device has deleted meanwhile stays deleted. A note that
+    /// is archived already is returned as it is.
+    pub async fn archive_note(&self, id: &NoteId) -> Result<Note> {
+        let id = *id;
+        self.write(move |c| notes::set_archived(c, &id, true)).await
+    }
+
+    /// Brings an archived note back to the list. Not an edit either.
+    pub async fn unarchive_note(&self, id: &NoteId) -> Result<Note> {
+        let id = *id;
+        self.write(move |c| notes::set_archived(c, &id, false))
+            .await
+    }
+
+    /// Lets go of a note that holds nothing, when the person is done with
+    /// it: no text but spaces and line breaks, and no file.
+    ///
+    /// A note is made at the first character typed. One emptied again was
+    /// never a thought, and goes without a word: off the device altogether
+    /// if it was never offered to the server, deleted like any other note
+    /// if it was. A note that holds something is left as it is.
+    pub async fn let_go_if_empty(&self, id: &NoteId) -> Result<LetGo> {
+        let id = *id;
+        self.write(move |c| notes::let_go_if_empty(c, &id)).await
+    }
+
     // ---- Notes: reading ----
 
-    /// The note with this ID, unless it is deleted or does not exist.
+    /// The note with this ID, archived or not, unless it is deleted or does
+    /// not exist.
     pub async fn get_note(&self, id: &NoteId) -> Result<Option<Note>> {
         let id = *id;
         self.read(move |c| notes::get(c, &id)).await
     }
 
-    /// Notes, most recently edited first.
+    /// The list: notes that are not archived, most recently edited first.
     pub async fn list_notes(&self, limit: usize, offset: usize) -> Result<Vec<Note>> {
-        self.read(move |c| notes::list(c, limit, offset)).await
+        self.read(move |c| notes::list(c, notes::Which::Listed, limit, offset))
+            .await
+    }
+
+    /// The archived notes, most recently edited first.
+    pub async fn list_archived_notes(&self, limit: usize, offset: usize) -> Result<Vec<Note>> {
+        self.read(move |c| notes::list(c, notes::Which::Archived, limit, offset))
+            .await
+    }
+
+    /// Every note that is not deleted: the notes of the list, then the
+    /// archived ones, each most recently edited first. What an export
+    /// holds.
+    pub async fn list_every_note(&self, limit: usize, offset: usize) -> Result<Vec<Note>> {
+        self.read(move |c| notes::list(c, notes::Which::Every, limit, offset))
+            .await
     }
 
     /// Notes containing every word of `query`, best match first. Each word
     /// also matches as the start of a longer word.
+    ///
+    /// Archived notes are found too. They come after every note that is
+    /// not archived, and [`Note::archived`] says which they are.
     pub async fn search_notes(&self, query: &str, limit: usize) -> Result<Vec<Note>> {
         let query = query.to_owned();
         self.read(move |c| notes::search(c, &query, limit)).await
     }
 
-    /// Notes carrying this tag, with or without its leading `#`.
+    /// Notes of the list carrying this tag, with or without its leading
+    /// `#`. Archived notes are left out, as the list leaves them out.
     pub async fn list_notes_by_tag(
         &self,
         tag: &str,
@@ -586,7 +643,19 @@ impl Store {
         offset: usize,
     ) -> Result<Vec<Note>> {
         let tag = tag.to_owned();
-        self.read(move |c| notes::list_by_tag(c, &tag, limit, offset))
+        self.read(move |c| notes::list_by_tag(c, notes::Which::Listed, &tag, limit, offset))
+            .await
+    }
+
+    /// Archived notes carrying this tag.
+    pub async fn list_archived_notes_by_tag(
+        &self,
+        tag: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Note>> {
+        let tag = tag.to_owned();
+        self.read(move |c| notes::list_by_tag(c, notes::Which::Archived, &tag, limit, offset))
             .await
     }
 
@@ -594,6 +663,10 @@ impl Store {
     /// may be left out. This is what a list with a search box and tag
     /// filter shows: it looks through every note, not only those a client
     /// has loaded.
+    ///
+    /// With neither, it is the list, and archived notes are left out. With
+    /// either, the archived notes that match come after the rest, and
+    /// [`Note::archived`] says which they are.
     pub async fn find_notes(
         &self,
         query: &str,
@@ -606,21 +679,42 @@ impl Store {
             .await
     }
 
-    /// Every tag in use, with how many notes carry it.
+    /// Every tag in use, with how many notes carry it. Archived notes
+    /// count: the number beside a tag is how many notes
+    /// [`Self::find_notes`] gives for it.
     pub async fn list_tags(&self) -> Result<Vec<(String, usize)>> {
         self.read(|c| notes::list_tags(c)).await
     }
 
-    /// The IDs of notes whose ID starts with `prefix`.
+    /// The IDs of notes whose ID starts with `prefix`, archived notes
+    /// among them and deleted ones not.
     pub async fn list_note_ids_by_prefix(&self, prefix: &str, limit: usize) -> Result<Vec<String>> {
         let prefix = prefix.to_owned();
-        self.read(move |c| notes::ids_by_prefix(c, &prefix, limit))
+        self.read(move |c| notes::ids_by_prefix(c, &prefix, false, limit))
             .await
     }
 
-    /// How many notes the store holds, not counting deleted ones.
+    /// The IDs of deleted notes whose ID starts with `prefix`: the notes
+    /// that [`Self::restore_note`] can bring back.
+    pub async fn list_deleted_note_ids_by_prefix(
+        &self,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let prefix = prefix.to_owned();
+        self.read(move |c| notes::ids_by_prefix(c, &prefix, true, limit))
+            .await
+    }
+
+    /// How many notes the store holds, archived ones among them, not
+    /// counting deleted ones.
     pub async fn note_count(&self) -> Result<usize> {
         self.read(|c| notes::count(c)).await
+    }
+
+    /// How many notes the list holds, and how many are archived.
+    pub async fn note_counts(&self) -> Result<NoteCounts> {
+        self.read(|c| notes::counts(c)).await
     }
 
     // ---- Documents ----
@@ -742,6 +836,15 @@ impl Store {
     ) -> Result<Vec<UnsentNote>> {
         self.read(move |c| sync_state::unsent(c, after, max_notes, max_bytes))
             .await
+    }
+
+    /// Records that these notes are about to be sent to the server, and
+    /// returns those the store still holds. A push does this before it
+    /// sends a note for the first time ([`UnsentNote::offered`]), and
+    /// leaves out a note that is not in the answer: it was let go as empty
+    /// in the meantime.
+    pub async fn offer_notes(&self, ids: Vec<NoteId>) -> Result<Vec<NoteId>> {
+        self.write(move |c| sync_state::offer(c, &ids)).await
     }
 
     /// Forgets the server's version of a note, so that the next push

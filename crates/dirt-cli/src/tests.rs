@@ -6,14 +6,19 @@ use dirt_core::{NoteId, Store};
 use tempfile::TempDir;
 use tokio::time::sleep;
 
-use crate::cli::{CompletionShell, ExportFormat};
+use clap::Parser;
+
+use crate::cli::{Cli, Commands, CompletionShell, ExportFormat};
+use crate::commands::archive::{run_archive, run_unarchive};
 use crate::commands::common::{
-    default_editor, format_relative_time, list_notes, normalize_content, normalize_note_identifier,
-    normalize_search_query, note_preview, resolve_note_for_edit, search_notes,
+    default_editor, format_note_lines, format_relative_time, list_notes, normalize_content,
+    normalize_note_identifier, normalize_search_query, note_preview, note_to_list_item,
+    resolve_deleted_note, resolve_note_for_edit, search_notes,
 };
 use crate::commands::completions::run_completions;
 use crate::commands::delete::run_delete;
 use crate::commands::export::{files_not_here, run_export};
+use crate::commands::restore::run_restore;
 use crate::commands::sync::run_sync;
 use crate::context::Context;
 use crate::error::CliError;
@@ -62,12 +67,12 @@ async fn list_notes_respects_limit_and_tag_filter() {
     sleep(Duration::from_millis(2)).await;
     store.create_note("Third #work").await.unwrap();
 
-    let recent = list_notes(2, None, &store).await.unwrap();
+    let recent = list_notes(2, None, false, &store).await.unwrap();
     assert_eq!(recent.len(), 2);
     assert_eq!(recent[0].content, "Third #work");
     assert_eq!(recent[1].content, "Second #personal");
 
-    let work_only = list_notes(10, Some("work"), &store).await.unwrap();
+    let work_only = list_notes(10, Some("work"), false, &store).await.unwrap();
     assert_eq!(work_only.len(), 2);
     assert!(work_only.iter().all(|note| note.content.contains("#work")));
 }
@@ -170,6 +175,260 @@ async fn run_delete_soft_deletes_note_by_exact_and_prefix_id() {
         .unwrap();
 
     assert!(store.get_note(&note_a).await.unwrap().is_none());
+}
+
+// ---- Archive, and bringing a deleted note back ----
+
+#[test]
+fn the_new_commands_are_read_from_the_command_line() {
+    let parsed = |words: &[&str]| Cli::try_parse_from(words).unwrap().command.unwrap();
+
+    assert!(matches!(
+        parsed(&["dirt", "archive", "0192d3a8"]),
+        Commands::Archive { id } if id == "0192d3a8"
+    ));
+    assert!(matches!(
+        parsed(&["dirt", "unarchive", "0192d3a8"]),
+        Commands::Unarchive { id } if id == "0192d3a8"
+    ));
+    assert!(matches!(
+        parsed(&["dirt", "restore", "0192d3a8"]),
+        Commands::Restore { id } if id == "0192d3a8"
+    ));
+    assert!(matches!(
+        parsed(&["dirt", "list", "--archived", "--tag", "home"]),
+        Commands::List { archived: true, tag: Some(tag), json: false, limit: 10 } if tag == "home"
+    ));
+    assert!(matches!(
+        parsed(&["dirt", "list"]),
+        Commands::List {
+            archived: false,
+            ..
+        }
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_archive_takes_a_note_out_of_the_list_and_run_unarchive_brings_it_back() {
+    let (_folder, db_path) = temp_db();
+    let store = Store::open(&db_path).unwrap();
+    let done = insert_note(
+        &store,
+        "cccccccc-cccc-7ccc-8ccc-111111111111",
+        "Bread #shop",
+    )
+    .await;
+    let open = insert_note(&store, "cccccccc-cccc-7ccc-8ccc-222222222222", "Milk #shop").await;
+    let context = without_a_server(&store);
+
+    run_archive("cccccccc-cccc-7ccc-8ccc-1", &context)
+        .await
+        .unwrap();
+
+    let ids = |notes: Vec<dirt_core::Note>| notes.iter().map(|note| note.id).collect::<Vec<_>>();
+    assert_eq!(
+        ids(list_notes(10, None, false, &store).await.unwrap()),
+        [open]
+    );
+    assert_eq!(
+        ids(list_notes(10, None, true, &store).await.unwrap()),
+        [done]
+    );
+    // `dirt list --tag` and `dirt list --archived --tag`.
+    assert_eq!(
+        ids(list_notes(10, Some("shop"), false, &store).await.unwrap()),
+        [open]
+    );
+    assert_eq!(
+        ids(list_notes(10, Some("shop"), true, &store).await.unwrap()),
+        [done]
+    );
+    // Not an edit: the note has the edit time it had.
+    let archived = store.get_note(&done).await.unwrap().unwrap();
+    assert!(archived.archived);
+    assert_eq!(archived.updated_at, 1000);
+    // Archiving it again is not an error, and changes nothing.
+    let revision = store.note_revision(&done).await.unwrap();
+    run_archive("cccccccc-cccc-7ccc-8ccc-111111111111", &context)
+        .await
+        .unwrap();
+    assert_eq!(store.note_revision(&done).await.unwrap(), revision);
+
+    // An archived note is named by the start of its ID like any other.
+    run_unarchive("cccccccc-cccc-7ccc-8ccc-1", &context)
+        .await
+        .unwrap();
+
+    assert_eq!(list_notes(10, None, false, &store).await.unwrap().len(), 2);
+    assert!(list_notes(10, None, true, &store).await.unwrap().is_empty());
+    assert_eq!(
+        store.get_note(&done).await.unwrap().unwrap().updated_at,
+        1000
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn archiving_a_note_that_is_not_there_is_not_found() {
+    let (_folder, db_path) = temp_db();
+    let store = Store::open(&db_path).unwrap();
+    let deleted = insert_note(&store, "dddddddd-dddd-7ddd-8ddd-111111111111", "Gone").await;
+    store.delete_note(&deleted).await.unwrap();
+    let context = without_a_server(&store);
+
+    for id in ["dddddddd-dddd-7ddd-8ddd-111111111111", "eeeeeeee"] {
+        let error = run_archive(id, &context).await.unwrap_err();
+        assert!(matches!(error, CliError::NoteNotFound(_)), "{error}");
+        let error = run_unarchive(id, &context).await.unwrap_err();
+        assert!(matches!(error, CliError::NoteNotFound(_)), "{error}");
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_search_lists_archived_matches_after_the_rest_and_says_which_they_are() {
+    let (_folder, db_path) = temp_db();
+    let store = Store::open(&db_path).unwrap();
+    let archived = store.create_note("Milk milk milk #shop").await.unwrap();
+    store.archive_note(&archived.id).await.unwrap();
+    sleep(Duration::from_millis(2)).await;
+    let listed = store.create_note("Remember the milk").await.unwrap();
+
+    let matches = search_notes("milk", 10, &store).await.unwrap();
+    assert_eq!(
+        matches.iter().map(|note| note.id).collect::<Vec<_>>(),
+        [listed.id, archived.id]
+    );
+
+    let lines = format_note_lines(&matches);
+    assert!(!lines[0].contains("archived"), "{}", lines[0]);
+    assert!(lines[1].ends_with("#shop  (archived)"), "{}", lines[1]);
+    // Without tags the word stands where the tags would.
+    let plain = store.create_note("No tags here").await.unwrap();
+    let plain = store.archive_note(&plain.id).await.unwrap();
+    let line = format_note_lines(&[plain]).remove(0);
+    assert!(line.ends_with("just now    (archived)"), "{line}");
+
+    // As JSON, every note says whether it is archived.
+    let items: Vec<serde_json::Value> = matches
+        .iter()
+        .map(|note| serde_json::to_value(note_to_list_item(note)).unwrap())
+        .collect();
+    assert_eq!(items[0]["archived"], false);
+    assert_eq!(items[1]["archived"], true);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_restore_brings_a_deleted_note_back_by_exact_and_prefix_id() {
+    let (_folder, db_path) = temp_db();
+    let store = Store::open(&db_path).unwrap();
+    let note_a = insert_note(&store, "ffffffff-ffff-7fff-8fff-111111111111", "First").await;
+    let note_b = insert_note(&store, "ffffffff-ffff-7fff-8fff-222222222222", "Second").await;
+    let context = without_a_server(&store);
+    for id in [
+        "ffffffff-ffff-7fff-8fff-111111111111",
+        "ffffffff-ffff-7fff-8fff-222222222222",
+    ] {
+        run_delete(id, &context).await.unwrap();
+    }
+    assert!(list_notes(10, None, false, &store)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // By the start of the ID, which no live note has any more.
+    run_restore("ffffffff-ffff-7fff-8fff-2", &context)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_note(&note_b).await.unwrap().unwrap().content,
+        "Second"
+    );
+    assert!(store.get_note(&note_a).await.unwrap().is_none());
+
+    // By the whole ID, as `dirt delete` printed it.
+    run_restore("ffffffff-ffff-7fff-8fff-111111111111", &context)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_note(&note_a).await.unwrap().unwrap().content,
+        "First"
+    );
+    // Bringing back a note that is not deleted leaves it as it is.
+    let revision = store.note_revision(&note_a).await.unwrap();
+    run_restore("ffffffff-ffff-7fff-8fff-111111111111", &context)
+        .await
+        .unwrap();
+    assert_eq!(store.note_revision(&note_a).await.unwrap(), revision);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn run_restore_says_when_no_deleted_note_or_more_than_one_is_meant() {
+    let (_folder, db_path) = temp_db();
+    let store = Store::open(&db_path).unwrap();
+    let live = insert_note(&store, "abababab-abab-7bab-8bab-111111111111", "Live").await;
+    for id in [
+        "acacacac-acac-7cac-8cac-111111111111",
+        "acacacac-acac-7cac-8cac-222222222222",
+    ] {
+        let id = insert_note(&store, id, "Deleted").await;
+        store.delete_note(&id).await.unwrap();
+    }
+    let context = without_a_server(&store);
+
+    // Two deleted notes share the start.
+    let error = run_restore("acacacac", &context).await.unwrap_err();
+    assert!(matches!(error, CliError::AmbiguousNoteId(_)), "{error}");
+    // The start of a live note's ID names no deleted note.
+    let error = resolve_deleted_note("abababab", &store).await.unwrap_err();
+    assert!(matches!(error, CliError::NoteNotFound(_)), "{error}");
+    // A whole ID that this device holds no note for.
+    let error = run_restore("adadadad-adad-7dad-8dad-111111111111", &context)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CliError::NoteNotFound(_)), "{error}");
+    assert!(matches!(
+        run_restore("  ", &context).await.unwrap_err(),
+        CliError::EmptyNoteId
+    ));
+
+    assert!(store.get_note(&live).await.unwrap().is_some());
+    assert_eq!(list_notes(10, None, false, &store).await.unwrap().len(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_export_keeps_archived_notes_and_marks_them() {
+    let (folder, db_path) = temp_db();
+    let store = Store::open(&db_path).unwrap();
+    store.create_note("Still to do").await.unwrap();
+    let done = store.create_note("Done and archived").await.unwrap();
+    store.archive_note(&done.id).await.unwrap();
+    let context = without_a_server(&store);
+
+    let json_path = folder.path().join("notes.json");
+    run_export(ExportFormat::Json, Some(&json_path), None, &context)
+        .await
+        .unwrap();
+    let exported: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+    let marks: Vec<(&str, bool)> = exported
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|note| {
+            (
+                note["content"].as_str().unwrap(),
+                note["archived"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(marks, [("Still to do", false), ("Done and archived", true)]);
+
+    let markdown_path = folder.path().join("notes.md");
+    run_export(ExportFormat::Markdown, Some(&markdown_path), None, &context)
+        .await
+        .unwrap();
+    let exported = std::fs::read_to_string(&markdown_path).unwrap();
+    assert_eq!(exported.matches("archived: true\n").count(), 1);
+    assert!(exported.ends_with("archived: true\n---\n\nDone and archived\n"));
 }
 
 /// A sync that cannot happen must fail, so that nobody takes a silent

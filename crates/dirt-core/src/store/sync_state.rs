@@ -3,9 +3,15 @@
 //! not be synced and why.
 //!
 //! A note is **unsent** while its revision differs from the revision last
-//! pushed. Only a local edit raises the revision. Merging a document that
-//! came from the server does not, so pulling never makes a note look unsent,
-//! and an edit made while a push is in flight is never mistaken for sent.
+//! pushed. Only a change made on this device raises the revision. Merging a
+//! document that came from the server does not, so pulling never makes a
+//! note look unsent, and an edit made while a push is in flight is never
+//! mistaken for sent.
+//!
+//! The revision counts writes to the row, not edits to the note. Deleting a
+//! note and archiving one are not edits in the note's document (they raise
+//! no edit count there), and each raises the revision all the same. That is
+//! how a change that is not an edit is noticed as unsent and pushed.
 
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -31,6 +37,10 @@ pub struct UnsentNote {
     /// Where this note sits in the store's order. Passing the last note's
     /// position as `after` fetches the notes that follow it.
     pub position: i64,
+    /// Whether the note may have reached the server before: it came from
+    /// there, or an earlier push held it. One that has not must be offered
+    /// ([`offer`](crate::Store::offer_notes)) before it is sent.
+    pub offered: bool,
 }
 
 /// How far sync has got with the account.
@@ -81,7 +91,7 @@ pub(super) fn unsent(
     max_bytes: usize,
 ) -> Result<Vec<UnsentNote>> {
     let mut statement = connection.prepare(
-        "SELECT id, doc, revision, server_change, rowid FROM notes \
+        "SELECT id, doc, revision, server_change, rowid, offered FROM notes \
           WHERE (pushed_revision IS NULL OR pushed_revision <> revision) \
             AND id NOT IN (SELECT note_id FROM sync_problems) \
             AND rowid > ?1 \
@@ -94,12 +104,13 @@ pub(super) fn unsent(
             row.get::<_, i64>(2)?,
             row.get::<_, i64>(3)?,
             row.get::<_, i64>(4)?,
+            row.get::<_, bool>(5)?,
         ))
     })?;
     let mut notes = Vec::new();
     let mut bytes = 0usize;
     for row in rows {
-        let (id, document, revision, base_change, position) = row?;
+        let (id, document, revision, base_change, position, offered) = row?;
         bytes += document.len();
         if bytes > max_bytes && !notes.is_empty() {
             break;
@@ -113,9 +124,35 @@ pub(super) fn unsent(
             revision,
             base_change,
             position,
+            offered,
         });
     }
     Ok(notes)
+}
+
+/// Records that these notes are about to be sent to the server, and returns
+/// those the store still holds.
+///
+/// A push must do this before it sends a note for the first time. The
+/// answer to a push can be lost, so once the request has left, the server
+/// may hold the note whatever this device hears. A note that was never
+/// offered is the only kind that may be taken off the device without a
+/// trace ([`let_go_if_empty`](super::notes::let_go_if_empty)), and one that
+/// was let go between being read for a push and being offered is not in the
+/// answer here, so that the push leaves it out.
+pub(super) fn offer(connection: &mut Connection, ids: &[NoteId]) -> Result<Vec<NoteId>> {
+    let tx = write_transaction(connection)?;
+    let mut held = Vec::with_capacity(ids.len());
+    {
+        let mut statement = tx.prepare("UPDATE notes SET offered = 1 WHERE id = ?1")?;
+        for id in ids {
+            if statement.execute([id.as_str()])? > 0 {
+                held.push(*id);
+            }
+        }
+    }
+    tx.commit()?;
+    Ok(held)
 }
 
 pub(super) fn unsent_count(connection: &Connection) -> Result<usize> {
@@ -168,7 +205,8 @@ pub(super) fn mark_pushed(
 ) -> Result<()> {
     let tx = write_transaction(connection)?;
     tx.execute(
-        "UPDATE notes SET pushed_revision = ?2, server_change = ?3 \n          WHERE id = ?1 AND server_change < ?3",
+        // The server has the note, whoever offered it.
+        "UPDATE notes SET pushed_revision = ?2, server_change = ?3, offered = 1 \n          WHERE id = ?1 AND server_change < ?3",
         params![id.as_str(), revision, change],
     )?;
     tx.commit()?;
@@ -315,13 +353,15 @@ pub(super) fn purge_candidates(
     Ok(candidates)
 }
 
-fn remove_row(tx: &rusqlite::Transaction<'_>, row: i64, id: &NoteId) -> Result<()> {
+/// Removes a note's row and everything kept beside it.
+pub(super) fn remove_row(tx: &rusqlite::Transaction<'_>, row: i64, id: &NoteId) -> Result<()> {
     tx.execute("DELETE FROM notes_fts WHERE rowid = ?1", [row])?;
     tx.execute(
         "DELETE FROM sync_problems WHERE note_id = ?1",
         [id.as_str()],
     )?;
-    // The note's tag rows go with it, through the foreign key.
+    // The note's tags, and what is kept about its files, go with it through
+    // the foreign keys.
     tx.execute("DELETE FROM notes WHERE rowid = ?1", [row])?;
     Ok(())
 }
@@ -357,23 +397,28 @@ pub(super) fn drop_purged(connection: &mut Connection, id: &NoteId, revision: i6
 /// So whatever this device had sent of the note was in that version and
 /// was covered by the delete, and its copy can go.
 ///
-/// The one thing the purge cannot have covered is a change this device has
-/// not sent. If the note is deleted here as well, that change is the
-/// delete, and nothing is lost. If it is not, the person wrote something
+/// The one thing the purge cannot have covered is an edit this device has
+/// not sent. If the note is deleted here as well, the delete covers that
+/// too, and nothing is lost. If it is not, the person wrote something
 /// here that no other device has seen, and it is never thrown away: the
 /// text is kept as a new note, which syncs like any other.
+///
+/// Archiving is not an edit. A note that this device archived, or brought
+/// back to the list, without having heard of the delete holds nothing the
+/// delete did not cover, and goes like any other copy: archiving does not
+/// bring a deleted note back.
 pub(super) fn apply_purge(connection: &mut Connection, id: &NoteId) -> Result<PurgeApplied> {
     let tx = write_transaction(connection)?;
     let held: Option<(i64, Vec<u8>, bool, bool)> = tx
         .query_row(
             "SELECT rowid, doc, deleted, \
-                    pushed_revision IS NULL OR pushed_revision <> revision \
+                    pushed_revision IS NULL OR pushed_revision < edited_revision \
                FROM notes WHERE id = ?1",
             [id.as_str()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()?;
-    let Some((row, document, deleted, unsent)) = held else {
+    let Some((row, document, deleted, unsent_edit)) = held else {
         // A note this device could never read is listed as a problem
         // without being held: it joined after a change of the key, say.
         // The note is gone now, and the problem with it. Left behind, it
@@ -385,7 +430,7 @@ pub(super) fn apply_purge(connection: &mut Connection, id: &NoteId) -> Result<Pu
         tx.commit()?;
         return Ok(PurgeApplied::NotHeld);
     };
-    let applied = if unsent && !deleted {
+    let applied = if unsent_edit && !deleted {
         let me = client_id(&tx)?;
         let old = NoteDoc::from_bytes(me, &document)?;
         let kept = NoteId::new();
@@ -403,6 +448,8 @@ pub(super) fn apply_purge(connection: &mut Connection, id: &NoteId) -> Result<Pu
         for attachment in old.attachments() {
             fresh.attach(&attachment, edited_at);
         }
+        // An archived note that was edited is archived still.
+        fresh.set_archived(old.is_archived());
         save(&tx, &kept, &fresh, None, Origin::Local)?;
         PurgeApplied::KeptAsNew(kept)
     } else {

@@ -6,10 +6,11 @@ use crate::error::CliError;
 pub async fn run_list(
     limit: usize,
     tag: Option<&str>,
+    archived: bool,
     as_json: bool,
     db: &Store,
 ) -> Result<(), CliError> {
-    let notes = list_notes(limit, tag, db).await?;
+    let notes = list_notes(limit, tag, archived, db).await?;
 
     if as_json {
         let json_items = notes

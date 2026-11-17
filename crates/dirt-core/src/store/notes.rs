@@ -1,8 +1,9 @@
 //! Reading and writing notes.
 //!
-//! A note's row holds its CRDT document and four things derived from it: the
-//! text, the last-edited time, whether it is deleted, and (in two other
-//! tables) its tags and its entry in the full-text index. Every write loads
+//! A note's row holds its CRDT document and five things derived from it: the
+//! text, the last-edited time, whether it is deleted, whether it is
+//! archived, and (in two other tables) its tags and its entry in the
+//! full-text index. Every write loads
 //! the document, changes it and saves it with its derived values inside one
 //! `BEGIN IMMEDIATE` transaction, so the derived values can never disagree
 //! with the document, and two processes can never interleave on one note.
@@ -12,12 +13,13 @@ use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 use dirt_proto::api::limits;
 
 use super::schema::{client_id, write_transaction};
+use super::sync_state::remove_row;
 use crate::files::Attachment;
 use crate::models::{extract_tags, Note, NoteId};
 use crate::notes::NoteDoc;
 use crate::{Error, Result};
 
-const NOTE_COLUMNS: &str = "id, text, edited_at";
+const NOTE_COLUMNS: &str = "n.id, n.text, n.edited_at, n.archived";
 
 fn note_from_row(row: &Row<'_>) -> rusqlite::Result<Note> {
     let id: String = row.get(0)?;
@@ -32,15 +34,21 @@ fn note_from_row(row: &Row<'_>) -> rusqlite::Result<Note> {
         // time can only have been made outside this program.
         created_at: id.created_at_ms().unwrap_or(edited_at),
         updated_at: edited_at,
+        archived: row.get(3)?,
     })
 }
 
 /// Where a document being saved came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Origin {
-    /// An edit made on this device. It raises the note's revision, which
-    /// marks the note as unsent.
+    /// An edit made on this device, or a delete. It raises the note's
+    /// revision, which marks the note as unsent.
     Local,
+    /// A change made on this device that is not an edit: archiving a note,
+    /// or bringing it back to the list. It raises the revision as an edit
+    /// does, so the note is unsent and is pushed like any other. It leaves
+    /// alone the revision at which the note was last edited.
+    Mark,
     /// A document merged in from the server. The revision is left alone:
     /// what the server already has does not need sending.
     Remote,
@@ -84,6 +92,7 @@ pub(super) fn save(
     let key = id.as_str();
     let text = doc.text();
     let deleted = doc.is_deleted();
+    let archived = doc.is_archived();
     // A document always has an edit time once it has been edited. One that
     // has not, which only a merge of an empty document could produce, falls
     // back to the creation time.
@@ -93,27 +102,45 @@ pub(super) fn save(
         .unwrap_or_default();
     let bytes = doc.encode();
 
-    let local = origin == Origin::Local;
+    // Made on this device, and so to be sent.
+    let local = origin != Origin::Remote;
+    let edit = origin == Origin::Local;
     // When this device first saw the note as deleted: kept while it stays
     // deleted, and forgotten if it comes back.
     let now = crate::util::now_ms();
     let row = if let Some(row) = existing_row {
+        // Every value on the right is the row's as it was, so `revision + 1`
+        // is the revision this very write gives the note.
         tx.execute(
             "UPDATE notes SET doc = ?1, text = ?2, edited_at = ?3, deleted = ?4, \
                     revision = revision + ?6, \
-                    deleted_at = CASE WHEN ?4 THEN COALESCE(deleted_at, ?7) END \
+                    edited_revision = CASE WHEN ?8 THEN revision + 1 ELSE edited_revision END, \
+                    deleted_at = CASE WHEN ?4 THEN COALESCE(deleted_at, ?7) END, \
+                    archived = ?9 \
               WHERE rowid = ?5",
-            params![bytes, text, edited_at, deleted, row, i64::from(local), now],
+            params![
+                bytes,
+                text,
+                edited_at,
+                deleted,
+                row,
+                i64::from(local),
+                now,
+                edit,
+                archived
+            ],
         )?;
         row
     } else {
-        // A note that arrives from the server starts out as sent.
+        // A note that arrives from the server starts out as sent, with no
+        // edit of this device's in it, and the server has it. One made
+        // here has yet to be offered.
         let pushed_revision = if local { None } else { Some(1) };
         let deleted_at = deleted.then_some(now);
         tx.execute(
             "INSERT INTO notes (id, doc, text, edited_at, deleted, revision, pushed_revision, \
-                                deleted_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7)",
+                                deleted_at, archived, edited_revision, offered) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9, ?10)",
             params![
                 key,
                 bytes,
@@ -121,7 +148,10 @@ pub(super) fn save(
                 edited_at,
                 deleted,
                 pushed_revision,
-                deleted_at
+                deleted_at,
+                archived,
+                i64::from(local),
+                !local
             ],
         )?;
         tx.last_insert_rowid()
@@ -192,6 +222,7 @@ pub(super) fn save(
         content: text,
         created_at: id.created_at_ms().unwrap_or(edited_at),
         updated_at: edited_at,
+        archived,
     }))
 }
 
@@ -363,6 +394,87 @@ pub(super) fn restore(connection: &mut Connection, id: &NoteId, now_ms: i64) -> 
     Ok(note)
 }
 
+/// Archives a note, or brings it back to the list. Returns the note.
+///
+/// Not an edit: the note keeps its edit time. It is unsent all the same,
+/// because the row's revision rises with every change made here.
+pub(super) fn set_archived(
+    connection: &mut Connection,
+    id: &NoteId,
+    archived: bool,
+) -> Result<Note> {
+    let tx = write_transaction(connection)?;
+    let (row, bytes) = load(&tx, id)?.ok_or_else(|| not_found(id))?;
+    let doc = NoteDoc::from_bytes(client_id(&tx)?, &bytes)?;
+    if doc.is_deleted() {
+        return Err(not_found(id));
+    }
+    if !doc.set_archived(archived) {
+        // Already as asked: leave the row, and its revision, alone.
+        drop(tx);
+        return get(connection, id)?.ok_or_else(|| not_found(id));
+    }
+    let note = save(&tx, id, &doc, Some(row), Origin::Mark)?.ok_or_else(|| not_found(id))?;
+    tx.commit()?;
+    Ok(note)
+}
+
+/// What became of a note that was to be let go if it was empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LetGo {
+    /// The note has text or a file. It stays as it is.
+    Kept,
+    /// The note had never been offered to the server. It is off the device
+    /// altogether: no row, no document, nothing to sync.
+    Dropped,
+    /// The server may have the note, so it was deleted as any note is, and
+    /// the delete syncs.
+    Deleted,
+    /// There was nothing to let go: the store holds no such note, or the
+    /// note is deleted already.
+    Gone,
+}
+
+/// Lets go of a note that holds nothing: no text but spaces and line
+/// breaks, and no file.
+///
+/// The interface makes a note at the first character typed, and a person
+/// who takes the character back has written nothing. If no push has ever
+/// held the note, it exists on this device alone and its row is removed.
+/// If one has, another device may hold the note, and it is deleted as any
+/// note is.
+pub(super) fn let_go_if_empty(connection: &mut Connection, id: &NoteId) -> Result<LetGo> {
+    let tx = write_transaction(connection)?;
+    let held: Option<(i64, Vec<u8>, bool)> = tx
+        .query_row(
+            "SELECT rowid, doc, offered FROM notes WHERE id = ?1",
+            [id.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    let Some((row, bytes, offered)) = held else {
+        return Ok(LetGo::Gone);
+    };
+    let doc = NoteDoc::from_bytes(client_id(&tx)?, &bytes)?;
+    if doc.is_deleted() {
+        return Ok(LetGo::Gone);
+    }
+    // A file this version cannot read is a file all the same.
+    if !doc.text().trim().is_empty() || !doc.named_files().is_empty() {
+        return Ok(LetGo::Kept);
+    }
+    let outcome = if offered {
+        doc.delete();
+        save(&tx, id, &doc, Some(row), Origin::Local)?;
+        LetGo::Deleted
+    } else {
+        remove_row(&tx, row, id)?;
+        LetGo::Dropped
+    };
+    tx.commit()?;
+    Ok(outcome)
+}
+
 /// Merges another copy of a note's document into this store, creating the
 /// note if it is not here yet. Returns the note, or `None` if the merged
 /// document says it is deleted.
@@ -460,10 +572,32 @@ pub(super) fn count(connection: &Connection) -> Result<usize> {
     Ok(usize::try_from(count).unwrap_or_default())
 }
 
+/// How many notes are in the list, and how many are archived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct NoteCounts {
+    /// Notes that are neither archived nor deleted: what the list holds.
+    pub listed: usize,
+    /// Archived notes that are not deleted.
+    pub archived: usize,
+}
+
+pub(super) fn counts(connection: &Connection) -> Result<NoteCounts> {
+    let (all, archived): (i64, Option<i64>) = connection.query_row(
+        "SELECT count(*), sum(archived) FROM notes WHERE deleted = 0",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let archived = archived.unwrap_or_default();
+    Ok(NoteCounts {
+        listed: usize::try_from(all - archived).unwrap_or_default(),
+        archived: usize::try_from(archived).unwrap_or_default(),
+    })
+}
+
 pub(super) fn get(connection: &Connection, id: &NoteId) -> Result<Option<Note>> {
     Ok(connection
         .query_row(
-            &format!("SELECT {NOTE_COLUMNS} FROM notes WHERE id = ?1 AND deleted = 0"),
+            &format!("SELECT {NOTE_COLUMNS} FROM notes n WHERE n.id = ?1 AND n.deleted = 0"),
             [id.as_str()],
             note_from_row,
         )
@@ -484,11 +618,40 @@ fn to_sql_count(count: usize) -> i64 {
     i64::try_from(count).unwrap_or(i64::MAX)
 }
 
+/// Which of the live notes a list holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Which {
+    /// The list: the notes that are not archived.
+    Listed,
+    /// The archived notes alone.
+    Archived,
+    /// Both, the archived notes after the rest: what Find looks through,
+    /// and what an export holds.
+    Every,
+}
+
+impl Which {
+    /// What this adds to `WHERE n.deleted = 0`.
+    const fn narrows(self) -> &'static str {
+        match self {
+            Self::Listed => "AND n.archived = 0",
+            Self::Archived => "AND n.archived = 1",
+            Self::Every => "",
+        }
+    }
+}
+
 /// Live notes, most recently edited first.
-pub(super) fn list(connection: &Connection, limit: usize, offset: usize) -> Result<Vec<Note>> {
+pub(super) fn list(
+    connection: &Connection,
+    which: Which,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<Note>> {
     let mut statement = connection.prepare(&format!(
-        "SELECT {NOTE_COLUMNS} FROM notes WHERE deleted = 0 \
-          ORDER BY edited_at DESC, id DESC LIMIT ?1 OFFSET ?2"
+        "SELECT {NOTE_COLUMNS} FROM notes n WHERE n.deleted = 0 {} \
+          ORDER BY n.archived, n.edited_at DESC, n.id DESC LIMIT ?1 OFFSET ?2",
+        which.narrows()
     ))?;
     let rows = statement.query_map(
         params![to_sql_count(limit), to_sql_count(offset)],
@@ -497,18 +660,21 @@ pub(super) fn list(connection: &Connection, limit: usize, offset: usize) -> Resu
     collect(rows)
 }
 
+/// Live notes that carry `tag`, most recently edited first.
 pub(super) fn list_by_tag(
     connection: &Connection,
+    which: Which,
     tag: &str,
     limit: usize,
     offset: usize,
 ) -> Result<Vec<Note>> {
-    let mut statement = connection.prepare(
-        "SELECT n.id, n.text, n.edited_at FROM notes n \
+    let mut statement = connection.prepare(&format!(
+        "SELECT {NOTE_COLUMNS} FROM notes n \
            JOIN note_tags t ON t.note_id = n.id \
-          WHERE t.tag = ?1 AND n.deleted = 0 \
-          ORDER BY n.edited_at DESC, n.id DESC LIMIT ?2 OFFSET ?3",
-    )?;
+          WHERE t.tag = ?1 AND n.deleted = 0 {} \
+          ORDER BY n.archived, n.edited_at DESC, n.id DESC LIMIT ?2 OFFSET ?3",
+        which.narrows()
+    ))?;
     let tag = tag.trim().trim_start_matches('#').to_lowercase();
     let rows = statement.query_map(
         params![tag, to_sql_count(limit), to_sql_count(offset)],
@@ -517,7 +683,10 @@ pub(super) fn list_by_tag(
     collect(rows)
 }
 
-/// Every tag in use, with the number of live notes that carry it.
+/// Every tag in use, with the number of live notes that carry it. An
+/// archived note counts: a tag is a way to find a note, and Find keeps the
+/// archived ones, so the number beside a tag is the number of notes that
+/// choosing it shows.
 pub(super) fn list_tags(connection: &Connection) -> Result<Vec<(String, usize)>> {
     let mut statement =
         connection.prepare("SELECT tag, count(*) FROM note_tags GROUP BY tag ORDER BY tag")?;
@@ -533,11 +702,13 @@ pub(super) fn list_tags(connection: &Connection) -> Result<Vec<(String, usize)>>
     Ok(tags)
 }
 
-/// The IDs of live notes whose ID starts with `prefix`, for commands that
-/// accept a shortened ID.
+/// The IDs of notes whose ID starts with `prefix`, for commands that accept
+/// a shortened ID: the live notes, or with `deleted` the deleted ones this
+/// device still holds, which is what a command that brings one back needs.
 pub(super) fn ids_by_prefix(
     connection: &Connection,
     prefix: &str,
+    deleted: bool,
     limit: usize,
 ) -> Result<Vec<String>> {
     // IDs are hexadecimal digits and hyphens. Anything else cannot match, and
@@ -547,10 +718,11 @@ pub(super) fn ids_by_prefix(
         return Ok(Vec::new());
     }
     let mut statement = connection
-        .prepare("SELECT id FROM notes WHERE deleted = 0 AND id LIKE ?1 ORDER BY id LIMIT ?2")?;
-    let rows = statement.query_map(params![format!("{prefix}%"), to_sql_count(limit)], |row| {
-        row.get::<_, String>(0)
-    })?;
+        .prepare("SELECT id FROM notes WHERE deleted = ?3 AND id LIKE ?1 ORDER BY id LIMIT ?2")?;
+    let rows = statement.query_map(
+        params![format!("{prefix}%"), to_sql_count(limit), deleted],
+        |row| row.get::<_, String>(0),
+    )?;
     let mut ids = Vec::new();
     for row in rows {
         ids.push(row?);
@@ -576,7 +748,8 @@ fn full_text_query(input: &str) -> Option<String> {
     }
 }
 
-/// Notes matching a full-text query, best match first.
+/// Notes matching a full-text query, best match first. An archived note is
+/// found too, after every note that is not archived.
 ///
 /// `CROSS JOIN` is SQLite's way of fixing the order of a join: the table
 /// on its left is read first. Left to choose, SQLite reads `notes` first
@@ -584,20 +757,21 @@ fn full_text_query(input: &str) -> Option<String> {
 /// walks the whole list of notes that hold the word. With 20,000 notes
 /// holding the word typed, that took 22 seconds. Read first, the index
 /// answers once.
-const SEARCH_SQL: &str = "SELECT n.id, n.text, n.edited_at FROM notes_fts f \
+const SEARCH_SQL: &str = "SELECT n.id, n.text, n.edited_at, n.archived FROM notes_fts f \
        CROSS JOIN notes n ON n.rowid = f.rowid \
       WHERE notes_fts MATCH ?1 AND n.deleted = 0 \
-      ORDER BY f.rank, n.edited_at DESC LIMIT ?2";
+      ORDER BY n.archived, f.rank, n.edited_at DESC LIMIT ?2";
 
 /// The same, for notes that also carry a tag. The index is read first here
 /// too, then the note, then its tags.
-const SEARCH_WITH_TAG_SQL: &str = "SELECT n.id, n.text, n.edited_at FROM notes_fts f \
+const SEARCH_WITH_TAG_SQL: &str = "SELECT n.id, n.text, n.edited_at, n.archived FROM notes_fts f \
        CROSS JOIN notes n ON n.rowid = f.rowid \
        CROSS JOIN note_tags t ON t.note_id = n.id AND t.tag = ?2 \
       WHERE notes_fts MATCH ?1 AND n.deleted = 0 \
-      ORDER BY f.rank, n.edited_at DESC LIMIT ?3";
+      ORDER BY n.archived, f.rank, n.edited_at DESC LIMIT ?3";
 
-/// Live notes matching every word of `query`, best match first.
+/// Live notes matching every word of `query`, best match first, the
+/// archived ones after the rest.
 pub(super) fn search(connection: &Connection, query: &str, limit: usize) -> Result<Vec<Note>> {
     let Some(query) = full_text_query(query) else {
         return Ok(Vec::new());
@@ -613,6 +787,10 @@ pub(super) fn search(connection: &Connection, query: &str, limit: usize) -> Resu
 /// With words to match, the best match comes first; without, the most
 /// recently edited. A query with text but no letter or digit matches
 /// nothing, as it does in [`search`].
+///
+/// With neither words nor a tag this is the list, which leaves archived
+/// notes out. With either, something is being found, and the archived
+/// notes that match come after the rest.
 pub(super) fn find(
     connection: &Connection,
     query: &str,
@@ -627,8 +805,8 @@ pub(super) fn find(
             return Ok(Vec::new());
         }
         return tag.map_or_else(
-            || list(connection, limit, 0),
-            |tag| list_by_tag(connection, &tag, limit, 0),
+            || list(connection, Which::Listed, limit, 0),
+            |tag| list_by_tag(connection, Which::Every, &tag, limit, 0),
         );
     };
     let Some(tag) = tag else {
