@@ -18,6 +18,7 @@ drawing the utterances again with replacement, group by group, ten thousand
 times, and seeing how often the order holds.
 """
 import json
+import os
 import random
 import re
 import statistics
@@ -28,7 +29,7 @@ from pathlib import Path
 from whisper_normalizer.english import EnglishTextNormalizer
 
 HERE = Path(__file__).resolve().parent.parent
-RESULTS = HERE / "data" / "results2"
+RESULTS = Path(os.environ.get("RESULTS", HERE / "data" / "results2"))
 GROUPS = ["clean", "other", "meeting", "calls", "thoughts"]
 normalise = EnglishTextNormalizer()
 SAME = {"ok": "okay", "alright": "all right"}
@@ -125,63 +126,52 @@ def load(name):
     return run, reads
 
 
-def main():
-    refs = manifest(HERE / "data" / "set2" / "manifest.tsv")
-    names = sorted(p.name[: -len(".set.jsonl")] for p in RESULTS.glob("*.set.jsonl"))
-    if "--texts" in sys.argv:
-        name = sys.argv[sys.argv.index("--texts") + 1]
-        _, reads = load(name)
-        for uid, (group, ref, raw) in refs.items():
-            hyp = same_compounds(plain(reads[uid]["text"]), ref)
-            s, d, i = errors(ref, hyp)
-            if s + d + i:
-                print(f"{uid} [{group}] {s + d + i}/{len(ref)}\n   said:  {raw}\n   wrote: {reads[uid]['text']}")
-        return
+def utterance_errors(reads, refs):
+    """For every utterance: (mistakes, reference words)."""
+    out = {}
+    for uid, (_, ref, _) in refs.items():
+        s, d, i = errors(ref, same_compounds(plain(reads[uid]["text"]), ref))
+        out[uid] = (s + d + i, len(ref))
+    return out
 
-    table, per_utt = {}, {}
-    for name in names:
-        run, reads = load(name)
-        if set(reads) != set(refs):
-            print(f"{name}: {len(reads)} of {len(refs)} read, left out")
-            continue
-        counts = defaultdict(lambda: [0, 0])
-        per_utt[name] = {}
-        cased = punctuated = 0
-        for uid, (group, ref, _) in refs.items():
-            text = reads[uid]["text"]
-            s, d, i = errors(ref, same_compounds(plain(text), ref))
-            counts[group][0] += s + d + i
-            counts[group][1] += len(ref)
-            per_utt[name][uid] = (s + d + i, len(ref))
-            cased += bool(re.search(r"[a-z]", text)) and bool(re.search(r"[A-Z]", text))
-            punctuated += bool(re.search(r"[.,?]", text))
-        row = {g: 100 * counts[g][0] / counts[g][1] for g in GROUPS}
-        row["all"] = 100 * sum(c[0] for c in counts.values()) / sum(c[1] for c in counts.values())
-        row["words"] = {g: counts[g][1] for g in GROUPS}
-        row["capitals"] = cased / len(refs)
-        row["punctuation"] = punctuated / len(refs)
-        row["bytes"] = used_bytes(name, run["flags"])
-        timing_file = RESULTS / f"{name}.timing.jsonl"
-        if timing_file.exists():
-            timing = [json.loads(l) for l in timing_file.read_text(encoding="utf-8").splitlines()]
-            for r in timing:
-                if r["kind"] == "read":
-                    row[r["id"]] = statistics.median(r["read_seconds"])
-                    row[r["id"] + "_all"] = [round(x, 2) for x in r["read_seconds"]]
-                    row[r["id"] + "_pieces"] = len(r["pieces"])
-                    row[r["id"] + "_peak"] = r["peak_bytes"] / 2 ** 20
-                if r["kind"] == "run":
-                    row["load"] = r["load_seconds"]
-                    row["calibration"] = r["calibration_seconds"]
-                if r["kind"] == "end":
-                    row["peak"] = r["peak_bytes"] / 2 ** 20
-        table[name] = row
 
-    order = sorted(table, key=lambda n: table[n]["all"])
+def timing_row(name):
+    row = {}
+    timing_file = RESULTS / f"{name}.timing.jsonl"
+    if not timing_file.exists():
+        return row
+    for r in (json.loads(l) for l in timing_file.read_text(encoding="utf-8").splitlines()):
+        if r["kind"] == "read":
+            row[r["id"]] = statistics.median(r["read_seconds"])
+            row[r["id"] + "_all"] = [round(x, 2) for x in r["read_seconds"]]
+            row[r["id"] + "_pieces"] = len(r["pieces"])
+            row[r["id"] + "_peak"] = r["peak_bytes"] / 2 ** 20
+        if r["kind"] == "run":
+            row["load"] = r["load_seconds"]
+            row["calibration"] = r["calibration_seconds"]
+        if r["kind"] == "end":
+            row["peak"] = r["peak_bytes"] / 2 ** 20
+    return row
+
+
+def rates(per_utt, refs):
+    counts = defaultdict(lambda: [0, 0])
+    for uid, (group, _, _) in refs.items():
+        e, n = per_utt[uid]
+        counts[group][0] += e
+        counts[group][1] += n
+    row = {g: 100 * counts[g][0] / counts[g][1] for g in GROUPS if counts[g][1]}
+    row["all"] = 100 * sum(c[0] for c in counts.values()) / sum(c[1] for c in counts.values())
+    row["words"] = {g: counts[g][1] for g in GROUPS}
+    return row
+
+
+def print_table(title, table, order, refs):
     words = table[order[0]]["words"] if order else {}
-    print(f"{len(refs)} utterances; words: " + ", ".join(f"{g} {words.get(g)}" for g in GROUPS)
-          + f"; all {sum(words.values())}\n")
-    head = "| Model | Size, MiB | All | Clean | Other | Meetings | Calls | Thoughts | Capitals and punctuation | 5 s | 15 s | 60 s | Peak memory, MiB |"
+    print(f"\n## {title}\n\n{len(refs)} utterances; words: "
+          + ", ".join(f"{g} {words.get(g)}" for g in GROUPS) + f"; all {sum(words.values())}\n")
+    head = ("| Model | Size, MiB | All | Clean | Other | Meetings | Calls | Thoughts | Capitals and punctuation"
+            " | 5 s | 15 s | 60 s | Peak memory, MiB |")
     print(head)
     print("|" + "---|" * (head.count("|") - 1))
     for name in order:
@@ -193,37 +183,105 @@ def main():
         print(f"| {name} | {size} | {r['all']:.1f}% | " + " | ".join(f"{r[g]:.1f}%" for g in GROUPS)
               + f" | {writes} | {times} | {peak} |")
 
-    # Is the order of neighbours more than chance?
-    random.seed(1)
-    by_group = defaultdict(list)
-    for uid, (group, _, _) in refs.items():
-        by_group[group].append(uid)
+
+def chance(order, per_utt, refs, table, extra_pairs):
+    """Bootstrap over utterances, group by group: B's mistakes minus A's."""
+    import numpy as np
+
+    ids = list(refs)
+    index = {u: k for k, u in enumerate(ids)}
+    rng = np.random.default_rng(1)
     draws = []
-    for _ in range(10000):
-        draw = []
-        for group in GROUPS:
-            ids = by_group[group]
-            draw += random.choices(ids, k=len(ids))
-        draws.append(draw)
+    for group in GROUPS:
+        members = np.array([index[u] for u in ids if refs[u][0] == group])
+        if len(members):
+            draws.append(members[rng.integers(0, len(members), size=(10000, len(members)))])
+    draws = np.concatenate(draws, axis=1)
 
-    def rate(name, ids):
-        return 100 * sum(per_utt[name][u][0] for u in ids) / sum(per_utt[name][u][1] for u in ids)
+    def arrays(name):
+        e = np.array([per_utt[name][u][0] for u in ids], dtype=float)
+        n = np.array([per_utt[name][u][1] for u in ids], dtype=float)
+        return e, n
 
-    print("\nIs the difference more than chance? (B's mistakes minus A's, in points; the range 95 draws in 100 fell in)")
+    print("\nIs the difference more than chance? (B's mistakes minus A's, in points;"
+          " the range 95 draws in 100 fell in)")
     pairs = [(order[i], order[j]) for i in range(len(order)) for j in range(i + 1, min(i + 4, len(order)))]
-    wanted = [a for a in sys.argv[1:] if "," in a]
-    pairs += [tuple(w.split(",")) for w in wanted]
+    pairs += [p for p in extra_pairs if p not in pairs]
     for a, b in pairs:
         if a not in per_utt or b not in per_utt:
             continue
-        diffs = sorted(rate(b, d) - rate(a, d) for d in draws)
+        ea, n = arrays(a)
+        eb, _ = arrays(b)
+        words = n[draws].sum(axis=1)
+        diffs = np.sort(100 * (eb[draws].sum(axis=1) - ea[draws].sum(axis=1)) / words)
         low, high = diffs[250], diffs[9749]
-        wins = sum(x > 0 for x in diffs) / len(diffs)
+        wins = float((diffs > 0).mean())
         verdict = "more than chance" if low > 0 or high < 0 else "within chance"
         print(f"  {a} against {b}: {table[b]['all'] - table[a]['all']:+.2f} ({low:+.2f} to {high:+.2f}); "
               f"A ahead in {100 * wins:.0f}% of draws: {verdict}")
 
-    (RESULTS / "summary2.json").write_text(json.dumps(table, indent=1))
+
+def main():
+    refs = manifest(HERE / "data" / "set2" / "manifest.tsv")
+    third_ids = set(manifest(HERE / "data" / "set2" / "manifest-third.tsv"))
+    third = {u: v for u, v in refs.items() if u in third_ids}
+    names = sorted(p.name[: -len(".set.jsonl")] for p in RESULTS.glob("*.set.jsonl"))
+    if "--texts" in sys.argv:
+        name = sys.argv[sys.argv.index("--texts") + 1]
+        _, reads = load(name)
+        for uid, (group, ref, raw) in refs.items():
+            if uid not in reads:
+                continue
+            hyp = same_compounds(plain(reads[uid]["text"]), ref)
+            s, d, i = errors(ref, hyp)
+            if s + d + i:
+                print(f"{uid} [{group}] {s + d + i}/{len(ref)}\n   said:  {raw}\n   wrote: {reads[uid]['text']}")
+        return
+
+    whole, part, per_utt, info = [], [], {}, {}
+    for name in names:
+        run, reads = load(name)
+        if set(refs) <= set(reads):
+            whole.append(name)
+            use = refs
+        elif third_ids <= set(reads):
+            part.append(name)
+            use = third
+        else:
+            print(f"{name}: {len(reads)} of {len(refs)} read, left out")
+            continue
+        per_utt[name] = utterance_errors(reads, use)
+        texts = [reads[u]["text"] for u in use]
+        info[name] = timing_row(name)
+        info[name]["capitals"] = sum(bool(re.search(r"[a-z]", t)) and bool(re.search(r"[A-Z]", t)) for t in texts) / len(texts)
+        info[name]["punctuation"] = sum(bool(re.search(r"[.,?]", t)) for t in texts) / len(texts)
+        info[name]["bytes"] = used_bytes(name, run["flags"])
+
+    def make_table(models, use):
+        table = {}
+        for name in models:
+            row = rates({u: per_utt[name][u] for u in use}, use)
+            row.update(info[name])
+            table[name] = row
+        return table
+
+    wanted = [tuple(a.split(",")) for a in sys.argv[1:] if "," in a]
+
+    full = make_table(whole, refs)
+    order = sorted(full, key=lambda n: full[n]["all"])
+    print_table("The whole set", full, order, refs)
+    chance(order, per_utt, refs, full, wanted)
+
+    if part:
+        sub = make_table(whole + part, third)
+        sub_order = sorted(sub, key=lambda n: sub[n]["all"])
+        print_table("The fixed third (scripts/third.py), every model", sub, sub_order, third)
+        chance(sub_order, {n: {u: per_utt[n][u] for u in third} for n in sub}, third, sub, wanted)
+    else:
+        sub = {}
+
+    summary = {"whole": full, "third": sub}
+    (RESULTS / "summary2.json").write_text(json.dumps(summary, indent=1))
 
 
 if __name__ == "__main__":
