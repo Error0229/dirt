@@ -54,8 +54,14 @@ pub fn SyncStatus(
     let (icon, state) = looks(indicator);
     let words = indicator.short();
     let compact = platform == Platform::Android;
+    // On Android the words are shown nowhere else, so where they say more
+    // than "Synced" a long press gives them first.
     let tooltip = if compact {
-        indicator.tooltip(now_ms).or_else(|| Some(words.clone()))
+        match indicator.tooltip(now_ms) {
+            Some(tooltip) if !indicator.is_quiet() => Some(format!("{words}. {tooltip}")),
+            Some(tooltip) => Some(tooltip),
+            None => Some(words.clone()),
+        }
     } else {
         indicator.tooltip(now_ms)
     };

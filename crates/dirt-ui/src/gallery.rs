@@ -25,9 +25,9 @@ use serde::Deserialize;
 use crate::appearance::{theme_name, Appearance, Platform, TextSize};
 use crate::components::{
     use_toasts, AccentDots, Banner, Button, ButtonKind, ConfirmInPlace, FindField, IconButton,
-    IconButtonSize, LayerLine, ListExit, NoteRow, NoteSummary, Panel, ScrollArea, Segment,
-    Segmented, Sheet, Slider, Swipeable, Switch, SyncStatus, TagList, TagOption, TextSizeSlider,
-    Toast,
+    IconButtonSize, LayerLine, ListExit, NoteCard, NoteRow, NoteSummary, Panel, PullToSync,
+    ScrollArea, Segment, Segmented, Sheet, Slider, Swipeable, Switch, SyncStatus, TagList,
+    TagOption, TagStrip, TextSizeSlider, Toast,
 };
 use crate::events::Bus;
 use crate::icons::{Icon, IconSize, IconSvg};
@@ -170,6 +170,7 @@ fn Page(
                 AnimatedList {}
                 ListParts {}
                 SwipeCard {}
+                AndroidList {}
                 Icons {}
                 Type {}
                 Colours {}
@@ -699,6 +700,68 @@ fn SwipeCard() -> Element {
                     cards.write().push(card);
                 },
                 "Another card"
+            }
+        }
+    }
+}
+
+/// Android's list: cards in a list that is pulled down to sync, and the
+/// strip of tags.
+#[component]
+fn AndroidList() -> Element {
+    let mut picked = use_signal(|| vec!["travel".to_owned()]);
+    let mut busy = use_signal(|| false);
+    let clock = crate::time::Clock::now();
+    let notes = [
+        "Plan the trip\nflights first, then the hotel #travel #work",
+        "Pack the bags #travel",
+        "Quarterly report, due Friday #work",
+    ];
+    let options: Vec<TagOption> = ["travel", "work", "home"]
+        .into_iter()
+        .map(|tag| TagOption {
+            tag: tag.to_owned(),
+            notes: None,
+            picked: picked.read().iter().any(|chosen| chosen == tag),
+        })
+        .collect();
+    rsx! {
+        h2 { "Android: cards, pull to sync, the strip of tags" }
+        TagStrip {
+            open: true,
+            options,
+            on_pick: move |tag: String| {
+                let mut all = picked.write();
+                if all.contains(&tag) {
+                    all.retain(|chosen| *chosen != tag);
+                } else {
+                    all.push(tag);
+                }
+            },
+            on_rule: move |_| {},
+        }
+        ScrollArea { class: "gal-pull",
+            PullToSync {
+                busy: busy(),
+                on_pull: move |()| {
+                    busy.set(true);
+                    spawn(async move {
+                        // The script holds the list while this is set.
+                        let _ = document::eval("await new Promise(done => setTimeout(done, 1500));").await;
+                        busy.set(false);
+                    });
+                },
+                div { class: "gal-cards", "data-dui-list": "", "data-dui-exit": "fold",
+                    for text in notes {
+                        NoteCard {
+                            key: "{text}",
+                            summary: NoteSummary::of(&dirt_core::models::Note::new(text), &[], clock),
+                            on_open: move |()| {},
+                            on_tag: move |_| {},
+                            on_swipe: move |()| {},
+                        }
+                    }
+                }
             }
         }
     }

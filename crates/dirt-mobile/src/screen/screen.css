@@ -29,6 +29,8 @@
 .dm-dock{flex:none;padding:6px 12px calc(24px + env(safe-area-inset-bottom,0px))}
 .dm-bar{display:block;width:100%;height:52px;border-radius:var(--r-bar);background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow-2);text-align:left;padding:0 20px;font-size:16px;color:var(--text-3);transition:transform 140ms var(--e-std)}
 .dm-bar:active{transform:scale(.98)}
+/* While Find has the keyboard, the dock goes, as the keyboard covers it. */
+.dm:has(.dm-find input:focus) .dm-dock{display:none}
 
 /* The page: a note, full screen. */
 .dm-page{padding-top:env(safe-area-inset-top,0px)}

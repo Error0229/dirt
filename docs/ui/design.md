@@ -1673,17 +1673,28 @@ with the tags chosen in Find as its words.
 | Leaving a page | The page closes the moment ⌄, ‹ or Back is pressed, and what it held is saved afterwards from what it held then. A page opened straight after is a page of its own: nothing typed into it is lost to the one being saved, and a note whose first character is still being made is made and saved all the same |
 | A new page let go | Until the grain (step 7), a new page with words closes into its new card at the top of the list, as an old note closes into its own. With nothing written it goes back into the bar (5.5) |
 | Back | Closes, in this order, whatever is open: Settings (the old screen, until step 5), the page, the list of archived notes, the strip's offers, then Find. With nothing open the app goes behind the others and keeps running, as Back does on the home screen |
-| Find | Its cross, or Back, closes it, and the list is whole again: its words and tags go with it. The search key on the keyboard opens the first note found, as Enter does on the desktop; Backspace in an empty Find takes back the last tag |
+| Find | Its cross, or Back, closes it, and the list is whole again: its words and tags go with it. While it has the keyboard the dock goes, as the keyboard would cover it. The search key on the keyboard opens the first note found, as Enter does on the desktop; Backspace in an empty Find takes back the last tag |
 | A tag tapped on a card | Brings Find down with the tag as a filled pill under it, where it is seen and taken back, and narrows the list (one action) |
-| The page's bar | Fades on the first key typed, and comes back when the page is touched anywhere; a touch that brings it back does not also press what is under it. While it is faded its buttons cannot be pressed |
+| The page's bar | Fades on the first key typed, and comes back when the keyboard goes away or the page is touched anywhere; a touch that brings it back does not also press what is under it. While it is faded its buttons cannot be pressed |
 | Archive and delete from the page | The page goes back into its card first, and then the card is put away: it folds shut (archive) or tears away (delete), with the toast. A note emptied on the page is let go instead, with no toast |
 | A card swiped away | Once it has flown off, the gap it leaves folds shut, archive or delete alike, and the cards below rise into it (snap) |
 | Pull to sync | The list holds at 58 px for as long as the sync runs, at least 600 ms and at most 15 s. Pulled while signed out, the arrow turns and settles and nothing syncs; the sync icon says why. A pull is told from a scroll by the finger's first move: down, with the list at its top. It is read from touch events, because Android's WebView takes a vertical drag of pointer events for its own scrolling |
-| The sync status | An icon with no words (6.6). A long press gives its words, or its tooltip where it has one. A tap syncs; with a problem, or signed out, it opens Settings, the old screen until step 5 |
+| The sync status | An icon with no words (6.6), so a long press gives them: its words and then its tooltip ("Offline · 1 waiting. Notes wait here and go when you're back"), or the tooltip alone for Synced. A tap syncs; with a problem, or signed out, it opens Settings, the old screen until step 5 |
 | A card | Its tags have 40 dp targets around their small type. A long press anywhere else on it gives its edit time in full. Its thumbnail is shown only when the device already has the picture's thumbnail; the list fetches none, and opening the note fetches them as its files do |
 | The mic | The dock is the bar alone, and a page's bar has no 🎙, until voice (step 9): no icon is shown that does nothing |
 | Appearance | Until Settings is rebuilt (step 5), the old Settings screen has a card with the theme, the accents and the text size, drawn by `dirt-ui` |
 | A share | Saved at once as before, with no toast yet: the toast after a share, with **Undo**, comes with capture from outside the app (step 8) |
+| Touch and hover | A finger leaves `:hover` on what it tapped, so where nothing hovers (`hover: none`) an icon button is grey only while it is pressed |
+| The old screens | Settings and Devices are drawn over the main screen, which stays as it was under them, in the light theme whatever is chosen (`.dui-light`), since their own colours are light ones |
+
+**What did not work as the design assumes.** The page is hidden with
+`display: none` when it is closed, not with `visibility`: Android's WebView
+(133, on the emulator) was seen to keep a child of the page hidden after
+it had opened again, its inherited visibility not worked out afresh once
+the clip had run. And a tap that reaches the page within a few
+milliseconds of Back, faster than a hand can, lands before Back has closed
+the page, so what is typed then goes nowhere; at a hand's pace it goes to
+the new page.
 
 ---
 

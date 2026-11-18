@@ -1205,6 +1205,30 @@ pub fn MainScreen() -> Element {
         }
     });
 
+    // The keyboard going away brings the page's bar back, and the dock,
+    // which Find hides while it has the keyboard: the window grows again
+    // when it does.
+    use_future(move || async move {
+        let mut grew = document::eval(concat!(
+            "let tall = innerHeight;",
+            "addEventListener('resize', () => {",
+            "  if (innerHeight > tall + 120) {",
+            "    const at = document.activeElement;",
+            "    if (at && at.id === 'dui-find') at.blur();",
+            "    dioxus.send(true);",
+            "  }",
+            "  tall = innerHeight;",
+            "});",
+            "await new Promise(() => {});",
+        ));
+        let mut typing = screen.typing;
+        while grew.recv::<bool>().await.is_ok() {
+            if *typing.peek() {
+                typing.set(false);
+            }
+        }
+    });
+
     // Something may have come from outside the app.
     use_effect(move || {
         let _ = app.capture_ready.read();

@@ -128,13 +128,15 @@ pub fn Main() -> Element {
             }),
     );
 
+    // Nothing is said to be empty before the store has answered.
+    let read = screen.listing.read().is_some();
     let listing = screen.listing.read().clone().unwrap_or_default();
     let clock = *screen.clock.read();
     let exit = screen.exit.read().name();
     let returned = *screen.returned.read();
     let flashing = screen.flashing.read().clone();
     let limit = *screen.limit.read();
-    let empty = listing.notes.is_empty() && !listing.finding && !listing.archived_view;
+    let empty = read && listing.notes.is_empty() && !listing.finding && !listing.archived_view;
     let archived_count = listing.counts.archived;
     let show_archived_line =
         !listing.finding && !listing.archived_view && archived_count > 0 && !listing.more;

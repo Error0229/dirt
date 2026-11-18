@@ -102,7 +102,7 @@ fn Legacy(back: View, children: Element) -> Element {
     });
     rsx! {
         div {
-            class: "dm-legacy",
+            class: "dm-legacy dui-light",
             "data-dui-id": "{id}",
             "data-dui-back": "",
             {children}

@@ -44,6 +44,10 @@
 .dui-icon-btn.danger:hover{color:var(--danger);background:var(--danger-soft)}
 .dui-icon-btn[aria-pressed="true"]{color:var(--accent);background:var(--accent-soft)}
 .dui-icon-btn:disabled{opacity:.45;cursor:default;pointer-events:none}
+/* A finger leaves :hover behind on what it tapped, until it taps something
+   else. Where nothing hovers, an icon button shows it is pressed only while
+   it is. */
+@media (hover:none){.dui-icon-btn:hover:not([aria-pressed="true"]){background:none;color:var(--text-2)}.dui-icon-btn:active:not([aria-pressed="true"]){background:var(--surface-2)}}
 /* 40 dp on Android, whatever the size asked for: a finger needs it. */
 .android .dui-icon-btn,.android .dui-icon-btn.sm{width:40px;height:40px;border-radius:12px}
 
@@ -320,8 +324,11 @@
 .dui-card.flash .dui-swipe-in{animation:dui-flash 1.6s var(--e-std)}
 
 /* ---- A page that grows out of its card (Android, 5.5) --------------------- */
-.dui-grow{position:fixed;inset:0;z-index:500;background:var(--surface);display:flex;flex-direction:column;visibility:hidden;contain:layout paint}
-.dui-grow.on,.dui-grow.leaving{visibility:visible}
+/* Hidden by display, not visibility: Android's WebView was seen to keep a
+   child of the page hidden after it had opened again, its inherited
+   visibility not worked out afresh once the clip had run. */
+.dui-grow{position:fixed;inset:0;z-index:500;background:var(--surface);display:none;flex-direction:column}
+.dui-grow.on,.dui-grow.leaving{display:flex}
 
 /* ---- Pulling a list down to sync (Android, 5.5) --------------------------- */
 .dui-pull{position:relative;min-height:100%;will-change:transform}
