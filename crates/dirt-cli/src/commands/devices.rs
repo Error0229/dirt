@@ -9,7 +9,7 @@ use std::io::{self, BufRead, Write};
 use std::time::Duration;
 
 use dirt_core::api::{DeviceInfo, DeviceStatus};
-use dirt_core::enrolment::CancelReason;
+use dirt_core::enrolment::{CancelReason, ShortCode};
 use dirt_core::session::{ExchangeStep, Session};
 use dirt_core::util::as_sentence;
 
@@ -161,15 +161,16 @@ async fn approve(session: &Session, prefix: Option<&str>) -> Result<(), CliError
     let mut last_progress = std::time::Instant::now();
     // The code the person has answered for. The other device may begin
     // again, which gives a new code that has to be compared afresh.
-    let mut answered_for: Option<String> = None;
+    let mut answered_for: Option<ShortCode> = None;
     loop {
         match approval.poll().await.map_err(failed)? {
-            ExchangeStep::Compare { code } if answered_for.as_deref() != Some(code.as_str()) => {
+            ExchangeStep::Compare { code } if answered_for != Some(code) => {
                 if answered_for.is_some() {
                     println!("The other device began again. There is a new code.");
                 }
                 println!("Code: {code}");
-                if ask("Does the other device show the same code? [y/N] ")? {
+                if ask("Does the other device show the same pictures, or the same digits? [y/N] ")?
+                {
                     approval.confirm().await.map_err(failed)?;
                     println!("Waiting for the other device to confirm too.");
                 } else {
@@ -218,12 +219,13 @@ pub async fn join(session: &Session) -> Result<(), CliError> {
          or run `dirt devices approve` there."
     );
     let mut last_progress = std::time::Instant::now();
-    let mut answered_for: Option<String> = None;
+    let mut answered_for: Option<ShortCode> = None;
     loop {
         match join.poll().await.map_err(failed)? {
-            ExchangeStep::Compare { code } if answered_for.as_deref() != Some(code.as_str()) => {
+            ExchangeStep::Compare { code } if answered_for != Some(code) => {
                 println!("Code: {code}");
-                if ask("Does the other device show the same code? [y/N] ")? {
+                if ask("Does the other device show the same pictures, or the same digits? [y/N] ")?
+                {
                     join.confirm().await.map_err(failed)?;
                     println!("Waiting for the other device to confirm too.");
                 } else {

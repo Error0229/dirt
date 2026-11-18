@@ -17,7 +17,9 @@ use uuid::Uuid;
 use super::{Session, SessionError, SessionState};
 use crate::api::ApiClient;
 use crate::crypto::{AccountKey, KEY_VERSION};
-use crate::enrolment::{Agreed, Approving, CancelReason, EnrolmentError, Joining, Message};
+use crate::enrolment::{
+    Agreed, Approving, CancelReason, EnrolmentError, Joining, Message, ShortCode,
+};
 use crate::key_change::{wrap_account_key, WrapContext};
 use crate::recovery::{RecoveryError, RecoveryPhrase};
 use crate::secrets::DeviceSecrets;
@@ -31,7 +33,7 @@ pub enum ExchangeStep {
     /// Waiting for the other device to open its screen or to answer.
     Waiting,
     /// Both devices show a code. The person says whether they are the same.
-    Compare { code: String },
+    Compare { code: ShortCode },
     /// The person confirmed here. Waiting for the other device to finish.
     Finishing,
     /// The new device has the account key and is approved.

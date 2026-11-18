@@ -39,6 +39,10 @@ use vodozemac::sas::{EstablishedSas, Sas};
 use vodozemac::Curve25519PublicKey;
 use zeroize::Zeroizing;
 
+mod short_code;
+
+pub use short_code::{Picture, ShortCode};
+
 use crate::crypto::{random_token, AccountKey};
 
 /// Why an exchange cannot go on.
@@ -204,15 +208,14 @@ impl Agreed {
         &self.transcript.exchange
     }
 
-    /// The code the person compares on the two devices: three groups of
-    /// four digits.
+    /// The code the person compares on the two devices: seven pictures,
+    /// or the same as three groups of four digits.
     #[must_use]
-    pub fn code(&self) -> String {
-        let (a, b, c) = self
+    pub fn code(&self) -> ShortCode {
+        let bytes = self
             .secret
-            .bytes(&self.transcript.info("dirt enrolment code v1"))
-            .decimals();
-        format!("{a} {b} {c}")
+            .bytes(&self.transcript.info("dirt enrolment code v1"));
+        ShortCode::new(bytes.emoji_indices(), bytes.decimals())
     }
 
     fn wrapping_cipher(&self) -> XChaCha20Poly1305 {
@@ -533,8 +536,10 @@ mod tests {
 
         let code = laptop.code();
         assert_eq!(phone.code(), code);
-        // Three groups of four digits.
-        let groups: Vec<&str> = code.split(' ').collect();
+        // Seven pictures, or three groups of four digits.
+        assert_eq!(code.pictures().len(), 7);
+        let digits = code.digits();
+        let groups: Vec<&str> = digits.split(' ').collect();
         assert_eq!(groups.len(), 3);
         assert!(groups
             .iter()

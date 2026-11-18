@@ -7,7 +7,7 @@
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use dirt_core::enrolment::{CancelReason, EnrolmentError, Message};
+use dirt_core::enrolment::{CancelReason, EnrolmentError, Message, ShortCode};
 use dirt_core::recovery::RecoveryError;
 use dirt_core::session::{
     Approval, ExchangeStep, Join, ResetOutcome, SessionError, SessionState, SignOutError, Unsynced,
@@ -48,7 +48,7 @@ async fn waiting_device(server: &Server, name: &str) -> Client {
 }
 
 /// Starts the exchange on both devices and runs it until both show a code.
-async fn until_codes(laptop: &Client, phone: &Client) -> (Approval, Join, String, String) {
+async fn until_codes(laptop: &Client, phone: &Client) -> (Approval, Join, ShortCode, ShortCode) {
     let mut join = phone.session.begin_join().await.unwrap();
     let waiting = laptop.session.waiting_devices().await.unwrap();
     let target = waiting
@@ -994,7 +994,7 @@ mod on_screen {
         (approving, joining)
     }
 
-    fn code_on(screen: &Exchange) -> Option<String> {
+    fn code_on(screen: &Exchange) -> Option<ShortCode> {
         match screen.view() {
             ExchangeView::Step(ExchangeStep::Compare { code }) => Some(code),
             _ => None,
