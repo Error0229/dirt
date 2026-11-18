@@ -208,7 +208,7 @@ def chance(order, per_utt, refs, table, extra_pairs):
     pairs = [(order[i], order[j]) for i in range(len(order)) for j in range(i + 1, min(i + 4, len(order)))]
     pairs += [p for p in extra_pairs if p not in pairs]
     for a, b in pairs:
-        if a not in per_utt or b not in per_utt:
+        if not all(n in per_utt and all(u in per_utt[n] for u in ids) for n in (a, b)):
             continue
         ea, n = arrays(a)
         eb, _ = arrays(b)
@@ -244,9 +244,12 @@ def main():
         if set(refs) <= set(reads):
             whole.append(name)
             use = refs
-        elif third_ids <= set(reads):
+        elif len(third_ids & set(reads)) >= 0.9 * len(third_ids):
+            # Read the third, or most of it before a run was cut.
             part.append(name)
-            use = third
+            use = {u: v for u, v in third.items() if u in reads}
+            if len(use) < len(third):
+                print(f"{name}: {len(use)} of the third's {len(third)} read before it was cut")
         else:
             print(f"{name}: {len(reads)} of {len(refs)} read, left out")
             continue
@@ -273,10 +276,13 @@ def main():
     chance(order, per_utt, refs, full, wanted)
 
     if part:
-        sub = make_table(whole + part, third)
+        # Every model on the utterances of the third that all of them read.
+        common = {u: v for u, v in third.items() if all(u in per_utt[n] for n in part)}
+        sub = make_table(whole + part, common)
         sub_order = sorted(sub, key=lambda n: sub[n]["all"])
-        print_table("The fixed third (scripts/third.py), every model", sub, sub_order, third)
-        chance(sub_order, {n: {u: per_utt[n][u] for u in third} for n in sub}, third, sub, wanted)
+        print_table(f"The fixed third (scripts/third.py), every model: {len(common)} of its {len(third)}"
+                    " that every model read", sub, sub_order, common)
+        chance(sub_order, {n: {u: per_utt[n][u] for u in common} for n in sub}, common, sub, wanted)
     else:
         sub = {}
 

@@ -1,0 +1,7 @@
+    Finished `release` profile [optimized] target(s) in 1m 14s
+built aarch64-linux-android whisper sherpa in 74 s
+-rw-r--r-- 2 login 197609 1746856 Nov 17 22:16 target/aarch64-linux-android/release/voice-trial
+built x86_64-linux-android sherpa in 28 s
+-rw-r--r-- 2 login 197609 696504 Nov 17 22:17 target/x86_64-linux-android/release/voice-trial
+39003753ec293425ed56723ea9b972b98841a490af3311670c3060548d654330 *target/sherpa-onnx-prebuilt/sherpa-onnx-v2.0.1-android.tar.bz2
+afa4de3ca4ab0afd53bb4aab40d28ee15608364b549ffc0fe0caf6489bfc39a5 *target/sherpa-onnx-prebuilt/sherpa-onnx-v2.0.1-win-x64-shared-MT-Release-lib.tar.bz2

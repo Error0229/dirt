@@ -20,6 +20,36 @@ figures in the plan can be traced: `tables.md` (the tables as printed),
 before the laptop slept; `results-third` a later repeat of sherpa-onnx).
 No sound and no model is in it.
 
+## The second measurement
+
+After the owner decided on 2026-11-17 that words need not appear while the
+person speaks, the second measurement asked which model writes the most
+accurate text for a finished recording. Its result is the section "Trial
+1, second measurement: accuracy after the recording ends" of the plan.
+`results2/` holds what it gave: `tables.txt` (the accuracy tables and the
+bootstrap), `retime.md` (first and second timings side by side),
+`long.txt` (the five-minute recording), `summary2.json`, `builds.txt`,
+`licences.txt`, the machine's load (`load.csv`), and every run's own lines
+in `runs.tar.gz` (`results2/long/first-cutter` holds the long readings made
+with the first cutter, which lost words).
+
+```bash
+python -I scripts/make-set2.py data/librispeech/LibriSpeech   # the test set, the timing clips, ten minutes
+python -I scripts/third.py data/set2/manifest.tsv data/set2/manifest-third.tsv
+mv data/long data/long10 && python -I scripts/shorten-long.py data/long10 data/long
+bash scripts/run2.sh list
+bash scripts/run2.sh parakeet-v2 parakeet-110m ...            # one model at a time
+SET=data/set2/manifest-third.tsv bash scripts/run2.sh cpp-medium.en cpp-turbo
+MODE=retime bash scripts/run2.sh parakeet-v2 ...
+MODE=long bash scripts/run2.sh parakeet-v2 parakeet-110m cpp-small.en
+data/venv/Scripts/python scripts/analyse2.py
+data/venv/Scripts/python scripts/analyse-long.py
+data/venv/Scripts/python scripts/retime.py
+```
+
+`data/venv` needs `whisper-normalizer` and `numpy`. Run one copy of
+`run2.sh` at a time: two side by side overheated the laptop.
+
 ## What is here
 
 | | |

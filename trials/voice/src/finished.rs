@@ -71,9 +71,17 @@ impl Cutter {
         Err("cutting at pauses needs the sherpa feature, for Silero's model".to_owned())
     }
 
-    /// The pieces of a recording, as sample ranges. Speech is never cut
-    /// inside a stretch the detector heard as one, unless that stretch
-    /// alone is longer than the window, when it is cut in equal parts.
+    /// The pieces of a recording, as sample ranges that follow one another
+    /// with nothing left out: the detector only chooses where to cut. Each
+    /// cut is in the middle of the latest pause that keeps the piece within
+    /// the window; where the detector heard no pause in the second half of
+    /// the window, it is at the quietest tenth of a second there.
+    ///
+    /// The first version kept only what the detector heard as speech, with
+    /// 0.2 s either side, and cut a stretch it heard as one into equal
+    /// parts when the stretch was longer than the window. On the long
+    /// recording that lost words the detector missed and cut through
+    /// others; recordings shorter than the window were never cut by it.
     #[cfg(feature = "sherpa")]
     pub fn cut(&mut self, samples: &[f32]) -> Vec<(usize, usize)> {
         self.vad.reset();
@@ -84,27 +92,28 @@ impl Cutter {
         }
         self.vad.flush();
         take(&self.vad, &mut speech);
+        // The middle of every pause between two stretches of speech.
+        let pauses: Vec<usize> = speech
+            .windows(2)
+            .filter(|pair| pair[1].0 > pair[0].1)
+            .map(|pair| (pair[0].1 + pair[1].0) / 2)
+            .collect();
 
         let window = (self.window * RATE as f32) as usize;
-        let margin = RATE / 5;
-        let mut pieces: Vec<(usize, usize)> = Vec::new();
-        for (start, end) in speech {
-            match pieces.last_mut() {
-                Some(piece) if end - piece.0 <= window => piece.1 = end,
-                _ => pieces.push((start, end)),
-            }
-        }
         let mut out = Vec::new();
-        for (start, end) in pieces {
-            // A little quiet either side, so no word is clipped.
-            let start = start.saturating_sub(margin);
-            let end = (end + margin).min(samples.len());
-            let parts = (end - start).div_ceil(window + 2 * margin).max(1);
-            let each = (end - start).div_ceil(parts);
-            for part in 0..parts {
-                out.push((start + part * each, (start + (part + 1) * each).min(end)));
-            }
+        let mut start = 0;
+        while samples.len() - start > window {
+            let latest = start + window;
+            let cut = pauses
+                .iter()
+                .copied()
+                .filter(|&p| p > start + window / 2 && p <= latest)
+                .next_back()
+                .unwrap_or_else(|| quietest(samples, start + window / 2, latest));
+            out.push((start, cut));
+            start = cut;
         }
+        out.push((start, samples.len()));
         out
     }
 
@@ -112,6 +121,19 @@ impl Cutter {
     pub fn cut(&mut self, samples: &[f32]) -> Vec<(usize, usize)> {
         vec![(0, samples.len())]
     }
+}
+
+/// The middle of the quietest tenth of a second between `from` and `to`.
+#[cfg(feature = "sherpa")]
+fn quietest(samples: &[f32], from: usize, to: usize) -> usize {
+    let step = RATE / 10;
+    (from..to.saturating_sub(step))
+        .step_by(RATE / 100)
+        .min_by(|&a, &b| {
+            let energy = |s: usize| samples[s..s + step].iter().map(|x| x * x).sum::<f32>();
+            energy(a).total_cmp(&energy(b))
+        })
+        .map_or(to, |s| s + step / 2)
 }
 
 #[cfg(feature = "sherpa")]

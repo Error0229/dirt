@@ -1,0 +1,25 @@
+the recording: 832 words after normalising
+
+cpp-small.en-cut25: 287 s read in 115.7, 108.4, 113.1 s (15 piece(s), longest 24.9 s, finding the pauses took 1.0 s), peak 959 MiB
+   per minute of sound: 23.6 s (median); ten minutes would take about 236 s at this rate
+   mistakes 7.45% (62 of 832)
+   within two words of the 14 joins: 7 mistakes in about 70 words (10.0%); elsewhere 55 in 762 (7.2%)
+   no run of three or more words lost or added
+
+cpp-small.en: 287 s read in 88.5, 92.9, 103.5 s (1 piece(s), longest 287.1 s, finding the pauses took 0.0 s), peak 1036 MiB
+   per minute of sound: 19.4 s (median); ten minutes would take about 194 s at this rate
+   mistakes 6.61% (55 of 832)
+   no run of three or more words lost or added
+
+parakeet-110m: 287 s read in 9.8, 9.9, 10.1 s (15 piece(s), longest 24.9 s, finding the pauses took 1.4 s), peak 632 MiB
+   per minute of sound: 2.1 s (median); ten minutes would take about 21 s at this rate
+   mistakes 7.57% (63 of 832)
+   within two words of the 14 joins: 10 mistakes in about 70 words (14.3%); elsewhere 53 in 762 (7.0%)
+   LOST 3 words at word 550 of 832: i could not
+
+parakeet-v2: 287 s read in 28.1, 32.6, 33.0 s (15 piece(s), longest 24.9 s, finding the pauses took 1.5 s), peak 1186 MiB
+   per minute of sound: 6.8 s (median); ten minutes would take about 68 s at this rate
+   mistakes 6.13% (51 of 832)
+   within two words of the 14 joins: 6 mistakes in about 70 words (8.6%); elsewhere 45 in 762 (5.9%)
+   no run of three or more words lost or added
+

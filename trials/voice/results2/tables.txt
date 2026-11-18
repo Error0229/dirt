@@ -1,0 +1,201 @@
+cpp-turbo: 71 of the third's 77 read before it was cut
+
+## The whole set
+
+227 utterances; words: clean 1447, other 1353, meeting 570, calls 804, thoughts 424; all 4598
+
+| Model | Size, MiB | All | Clean | Other | Meetings | Calls | Thoughts | Capitals and punctuation | 5 s | 15 s | 60 s | Peak memory, MiB |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| parakeet-unified | 632 | 4.5% | 0.9% | 2.7% | 7.5% | 13.6% | 1.7% | Yes | 0.68 s | 2.16 s | 8.34 s | 1160 |
+| parakeet-v2 | 631 | 4.8% | 1.2% | 2.7% | 10.5% | 13.2% | 0.7% | Yes | 0.64 s | 2.07 s | 8.64 s | 1157 |
+| parakeet-ultra | 640 | 5.2% | 1.5% | 3.7% | 8.9% | 14.2% | 1.2% | Yes | 0.35 s | 0.87 s | 3.76 s | 1167 |
+| parakeet-v3 | 640 | 5.9% | 1.8% | 3.8% | 11.6% | 15.4% | 0.9% | Yes | 0.70 s | 1.97 s | 8.77 s | 1167 |
+| zipformer-gigaspeech | 70 | 6.2% | 1.8% | 5.2% | 12.1% | 13.2% | 2.8% | No | 0.10 s | 0.30 s | 1.93 s | 561 |
+| parakeet-redux | 640 | 6.2% | 1.9% | 5.4% | 8.6% | 15.3% | 3.3% | Yes | 0.41 s | 1.03 s | 4.16 s | 1168 |
+| parakeet-110m | 130 | 6.4% | 1.8% | 4.5% | 12.6% | 15.9% | 1.2% | Yes | 0.14 s | 0.35 s | 1.79 s | 604 |
+| sherpa-whisper-turbo | 989 | 6.5% | 1.2% | 3.8% | 14.4% | 18.4% | 0.2% | Yes | 5.31 s | 13.06 s | 50.20 s | 1928 |
+| cpp-small.en | 465 | 7.1% | 2.3% | 6.4% | 15.3% | 14.4% | 0.9% | Yes | 5.23 s | 6.62 s | 20.20 s | 967 |
+| cpp-small.en-q5 | 181 | 7.3% | 2.5% | 6.4% | 14.9% | 15.0% | 1.7% | Yes | 4.69 s | 5.41 s | 21.01 s | 723 |
+| cpp-distil-small.en | 321 | 7.5% | 2.6% | 5.8% | 14.2% | 16.7% | 3.1% | Yes | 4.11 s | 4.66 s | 19.88 s | 698 |
+| sherpa-whisper-small.en | 358 | 7.6% | 2.3% | 6.1% | 17.2% | 15.7% | 2.4% | Yes | 1.99 s | 6.68 s | 24.72 s | 1252 |
+| sherpa-whisper-distil-small.en | 285 | 7.8% | 2.8% | 6.6% | 15.4% | 15.4% | 3.8% | Yes | 1.51 s | 5.07 s | 20.22 s | 933 |
+| sherpa-whisper-small.en-fp32 | 925 | 7.9% | 2.4% | 6.4% | 17.4% | 16.3% | 2.1% | Yes | 1.64 s | 5.33 s | 30.20 s | 1816 |
+| canary-180m-flash | 198 | 8.1% | 1.5% | 3.9% | 11.1% | 27.7% | 2.4% | Yes | 0.65 s | 2.51 s | 9.96 s | 717 |
+| sherpa-whisper-distil-large-v3 | 938 | 8.3% | 1.9% | 6.5% | 17.2% | 20.1% | 1.2% | Yes | 3.33 s | 7.33 s | 21.90 s | 1803 |
+| cpp-base.en | 141 | 8.4% | 2.5% | 8.1% | 15.4% | 18.2% | 0.9% | Yes | 1.65 s | 1.84 s | 6.09 s | 452 |
+| moonshine-base | 135 | 8.5% | 2.3% | 8.4% | 11.6% | 20.3% | 3.1% | Yes | 0.22 s | 1.09 s | 4.77 s | 357 |
+| cpp-base.en-q5 | 57 | 8.5% | 2.1% | 8.4% | 15.6% | 18.9% | 1.2% | Yes | 1.72 s | 1.99 s | 6.31 s | 368 |
+| sherpa-whisper-base.en-fp32 | 279 | 9.6% | 2.8% | 9.1% | 18.2% | 21.1% | 1.4% | Yes | 0.48 s | 1.60 s | 6.56 s | 865 |
+| sherpa-whisper-base.en | 153 | 10.0% | 2.9% | 8.9% | 20.7% | 20.9% | 2.8% | Yes | 0.41 s | 1.38 s | 5.68 s | 737 |
+| moonshine-tiny | 42 | 11.6% | 3.0% | 11.7% | 16.1% | 28.0% | 3.8% | Yes | 0.15 s | 0.73 s | 3.23 s | 221 |
+
+Is the difference more than chance? (B's mistakes minus A's, in points; the range 95 draws in 100 fell in)
+  parakeet-unified against parakeet-v2: +0.33 (-0.39 to +1.08); A ahead in 80% of draws: within chance
+  parakeet-unified against parakeet-ultra: +0.72 (-0.02 to +1.47); A ahead in 97% of draws: within chance
+  parakeet-unified against parakeet-v3: +1.39 (+0.47 to +2.34); A ahead in 100% of draws: more than chance
+  parakeet-v2 against parakeet-ultra: +0.39 (-0.55 to +1.30); A ahead in 80% of draws: within chance
+  parakeet-v2 against parakeet-v3: +1.07 (+0.31 to +1.85); A ahead in 100% of draws: more than chance
+  parakeet-v2 against zipformer-gigaspeech: +1.30 (+0.47 to +2.13); A ahead in 100% of draws: more than chance
+  parakeet-ultra against parakeet-v3: +0.67 (-0.04 to +1.51); A ahead in 96% of draws: within chance
+  parakeet-ultra against zipformer-gigaspeech: +0.91 (-0.02 to +1.76); A ahead in 97% of draws: within chance
+  parakeet-ultra against parakeet-redux: +1.00 (+0.40 to +1.60); A ahead in 100% of draws: more than chance
+  parakeet-v3 against zipformer-gigaspeech: +0.24 (-0.80 to +1.22); A ahead in 68% of draws: within chance
+  parakeet-v3 against parakeet-redux: +0.33 (-0.46 to +1.08); A ahead in 79% of draws: within chance
+  parakeet-v3 against parakeet-110m: +0.43 (-0.48 to +1.31); A ahead in 84% of draws: within chance
+  zipformer-gigaspeech against parakeet-redux: +0.09 (-0.82 to +1.07); A ahead in 56% of draws: within chance
+  zipformer-gigaspeech against parakeet-110m: +0.20 (-0.55 to +0.97); A ahead in 68% of draws: within chance
+  zipformer-gigaspeech against sherpa-whisper-turbo: +0.35 (-0.70 to +1.57); A ahead in 72% of draws: within chance
+  parakeet-redux against parakeet-110m: +0.11 (-0.68 to +0.91); A ahead in 60% of draws: within chance
+  parakeet-redux against sherpa-whisper-turbo: +0.26 (-0.94 to +1.56); A ahead in 65% of draws: within chance
+  parakeet-redux against cpp-small.en: +0.87 (-0.16 to +1.87); A ahead in 95% of draws: within chance
+  parakeet-110m against sherpa-whisper-turbo: +0.15 (-0.80 to +1.35); A ahead in 58% of draws: within chance
+  parakeet-110m against cpp-small.en: +0.76 (+0.07 to +1.48); A ahead in 98% of draws: more than chance
+  parakeet-110m against cpp-small.en-q5: +0.94 (+0.09 to +1.83); A ahead in 98% of draws: more than chance
+  sherpa-whisper-turbo against cpp-small.en: +0.61 (-0.46 to +1.56); A ahead in 87% of draws: within chance
+  sherpa-whisper-turbo against cpp-small.en-q5: +0.78 (-0.28 to +1.69); A ahead in 93% of draws: within chance
+  sherpa-whisper-turbo against cpp-distil-small.en: +0.98 (-0.28 to +2.02); A ahead in 94% of draws: within chance
+  cpp-small.en against cpp-small.en-q5: +0.17 (-0.34 to +0.85); A ahead in 68% of draws: within chance
+  cpp-small.en against cpp-distil-small.en: +0.37 (-0.28 to +1.02); A ahead in 86% of draws: within chance
+  cpp-small.en against sherpa-whisper-small.en: +0.52 (-0.13 to +1.27); A ahead in 93% of draws: within chance
+  cpp-small.en-q5 against cpp-distil-small.en: +0.20 (-0.52 to +0.89); A ahead in 70% of draws: within chance
+  cpp-small.en-q5 against sherpa-whisper-small.en: +0.35 (-0.13 to +0.82); A ahead in 92% of draws: within chance
+  cpp-small.en-q5 against sherpa-whisper-distil-small.en: +0.50 (-0.29 to +1.24); A ahead in 89% of draws: within chance
+  cpp-distil-small.en against sherpa-whisper-small.en: +0.15 (-0.55 to +0.87); A ahead in 65% of draws: within chance
+  cpp-distil-small.en against sherpa-whisper-distil-small.en: +0.30 (-0.26 to +0.86); A ahead in 85% of draws: within chance
+  cpp-distil-small.en against sherpa-whisper-small.en-fp32: +0.37 (-0.36 to +1.11); A ahead in 83% of draws: within chance
+  sherpa-whisper-small.en against sherpa-whisper-distil-small.en: +0.15 (-0.60 to +0.88); A ahead in 65% of draws: within chance
+  sherpa-whisper-small.en against sherpa-whisper-small.en-fp32: +0.22 (-0.15 to +0.59); A ahead in 87% of draws: within chance
+  sherpa-whisper-small.en against canary-180m-flash: +0.43 (-2.50 to +5.43); A ahead in 57% of draws: within chance
+  sherpa-whisper-distil-small.en against sherpa-whisper-small.en-fp32: +0.07 (-0.68 to +0.85); A ahead in 55% of draws: within chance
+  sherpa-whisper-distil-small.en against canary-180m-flash: +0.28 (-2.62 to +5.24); A ahead in 53% of draws: within chance
+  sherpa-whisper-distil-small.en against sherpa-whisper-distil-large-v3: +0.48 (-0.72 to +1.80); A ahead in 77% of draws: within chance
+  sherpa-whisper-small.en-fp32 against canary-180m-flash: +0.22 (-2.80 to +5.25); A ahead in 51% of draws: within chance
+  sherpa-whisper-small.en-fp32 against sherpa-whisper-distil-large-v3: +0.41 (-0.78 to +1.74); A ahead in 74% of draws: within chance
+  sherpa-whisper-small.en-fp32 against cpp-base.en: +0.50 (-0.46 to +1.41); A ahead in 85% of draws: within chance
+  canary-180m-flash against sherpa-whisper-distil-large-v3: +0.20 (-4.94 to +3.45); A ahead in 59% of draws: within chance
+  canary-180m-flash against cpp-base.en: +0.28 (-4.73 to +3.18); A ahead in 64% of draws: within chance
+  canary-180m-flash against moonshine-base: +0.39 (-4.57 to +3.44); A ahead in 64% of draws: within chance
+  sherpa-whisper-distil-large-v3 against cpp-base.en: +0.09 (-1.12 to +1.22); A ahead in 55% of draws: within chance
+  sherpa-whisper-distil-large-v3 against moonshine-base: +0.20 (-1.43 to +1.75); A ahead in 59% of draws: within chance
+  sherpa-whisper-distil-large-v3 against cpp-base.en-q5: +0.22 (-1.11 to +1.49); A ahead in 62% of draws: within chance
+  cpp-base.en against moonshine-base: +0.11 (-0.92 to +1.17); A ahead in 57% of draws: within chance
+  cpp-base.en against cpp-base.en-q5: +0.13 (-0.32 to +0.62); A ahead in 68% of draws: within chance
+  cpp-base.en against sherpa-whisper-base.en-fp32: +1.28 (+0.32 to +2.43); A ahead in 100% of draws: more than chance
+  moonshine-base against cpp-base.en-q5: +0.02 (-0.96 to +1.03); A ahead in 51% of draws: within chance
+  moonshine-base against sherpa-whisper-base.en-fp32: +1.17 (+0.02 to +2.46); A ahead in 98% of draws: more than chance
+  moonshine-base against sherpa-whisper-base.en: +1.57 (+0.33 to +2.97); A ahead in 99% of draws: more than chance
+  cpp-base.en-q5 against sherpa-whisper-base.en-fp32: +1.15 (+0.31 to +2.18); A ahead in 100% of draws: more than chance
+  cpp-base.en-q5 against sherpa-whisper-base.en: +1.54 (+0.58 to +2.71); A ahead in 100% of draws: more than chance
+  cpp-base.en-q5 against moonshine-tiny: +3.13 (+1.95 to +4.36); A ahead in 100% of draws: more than chance
+  sherpa-whisper-base.en-fp32 against sherpa-whisper-base.en: +0.39 (-0.14 to +1.02); A ahead in 91% of draws: within chance
+  sherpa-whisper-base.en-fp32 against moonshine-tiny: +1.98 (+0.67 to +3.30); A ahead in 100% of draws: more than chance
+  sherpa-whisper-base.en against moonshine-tiny: +1.59 (+0.21 to +2.96); A ahead in 99% of draws: more than chance
+  parakeet-v2 against parakeet-110m: +1.50 (+0.65 to +2.31); A ahead in 100% of draws: more than chance
+  parakeet-v2 against sherpa-whisper-turbo: +1.65 (+0.55 to +2.93); A ahead in 100% of draws: more than chance
+  parakeet-110m against zipformer-gigaspeech: -0.20 (-0.97 to +0.55); A ahead in 30% of draws: within chance
+  parakeet-v2 against sherpa-whisper-distil-large-v3: +3.41 (+2.14 to +4.82); A ahead in 100% of draws: more than chance
+
+## The fixed third (scripts/third.py), every model: 71 of its 77 that every model read
+
+71 utterances; words: clean 446, other 463, meeting 219, calls 283, thoughts 74; all 1485
+
+| Model | Size, MiB | All | Clean | Other | Meetings | Calls | Thoughts | Capitals and punctuation | 5 s | 15 s | 60 s | Peak memory, MiB |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| parakeet-unified | 632 | 4.1% | 0.4% | 1.7% | 7.3% | 11.3% | 4.1% | Yes | 0.68 s | 2.16 s | 8.34 s | 1160 |
+| parakeet-v2 | 631 | 4.2% | 0.7% | 2.8% | 7.3% | 11.0% | 0.0% | Yes | 0.64 s | 2.07 s | 8.64 s | 1157 |
+| parakeet-v3 | 640 | 4.6% | 0.4% | 4.1% | 8.2% | 10.2% | 0.0% | Yes | 0.70 s | 1.97 s | 8.77 s | 1167 |
+| parakeet-ultra | 640 | 4.7% | 0.4% | 3.5% | 10.0% | 10.6% | 0.0% | Yes | 0.35 s | 0.87 s | 3.76 s | 1167 |
+| canary-180m-flash | 198 | 5.7% | 0.7% | 4.1% | 8.7% | 15.2% | 1.4% | Yes | 0.65 s | 2.51 s | 9.96 s | 717 |
+| cpp-turbo | 1549 | 5.8% | 0.2% | 3.2% | 16.0% | 12.4% | 0.0% | Yes | 27.13 s | 31.10 s | 74.45 s | 2108 |
+| sherpa-whisper-turbo | 989 | 6.0% | 0.4% | 3.5% | 13.2% | 14.8% | 0.0% | Yes | 5.31 s | 13.06 s | 50.20 s | 1928 |
+| parakeet-redux | 640 | 6.1% | 1.1% | 8.0% | 9.1% | 9.2% | 4.1% | Yes | 0.41 s | 1.03 s | 4.16 s | 1168 |
+| parakeet-110m | 130 | 6.6% | 1.1% | 5.0% | 12.8% | 14.5% | 1.4% | Yes | 0.14 s | 0.35 s | 1.79 s | 604 |
+| zipformer-gigaspeech | 70 | 6.7% | 1.3% | 6.5% | 11.4% | 13.4% | 1.4% | No | 0.10 s | 0.30 s | 1.93 s | 561 |
+| cpp-medium.en | 1463 | 6.9% | 1.1% | 4.3% | 14.2% | 15.9% | 1.4% | Yes | 20.66 s | 24.74 s | 86.62 s | 2323 |
+| cpp-small.en-q5 | 181 | 6.9% | 1.1% | 5.4% | 16.0% | 13.1% | 1.4% | Yes | 4.69 s | 5.41 s | 21.01 s | 723 |
+| cpp-small.en | 465 | 7.3% | 1.1% | 6.0% | 16.4% | 13.8% | 0.0% | Yes | 5.23 s | 6.62 s | 20.20 s | 967 |
+| cpp-distil-small.en | 321 | 7.4% | 1.1% | 6.0% | 14.6% | 14.8% | 4.1% | Yes | 4.11 s | 4.66 s | 19.88 s | 698 |
+| sherpa-whisper-distil-small.en | 285 | 8.0% | 2.0% | 7.8% | 13.7% | 14.5% | 4.1% | Yes | 1.51 s | 5.07 s | 20.22 s | 933 |
+| sherpa-whisper-small.en | 358 | 8.1% | 1.1% | 6.7% | 18.3% | 14.8% | 2.7% | Yes | 1.99 s | 6.68 s | 24.72 s | 1252 |
+| sherpa-whisper-small.en-fp32 | 925 | 8.3% | 1.1% | 6.5% | 18.7% | 15.9% | 2.7% | Yes | 1.64 s | 5.33 s | 30.20 s | 1816 |
+| cpp-base.en | 141 | 8.8% | 1.3% | 9.5% | 14.2% | 17.3% | 1.4% | Yes | 1.65 s | 1.84 s | 6.09 s | 452 |
+| sherpa-whisper-distil-large-v3 | 938 | 9.3% | 1.6% | 9.3% | 14.2% | 20.1% | 0.0% | Yes | 3.33 s | 7.33 s | 21.90 s | 1803 |
+| cpp-base.en-q5 | 57 | 9.5% | 1.6% | 10.2% | 13.2% | 20.1% | 1.4% | Yes | 1.72 s | 1.99 s | 6.31 s | 368 |
+| moonshine-base | 135 | 9.6% | 2.0% | 11.0% | 10.0% | 19.8% | 5.4% | Yes | 0.22 s | 1.09 s | 4.77 s | 357 |
+| sherpa-whisper-base.en-fp32 | 279 | 11.8% | 1.6% | 12.1% | 17.4% | 25.8% | 1.4% | Yes | 0.48 s | 1.60 s | 6.56 s | 865 |
+| sherpa-whisper-base.en | 153 | 12.7% | 1.6% | 12.3% | 22.8% | 25.8% | 1.4% | Yes | 0.41 s | 1.38 s | 5.68 s | 737 |
+| moonshine-tiny | 42 | 12.8% | 2.5% | 15.3% | 13.2% | 26.9% | 4.1% | Yes | 0.15 s | 0.73 s | 3.23 s | 221 |
+
+Is the difference more than chance? (B's mistakes minus A's, in points; the range 95 draws in 100 fell in)
+  parakeet-unified against parakeet-v2: +0.13 (-0.80 to +1.05); A ahead in 58% of draws: within chance
+  parakeet-unified against parakeet-v3: +0.47 (-0.73 to +1.75); A ahead in 75% of draws: within chance
+  parakeet-unified against parakeet-ultra: +0.61 (-0.45 to +1.69); A ahead in 86% of draws: within chance
+  parakeet-v2 against parakeet-v3: +0.34 (-0.66 to +1.43); A ahead in 71% of draws: within chance
+  parakeet-v2 against parakeet-ultra: +0.47 (-0.53 to +1.49); A ahead in 81% of draws: within chance
+  parakeet-v2 against canary-180m-flash: +1.48 (+0.20 to +2.77); A ahead in 99% of draws: more than chance
+  parakeet-v3 against parakeet-ultra: +0.13 (-0.55 to +0.88); A ahead in 62% of draws: within chance
+  parakeet-v3 against canary-180m-flash: +1.14 (-0.20 to +2.51); A ahead in 95% of draws: within chance
+  parakeet-v3 against cpp-turbo: +1.21 (-0.13 to +2.65); A ahead in 96% of draws: within chance
+  parakeet-ultra against canary-180m-flash: +1.01 (-0.07 to +2.09); A ahead in 96% of draws: within chance
+  parakeet-ultra against cpp-turbo: +1.08 (-0.20 to +2.45); A ahead in 94% of draws: within chance
+  parakeet-ultra against sherpa-whisper-turbo: +1.28 (-0.06 to +2.67); A ahead in 97% of draws: within chance
+  canary-180m-flash against cpp-turbo: +0.07 (-1.36 to +1.60); A ahead in 51% of draws: within chance
+  canary-180m-flash against sherpa-whisper-turbo: +0.27 (-0.90 to +1.47); A ahead in 65% of draws: within chance
+  canary-180m-flash against parakeet-redux: +0.40 (-0.98 to +1.91); A ahead in 69% of draws: within chance
+  cpp-turbo against sherpa-whisper-turbo: +0.20 (-0.65 to +1.07); A ahead in 64% of draws: within chance
+  cpp-turbo against parakeet-redux: +0.34 (-1.29 to +1.90); A ahead in 65% of draws: within chance
+  cpp-turbo against parakeet-110m: +0.81 (-0.33 to +1.85); A ahead in 92% of draws: within chance
+  sherpa-whisper-turbo against parakeet-redux: +0.13 (-1.52 to +1.76); A ahead in 55% of draws: within chance
+  sherpa-whisper-turbo against parakeet-110m: +0.61 (-0.47 to +1.66); A ahead in 85% of draws: within chance
+  sherpa-whisper-turbo against zipformer-gigaspeech: +0.74 (-0.95 to +2.41); A ahead in 80% of draws: within chance
+  parakeet-redux against parakeet-110m: +0.47 (-0.66 to +1.60); A ahead in 78% of draws: within chance
+  parakeet-redux against zipformer-gigaspeech: +0.61 (-0.89 to +2.11); A ahead in 77% of draws: within chance
+  parakeet-redux against cpp-medium.en: +0.74 (-0.74 to +2.24); A ahead in 82% of draws: within chance
+  parakeet-110m against zipformer-gigaspeech: +0.13 (-1.33 to +1.57); A ahead in 56% of draws: within chance
+  parakeet-110m against cpp-medium.en: +0.27 (-0.65 to +1.18); A ahead in 69% of draws: within chance
+  parakeet-110m against cpp-small.en-q5: +0.34 (-0.82 to +1.45); A ahead in 71% of draws: within chance
+  zipformer-gigaspeech against cpp-medium.en: +0.13 (-1.41 to +1.77); A ahead in 54% of draws: within chance
+  zipformer-gigaspeech against cpp-small.en-q5: +0.20 (-1.61 to +2.07); A ahead in 57% of draws: within chance
+  zipformer-gigaspeech against cpp-small.en: +0.54 (-1.09 to +2.18); A ahead in 73% of draws: within chance
+  cpp-medium.en against cpp-small.en-q5: +0.07 (-0.94 to +1.02); A ahead in 54% of draws: within chance
+  cpp-medium.en against cpp-small.en: +0.40 (-0.70 to +1.51); A ahead in 74% of draws: within chance
+  cpp-medium.en against cpp-distil-small.en: +0.54 (-0.65 to +1.77); A ahead in 80% of draws: within chance
+  cpp-small.en-q5 against cpp-small.en: +0.34 (-0.41 to +1.20); A ahead in 76% of draws: within chance
+  cpp-small.en-q5 against cpp-distil-small.en: +0.47 (-0.54 to +1.54); A ahead in 79% of draws: within chance
+  cpp-small.en-q5 against sherpa-whisper-distil-small.en: +1.08 (-0.14 to +2.30); A ahead in 96% of draws: within chance
+  cpp-small.en against cpp-distil-small.en: +0.13 (-0.98 to +1.29); A ahead in 56% of draws: within chance
+  cpp-small.en against sherpa-whisper-distil-small.en: +0.74 (-0.53 to +2.03); A ahead in 86% of draws: within chance
+  cpp-small.en against sherpa-whisper-small.en: +0.81 (-0.19 to +1.77); A ahead in 94% of draws: within chance
+  cpp-distil-small.en against sherpa-whisper-distil-small.en: +0.61 (-0.54 to +1.74); A ahead in 84% of draws: within chance
+  cpp-distil-small.en against sherpa-whisper-small.en: +0.67 (-0.49 to +1.79); A ahead in 86% of draws: within chance
+  cpp-distil-small.en against sherpa-whisper-small.en-fp32: +0.88 (-0.33 to +2.03); A ahead in 92% of draws: within chance
+  sherpa-whisper-distil-small.en against sherpa-whisper-small.en: +0.07 (-1.12 to +1.31); A ahead in 52% of draws: within chance
+  sherpa-whisper-distil-small.en against sherpa-whisper-small.en-fp32: +0.27 (-0.98 to +1.55); A ahead in 64% of draws: within chance
+  sherpa-whisper-distil-small.en against cpp-base.en: +0.81 (-1.26 to +2.79); A ahead in 78% of draws: within chance
+  sherpa-whisper-small.en against sherpa-whisper-small.en-fp32: +0.20 (-0.19 to +0.66); A ahead in 78% of draws: within chance
+  sherpa-whisper-small.en against cpp-base.en: +0.74 (-1.00 to +2.45); A ahead in 79% of draws: within chance
+  sherpa-whisper-small.en against sherpa-whisper-distil-large-v3: +1.21 (-1.08 to +3.93); A ahead in 83% of draws: within chance
+  sherpa-whisper-small.en-fp32 against cpp-base.en: +0.54 (-1.28 to +2.32); A ahead in 71% of draws: within chance
+  sherpa-whisper-small.en-fp32 against sherpa-whisper-distil-large-v3: +1.01 (-1.23 to +3.67); A ahead in 78% of draws: within chance
+  sherpa-whisper-small.en-fp32 against cpp-base.en-q5: +1.21 (-0.93 to +3.43); A ahead in 86% of draws: within chance
+  cpp-base.en against sherpa-whisper-distil-large-v3: +0.47 (-2.01 to +3.28); A ahead in 62% of draws: within chance
+  cpp-base.en against cpp-base.en-q5: +0.67 (-0.37 to +1.91); A ahead in 87% of draws: within chance
+  cpp-base.en against moonshine-base: +0.74 (-1.33 to +2.98); A ahead in 74% of draws: within chance
+  sherpa-whisper-distil-large-v3 against cpp-base.en-q5: +0.20 (-2.87 to +3.17); A ahead in 54% of draws: within chance
+  sherpa-whisper-distil-large-v3 against moonshine-base: +0.27 (-3.27 to +3.75); A ahead in 55% of draws: within chance
+  sherpa-whisper-distil-large-v3 against sherpa-whisper-base.en-fp32: +2.49 (-1.48 to +6.56); A ahead in 89% of draws: within chance
+  cpp-base.en-q5 against moonshine-base: +0.07 (-2.04 to +2.17); A ahead in 51% of draws: within chance
+  cpp-base.en-q5 against sherpa-whisper-base.en-fp32: +2.29 (+0.20 to +5.00); A ahead in 98% of draws: more than chance
+  cpp-base.en-q5 against sherpa-whisper-base.en: +3.16 (+0.84 to +6.07); A ahead in 100% of draws: more than chance
+  moonshine-base against sherpa-whisper-base.en-fp32: +2.22 (-0.41 to +5.37); A ahead in 94% of draws: within chance
+  moonshine-base against sherpa-whisper-base.en: +3.10 (+0.31 to +6.43); A ahead in 99% of draws: more than chance
+  moonshine-base against moonshine-tiny: +3.23 (+1.28 to +5.30); A ahead in 100% of draws: more than chance
+  sherpa-whisper-base.en-fp32 against sherpa-whisper-base.en: +0.88 (-0.26 to +2.32); A ahead in 91% of draws: within chance
+  sherpa-whisper-base.en-fp32 against moonshine-tiny: +1.01 (-1.42 to +3.17); A ahead in 80% of draws: within chance
+  sherpa-whisper-base.en against moonshine-tiny: +0.13 (-2.35 to +2.32); A ahead in 55% of draws: within chance
+  parakeet-v2 against parakeet-110m: +2.36 (+1.46 to +3.36); A ahead in 100% of draws: more than chance
+  parakeet-v2 against sherpa-whisper-turbo: +1.75 (+0.34 to +3.16); A ahead in 99% of draws: more than chance
+  parakeet-110m against cpp-small.en: +0.67 (-0.30 to +1.67); A ahead in 90% of draws: within chance
+  parakeet-v2 against cpp-turbo: +1.55 (+0.13 to +3.09); A ahead in 98% of draws: more than chance
+  parakeet-v2 against cpp-medium.en: +2.63 (+1.28 to +4.07); A ahead in 100% of draws: more than chance
+  parakeet-v2 against sherpa-whisper-distil-large-v3: +5.05 (+2.95 to +7.69); A ahead in 100% of draws: more than chance
