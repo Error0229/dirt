@@ -17,6 +17,11 @@ use dirt_core::sync::overview::SyncOverview;
 use dirt_core::sync::worker::Trigger;
 use dirt_core::util::{as_sentence, now_ms};
 
+use dirt_core::models::ThemeMode;
+use dirt_ui::appearance::theme_name;
+use dirt_ui::components::{AccentDots, Segment, Segmented, TextSizeSlider};
+use dirt_ui::Appearance;
+
 use crate::app_shell::REDIRECT_URI;
 use crate::services::activity::{self, SaveOutcome};
 use crate::state::{AppState, View};
@@ -41,6 +46,7 @@ const PANEL: &str = "
 const HEADING: &str = "margin: 0; font-weight: 600; color: #111827;";
 const TEXT: &str = "margin: 0; font-size: 13px; color: #6b7280; line-height: 1.4;";
 const WARNING: &str = "margin: 0; font-size: 13px; color: #b91c1c; line-height: 1.4;";
+const ROW: &str = "display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px;";
 
 #[component]
 pub fn Settings() -> Element {
@@ -91,7 +97,7 @@ pub fn Settings() -> Element {
             UiButton {
                 r#type: "button",
                 variant: ButtonVariant::Secondary,
-                onclick: move |_| view_signal.set(View::List),
+                onclick: move |_| view_signal.set(View::Main),
                 "← Back"
             }
             h2 {
@@ -112,6 +118,7 @@ pub fn Settings() -> Element {
                         "Signing in is not available in this build or on this device. Notes are kept on this device only."
                     }
                 }
+                AppearancePanel {}
                 ExportPanel {}
             }
         };
@@ -169,20 +176,13 @@ pub fn Settings() -> Element {
         let session = session.clone();
         move |_: MouseEvent| {
             let session = session.clone();
-            let mut state = state;
             busy.set(true);
             spawn(async move {
                 let outcome = session.move_local_notes().await;
                 message.set(Some(match outcome {
                     Ok(moved) => {
                         local_waiting.set(0);
-                        let open = state.store.peek().clone();
-                        if let Some(open) = open {
-                            let listed = *state.listed_notes.peek();
-                            if let Ok(latest) = open.list_notes(listed).await {
-                                state.notes.set(latest);
-                            }
-                        }
+                        state.reread();
                         (
                             MessageKind::Info,
                             format!("Moved {moved} note(s) into your account."),
@@ -416,10 +416,66 @@ pub fn Settings() -> Element {
                 }
             }
 
+            AppearancePanel {}
             ExportPanel {}
 
             if let Some((kind, text)) = message() {
                 MessageBanner { kind, text }
+            }
+        }
+    }
+}
+
+/// How Dirt looks on this device (interface design, sections 4.1, 4.1.1
+/// and 4.2): the theme, the accent and the text size. They are kept on the
+/// device and not synced. Until step 5 of the interface's plan gives
+/// Settings its new page, they are here, drawn by `dirt-ui`.
+#[component]
+fn AppearancePanel() -> Element {
+    let state = use_context::<AppState>();
+    let appearance = Appearance::from_settings(&state.settings.read());
+    let choose = move |next: Appearance| {
+        let mut settings = state.settings;
+        next.write_to(&mut settings.write());
+        state.save_settings();
+    };
+    let theme = theme_name(appearance.theme).to_owned();
+    rsx! {
+        div { style: "{PANEL}",
+            p { style: "{HEADING}", "Appearance" }
+            div { style: "{ROW}",
+                p { style: "{TEXT}", "Theme" }
+                Segmented {
+                    label: "Theme",
+                    segments: vec![
+                        Segment::new("system", "Auto"),
+                        Segment::new("light", "Light"),
+                        Segment::new("dark", "Dark"),
+                    ],
+                    value: theme,
+                    onchange: move |value: String| {
+                        let theme = match value.as_str() {
+                            "light" => ThemeMode::Light,
+                            "dark" => ThemeMode::Dark,
+                            _ => ThemeMode::System,
+                        };
+                        choose(Appearance { theme, ..appearance });
+                    },
+                }
+            }
+            div { style: "{ROW}",
+                p { style: "{TEXT}", "Accent" }
+                AccentDots {
+                    value: appearance.accent,
+                    onchange: move |accent| choose(Appearance { accent, ..appearance }),
+                }
+            }
+            div { style: "{ROW}",
+                p { style: "{TEXT}", "Text size" }
+                TextSizeSlider {
+                    value: appearance.text_size,
+                    onchange: move |text_size| choose(Appearance { text_size, ..appearance }),
+                }
             }
         }
     }
@@ -594,9 +650,13 @@ fn ProblemNote(problem: NoteProblem) -> Element {
     let title = problem.title();
     let reason = as_sentence(&problem.reason);
     let release = problem.release();
-    // Only a note in the list can be opened: not one this device never
-    // held, and not a deleted one.
-    let on_this_device = (state.notes)().iter().any(|note| note.id == id);
+    // Only a note this device holds can be opened: not one it never held,
+    // and not a deleted one.
+    let held = use_resource(move || async move {
+        let store = state.store.peek().clone()?;
+        store.core().get_note(&id).await.ok().flatten()
+    });
+    let on_this_device = held().flatten().is_some();
     let name_style = if on_this_device {
         "margin: 0; font-size: 14px; color: #111827; text-decoration: underline;"
     } else {
@@ -614,8 +674,8 @@ fn ProblemNote(problem: NoteProblem) -> Element {
             ",
             onclick: move |_| {
                 if on_this_device {
-                    state.selected_note_id.set(Some(id));
-                    state.view.set(View::Editor);
+                    state.open_request.set(Some(id));
+                    state.view.set(View::Main);
                 }
             },
             p { style: "{name_style}", "{title}" }

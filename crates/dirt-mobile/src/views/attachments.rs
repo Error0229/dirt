@@ -25,12 +25,12 @@ use dirt_core::util::as_sentence;
 use uuid::Uuid;
 
 use crate::config::default_mobile_data_directory;
-use crate::incoming::{attach_incoming, note_text, Incoming, Picked};
+use crate::incoming::{attach_incoming, Incoming, Picked};
 use crate::services::activity::{self, SaveOutcome};
 use crate::state::AppState;
-use crate::ui::{ButtonVariant, UiButton};
+use dirt_ui::components::{Button, ButtonKind};
 
-const TEXT: &str = "margin: 0; font-size: 12px; color: #6b7280; line-height: 1.4;";
+const TEXT: &str = "margin: 0; font-size: 12px; color: var(--text-3); line-height: 1.4;";
 
 /// A thumbnail larger than this is not shown. One made by Dirt is a few
 /// tens of kilobytes; a note may name any file as a thumbnail.
@@ -64,88 +64,6 @@ pub async fn choose_files() -> Option<Vec<Incoming>> {
             };
         }
         tokio::time::sleep(ASK_EVERY).await;
-    }
-}
-
-/// The note files are being chosen for.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Target {
-    /// A note that is saved.
-    Note(NoteId),
-    /// A note that is not saved yet, with the text written so far. It is
-    /// saved first, with that text or, if there is none, called after the
-    /// files.
-    New { text: String },
-}
-
-/// What came of choosing files for a note.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Attached {
-    /// The note the files went to, with its text: the one that was open,
-    /// or the one that was made. `None` if no note could be made.
-    pub note: Option<(NoteId, String)>,
-    /// A line for each file that could not be attached.
-    pub failed: Vec<String>,
-}
-
-/// Asks the person which files to attach and attaches them, and says how
-/// it went: `None` if they chose none.
-///
-/// The whole of it runs apart from the screen that asked. Between the
-/// person choosing and the files being attached the activity copies them
-/// into the app, which takes a moment for a photograph, and the person may
-/// leave the note meanwhile. Files that were chosen are attached all the
-/// same, to the note they were chosen for. The answer comes back for the
-/// screen to show, if it is still there to hear it.
-pub fn choose_and_attach(
-    mut state: AppState,
-    target: Target,
-) -> tokio::sync::oneshot::Receiver<Option<Attached>> {
-    let (answer, heard) = tokio::sync::oneshot::channel();
-    dioxus::core::spawn_forever(async move {
-        let attached = match choose_files().await {
-            None => None,
-            Some(files) => Some(attach_chosen(&mut state, target, files).await),
-        };
-        // The screen that asked may be gone. That is no failure.
-        let _ = answer.send(attached);
-    });
-    heard
-}
-
-async fn attach_chosen(state: &mut AppState, target: Target, files: Vec<Incoming>) -> Attached {
-    let Some(store) = state.store.peek().clone() else {
-        crate::incoming::discard_all(&files);
-        return Attached {
-            note: None,
-            failed: vec!["The notes are not open.".to_owned()],
-        };
-    };
-    let (note, text, made) = match target {
-        Target::Note(note) => (note, String::new(), false),
-        Target::New { text } => match store.create_note(&note_text(&text, &files)).await {
-            Ok(note) => (note.id, note.content, true),
-            Err(error) => {
-                crate::incoming::discard_all(&files);
-                return Attached {
-                    note: None,
-                    failed: vec![format!("The note could not be saved: {error}")],
-                };
-            }
-        },
-    };
-    let failed = attach(state, note, files).await;
-    if made {
-        // A new note belongs in the list whether or not its editor is
-        // still open. The list is the app's, not the editor's.
-        let listed = *state.listed_notes.peek();
-        if let Ok(notes) = store.list_notes(listed).await {
-            state.notes.set(notes);
-        }
-    }
-    Attached {
-        note: Some((note, text)),
-        failed,
     }
 }
 
@@ -205,13 +123,13 @@ async fn thumbnail_held(state: &AppState, thumbnail: Uuid) -> Option<String> {
     Some(as_data_uri(&picture))
 }
 
-/// The files of the open note, and the way to add one.
+/// The files of the open note. They are added by the paperclip in the
+/// page's bar, which raises `changed`; so does whatever changes them here,
+/// to read them again.
 #[component]
-pub fn AttachmentPanel(note_id: NoteId) -> Element {
+pub fn AttachmentPanel(note_id: NoteId, changed: Signal<u64>) -> Element {
     let state = use_context::<AppState>();
-
-    // Raised by whatever changes the note's files here, to read them again.
-    let mut changed = use_signal(|| 0u64);
+    let mut changed = changed;
     let mut busy = use_signal(|| None::<String>);
     let mut message = use_signal(|| None::<String>);
 
@@ -272,24 +190,6 @@ pub fn AttachmentPanel(note_id: NoteId) -> Element {
             }
         });
     });
-
-    let choose = move |_| {
-        // Chosen and attached apart from this panel, which only shows how
-        // it went: leaving the note must not drop files already chosen.
-        let attaching = choose_and_attach(state, Target::Note(note_id));
-        spawn(async move {
-            busy.set(Some("Attaching...".to_owned()));
-            message.set(None);
-            let attached = attaching.await.ok().flatten();
-            busy.set(None);
-            if let Some(attached) = attached {
-                if !attached.failed.is_empty() {
-                    message.set(Some(attached.failed.join(" ")));
-                }
-            }
-            changed.set(changed() + 1);
-        });
-    };
 
     let open = move |file: AttachedFile| {
         spawn(async move {
@@ -394,20 +294,11 @@ pub fn AttachmentPanel(note_id: NoteId) -> Element {
 
     rsx! {
         div {
+            class: "dm-files",
             style: "display: flex; flex-direction: column; gap: 8px;",
 
-            div {
-                style: "display: flex; align-items: center; gap: 10px;",
-                UiButton {
-                    r#type: "button",
-                    variant: ButtonVariant::Outline,
-                    disabled: working.is_some(),
-                    onclick: choose,
-                    "Attach a file"
-                }
-                if let Some(doing) = working {
-                    p { style: "{TEXT}", "{doing}" }
-                }
+            if let Some(doing) = working {
+                p { style: "{TEXT}", "{doing}" }
             }
 
             if let Some(text) = message() {
@@ -464,9 +355,9 @@ fn AttachmentRow(
                 flex-direction: column;
                 gap: 6px;
                 padding: 8px 10px;
-                border: 1px solid #e5e7eb;
+                border: 1px solid var(--border);
                 border-radius: 10px;
-                background: #ffffff;
+                background: var(--surface);
             ",
             div {
                 style: "display: flex; align-items: center; gap: 10px; min-width: 0;",
@@ -488,8 +379,8 @@ fn AttachmentRow(
                             width: 44px;
                             height: 44px;
                             border-radius: 6px;
-                            background: #f3f4f6;
-                            color: #6b7280;
+                            background: var(--surface-2);
+                            color: var(--text-2);
                             font-size: 10px;
                             display: flex;
                             align-items: center;
@@ -506,7 +397,7 @@ fn AttachmentRow(
                         style: "
                             margin: 0;
                             font-size: 13px;
-                            color: #111827;
+                            color: var(--text);
                             white-space: nowrap;
                             overflow: hidden;
                             text-overflow: ellipsis;
@@ -519,22 +410,22 @@ fn AttachmentRow(
             div {
                 style: "display: flex; gap: 6px;",
                 if can_open {
-                    UiButton {
-                        r#type: "button",
-                        variant: ButtonVariant::Ghost,
+                    Button {
+                        kind: ButtonKind::Ghost,
+                        small: true,
                         onclick: move |_| on_open.call(for_open.clone()),
                         "Open"
                     }
                 }
-                UiButton {
-                    r#type: "button",
-                    variant: ButtonVariant::Ghost,
+                Button {
+                    kind: ButtonKind::Ghost,
+                    small: true,
                     onclick: move |_| on_save.call(for_save.clone()),
                     "Save a copy"
                 }
-                UiButton {
-                    r#type: "button",
-                    variant: ButtonVariant::Ghost,
+                Button {
+                    kind: ButtonKind::Danger,
+                    small: true,
                     onclick: move |_| on_remove.call(for_remove.clone()),
                     "Remove"
                 }

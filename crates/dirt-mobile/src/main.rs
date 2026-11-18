@@ -19,6 +19,8 @@ mod gallery;
 #[cfg(any(target_os = "android", test))]
 mod incoming;
 #[cfg(target_os = "android")]
+mod screen;
+#[cfg(target_os = "android")]
 mod services;
 #[cfg(target_os = "android")]
 mod state;

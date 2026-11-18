@@ -49,6 +49,14 @@ pub fn focus(selectors: &[&str], caret: Caret) {
     ));
 }
 
+/// Takes the keyboard's focus from whatever has it. On a phone that puts
+/// the keyboard away.
+pub fn blur() {
+    document::eval(
+        "document.activeElement && document.activeElement.blur && document.activeElement.blur();",
+    );
+}
+
 /// Sets the text of the field that matches `selector`. Nothing is heard
 /// of it: the app already knows the text it set.
 pub fn set_value(selector: &str, text: &str) {

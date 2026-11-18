@@ -5,6 +5,12 @@
 //! with no server, or a device whose secure storage cannot be used, has no
 //! session and keeps its notes in the local store.
 //!
+//! Everything is drawn inside `dirt_ui::UiRoot`, which brings the new
+//! interface's style sheet and script and applies the theme, the accent
+//! and the text size from this device's settings. The main screen is the
+//! new one and is always there; Settings and Devices are the old screens,
+//! drawn over it until step 5 of the interface's plan replaces them.
+//!
 //! Signing in leaves the app for the browser. Android brings the person
 //! back through the custom address `dev.dirt.app://callback`, which
 //! `MainActivity` keeps until this code asks for it (`services::sign_in`).
@@ -14,7 +20,8 @@
 //!
 //! The activity is asked in the same way for what came from outside the
 //! app: text or pictures another app shared, which become a note at once,
-//! and a press of the home-screen widget, which opens a blank note.
+//! and a press of the home-screen widget, which opens a new page. The main
+//! screen does the asking (`screen::Screen`); this says when to.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,24 +29,24 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use dirt_core::api::HttpTransport;
 use dirt_core::config::ServerAddress;
-use dirt_core::models::{Note, NoteId};
+use dirt_core::models::Settings;
 use dirt_core::secrets::slot_name;
 use dirt_core::session::{Session, SessionConfig, SessionError, SessionState};
 use dirt_core::store::StoreName;
 use dirt_core::sync::worker::{SyncStatus, Timing, Trigger};
 use dirt_core::Store;
+use dirt_ui::events::{use_outcome, Outcome};
+use dirt_ui::{Appearance, UiRoot};
 
 use crate::bootstrap_config::load_bootstrap_config;
 use crate::config::default_mobile_data_directory;
-use crate::data::{MobileNoteStore, NOTES_PAGE};
-use crate::incoming::{
-    attach_incoming, discard_all, not_copied_in, note_text, worth_a_note, Capture,
-};
-use crate::services::activity::{take_capture, take_redirect};
+use crate::data::MobileNoteStore;
+use crate::screen::MainScreen;
+use crate::services::activity::{animations_off, take_redirect};
 use crate::services::secure_storage::EncryptedPrefs;
 use crate::state::{AppState, View};
 use crate::ui::MOBILE_UI_STYLES;
-use crate::views::{Devices, Editor, List, Settings};
+use crate::views::{Devices, Settings as SettingsView};
 
 /// Where the sign-in service sends the browser afterwards. The manifest
 /// registers the app for this address.
@@ -82,83 +89,29 @@ async fn finish_sign_in(session: &Session, redirect: &str) -> Option<String> {
     }
 }
 
-/// Deals with what was asked of the app from outside it, if anything was.
-///
-/// What was shared is saved as a note straight away: capture does not
-/// wait for the person, who finds the note at the top of the list. Shared
-/// pictures are attached to it, and a note made of pictures alone is called
-/// after them. The widget asks for a blank note to write in. Neither takes
-/// the person out of a note they are in the middle of writing.
-async fn receive_capture(
-    store: Signal<Option<Arc<MobileNoteStore>>>,
-    session: Signal<Option<Session>>,
-    mut notes: Signal<Vec<Note>>,
-    listed_notes: Signal<usize>,
-    mut selected_note_id: Signal<Option<NoteId>>,
-    mut view: Signal<View>,
-    mut startup_issue: Signal<Option<String>>,
-) {
-    // More than one may be waiting: two shares can arrive before either is
-    // asked for.
-    while let Some(capture) = take_capture() {
-        match capture {
-            Capture::Blank => {
-                if *view.peek() != View::Editor {
-                    selected_note_id.set(None);
-                    view.set(View::Editor);
-                }
-            }
-            Capture::Shared { text, files } => {
-                if !worth_a_note(&text, &files) {
-                    // Nothing came in to make a note of. Say what was lost.
-                    startup_issue.set(Some(not_copied_in(&files).join(" ")));
-                    continue;
-                }
-                let Some(note_store) = store.peek().clone() else {
-                    discard_all(&files);
-                    startup_issue.set(Some(
-                        "What was shared could not be saved: the notes are not open.".to_owned(),
-                    ));
-                    continue;
-                };
-                match note_store.create_note(&note_text(&text, &files)).await {
-                    Ok(note) => {
-                        // As a task of its own: it finishes whatever the
-                        // screen does meanwhile.
-                        let core = note_store.core().clone();
-                        let failed = tokio::spawn(attach_incoming(core, note.id, files))
-                            .await
-                            .unwrap_or_default();
-                        if !failed.is_empty() {
-                            startup_issue.set(Some(failed.join(" ")));
-                        }
-                        if let Some(current) = session.peek().as_ref() {
-                            current.notify(Trigger::Changed);
-                        }
-                        let listed = *listed_notes.peek();
-                        match note_store.list_notes(listed).await {
-                            Ok(refreshed) => notes.set(refreshed),
-                            Err(error) => tracing::warn!("Listing after a share failed: {error}"),
-                        }
-                        // Asked now, not before the note was saved: the
-                        // person may have begun writing in the meantime.
-                        if *view.peek() != View::Editor {
-                            view.set(View::List);
-                        }
-                    }
-                    Err(error) => {
-                        discard_all(&files);
-                        tracing::error!("What was shared could not be saved: {error}");
-                        startup_issue
-                            .set(Some(format!("What was shared could not be saved: {error}")));
-                    }
-                }
-            }
+/// An old screen, drawn over the main screen with its own colours. Back
+/// goes to `back`.
+#[component]
+fn Legacy(back: View, children: Element) -> Element {
+    let state = use_context::<AppState>();
+    let id = use_outcome(move |outcome| {
+        if outcome == Outcome::Back {
+            let mut view = state.view;
+            view.set(back);
+        }
+    });
+    rsx! {
+        div {
+            class: "dm-legacy",
+            "data-dui-id": "{id}",
+            "data-dui-back": "",
+            {children}
         }
     }
 }
 
 #[component]
+#[allow(clippy::too_many_lines)]
 pub fn AppShell() -> Element {
     // The address the app was built with. One that cannot be an address
     // is said at start-up and not passed over.
@@ -167,30 +120,35 @@ pub fn AppShell() -> Element {
             .map(|address| address.map(|address| address.url))
             .map_err(|error| dirt_core::util::as_sentence(&error));
 
-    let mut notes = use_signal(Vec::new);
-    let mut selected_note_id = use_signal(|| None);
-    let mut view = use_signal(|| View::List);
-    let search_query = use_signal(String::new);
-    let tag_filter = use_signal(|| None::<String>);
-    let listed_notes = use_signal(|| NOTES_PAGE);
+    let view = use_signal(|| View::Main);
     let mut startup_issue = use_signal(|| None::<String>);
     let mut store: Signal<Option<Arc<MobileNoteStore>>> = use_signal(|| None);
+    let mut device_store: Signal<Option<Store>> = use_signal(|| None);
+    let mut settings = use_signal(Settings::default);
+    let mut reduced_motion = use_signal(animations_off);
     let mut session: Signal<Option<Session>> = use_signal(|| None);
     let mut session_state = use_signal(|| SessionState::SignedOut);
     let mut sync_status = use_signal(SyncStatus::default);
+    let notes_read = use_signal(|| 0_u64);
+    let mut pulled = use_signal(|| 0_u64);
+    let mut current_note_id = use_signal(|| None);
+    let open_request = use_signal(|| None);
+    let mut capture_ready = use_signal(|| 0_u64);
 
-    use_context_provider(|| AppState {
-        notes,
-        selected_note_id,
+    let state = use_context_provider(|| AppState {
         view,
-        search_query,
-        tag_filter,
-        listed_notes,
         startup_issue,
         store,
+        device_store,
+        settings,
         session,
         session_state,
         sync_status,
+        notes_read,
+        pulled,
+        current_note_id,
+        open_request,
+        capture_ready,
     });
 
     // One-shot start-up. `use_resource` only runs again if a signal it
@@ -221,9 +179,22 @@ pub fn AppShell() -> Element {
                 }
                 None => None,
             };
-            let note_store = opened_session
-                .as_ref()
-                .map_or_else(open_local_store, |opened| Ok(opened.store()));
+            // The settings are the device's, kept in its local store
+            // whoever is signed in.
+            let (note_store, device) = opened_session.as_ref().map_or_else(
+                || match open_local_store() {
+                    Ok(local) => (Ok(local.clone()), Some(local)),
+                    Err(error) => (Err(error), None),
+                },
+                |opened| (Ok(opened.store()), Some(opened.device_store())),
+            );
+            if let Some(device) = &device {
+                match device.load_settings().await {
+                    Ok(loaded) => settings.set(loaded),
+                    Err(error) => tracing::warn!("Could not read this device's settings: {error}"),
+                }
+            }
+            device_store.set(device);
             let note_store = match note_store {
                 Ok(note_store) => Arc::new(MobileNoteStore::new(note_store)),
                 Err(error) => {
@@ -232,11 +203,6 @@ pub fn AppShell() -> Element {
                     return;
                 }
             };
-            let listed = *listed_notes.peek();
-            match note_store.list_notes(listed).await {
-                Ok(initial) => notes.set(initial),
-                Err(error) => tracing::warn!("Initial note listing failed: {error}"),
-            }
             store.set(Some(note_store));
 
             if let Some(opened) = &opened_session {
@@ -254,16 +220,7 @@ pub fn AppShell() -> Element {
             }
 
             // The app may have been started by a share or by the widget.
-            receive_capture(
-                store,
-                session,
-                notes,
-                listed_notes,
-                selected_note_id,
-                view,
-                startup_issue,
-            )
-            .await;
+            *capture_ready.write() += 1;
         }
     });
 
@@ -275,24 +232,18 @@ pub fn AppShell() -> Element {
             let Some(current) = current else { return };
             let mut states = current.watch_state();
             while states.changed().await.is_ok() {
-                let state = *states.borrow_and_update();
-                session_state.set(state);
+                let state_now = *states.borrow_and_update();
+                session_state.set(state_now);
                 let next = current.store();
                 let same_store = store
                     .peek()
                     .as_ref()
                     .is_some_and(|open| open.path() == next.path());
                 if !same_store {
-                    let next = Arc::new(MobileNoteStore::new(next));
-                    selected_note_id.set(None);
-                    if *view.peek() == View::Editor {
-                        view.set(View::List);
-                    }
-                    let listed = *listed_notes.peek();
-                    notes.set(next.list_notes(listed).await.unwrap_or_default());
-                    store.set(Some(next));
+                    current_note_id.set(None);
+                    store.set(Some(Arc::new(MobileNoteStore::new(next))));
                 }
-                if state == SessionState::SignedOut {
+                if state_now == SessionState::SignedOut {
                     current.remove_signed_out_stores();
                     // Copies of the account's files that were lent to other
                     // apps go with the account, and so does an export of
@@ -304,26 +255,27 @@ pub fn AppShell() -> Element {
         }
     });
 
-    // Follow sync: show its status, and reload the list when notes arrive
-    // from another device.
+    // Follow sync: show its status, and read the notes again when a cycle
+    // has brought notes from another device or sent some.
     let _sync_watch = use_resource(move || {
         let current = session();
         async move {
             let Some(current) = current else { return };
             let mut statuses = current.watch_sync();
-            let mut pulled = statuses.borrow().pulled;
+            let mut pulled_before = statuses.borrow().pulled;
+            let mut synced_before = statuses.borrow().last_synced_ms;
             while statuses.changed().await.is_ok() {
                 let status = statuses.borrow_and_update().clone();
-                if status.pulled != pulled {
-                    pulled = status.pulled;
-                    let open = store.peek().clone();
-                    if let Some(open) = open {
-                        let listed = *listed_notes.peek();
-                        if let Ok(latest) = open.list_notes(listed).await {
-                            notes.set(latest);
-                        }
-                    }
+                if status.pulled != pulled_before {
+                    pulled_before = status.pulled;
+                    *pulled.write() += 1;
+                    state.reread();
+                } else if status.last_synced_ms != synced_before {
+                    // A cycle that only sent: the notes it sent are on the
+                    // server now, and the list stops marking them.
+                    state.reread();
                 }
+                synced_before = status.last_synced_ms;
                 sync_status.set(status);
             }
         }
@@ -332,11 +284,11 @@ pub fn AppShell() -> Element {
     // While a sign-in is under way, watch for the redirect the browser
     // sends the person back with.
     let _redirect_watch = use_resource(move || {
-        let state = session_state();
+        let state_now = session_state();
         let current = session();
         async move {
             let Some(current) = current else { return };
-            if state != SessionState::SigningIn {
+            if state_now != SessionState::SigningIn {
                 return;
             }
             loop {
@@ -354,7 +306,8 @@ pub fn AppShell() -> Element {
     // Coming back to the app is a reason to sync: notes may have been
     // written elsewhere while it was in the background. The web view says
     // when that happens, because its page becomes visible again. The worker
-    // skips the sync if one ran a moment ago.
+    // skips the sync if one ran a moment ago. "Remove animations" may have
+    // been changed meanwhile, and is read again.
     use_future(move || async move {
         let mut became_visible = document::eval(
             r#"
@@ -374,38 +327,35 @@ pub fn AppShell() -> Element {
             if let Some(current) = session.peek().clone() {
                 current.notify(Trigger::Returned);
             }
+            let off = animations_off();
+            if *reduced_motion.peek() != off {
+                reduced_motion.set(off);
+            }
             // A share or the widget may be what brought the app forward.
-            receive_capture(
-                store,
-                session,
-                notes,
-                listed_notes,
-                selected_note_id,
-                view,
-                startup_issue,
-            )
-            .await;
+            *capture_ready.write() += 1;
         }
     });
 
+    let appearance = Appearance::from_settings(&settings.read());
     let current_view = view();
 
     rsx! {
-        style { "{MOBILE_UI_STYLES}" }
-        div {
-            style: "
-                min-height: 100vh;
-                font-family: system-ui, -apple-system, sans-serif;
-                color: #111827;
-                background: #f9fafb;
-                display: flex;
-                flex-direction: column;
-            ",
+        UiRoot { appearance, reduced_motion: reduced_motion(),
+            MainScreen {}
             match current_view {
-                View::List => rsx! { List {} },
-                View::Editor => rsx! { Editor {} },
-                View::Settings => rsx! { Settings {} },
-                View::Devices => rsx! { Devices {} },
+                View::Main => rsx! {},
+                View::Settings => rsx! {
+                    Legacy { back: View::Main,
+                        style { "{MOBILE_UI_STYLES}" }
+                        SettingsView {}
+                    }
+                },
+                View::Devices => rsx! {
+                    Legacy { back: View::Settings,
+                        style { "{MOBILE_UI_STYLES}" }
+                        Devices {}
+                    }
+                },
             }
         }
     }
