@@ -63,6 +63,25 @@ fn seen(device: &DeviceInfo, clock: Clock) -> String {
 
 #[component]
 pub(super) fn Devices(linked: Linked, copy: EventHandler<String>) -> Element {
+    let toasts = use_toasts();
+    // While this device is being let in. When it is turned away it is
+    // signed out at once, and the section that was letting it in goes
+    // before it can say so; this says it instead.
+    let mut joining = use_signal(|| false);
+    let mut was_waiting = use_signal(|| false);
+    use_effect(move || {
+        let now = *linked.state.read();
+        let waiting = matches!(now, SessionState::WaitingForApproval { .. });
+        if *was_waiting.peek() && now == SessionState::SignedOut && *joining.peek() {
+            joining.set(false);
+            toasts.show_error(Toast::new("Nothing was shared").detail(
+                "The pictures differed, or the other device turned this one away.                  Sign in again to try again.",
+            ));
+        }
+        if *was_waiting.peek() != waiting {
+            was_waiting.set(waiting);
+        }
+    });
     let state = *linked.state.read();
     if linked.session.read().is_none() {
         return rsx! {
@@ -73,7 +92,7 @@ pub(super) fn Devices(linked: Linked, copy: EventHandler<String>) -> Element {
         SessionState::SignedOut | SessionState::SigningIn => rsx! {
             Card { Note { text: "Sign in to use Dirt on more than one device." } }
         },
-        SessionState::WaitingForApproval { .. } => rsx! { JoinHere { linked } },
+        SessionState::WaitingForApproval { .. } => rsx! { JoinHere { linked, joining } },
         SessionState::Ready { .. } => rsx! { DeviceList { linked, copy } },
     }
 }
@@ -165,7 +184,8 @@ fn Pairing(
 
 /// A device that has signed in and waits to be let in.
 #[component]
-fn JoinHere(linked: Linked) -> Element {
+fn JoinHere(linked: Linked, joining: Signal<bool>) -> Element {
+    let mut joining = joining;
     let nav = settings_nav();
     let facts = facts();
     let toasts = use_toasts();
@@ -183,6 +203,7 @@ fn JoinHere(linked: Linked) -> Element {
         let typing = with_phrase();
         if !open || typing {
             exchange.set(None);
+            joining.set(false);
             if !open {
                 ended.set(None);
                 phrase.set(String::new());
@@ -201,6 +222,7 @@ fn JoinHere(linked: Linked) -> Element {
                 Ok(join) => {
                     if nav.is_open() && !*with_phrase.peek() {
                         exchange.set(Some(Rc::new(Exchange::join(join, Pace::default()))));
+                        joining.set(true);
                     }
                 }
                 Err(error) => ended.set(Some(("Could not ask".to_owned(), as_sentence(&error)))),
@@ -211,6 +233,7 @@ fn JoinHere(linked: Linked) -> Element {
 
     let on_end = move |view: ExchangeView| {
         exchange.set(None);
+        joining.set(false);
         match view {
             ExchangeView::Step(ExchangeStep::Done) => {
                 toasts.show(

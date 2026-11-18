@@ -8,6 +8,7 @@ use dirt_core::session::{
     KeyChange, ResetOutcome, SessionError, SessionState, SignOutError, Unsynced,
 };
 use dirt_core::sync::overview::{sign_out_would_lose, SyncOverview};
+use dirt_core::sync::worker::Trigger;
 use dirt_core::util::as_sentence;
 
 use super::rows::{Btn, Card, Row, RowButton};
@@ -321,7 +322,12 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
                                     let session = session.clone();
                                     spawn(async move {
                                         match session.cancel_reset().await {
-                                            Ok(()) => toasts.show(Toast::new("Refused. Nothing was changed")),
+                                            Ok(()) => {
+                                                toasts.show(Toast::new("Refused. Nothing was changed"));
+                                                // The request is in the sync's figures
+                                                // until the next sync.
+                                                session.notify(Trigger::Manual);
+                                            }
                                             Err(error) => toasts.show_error(
                                                 Toast::new("Could not refuse").detail(as_sentence(&error)),
                                             ),

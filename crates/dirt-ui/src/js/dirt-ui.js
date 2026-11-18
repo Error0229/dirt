@@ -931,6 +931,14 @@
   // press on the rail, or Rust asking (`DirtUi.jump`), brings a section
   // into sight.
   const sectionsOf = scroller => $$('[data-dui-section]', scroller);
+  // Where a section starts in the page it scrolls in. Measured by offsets,
+  // not by boxes on screen: as Settings opens it grows from a point, and
+  // its boxes are a small fraction of their size.
+  function topIn(element, scroller) {
+    let top = 0;
+    for (let at = element; at && at !== scroller; at = at.offsetParent) top += at.offsetTop;
+    return top;
+  }
   function railFor(scroller) {
     const modal = scroller.closest('[data-dui-modal]');
     return modal ? modal.querySelector('[data-dui-rail]') : null;
@@ -947,9 +955,8 @@
   function followRail(scroller) {
     const sections = sectionsOf(scroller);
     if (!sections.length) return;
-    const top = scroller.getBoundingClientRect().top;
     let current = sections[0];
-    sections.forEach(section => { if (section.getBoundingClientRect().top - top - 40 <= 0) current = section; });
+    sections.forEach(section => { if (topIn(section, scroller) - scroller.scrollTop - 40 <= 0) current = section; });
     if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) current = sections[sections.length - 1];
     markRail(scroller, current.dataset.duiSection);
   }
@@ -967,7 +974,7 @@
     }
     const scroller = section.closest('[data-dui-scroll]');
     if (!scroller) return;
-    const top = section.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 8;
+    const top = topIn(section, scroller) - 8;
     scroller.scrollTo({ top, behavior: instant || reduced() ? 'auto' : 'smooth' });
     markRail(scroller, name);
   }
@@ -1253,11 +1260,21 @@
   // ---- Where the keyboard goes when nothing has it -----------------------
   // A button that is pressed and then taken away (a row archived, a view
   // closed) leaves the focus on the page's body, where a screen's keys are
-  // not heard. An element with `data-dui-home` takes it instead.
+  // not heard. An element with `data-dui-home` takes it instead. While a
+  // panel or sheet is open the focus stays in it: a confirmation that has
+  // gone gives it back to its row first, and otherwise the panel takes it.
+  const lost = () => {
+    const at = document.activeElement;
+    return !at || at === document.body || at === root;
+  };
   document.addEventListener('focusout', () => {
     setTimeout(() => {
-      const at = document.activeElement;
-      if (at && at !== document.body && at !== root) return;
+      if (!lost()) return;
+      const top = openModals().pop();
+      if (top) {
+        setTimeout(() => { if (lost()) (focusables(top)[0] || top).focus({ preventScroll: true }); }, 0);
+        return;
+      }
       const home = document.querySelector('[data-dui-home]');
       if (home && shown(home)) home.focus({ preventScroll: true });
     }, 0);

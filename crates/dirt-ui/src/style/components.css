@@ -379,7 +379,8 @@
 .dui-rail button[aria-current="true"]{color:var(--text);font-weight:550}
 .dui-rail-ind{position:absolute;left:0;right:0;top:0;height:34px;border-radius:8px;background:var(--surface-2);transform:translateY(calc(var(--i,0) * 34px));transition:transform var(--d-3) var(--e-out)}
 .dui-set-wrap{flex:1}
-.dui-set{padding:4px 28px 28px}
+/* The frame its sections are measured in (the script's jump and rail). */
+.dui-set{padding:4px 28px 28px;position:relative}
 .android .dui-set{padding:0 16px 40px}
 .dui-set-sec{padding-top:22px;scroll-margin-top:8px}
 .dui-set-sec h3{font-size:11.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;margin:0 0 8px 2px}
