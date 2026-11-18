@@ -69,8 +69,8 @@ Each has a default that holds if the step is reached without an answer.
 | Decision | Needed by | Default |
 |---|---|---|
 | PDF in the preview: bundle a renderer (a few MB) or not | Step 6 | Not bundled: a PDF opens in another app on Linux and Android |
-| The speech model: fetched on first use, or shipped in the app | Step 9. Trial 1 has the sizes: 68 or 110 MiB | Fetched on first use |
-| Which speech model: Kroko's, 68 MiB, under CC BY-SA once its makers confirm it; or the zipformer of 2023-06-26 with Moonshine tiny, 110 MiB, under Apache-2.0 and MIT (trial 1 result, "Recommendation") | Step 9 | The pair: its licences ask nothing |
+| The speech model: fetched on first use, or shipped in the app | Step 9. Trial 1's second measurement has the sizes: 631 MiB for Parakeet TDT 0.6b v2, 130 MiB for Parakeet TDT-CTC 110m | Fetched on first use |
+| Which speech model, now that words are made after the recording ends: Parakeet TDT 0.6b v2 (631 MiB, 4.8% of words wrong, about 1.1 GiB while it works) or Parakeet TDT-CTC 110m (130 MiB, 6.4%, about 0.6 GiB), both CC BY 4.0, which asks for credit ("Trial 1, second measurement"). A phone run shows whether Android lets the app hold 1.1 GiB in the background | Step 9 | Parakeet TDT 0.6b v2, unless the phone run shows it cannot have the memory; then the 110m |
 | Snap Layouts on Windows 11: accept losing the flyout, or win it back | Step 3 | Accept losing it |
 
 ## Trials
