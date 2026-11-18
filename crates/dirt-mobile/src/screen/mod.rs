@@ -30,12 +30,14 @@ use std::time::Duration;
 use dioxus::prelude::*;
 use dirt_core::files::thumbnail::as_data_uri;
 use dirt_core::models::{extract_tags, Note, NoteId};
+use dirt_core::session::SessionState;
 use dirt_core::store::{LetGo, NoteCounts, TagCount, TagRule};
 use dirt_core::sync::overview::SyncIndicator;
 use dirt_core::sync::worker::Trigger;
 use dirt_ui::components::{card_element_id, use_toasts, GrowFrom, ListExit, Toast, Toasts};
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::find;
+use dirt_ui::settings::Section;
 use dirt_ui::time::Clock;
 use dirt_ui::Icon;
 
@@ -46,7 +48,7 @@ use crate::incoming::{
     attach_incoming, discard_all, not_copied_in, note_text, worth_a_note, Capture,
 };
 use crate::services::activity::{copy_text, take_capture};
-use crate::state::{AppState, View};
+use crate::state::AppState;
 use crate::views::attachments::{attach, choose_files as pick_files};
 use list::Main;
 use page::Page;
@@ -868,10 +870,21 @@ impl Screen {
     }
 
     /// What tapping the sync status does (6.6): syncs now, or opens
-    /// Settings, where a problem is explained and where to sign in is.
+    /// Settings where a problem is explained, where to sign in is, or, on
+    /// a device waiting to be let in, where it waits.
     pub fn sync_now(self) {
         match self.sync_indicator() {
-            SyncIndicator::Problem { .. } | SyncIndicator::SignedOut => self.open_settings(),
+            SyncIndicator::Problem { .. } => self.app.nav.open_at(Section::Sync),
+            SyncIndicator::SignedOut => self.app.nav.open_at(
+                if matches!(
+                    *self.app.session_state.peek(),
+                    SessionState::WaitingForApproval { .. }
+                ) {
+                    Section::Devices
+                } else {
+                    Section::Account
+                },
+            ),
             _ => self.pulled(),
         }
     }
@@ -883,9 +896,9 @@ impl Screen {
         }
     }
 
+    /// The gear: Settings, where it was.
     pub fn open_settings(self) {
-        let mut view = self.app.view;
-        view.set(View::Settings);
+        self.app.nav.open();
     }
 
     // ---- What comes from outside the app (8.1) --------------------------------
@@ -906,8 +919,7 @@ impl Screen {
         while let Some(capture) = take_capture() {
             match capture {
                 Capture::Blank => {
-                    let mut view = self.app.view;
-                    view.set(View::Main);
+                    self.app.nav.close();
                     self.new_page();
                 }
                 Capture::Shared { text, files } => self.keep_shared(&text, files).await,
@@ -1283,14 +1295,15 @@ pub fn MainScreen() -> Element {
         spawn(async move { screen.receive_captures().await });
     });
 
-    // While an old screen (Settings, Devices) covers the main screen, the
-    // main screen is out of reach: no tap, key or screen reader reaches it.
-    let covered = *app.view.read() != View::Main;
+    // While Settings covers the main screen, the main screen is out of
+    // reach: no tap, key or screen reader reaches it. It steps back behind
+    // the sheet (5.5).
+    let covered = app.nav.is_open();
 
     rsx! {
         style { {include_str!("screen.css")} }
         div {
-            class: "dm-under",
+            class: "dm-under dui-steps-back",
             "inert": covered.then_some(""),
             "aria-hidden": covered.then_some("true"),
             Main {}
