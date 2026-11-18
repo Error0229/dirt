@@ -1,0 +1,6 @@
+am_total     median    2848  min  2198  max  3340  n=6
+am_wait      median    2888  min  2216  max  3362  n=6
+proc         median     130  min    61  max   174  n=6
+displayed    median    2831  min  2197  max  3313  n=6
+first_frame  median    1762  min  1118  max  2214  n=6
+keyboard     median    4528  min  3518  max  5148  n=6

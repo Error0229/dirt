@@ -1,0 +1,7 @@
+--- sheet cold: median of 6
+am_total     median    2670  min  2394  max  3321  n=6
+am_wait      median    2705  min  2421  max  3342  n=6
+proc         median     102  min    59  max   212  n=6
+displayed    median    2654  min  2351  max  3248  n=6
+first_frame  median    1788  min  1315  max  2458  n=6
+keyboard     median    3628  min  3444  max  5033  n=6

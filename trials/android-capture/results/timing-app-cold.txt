@@ -1,0 +1,7 @@
+{'am_total': 3303, 'am_wait': 3331, 'state': 'COLD', 'proc': 87, 'displayed': 3275, 'first_frame': None, 'keyboard': None, 'textarea': 5626}
+--- app cold: median of 5
+am_total     median    3388  min  2955  max  4389  n=5
+am_wait      median    3393  min  2963  max  4398  n=5
+proc         median      87  min    53  max   240  n=5
+displayed    median    3365  min  2935  max  4359  n=5
+textarea     median    5731  min  5064  max  7303  n=5

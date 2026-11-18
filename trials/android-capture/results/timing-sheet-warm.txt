@@ -1,0 +1,6 @@
+--- sheet warm: median of 6
+am_total     median    1260  min  1156  max  1288  n=6
+am_wait      median    1324  min  1176  max  1368  n=6
+displayed    median    1271  min  1226  max  1297  n=6
+first_frame  median     216  min   153  max   350  n=6
+keyboard     median    2287  min  2161  max  2637  n=6

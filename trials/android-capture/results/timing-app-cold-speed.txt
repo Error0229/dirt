@@ -1,0 +1,6 @@
+--- app cold: median of 4
+am_total     median    3644  min  2752  max  8368  n=4
+am_wait      median    3651  min  2758  max  8386  n=4
+proc         median     204  min    68  max   331  n=4
+displayed    median    3622  min  2717  max  8156  n=4
+textarea     median    6978  min  4930  max 15215  n=4

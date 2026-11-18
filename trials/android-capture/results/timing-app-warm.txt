@@ -1,0 +1,6 @@
+{'am_total': 342, 'am_wait': 350, 'state': 'HOT', 'proc': None, 'displayed': None, 'first_frame': None, 'keyboard': None, 'textarea': None}
+{'am_total': 375, 'am_wait': 567, 'state': 'HOT', 'proc': None, 'displayed': None, 'first_frame': None, 'keyboard': None, 'textarea': None}
+{'am_total': 264, 'am_wait': 274, 'state': 'HOT', 'proc': None, 'displayed': None, 'first_frame': None, 'keyboard': None, 'textarea': None}
+--- app warm: median of 5
+am_total     median     375  min   264  max  1155  n=5
+am_wait      median     567  min   274  max  1197  n=5

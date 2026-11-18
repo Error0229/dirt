@@ -1,0 +1,7 @@
+{'am_total': 6654, 'am_wait': 6802, 'state': 'COLD', 'proc': 276, 'displayed': 6461, 'first_frame': 5147, 'keyboard': None, 'textarea': None}
+--- sheet-own cold: median of 6
+am_total     median   11126  min  6654  max 16715  n=6
+am_wait      median   11574  min  6802  max 18161  n=6
+proc         median    1098  min   276  max  4675  n=6
+displayed    median   10698  min  6461  max 16339  n=6
+first_frame  median    9480  min  5147  max 15191  n=6
