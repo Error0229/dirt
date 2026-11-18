@@ -99,7 +99,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             font_family: "system-ui".to_string(),
-            font_size: 14,
+            font_size: 15,
             theme: ThemeMode::System,
             accent: Accent::Clay,
             capture_hotkey: "Ctrl+Shift+D".to_string(),
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn test_settings_default() {
         let settings = Settings::default();
-        assert_eq!(settings.font_size, 14);
+        assert_eq!(settings.font_size, 15);
         assert_eq!(settings.theme, ThemeMode::System);
         assert_eq!(settings.accent, Accent::Clay);
     }

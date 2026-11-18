@@ -2,22 +2,13 @@ use dioxus::prelude::*;
 use dioxus_primitives::slider::SliderValue;
 
 use dirt_core::models::Settings;
+use dirt_ui::TextSize;
 
 use super::row::SettingRow;
 use crate::components::select::{
     Select, SelectItemIndicator, SelectList, SelectOption, SelectTrigger, SelectValue,
 };
 use crate::components::slider::{Slider, SliderRange, SliderThumb, SliderTrack};
-
-/// Font family options.
-const FONT_FAMILIES: &[(&str, &str)] = &[
-    ("system-ui", "System Default"),
-    ("JetBrains Mono", "JetBrains Mono"),
-    ("Fira Code", "Fira Code"),
-    ("Consolas", "Consolas"),
-    ("Monaco", "Monaco"),
-    ("Menlo", "Menlo"),
-];
 
 #[component]
 pub(super) fn ThemeSettingsTab(
@@ -26,7 +17,6 @@ pub(super) fn ThemeSettingsTab(
     current_settings: Settings,
     current_theme_value: String,
     on_theme_change: EventHandler<String>,
-    on_font_family_change: EventHandler<String>,
     on_font_size_change: EventHandler<u32>,
 ) -> Element {
     rsx! {
@@ -74,52 +64,20 @@ pub(super) fn ThemeSettingsTab(
         }
 
         SettingRow {
-            label: "Font Family",
-            description: "Font used for note content",
-
-            Select::<String> {
-                default_value: current_settings.font_family.clone(),
-                on_value_change: move |value: Option<String>| {
-                    if let Some(value) = value {
-                        on_font_family_change.call(value);
-                    }
-                },
-
-                SelectTrigger {
-                    style: "width: 170px;",
-                    SelectValue {}
-                }
-
-                SelectList {
-                    for (index, (value, label)) in FONT_FAMILIES.iter().enumerate() {
-                        SelectOption::<String> {
-                            key: "{value}",
-                            index,
-                            value: (*value).to_string(),
-                            text_value: *label,
-                            "{label}"
-                            SelectItemIndicator {}
-                        }
-                    }
-                }
-            }
-        }
-
-        SettingRow {
-            label: "Font Size",
-            description: "Size of text in notes (10-24px)",
+            label: "Text size",
+            description: "Size of text in notes (13-20 px). Ctrl + and Ctrl - change it too",
 
             div {
                 style: "display: flex; align-items: center; gap: 8px;",
                 Slider {
-                    min: 10.0,
-                    max: 24.0,
+                    min: f64::from(TextSize::MIN.pixels()),
+                    max: f64::from(TextSize::MAX.pixels()),
                     step: 1.0,
                     default_value: SliderValue::Single(f64::from(current_settings.font_size)),
                     on_value_change: move |slider_value: SliderValue| {
                         let SliderValue::Single(size) = slider_value;
                         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                        let clamped = (size as u32).clamp(10, 24);
+                        let clamped = TextSize::new(size as u32).pixels();
                         on_font_size_change.call(clamped);
                     },
                     style: "width: 100px;",

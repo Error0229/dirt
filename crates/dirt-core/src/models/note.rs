@@ -68,6 +68,12 @@ impl Note {
             .collect()
     }
 
+    /// The note as a list shows it: title, preview and the tags at its end.
+    #[must_use]
+    pub fn outline(&self) -> Outline {
+        Outline::of(&self.content)
+    }
+
     /// Check if note content is empty (whitespace-only counts as empty)
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -97,6 +103,102 @@ pub fn extract_tags(text: &str) -> Vec<String> {
         .collect::<HashSet<_>>()
         .into_iter()
         .collect()
+}
+
+/// Where each `#tag` is in `text`, in the order they are written.
+///
+/// Each is the bytes it takes up, its `#` among them, by the same rule as
+/// [`extract_tags`]: for an interface that draws tags differently from the
+/// words around them.
+#[must_use]
+pub fn tag_spans(text: &str) -> Vec<std::ops::Range<usize>> {
+    tag_regex().find_iter(text).map(|tag| tag.range()).collect()
+}
+
+/// Whether `word` is one tag and nothing else: `#work`.
+fn is_tag(word: &str) -> bool {
+    tag_regex()
+        .find(word)
+        .is_some_and(|tag| tag.range() == (0..word.len()))
+}
+
+/// How many characters of a note a list shows under its title. Two lines
+/// on the desktop and three on a phone are fewer than this.
+const PREVIEW_CHARS: usize = 240;
+
+/// A note as a list shows it (interface design 6.2): its first line as the
+/// title, the rest as a preview, and the tags at its very end apart.
+///
+/// Tags at the very end of a note are labels, not prose: they are left out
+/// of the title and the preview. A tag in the middle of a sentence stays
+/// where it is. A note that is tags and nothing else has no labels: its
+/// tags are all it says.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Outline {
+    /// The first line that holds anything, without the space around it.
+    /// Empty for a note with no words.
+    pub title: String,
+    /// What follows the title, as one line, cut to a few lines' length.
+    pub preview: String,
+    /// The tags at the end of the note, as they are written, without
+    /// their `#`.
+    pub labels: Vec<String>,
+}
+
+impl Outline {
+    /// The outline of a note with this text.
+    #[must_use]
+    pub fn of(text: &str) -> Self {
+        let (prose, labels) = split_labels(text);
+        let mut lines = prose.lines().map(str::trim).filter(|line| !line.is_empty());
+        let title = lines.next().unwrap_or_default().to_owned();
+        let mut preview = String::new();
+        let mut held = 0;
+        'lines: for line in lines {
+            for word in line.split_whitespace() {
+                if held >= PREVIEW_CHARS {
+                    break 'lines;
+                }
+                if !preview.is_empty() {
+                    preview.push(' ');
+                    held += 1;
+                }
+                preview.push_str(word);
+                held += word.chars().count();
+            }
+        }
+        Self {
+            title,
+            preview,
+            labels,
+        }
+    }
+}
+
+/// Splits a note's text into its prose and the tags at its very end.
+fn split_labels(text: &str) -> (&str, Vec<String>) {
+    let mut prose = text.trim_end();
+    let mut labels = Vec::new();
+    loop {
+        // The last word, and where it starts.
+        let start = prose
+            .char_indices()
+            .rev()
+            .find(|(_, character)| character.is_whitespace())
+            .map_or(0, |(at, character)| at + character.len_utf8());
+        let word = &prose[start..];
+        if !is_tag(word) {
+            break;
+        }
+        labels.push(word[1..].to_owned());
+        prose = prose[..start].trim_end();
+    }
+    // Nothing but tags: they are the note, not labels on it.
+    if prose.is_empty() {
+        return (text, Vec::new());
+    }
+    labels.reverse();
+    (prose, labels)
 }
 
 #[cfg(test)]
@@ -182,5 +284,68 @@ mod tests {
 
         let not_empty = Note::new("Hello");
         assert!(!not_empty.is_empty());
+    }
+
+    #[test]
+    fn tag_spans_take_in_the_hash() {
+        let text = "ask #Work about #q3-plan, not #9lives";
+        let tags: Vec<&str> = tag_spans(text)
+            .into_iter()
+            .map(|span| &text[span])
+            .collect();
+        assert_eq!(tags, ["#Work", "#q3-plan"]);
+    }
+
+    #[test]
+    fn an_outline_is_the_first_line_the_rest_and_the_tags_at_the_end() {
+        let outline =
+            Outline::of("Sourdough\n78% hydration\nfold every 30 minutes #baking #Bread\n");
+        assert_eq!(outline.title, "Sourdough");
+        assert_eq!(outline.preview, "78% hydration fold every 30 minutes");
+        assert_eq!(outline.labels, ["baking", "Bread"]);
+    }
+
+    #[test]
+    fn a_tag_inside_a_sentence_is_prose() {
+        let outline = Outline::of("Ask #work about the offsite");
+        assert_eq!(outline.title, "Ask #work about the offsite");
+        assert!(outline.labels.is_empty());
+
+        // Only the tags after the last word are labels.
+        let outline = Outline::of("Ask #work about it #todo");
+        assert_eq!(outline.title, "Ask #work about it");
+        assert_eq!(outline.labels, ["todo"]);
+
+        // A tag stuck to a word is part of the word's line.
+        let outline = Outline::of("price#tag");
+        assert_eq!(outline.title, "price#tag");
+        assert!(outline.labels.is_empty());
+    }
+
+    #[test]
+    fn a_note_of_tags_alone_keeps_them_as_its_words() {
+        let outline = Outline::of("#idea #later");
+        assert_eq!(outline.title, "#idea #later");
+        assert!(outline.labels.is_empty());
+        assert_eq!(Outline::of("#idea").title, "#idea");
+        assert_eq!(Outline::of("\n #idea\n").title, "#idea");
+    }
+
+    #[test]
+    fn the_title_is_the_first_line_that_holds_anything() {
+        let outline = Outline::of("\n   \n  Second thoughts  \n\nmore\n");
+        assert_eq!(outline.title, "Second thoughts");
+        assert_eq!(outline.preview, "more");
+        assert_eq!(Outline::of("  \n ").title, "");
+        assert_eq!(Outline::of("").preview, "");
+    }
+
+    #[test]
+    fn a_long_note_gives_a_preview_of_a_few_lines() {
+        let long = format!("Title\n{}", "word ".repeat(400));
+        let outline = Outline::of(&long);
+        assert!(outline.preview.chars().count() <= PREVIEW_CHARS + 5);
+        assert!(outline.preview.ends_with("word"));
+        assert_eq!(Note::new(long).outline(), outline);
     }
 }

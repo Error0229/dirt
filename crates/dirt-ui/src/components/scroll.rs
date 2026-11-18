@@ -16,6 +16,9 @@ pub enum ListExit {
     /// It tears away to the left, and the gap closes after it: a delete.
     #[default]
     Tear,
+    /// It folds shut where it was, and the rows below rise into its
+    /// place: an archive.
+    Fold,
     /// It fades where it is.
     Fade,
     /// It is simply gone: a list being narrowed by Find.
@@ -23,9 +26,12 @@ pub enum ListExit {
 }
 
 impl ListExit {
-    const fn name(self) -> &'static str {
+    /// The name the script knows it by, for `data-dui-exit`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
         match self {
             Self::Tear => "tear",
+            Self::Fold => "fold",
             Self::Fade => "fade",
             Self::None => "none",
         }

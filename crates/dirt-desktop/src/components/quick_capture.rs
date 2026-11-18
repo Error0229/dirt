@@ -9,7 +9,6 @@ use dioxus::desktop::window;
 use dioxus::prelude::*;
 
 use super::button::{Button, ButtonVariant};
-use crate::queries::invalidate_notes_query;
 use crate::state::AppState;
 
 /// Hide quick-capture window immediately.
@@ -52,7 +51,6 @@ pub fn QuickCapture() -> Element {
                     Ok(note) => {
                         tracing::info!("Quick captured note: {}", note.id);
                         state.note_changed();
-                        invalidate_notes_query().await;
                     }
                     Err(e) => {
                         tracing::error!("Failed to create note: {}", e);

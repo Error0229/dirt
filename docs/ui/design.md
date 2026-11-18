@@ -1254,7 +1254,7 @@ not exist at all.
 | Editing an archived note | Leaves it archived. Only "back to the list" or **Undo** brings it back | |
 | Two devices choose differently | One choice holds, the same on every device, as for any single value in a note | |
 | Its tags | Narrowing to a tag is finding, so archived notes with the tag are shown, after the rest and under the same line "Archived". The count beside a tag counts them, and a tag that only archived notes carry is still offered: a thought put away can be found by its tag | |
-| Deleted, then brought back | Comes back archived, to where it was | |
+| Deleted, then brought back | Comes back archived. (A delete undone takes a new edit time, so it comes back at the top of the list: 7.8) | |
 | A build from before archive | Shows archived notes in its list, and keeps the mark when it edits one | |
 
 Why both: with only delete, clearing a done thought loses it, so people
@@ -1427,6 +1427,38 @@ Considered and left out: **Dim** (the list fading to 12%, which leaves
 half-present text beside the note) and **Glass** (the list turning to
 frosted glass over the desktop, which needs a transparent window and on
 macOS a private API the Mac App Store refuses).
+
+### 7.8 Settled when the main screen was built
+
+What the sections above left open, settled when the desktop's main screen
+was built (implementation plan, step 3a). Focus while writing (7.7), the
+controls shown by nearness (6.4's second half) and the window without a
+title bar (7.6) came after it, in step 3b.
+
+| | Settled |
+|---|---|
+| The chosen row | The chosen row is the note on the page. Pressing a row opens the note with the cursor in its text. <kbd>↑</kbd> <kbd>↓</kbd> in the list open each note without leaving the list; <kbd>↑</kbd> on the first row goes back to Find, and <kbd>Home</kbd> and <kbd>End</kbd> go to the ends. The list is one stop for <kbd>Tab</kbd>; the chosen row's tags and box are the stops after it, and no other row's |
+| Archive or delete from the list | <kbd>Del</kbd> and <kbd>Shift Del</kbd> in the list move the choice to the row below (above, at the end) and leave the keyboard in the list. From the note, or by a row's box, the page is blank afterwards with the cursor in it |
+| <kbd>Ctrl Z</kbd> | Outside the text, as 7.4 says, and also on a blank page, which has nothing of its own to undo and is where the cursor is after <kbd>Ctrl Del</kbd> in a note. It undoes the last archive or delete only, once |
+| A tag pressed on a row | Added to the tags chosen, as a token; the others stay |
+| <kbd>↓</kbd> in Find | Into the list of tags while it is open, and into the notes otherwise |
+| Layers | Only the list is in layers. While Find holds words or tags the notes are in the order found, and only the line "Archived" divides them (6.19). The list of archived notes, from "3 archived", is newest first with no layers |
+| "3 archived" | Until the pile (step 7), at the end of the list, once scrolling has reached it, and only while nothing is being found |
+| Load more | 100 notes at first, and 100 more each time the end of the list comes within 600 px of sight |
+| The hollow dot | Only while signed in and let in. Signed out, every note is on this device alone, and the status says so ("This device only") instead of a dot on every row |
+| Files on the blank page | 📎 or a drop makes a note of the files, with the tags chosen in Find as its text (6.1: a file with no words under it is a note). The list names such a note after its first file |
+| The page's text | Saved 400 ms after typing pauses, and at once when the note is left (done, another note opened, archived). The first character that is not a space makes the note at once |
+| Narrower than 720 px | The list takes the window. A note, or a page begun with <kbd>Ctrl N</kbd> or the + that appears at the foot of the list, comes over it; done goes back to the list. The breakpoint is the window's width |
+| The app's own menu | Copy when something is selected, Paste and Select all in a text field, and "Copy the note" (<kbd>Ctrl Shift C</kbd>) while a note is open. Paste reads the clipboard in the app, since a web view may not read it without asking |
+| Where the keyboard goes | When what had the keyboard is taken away (a row archived, the archived notes closed), the screen takes it, so that its keys still work |
+| An archived row leaving | Until the pile, it folds shut where it was (on the exit curve, at most 320 ms) while the rows below rise into its place (snap); no grain falls |
+
+**What did not work as the design assumes.** A delete undone brings the
+note back with a new edit time, so its row comes back at the top of the
+list and not "into its place" (5.5, "Undo"): the store's restore records
+the note anew. An archive undone does come back into its place, since
+archiving is not an edit. Changing the store's restore is left to a later
+step, with its own tests, since the edit time is part of what syncs.
 
 ---
 

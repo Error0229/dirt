@@ -17,6 +17,8 @@ gallery = []
 # `keyring-store`, which the Android app must not build.
 dirt-core = { path = "../dirt-core", default-features = false }
 dioxus.workspace = true
+# Local dates for the times a list shows (`time`).
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

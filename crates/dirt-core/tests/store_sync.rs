@@ -656,3 +656,62 @@ async fn a_note_that_arrives_already_deleted_starts_its_wait_on_arrival() {
     assert_eq!(candidates.len(), 1);
     assert_eq!((candidates[0].id, candidates[0].server_change), (id, 4));
 }
+
+#[tokio::test]
+async fn the_notes_not_on_the_server_are_the_unsent_ones_that_are_not_deleted() {
+    let (_folder, store) = temp_store();
+    let sent = store.create_note("sent").await.unwrap();
+    let draft = store.create_note("draft").await.unwrap();
+    let gone = store
+        .create_note("deleted before it was sent")
+        .await
+        .unwrap();
+    store.mark_note_pushed(&sent.id, 1, 5).await.unwrap();
+    store.delete_note(&gone.id).await.unwrap();
+
+    let every = vec![sent.id, draft.id, gone.id];
+    let waiting = store.unsynced_note_ids(every.clone()).await.unwrap();
+    assert_eq!(waiting, std::iter::once(draft.id).collect());
+
+    // An edit, and a change that is not an edit, each make a sent note
+    // wait again.
+    store
+        .update_note(&sent.id, "sent, then edited")
+        .await
+        .unwrap();
+    assert!(store
+        .unsynced_note_ids(every.clone())
+        .await
+        .unwrap()
+        .contains(&sent.id));
+    store.mark_note_pushed(&sent.id, 2, 6).await.unwrap();
+    assert!(!store
+        .unsynced_note_ids(every.clone())
+        .await
+        .unwrap()
+        .contains(&sent.id));
+    store.archive_note(&sent.id).await.unwrap();
+    assert!(store
+        .unsynced_note_ids(every.clone())
+        .await
+        .unwrap()
+        .contains(&sent.id));
+
+    // A note held back by a sync problem is no longer offered to the
+    // server, and has not reached it either.
+    let offered = store.unsent_count().await.unwrap();
+    store
+        .flag_note_problem(
+            &draft.id,
+            "too large".to_owned(),
+            ProblemKind::RetryAfterEdit,
+        )
+        .await
+        .unwrap();
+    assert_eq!(store.unsent_count().await.unwrap(), offered - 1);
+    assert!(store
+        .unsynced_note_ids(every.clone())
+        .await
+        .unwrap()
+        .contains(&draft.id));
+}

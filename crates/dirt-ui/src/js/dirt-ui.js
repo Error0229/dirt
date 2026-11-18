@@ -9,7 +9,9 @@
 //   release, telling Rust only how it ended;
 // - motion that depends on where things are (a panel out of its button,
 //   the circle a new theme spreads in, a toast opening);
-// - tooltips, and focus going into a panel or sheet and back out of it.
+// - tooltips, and focus going into a panel or sheet and back out of it;
+// - the app's own menu on a right click, arrow keys through a group, the
+//   one highlight of a list, and more rows as a list nears its end.
 //
 // Rust renders elements with `data-dui-*` attributes; the script finds
 // them as they appear. Nothing here keeps the app's state.
@@ -264,6 +266,30 @@
     rowsOf(list).forEach(row => seen.set(row.dataset.key, placeOf(row, list)));
     state.seen = seen;
     state.ready = true;
+    placeSelection(list, true);
+  }
+  // The one highlight of a list (section 5.5, "Selecting a note"): an
+  // element `.dui-sel-ind` among the list's children, which Rust renders
+  // and the script moves. It slides from the row that was chosen to the
+  // one that is, stretching to its height (snap); nothing fades. `quiet`
+  // puts it there without the slide, for a list that only changed size.
+  function placeSelection(list, quiet) {
+    const mark = [...list.children].find(child => child.classList.contains('dui-sel-ind'));
+    if (!mark) return;
+    const row = rowsOf(list).find(candidate => candidate.classList.contains('sel'));
+    // Touching the class only when it changes: the list's observer hears
+    // every write to it, even one that leaves it as it was.
+    if (!row || !shown(row)) { if (mark.classList.contains('on')) mark.classList.remove('on'); return; }
+    const place = placeOf(row, list);
+    const fresh = !mark.classList.contains('on');
+    const jump = quiet || fresh || reduced();
+    if (jump) mark.style.transition = 'none';
+    Object.assign(mark.style, { top: place.y + 'px', left: place.x + 'px', width: place.w + 'px', height: place.h + 'px' });
+    if (fresh) mark.classList.add('on');
+    if (jump) {
+      void mark.offsetHeight;
+      mark.style.transition = '';
+    }
   }
   // Where a row in flight is on screen, as an offset from its layout.
   function flightOf(row) {
@@ -287,13 +313,34 @@
     ghost.inert = true;
     Object.assign(ghost.style, { left: was.x + 'px', top: was.y + 'px', width: was.w + 'px', height: was.h + 'px' });
     list.append(ghost);
-    const tear = how !== 'fade' && !reduced();
-    const ms = tear ? 170 : reduced() ? tokens.reducedMs : 120;
-    const going = tear
+    const moving = !reduced();
+    const tear = how === 'tear' && moving;
+    let going, ms;
+    if (tear) {
       // The row tears away to the left (170 ms, exit).
-      ? ghost.animate([{ transform: 'none', opacity: 1 }, { transform: 'translateX(-28px) scale(.96)', opacity: 0 }],
-        { duration: ms, easing: tokens.exit, fill: 'forwards' })
-      : ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
+      ms = 170;
+      going = ghost.animate([{ transform: 'none', opacity: 1 }, { transform: 'translateX(-28px) scale(.96)', opacity: 0 }],
+        { duration: ms, easing: tokens.exit, fill: 'forwards' });
+    } else if (how === 'fold' && moving) {
+      // An archived row folds shut where it was, while the rows below
+      // rise into its place (snap).
+      const snap = spring('snap');
+      ms = Math.min(snap.ms, 320);
+      ghost.style.transformOrigin = '50% 0';
+      ghost.style.overflow = 'hidden';
+      going = ghost.animate([{ transform: 'none', opacity: 1 }, { transform: 'scaleY(.2)', opacity: 0 }],
+        { duration: ms, easing: tokens.exit, fill: 'forwards' });
+    } else if (how === 'shrink' && moving) {
+      // A token shrinks to nothing sideways while fading (200 ms, exit),
+      // and the field closes up.
+      ms = 200;
+      ghost.style.transformOrigin = '0 50%';
+      going = ghost.animate([{ transform: 'none', opacity: 1 }, { transform: 'scaleX(0)', opacity: 0 }],
+        { duration: ms, easing: tokens.exit, fill: 'forwards' });
+    } else {
+      ms = moving ? 120 : tokens.reducedMs;
+      going = ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
+    }
     after(going, ms, () => ghost.remove());
     return tear;
   }
@@ -344,6 +391,7 @@
         { duration: snap.ms, easing: snap.easing, delay: follow, fill: 'backwards' });
     });
     state.seen = next;
+    placeSelection(list, false);
   }
   // A window made narrower, a font arriving or a text size chosen moves
   // rows with no change to the page. Those are not played: the positions
@@ -822,19 +870,225 @@
     scrolls.delete(area);
   }
 
+  // ---- Text fields the app does not hold (dirt_ui::dom) -----------------
+  // A field of the new interface keeps its own text: the app hears every
+  // change and never writes the text back while the person types. These
+  // are what the app asks for when it must touch a field itself.
+  const isField = element => !!element && (element.tagName === 'TEXTAREA'
+    || (element.tagName === 'INPUT' && /^(text|search|url|email)$/.test(element.type)));
+  function placeCaret(element, caret) {
+    if (!isField(element)) return;
+    const end = element.value.length;
+    if (caret === 'end') element.setSelectionRange(end, end);
+    else if (caret === 'all') element.select();
+  }
+  // The first of `selectors` that is drawn gets the keyboard's focus.
+  function focus(selectors, caret) {
+    for (const selector of selectors) {
+      const element = $$(selector).find(shown);
+      if (!element) continue;
+      element.focus({ preventScroll: caret === 'kept' });
+      placeCaret(element, caret);
+      if (caret === 'end' && element.tagName === 'TEXTAREA') element.scrollTop = element.scrollHeight;
+      return true;
+    }
+    return false;
+  }
+  function setValue(selector, text) {
+    const element = document.querySelector(selector);
+    if (!element || element.value === text) return;
+    const keep = document.activeElement === element ? [element.selectionStart, element.selectionEnd] : null;
+    element.value = text;
+    if (keep) element.setSelectionRange(Math.min(keep[0], text.length), Math.min(keep[1], text.length));
+  }
+  // Text added at the end of a field, where the caret is not: the tags a
+  // new page gets. The field then says so as if it had been typed, so the
+  // app hears the whole text, with whatever was typed meanwhile.
+  function appendText(selector, text) {
+    const element = document.querySelector(selector);
+    if (!element || !text) return;
+    const keep = [element.selectionStart, element.selectionEnd];
+    element.value += text;
+    element.setSelectionRange(keep[0], keep[1]);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  // What goes into a field as if it had been typed there: kept by the
+  // field's own undo, and heard by the app.
+  function insertText(element, text) {
+    if (element.dataset.duiOneline !== undefined) text = text.replace(/\s*[\r\n]+\s*/g, ' ');
+    element.focus({ preventScroll: true });
+    let done = false;
+    try { done = document.execCommand('insertText', false, text); } catch (error) { done = false; }
+    if (!done) {
+      element.setRangeText(text, element.selectionStart, element.selectionEnd, 'end');
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+  // Find never grows: a line break pasted into it becomes a space.
+  document.addEventListener('paste', event => {
+    const field = event.target;
+    if (!field || !field.dataset || field.dataset.duiOneline === undefined || !event.clipboardData) return;
+    const text = event.clipboardData.getData('text/plain');
+    if (!/[\r\n]/.test(text)) return;
+    event.preventDefault();
+    insertText(field, text);
+  }, true);
+
+  // ---- Where the keyboard goes when nothing has it -----------------------
+  // A button that is pressed and then taken away (a row archived, a view
+  // closed) leaves the focus on the page's body, where a screen's keys are
+  // not heard. An element with `data-dui-home` takes it instead.
+  document.addEventListener('focusout', () => {
+    setTimeout(() => {
+      const at = document.activeElement;
+      if (at && at !== document.body && at !== root) return;
+      const home = document.querySelector('[data-dui-home]');
+      if (home && shown(home)) home.focus({ preventScroll: true });
+    }, 0);
+  }, true);
+
+  // ---- Arrow keys through a group (sections 6.3, 7.4, 12) ------------------
+  // Inside an element with `data-dui-arrows`, Up and Down move between its
+  // buttons. Up from the first goes to the element the attribute names,
+  // if it names one.
+  document.addEventListener('keydown', event => {
+    if (event.isComposing || event.ctrlKey || event.altKey || event.metaKey) return;
+    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    const at = document.activeElement;
+    const group = at && at.closest ? at.closest('[data-dui-arrows]') : null;
+    if (!group || isField(at)) return;
+    const stops = $$('button:not([disabled])', group).filter(shown);
+    if (!stops.length) return;
+    const index = stops.indexOf(at);
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === 'Home') return stops[0].focus();
+    if (event.key === 'End') return stops[stops.length - 1].focus();
+    if (event.key === 'ArrowDown') return stops[Math.min(stops.length - 1, index + 1)].focus();
+    if (index > 0) return stops[index - 1].focus();
+    const above = group.dataset.duiArrows && document.querySelector(group.dataset.duiArrows);
+    if (above) above.focus();
+  }, true);
+
+  // ---- The app's own menu (section 7.4) ------------------------------------
+  // Rust renders one element `[data-dui-menu]` with Copy, Paste, Select
+  // all and the screen's own entries. The script shows it on a right click
+  // or the menu key, with what applies there.
+  let menuFor = null;
+  const menuOf = () => document.querySelector('[data-dui-menu]');
+  function closeMenu(giveBack) {
+    const menu = menuOf();
+    if (!menu || !menu.classList.contains('on')) return;
+    menu.classList.remove('on');
+    const field = menuFor;
+    if (giveBack && field && field.isConnected) field.focus({ preventScroll: true });
+  }
+  function openMenu(event) {
+    const menu = menuOf();
+    if (!menu || touchUi()) return;
+    const target = event.target && event.target.closest ? event.target : document.activeElement;
+    if (!target.closest('.dui-root') || target.closest('[data-dui-menu]')) return;
+    const field = isField(target) ? target : null;
+    const picked = field ? field.selectionEnd > field.selectionStart : String(getSelection() || '').length > 0;
+    const offers = { copy: picked, paste: !!field && !field.readOnly, all: !!field };
+    $$('[data-dui-do]', menu).forEach(item => { item.hidden = !offers[item.dataset.duiDo]; });
+    const own = $$('[role="menuitem"]:not([data-dui-do])', menu);
+    if (!own.length && !offers.copy && !offers.paste && !offers.all) return;
+    event.preventDefault();
+    menuFor = field || (document.activeElement !== document.body ? document.activeElement : null);
+    menu.classList.add('on');
+    // By the pointer; for the menu key, by the field.
+    let [x, y] = [event.clientX, event.clientY];
+    if (!x && !y) {
+      const box = (field || target).getBoundingClientRect();
+      [x, y] = [box.left + 16, box.top + 24];
+    }
+    const box = menu.getBoundingClientRect();
+    x = Math.max(8, Math.min(innerWidth - box.width - 8, x));
+    y = y + box.height + 8 > innerHeight ? Math.max(8, y - box.height) : y;
+    Object.assign(menu.style, { left: x + 'px', top: y + 'px' });
+    if (!reduced()) {
+      const snap = spring('snap');
+      menu.animate([{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }], { duration: snap.ms, easing: snap.easing });
+    }
+    const first = $$('[role="menuitem"]', menu).find(item => !item.hidden);
+    if (first) first.focus({ preventScroll: true });
+  }
+  document.addEventListener('contextmenu', openMenu);
+  document.addEventListener('pointerdown', event => {
+    const menu = menuOf();
+    if (menu && menu.classList.contains('on') && !menu.contains(event.target)) closeMenu(false);
+  }, true);
+  document.addEventListener('keydown', event => {
+    const menu = menuOf();
+    if (!menu || !menu.classList.contains('on')) return;
+    if (event.key === 'Escape' || event.key === 'Tab') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeMenu(true);
+    }
+  }, true);
+  window.addEventListener('blur', () => closeMenu(false));
+  document.addEventListener('click', event => {
+    const item = event.target.closest ? event.target.closest('[data-dui-menu] [role="menuitem"]') : null;
+    if (!item) return;
+    const menu = item.closest('[data-dui-menu]');
+    const field = menuFor;
+    closeMenu(true);
+    const what = item.dataset.duiDo;
+    if (!what) return;
+    if (what === 'copy') {
+      if (field) field.focus({ preventScroll: true });
+      document.execCommand('copy');
+    } else if (what === 'all') {
+      if (field) { field.focus({ preventScroll: true }); field.select(); }
+    } else if (what === 'paste') {
+      tell(menu, 'paste');
+    }
+  });
+  // The clipboard's text, read by the app, put where the caret was.
+  function paste(text) {
+    const field = menuFor && menuFor.isConnected && isField(menuFor) ? menuFor : null;
+    if (field && text) insertText(field, text);
+  }
+
+  // ---- More rows as a list nears its end (section 3) -----------------------
+  // A mark `[data-dui-more]` at the end of a list says once, as it comes
+  // within a screen of being seen, that there is room for more.
+  const mores = new Map();
+  function watchMore(mark) {
+    if (mores.has(mark) || !window.IntersectionObserver) return;
+    const area = mark.closest('[data-dui-scroll]');
+    const seen = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return;
+      seen.disconnect();
+      mores.delete(mark);
+      tell(mark, 'more');
+    }, { root: area, rootMargin: '0px 0px 600px 0px' });
+    seen.observe(mark);
+    mores.set(mark, seen);
+  }
+  function forgetMore(mark) {
+    const seen = mores.get(mark);
+    if (seen) seen.disconnect();
+    mores.delete(mark);
+  }
+
   // ---- Finding what Rust renders -----------------------------------------
-  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],.dui-confirm';
+  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],.dui-confirm';
   function arrived(element) {
     if (element.matches('[data-dui-list]')) watchList(element);
     if (element.matches('[data-dui-modal]')) watchModal(element);
     if (element.matches('[data-dui-scroll]')) watchScroll(element);
     if (element.matches('[data-dui-toast]') && !element.classList.contains('dui-toast-ghost')) toastShown(element);
     if (element.matches('.dui-confirm')) confirmShown(element);
+    if (element.matches('[data-dui-more]')) watchMore(element);
   }
   function left(element, parent) {
     if (element.matches('[data-dui-list]')) forgetList(element);
     if (element.matches('[data-dui-modal]')) forgetModal(element);
     if (element.matches('[data-dui-scroll]')) forgetScroll(element);
+    if (element.matches('[data-dui-more]')) forgetMore(element);
     if (element.matches('[data-dui-toast]') && !element.classList.contains('dui-toast-ghost')) {
       toastGone(element, parent && parent.closest ? parent.closest('.dui-toast-layer') : null);
     }
@@ -865,5 +1119,5 @@
     if (document.body) watchPage(); else document.addEventListener('DOMContentLoaded', watchPage);
   }
 
-  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate };
+  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, appendText, paste };
 })();

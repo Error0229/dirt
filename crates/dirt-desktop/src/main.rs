@@ -13,13 +13,11 @@ mod components;
 #[cfg(feature = "gallery")]
 mod gallery;
 mod hotkey;
-mod queries;
+mod screen;
 mod services;
 mod state;
 mod theme;
-mod time_format;
 mod tray;
-mod views;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;

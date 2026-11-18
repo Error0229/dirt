@@ -15,6 +15,8 @@
 //! from, to show the list's animation, and it says how long each frame of
 //! a shuffle took. Its card can be swiped; beside it the gallery counts
 //! the pointer's movements the script handled and the messages Rust got.
+//! The parts of a list of notes (Find with its tags, rows, a layer's line,
+//! the sync status) are shown with notes made up for them.
 
 use dioxus::prelude::*;
 use dirt_core::models::{Accent, ThemeMode};
@@ -22,9 +24,10 @@ use serde::Deserialize;
 
 use crate::appearance::{theme_name, Appearance, Platform, TextSize};
 use crate::components::{
-    use_toasts, AccentDots, Banner, Button, ButtonKind, ConfirmInPlace, IconButton, IconButtonSize,
-    ListExit, Panel, ScrollArea, Segment, Segmented, Sheet, Slider, Swipeable, Switch,
-    TextSizeSlider, Toast,
+    use_toasts, AccentDots, Banner, Button, ButtonKind, ConfirmInPlace, FindField, IconButton,
+    IconButtonSize, LayerLine, ListExit, NoteRow, NoteSummary, Panel, ScrollArea, Segment,
+    Segmented, Sheet, Slider, Swipeable, Switch, SyncStatus, TagList, TagOption, TextSizeSlider,
+    Toast,
 };
 use crate::events::Bus;
 use crate::icons::{Icon, IconSize, IconSvg};
@@ -165,6 +168,7 @@ fn Page(
                 Controls { appearance, on_appearance }
                 Surfaces { panel, sheet }
                 AnimatedList {}
+                ListParts {}
                 SwipeCard {}
                 Icons {}
                 Type {}
@@ -516,6 +520,124 @@ fn AnimatedList() -> Element {
     }
 }
 
+/// The parts of a list of notes: Find with its tokens and its list of
+/// tags, rows with what Find matched, a layer's line, and the sync status
+/// in each of its states. The notes are made up; nothing is stored.
+#[component]
+fn ListParts() -> Element {
+    let mut tags = use_signal(|| vec!["work".to_owned()]);
+    let mut open = use_signal(|| true);
+    let mut any = use_signal(|| false);
+    let mut chosen = use_signal(|| None::<usize>);
+    let mut words = use_signal(String::new);
+    let clock = crate::time::Clock::now();
+    let found = crate::text::find_words(&words());
+    let notes: Vec<dirt_core::models::Note> = [
+        "Ask Jordan about the Q3 offsite
+bring the budget #work",
+        "Sourdough: 78% hydration
+fold every 30 minutes #baking #bread #weekend",
+        "Call the landlord about the #home boiler",
+    ]
+    .iter()
+    .enumerate()
+    .map(|(index, text)| {
+        let mut note = dirt_core::models::Note::new(*text);
+        note.updated_at -= i64::try_from(index).unwrap_or_default() * 3_600_000;
+        note.archived = index == 2;
+        note
+    })
+    .collect();
+    let picked = tags();
+    let offers = ["home", "baking", "idea"]
+        .iter()
+        .filter(|tag| !picked.iter().any(|chosen| chosen == *tag))
+        .map(|tag| TagOption {
+            tag: (*tag).to_owned(),
+            notes: Some(2),
+            picked: false,
+        });
+    let options: Vec<TagOption> = picked
+        .iter()
+        .map(|tag| TagOption {
+            tag: tag.clone(),
+            notes: None,
+            picked: true,
+        })
+        .chain(offers)
+        .collect();
+    let mut toggle = move |tag: String| {
+        let mut chosen_tags = tags.write();
+        if let Some(at) = chosen_tags.iter().position(|chosen| *chosen == tag) {
+            chosen_tags.remove(at);
+        } else {
+            chosen_tags.push(tag);
+        }
+    };
+    let states = [
+        dirt_core::sync::overview::SyncIndicator::Synced {
+            last_synced_ms: Some(clock.now_ms - 120_000),
+        },
+        dirt_core::sync::overview::SyncIndicator::Syncing,
+        dirt_core::sync::overview::SyncIndicator::JustSynced,
+        dirt_core::sync::overview::SyncIndicator::Offline { waiting: 2 },
+        dirt_core::sync::overview::SyncIndicator::Problem { notes: 1, files: 0 },
+        dirt_core::sync::overview::SyncIndicator::SignedOut,
+    ];
+    rsx! {
+        h2 { "A list of notes" }
+        div { class: "gal-card gal-notes",
+            FindField {
+                tags: picked.clone(),
+                has_text: !words().is_empty(),
+                tags_open: open(),
+                oninput: move |text: String| words.set(text),
+                onkeydown: move |_| {},
+                on_remove_tag: move |tag: String| toggle(tag),
+                on_tags: move |()| open.toggle(),
+            }
+            TagList {
+                open: open(),
+                options,
+                any: any(),
+                on_pick: move |tag: String| toggle(tag),
+                on_rule: move |rule: bool| any.set(rule),
+            }
+            div { "data-dui-list": "", "data-dui-exit": "none", role: "listbox", "aria-label": "Notes",
+                div { class: "dui-sel-ind", "aria-hidden": "true" }
+                for (index , note) in notes.iter().enumerate().take(1) {
+                    NoteRow {
+                        key: "{note.id}",
+                        summary: NoteSummary::of(note, &found, clock).waiting(true),
+                        selected: chosen() == Some(index),
+                        on_open: move |()| chosen.set(Some(index)),
+                        on_tag: move |tag: String| toggle(tag),
+                        on_archive: move |()| {},
+                        on_delete: move |()| {},
+                    }
+                }
+                LayerLine { name: "This week" }
+                for (index , note) in notes.iter().enumerate().skip(1) {
+                    NoteRow {
+                        key: "{note.id}",
+                        summary: NoteSummary::of(note, &found, clock).files(index == 1, None),
+                        selected: chosen() == Some(index),
+                        on_open: move |()| chosen.set(Some(index)),
+                        on_tag: move |tag: String| toggle(tag),
+                        on_archive: move |()| {},
+                        on_delete: move |()| {},
+                    }
+                }
+            }
+        }
+        div { class: "gal-card gal-line",
+            for (index , state) in states.into_iter().enumerate() {
+                SyncStatus { key: "{index}", indicator: state, now_ms: clock.now_ms, shortcut: "Ctrl R", onclick: move |_| {} }
+            }
+        }
+    }
+}
+
 #[component]
 fn SwipeCard() -> Element {
     let toasts = use_toasts();
@@ -588,7 +710,7 @@ fn Icons() -> Element {
             }
             span { class: "gal-icon", "data-tip": "Small, 15 px", IconSvg { icon: Icon::Feather, size: IconSize::Small } }
             span { class: "gal-icon", "data-tip": "Large, 22 px", IconSvg { icon: Icon::Feather, size: IconSize::Large } }
-            span { class: "gal-icon", "data-tip": "Not on the server yet", span { class: "gal-wait" } }
+            span { class: "gal-icon", "data-tip": dirt_core::sync::overview::NOT_ON_SERVER_YET, span { class: "gal-wait" } }
         }
     }
 }

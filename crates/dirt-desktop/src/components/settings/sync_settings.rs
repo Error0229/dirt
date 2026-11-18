@@ -144,9 +144,18 @@ fn ProblemNote(problem: NoteProblem) -> Element {
     let title = problem.title();
     let reason = as_sentence(&problem.reason);
     let release = problem.release();
-    // Only a note in the list can be opened: not one this device never
-    // held, and not a deleted one.
-    let on_this_device = (state.notes)().iter().any(|note| note.id == id);
+    // Only a note this device holds can be opened: not one it never held,
+    // and not a deleted one.
+    let held = use_resource(move || {
+        let store = state.db_service.read().clone();
+        async move {
+            match store {
+                Some(store) => store.get_note(&id).await.ok().flatten().is_some(),
+                None => false,
+            }
+        }
+    });
+    let on_this_device = held().unwrap_or(false);
 
     rsx! {
         div { class: "sync-problem",
@@ -156,10 +165,7 @@ fn ProblemNote(problem: NoteProblem) -> Element {
                     r#type: "button",
                     title: "Open this note",
                     onclick: move |_| {
-                        // The note must not be hidden by a search or a tag.
-                        state.search_query.set(String::new());
-                        state.active_tag_filter.set(None);
-                        state.current_note_id.set(Some(id));
+                        state.open_request.set(Some(id));
                         state.settings_open.set(false);
                     },
                     "{title}"

@@ -17,17 +17,18 @@ pull request.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Write a note | Yes | Yes | `dirt add`, or `dirt "a thought"` |
+| Write a note | On the page, always open beside the list: the first character makes the note, and it saves itself. Esc, Ctrl Enter or ✓ is done and gives a blank page. With the list narrowed to tags, a new page gets them at its end | Yes | `dirt add`, or `dirt "a thought"` |
 | Edit a note | Yes, saved as you type | Yes, with a Save button | `dirt edit <ID>`, in `$VISUAL` or `$EDITOR` |
-| Delete a note | Yes | Yes | `dirt delete <ID>` |
-| Bring a deleted note back | Not yet: steps 3 and 4 of the interface plan | Not yet: steps 3 and 4 of the interface plan | `dirt restore <ID>`, by the ID that `dirt delete` printed or the start of it |
-| Archive a note, and bring it back to the list | Not yet: steps 3 and 4 of the interface plan | Not yet: steps 3 and 4 of the interface plan | `dirt archive <ID>`, `dirt unarchive <ID>` |
-| List the archived notes | Not yet: steps 3 and 4 of the interface plan | Not yet: steps 3 and 4 of the interface plan | `dirt list --archived`, which `--tag` narrows as it does the list |
-| List notes | The 100 most recently edited, and 100 more with each press of "Show older notes". Archived notes are left out | The same | `dirt list`, 10 unless `--limit` says otherwise. Archived notes are left out |
+| Delete a note | Shift Del in the list, Ctrl Shift Del in a note, or the bin on an archived note. No question first: a toast offers **Undo** | Yes | `dirt delete <ID>` |
+| Bring a deleted note back | **Undo** on the toast, or Ctrl Z outside the text, for the last archive or delete, after the toast has gone too | Not yet: step 4 of the interface plan | `dirt restore <ID>`, by the ID that `dirt delete` printed or the start of it |
+| Archive a note, and bring it back to the list | The box on a row under the pointer, Del in the list, the box beside the open note or Ctrl Del in it; **Undo** or Ctrl Z, or "Back to the list" beside an archived note | Not yet: step 4 of the interface plan | `dirt archive <ID>`, `dirt unarchive <ID>` |
+| List the archived notes | "3 archived" at the end of the list, newest first; Esc or ‹ goes back | Not yet: step 4 of the interface plan | `dirt list --archived`, which `--tag` narrows as it does the list |
+| List notes | Most recently edited first, in layers by when each was edited (today, This week, Earlier this month, then by month). 100 at first, and 100 more as scrolling nears the end. Archived notes are left out. A hollow dot marks a note not on the server yet | The 100 most recently edited, and 100 more with each press of "Show older notes". Archived notes are left out | `dirt list`, 10 unless `--limit` says otherwise. Archived notes are left out |
 | Use it before signing in | Yes | Yes | Yes |
 
 A deleted note keeps its document, so it can be brought back, with the text
-it had. `dirt restore` does it; the apps will, as **Undo**. A note that was
+it had. `dirt restore` does it, and the desktop app's **Undo**; the Android
+app will. A note that was
 archived when it was deleted comes back archived.
 
 In an account, a deleted note is purged thirty days after a device saw it
@@ -38,24 +39,24 @@ signed in, are not purged: there is no limit for them to count against.
 An archived note is out of the list and is still a note: it syncs, is found
 by a search, opens and can be edited, and is exported. Archiving is not an
 edit. The note keeps its edit time, and a note that another device deleted
-stays deleted when this one archives it. The apps cannot archive yet. A
-note archived from the CLI, or on a device with a later version, leaves
-their lists all the same, and the number beside "All" on the desktop counts
-the list without it.
+stays deleted when this one archives it. The Android app cannot archive
+yet. A note archived from the CLI, or on a device with a later version,
+leaves its list all the same.
 
 ## Finding a note
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Search | Every note, by words | Every note, by words | `dirt search`, every note, by words |
-| Narrow to a tag | Tag row above the list, every note | Tag row above the list, every note | `dirt list --tag`, without the archived notes; `dirt list --archived --tag` for those |
-| Tag counts | Of every note, archived ones among them | Of every note, archived ones among them | No |
-| Archived notes among what is found | After the rest. Nothing marks them yet: steps 3 and 4 of the interface plan | The same | After the rest, with `(archived)` at the end of the line, and `"archived"` in `--json` |
+| Search | Find, at the top of the list (Ctrl F, Ctrl K, `/`): every note, by words, narrowing on every key | Every note, by words | `dirt search`, every note, by words |
+| Narrow to a tag | A tag on any row, or the `#` in Find, which opens a list of the six that would narrow most and stays open for more; several at once, with "all of them" or "any of them" | Tag row above the list, every note | `dirt list --tag`, without the archived notes; `dirt list --archived --tag` for those |
+| Tag counts | How many notes there would be with that tag too, archived ones among them | Of every note, archived ones among them | No |
+| Archived notes among what is found | After the rest, under a line "Archived", their titles a shade lighter | After the rest. Nothing marks them yet: step 4 of the interface plan | After the rest, with `(archived)` at the end of the line, and `"archived"` in `--json` |
 
 "By words" is the store's full-text search: a note matches when it holds
 every word typed, in any order, and each word also matches as the start of a
-longer one. The apps show up to 100 notes found, and 100 more with each
-press of "Show more notes".
+longer one. The apps show up to 100 notes found; the desktop app shows 100
+more as scrolling nears the end, and the Android app with each press of
+"Show more notes".
 
 Finding keeps archived notes, by words or by a tag: they come after every
 note that is not archived, however well they match. So the number beside a
@@ -102,12 +103,12 @@ data folder and the keychain entry, so signing in with either signs in both.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Attach a file to a note | "Attach a file" under the note, in a file dialog that takes several; or drop files on the note | "Attach a file" under the note, on Android's screen for choosing files, which takes several. On a note not saved yet, it saves the note first | `dirt attach <note> <file>`; `--name` and `--type` say what the path does not |
+| Attach a file to a note | The paperclip beside the note, or Ctrl Shift A, in a file dialog that takes several; or drop files on the page. On the blank page either makes a note of the files | "Attach a file" under the note, on Android's screen for choosing files, which takes several. On a note not saved yet, it saves the note first | `dirt attach <note> <file>`; `--name` and `--type` say what the path does not |
 | List a note's files | Under the open note: each file's name, size and kind, and where it is if it is not both here and on the server | The same | `dirt files <note>`, the same; `--json` |
-| Open a file | "Open" hands a copy to whatever the system uses for files of its kind, fetching the file first if need be. Not offered for a file the system would run | "Open" lends a copy to another app, which Android lets the person choose. Not offered for a file the system would run or install | No: `dirt save`, then open it |
-| Save a copy of a file | "Save a copy", in a file dialog that proposes the file's name | "Save a copy", on Android's screen for choosing a place | `dirt save <note> <file> [path]`. Does not replace a file that is there unless `--force` |
-| Remove a file from a note | "Remove" | "Remove" | `dirt detach <note> <file>` |
-| See a picture's thumbnail | In the file's row. Fetched by itself, without the picture | The same | Not applicable |
+| Open a file | "Open in another app", an icon on the file under the pointer, hands a copy to whatever the system uses for files of its kind, fetching the file first if need be. Not offered for a file the system would run | "Open" lends a copy to another app, which Android lets the person choose. Not offered for a file the system would run or install | No: `dirt save`, then open it |
+| Save a copy of a file | "Save a copy", an icon on the file, in a file dialog that proposes the file's name | "Save a copy", on Android's screen for choosing a place | `dirt save <note> <file> [path]`. Does not replace a file that is there unless `--force` |
+| Remove a file from a note | "Remove from the note", an icon on the file | "Remove" | `dirt detach <note> <file>` |
+| See a picture's thumbnail | In the file's tile. Fetched by itself, without the picture | The same | Not applicable |
 
 A photograph gets a thumbnail if it is a JPEG, a PNG, a GIF or a WebP. One
 saved as HEIC is attached without: the core does not read HEIC. The
@@ -124,9 +125,9 @@ plain name in the folder asked for.
 | | Desktop | Android | CLI |
 |---|---|---|---|
 | Sync without being asked | On start, on return to the window, after a change | On start, on return to the app, after a change | After each command that changes a note |
-| Sync now | Settings → Sync | Settings | `dirt sync` |
-| When it last synced, and how many notes and files wait | Settings → Sync | Settings, and a line above the list | `dirt auth status`, `dirt sync --verbose`. `dirt sync` and any command that changes a note say when a file did not go |
-| Each note that could not be synced, with the reason and what releases it | Settings → Sync | Settings | `dirt auth status`, `dirt sync --verbose` |
+| Sync now | The sync status at the foot of the list, or Ctrl R | Settings | `dirt sync` |
+| When it last synced, and how many notes and files wait | The sync status at the foot of the list, its tooltip, and Settings → Sync | Settings, and a line above the list | `dirt auth status`, `dirt sync --verbose`. `dirt sync` and any command that changes a note say when a file did not go |
+| Each note that could not be synced, with the reason and what releases it | Settings → Sync, which the sync status opens when there is a problem | Settings | `dirt auth status`, `dirt sync --verbose` |
 | Each file the server refused, with the reason | Settings → Sync | Settings | `dirt auth status`, `dirt sync`, `dirt files <note>` |
 | Open such a note from the list of them | Yes | Yes | By its ID, which is printed |
 
@@ -159,7 +160,7 @@ the head of the note in the Markdown.
 | | Desktop | Android | CLI |
 |---|---|---|---|
 | Light and dark themes | Yes, or follow the system | Light only | Not applicable |
-| Font and size | Yes | No | Not applicable |
+| Text size | Settings → Appearance, Ctrl + and Ctrl − (13 to 20 px, 15 at first). Inter and JetBrains Mono, bundled; the choice of font is gone | No | Not applicable |
 | Shell completions | Not applicable | Not applicable | `dirt completions <shell>` |
 
 ## Not built

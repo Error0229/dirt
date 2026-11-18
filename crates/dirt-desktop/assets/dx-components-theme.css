@@ -1,7 +1,8 @@
 /* This file contains the global styles for the styled dioxus components. You only
  * need to import this file once in your project root.
  */
-@import url("https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap");
+/* Inter is bundled by dirt-ui and nothing is fetched at run time
+   (interface design 4.2). */
 
 body {
   padding: 0;

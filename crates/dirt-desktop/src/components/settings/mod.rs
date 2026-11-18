@@ -13,7 +13,7 @@ use dirt_core::models::{Settings, ThemeMode};
 use super::button::{Button, ButtonVariant};
 use super::dialog::{DialogContent, DialogRoot, DialogTitle};
 use crate::services::export_into;
-use crate::state::AppState;
+use crate::state::{AppState, SettingsTab};
 use crate::theme::resolve_theme;
 use account_settings::AccountSettingsTab;
 use data_settings::DataSettingsTab;
@@ -27,15 +27,6 @@ mod devices_settings;
 mod row;
 mod sync_settings;
 mod theme_settings;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SettingsTab {
-    Appearance,
-    Data,
-    Sync,
-    Account,
-    Devices,
-}
 
 /// Settings panel component
 #[component]
@@ -128,7 +119,7 @@ pub fn SettingsPanel() -> Element {
     let export_json = move |_: MouseEvent| export_notes(ExportFormat::Json);
     let export_markdown = move |_: MouseEvent| export_notes(ExportFormat::Markdown);
 
-    let mut active_tab = use_signal(|| SettingsTab::Appearance);
+    let mut active_tab = use_signal(|| *state.settings_tab.peek());
 
     let on_theme_change = {
         let mut save = save_settings;
@@ -140,15 +131,6 @@ pub fn SettingsPanel() -> Element {
             };
             let mut new_settings = settings();
             new_settings.theme = new_theme;
-            save(new_settings);
-        }
-    };
-
-    let on_font_family_change = {
-        let mut save = save_settings;
-        move |value: String| {
-            let mut new_settings = settings();
-            new_settings.font_family = value;
             save(new_settings);
         }
     };
@@ -258,7 +240,6 @@ pub fn SettingsPanel() -> Element {
                             current_settings: current_settings,
                             current_theme_value: current_theme_value.to_string(),
                             on_theme_change: on_theme_change,
-                            on_font_family_change: on_font_family_change,
                             on_font_size_change: on_font_size_change,
                         }
                     },

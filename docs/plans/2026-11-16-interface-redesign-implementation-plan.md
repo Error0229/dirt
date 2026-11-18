@@ -1200,6 +1200,32 @@ title bar cannot be moved or resized keeps the system's title bar.
 **Done when:** every desktop row of design section 2 that this step covers
 takes the number of actions the table gives, counted by hand.
 
+**Split in two.** 3a is the screen: the page, the list in its layers, Find
+and tags, archive, delete and undo, the sync status, the app's own menu,
+<kbd>Ctrl Z</kbd> after the toast has gone, the text size's default of
+15 px, and every key of 7.4 but those of later steps' features. What it
+settled is in design section 7.8; its shared parts (the row, Find and the
+list of tags, the sync status, the layer line, the menu, load more) are in
+`dirt-ui` for step 4. 3b is focus while writing (7.7), the controls shown
+by nearness (6.4's second half) and the window without a title bar (7.6).
+
+3b also fixes two things 3a's review left open:
+
+- **Typing while a note is left is lost.** Done (Esc, Ctrl Enter, ✓) and
+  opening another note wait on the store to save and, for an emptied
+  note, let it go, before the page is blank or shows the other note.
+  What is typed in that moment goes into a page about to be replaced.
+  Two arrow presses before the first note is shown move one row, and
+  attaching a file while the first character's note is still being made
+  makes a second note. The page should change at once and the leaving
+  be done from what it held, so that the next thought can be typed
+  straight after Esc: capture in under two seconds is the product.
+- **A delete undone comes back at the top of the list**, not into its
+  place (design 6.3). The store's restore is a change to the document,
+  and moves the edit time. Restoring should keep the edit time the note
+  had, as unarchiving does; that is `dirt-core`'s, with its own tests,
+  and must still sync as a change.
+
 ### Step 4: Android's main screen
 
 The dock, cards, Find, the note that grows out of its card, swipe to

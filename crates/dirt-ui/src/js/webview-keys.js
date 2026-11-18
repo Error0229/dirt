@@ -24,7 +24,7 @@
   window.addEventListener('wheel', function (event) {
     if (event.ctrlKey || event.metaKey) event.preventDefault();
   }, { passive: false, capture: true });
-  // The browser's menu. The app's own (Copy, Paste, Select all) comes with
-  // the desktop's main screen.
+  // The browser's menu. The app's own (Copy, Paste, Select all) takes its
+  // place: `components::ContextMenu`, shown by the interface's script.
   window.addEventListener('contextmenu', function (event) { event.preventDefault(); }, true);
 })();

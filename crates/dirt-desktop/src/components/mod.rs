@@ -1,23 +1,16 @@
 //! UI Components
 //!
-//! Reusable UI components for the desktop application.
+//! The parts of the old interface that stay until their steps replace
+//! them (Settings, quick capture, and the controls they are built of), and
+//! the list of a note's files under the page.
 
 mod attachments;
-mod note_actions;
-mod note_card;
-mod note_editor;
-mod note_list;
 mod quick_capture;
 mod settings;
-mod toolbar;
 
-pub use note_actions::{create_note, delete_note_optimistic, update_note_content};
-pub use note_card::NoteCard;
-pub use note_editor::NoteEditor;
-pub use note_list::NoteList;
+pub use attachments::AttachmentPanel;
 pub use quick_capture::QuickCapture;
 pub use settings::SettingsPanel;
-pub use toolbar::Toolbar;
 pub mod button;
 pub mod dialog;
 pub mod input;

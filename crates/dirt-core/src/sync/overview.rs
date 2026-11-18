@@ -168,6 +168,10 @@ impl SyncOverview {
 /// asks again when this has passed.
 pub const JUST_SYNCED_MS: i64 = 1_400;
 
+/// What the list says of a note this device has not yet sent to the
+/// server, beside the note's row (interface design, section 6.6).
+pub const NOT_ON_SERVER_YET: &str = "Not on the server yet";
+
 /// Which state sync is in, for the status an app always shows.
 ///
 /// The status is an icon, and for three of the states a few words beside
