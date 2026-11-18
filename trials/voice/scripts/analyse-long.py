@@ -1,4 +1,5 @@
-"""The ten-minute recording: what each front-runner made of it.
+"""The long recording (five minutes, scripts/shorten-long.py): what each
+front-runner made of it.
 
     data/venv/Scripts/python scripts/analyse-long.py
 
@@ -69,6 +70,10 @@ def main():
         print(f"{path.stem}: {read['audio_seconds']:.0f} s read in {times} s "
               f"({len(read['pieces'])} piece(s), longest {max(b - a for a, b in read['pieces']):.1f} s, "
               f"finding the pauses took {read['cut_seconds']:.1f} s), peak {end['peak_bytes'] / 2 ** 20:.0f} MiB")
+        median = sorted(read["read_seconds"])[len(read["read_seconds"]) // 2]
+        per_minute = median / (read["audio_seconds"] / 60)
+        print(f"   per minute of sound: {per_minute:.1f} s (median); ten minutes would take about "
+              f"{10 * per_minute:.0f} s at this rate")
         print(f"   mistakes {100 * len(wrong) / len(ref):.2f}% ({len(wrong)} of {len(ref)})")
         if joins and exact:
             near = sum(1 for kind, _, j in wrong if any(abs(j - join) <= 2 for join in joins))

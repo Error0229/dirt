@@ -20,7 +20,7 @@
 # Three other modes, for after the queues:
 #   MODE=fetch  bash scripts/run2.sh NAME...   fetch and keep, measure nothing
 #   MODE=retime bash scripts/run2.sh NAME...   time again, into results2/retime
-#   MODE=long   bash scripts/run2.sh NAME...   read data/long (ten minutes)
+#   MODE=long   bash scripts/run2.sh NAME...   read data/long (five minutes)
 #               three times, into results2/long; LONG_WINDOW=25 cuts it
 #               at pauses even for whisper.cpp, which otherwise reads it
 #               whole with its own 30 second steps
