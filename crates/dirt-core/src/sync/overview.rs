@@ -642,7 +642,7 @@ mod tests {
         assert_eq!(waiting.headline(), "2 notes are waiting to be sent.");
         let offline = SyncOverview {
             failure: Some(failed(ErrorClass::TryAgainLater)),
-            ..waiting.clone()
+            ..waiting
         };
         assert_eq!(
             offline.headline(),

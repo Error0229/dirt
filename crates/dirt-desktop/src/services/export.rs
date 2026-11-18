@@ -19,9 +19,10 @@ const MOST_NAMED: usize = 5;
 pub struct Exported {
     /// The folder it is in.
     pub folder: PathBuf,
-    /// What to tell the person: what it holds and where it is, and then
-    /// any files it could not be given, with why. One line each.
+    /// What to tell the person: what it holds and the folder's name.
     pub said: String,
+    /// The files it could not be given, with why, one line each.
+    pub left_out: Vec<String>,
 }
 
 /// Exports every note and its files into a new folder inside `parent`.
@@ -37,12 +38,12 @@ pub async fn export_into(
 ) -> Result<Exported, ExportError> {
     let export = Export::with_files(store, session, format).await?;
     let folder = parent.join(suggested_export_folder_name(now_ms));
-    let mut said = vec![format!(
-        "Exported {} to {}.",
-        export.counts(),
-        folder.display()
-    )];
-    said.extend(export.left_out_lines(MOST_NAMED));
+    let name = folder.file_name().map_or_else(
+        || folder.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let said = format!("Exported {} to {name}", export.counts());
+    let left_out = export.left_out_lines(MOST_NAMED);
     // Copying takes as long as the disk it goes to takes. Not on the
     // window's own thread, which would stop drawing for that long.
     let written = folder.clone();
@@ -51,7 +52,8 @@ pub async fn export_into(
         .map_err(|error| ExportError::Io(std::io::Error::other(error)))??;
     Ok(Exported {
         folder,
-        said: said.join("\n"),
+        said,
+        left_out,
     })
 }
 
@@ -81,11 +83,9 @@ mod tests {
         assert_eq!(exported.folder, chosen.join("dirt-export-456"));
         assert_eq!(
             exported.said,
-            format!(
-                "Exported 2 notes and 1 file to {}.",
-                exported.folder.display()
-            )
+            "Exported 2 notes and 1 file to dirt-export-456"
         );
+        assert!(exported.left_out.is_empty());
         let notes = std::fs::read_to_string(exported.folder.join("notes.md")).unwrap();
         assert!(notes.contains("Desktop export #one"));
         assert!(notes.contains("Desktop export #two"));
@@ -126,13 +126,15 @@ mod tests {
             .unwrap();
         assert_eq!(
             exported.said,
-            format!(
-                "Exported 1 note and no files to {}.\n\
-                 1 file is not in the export.\n\
-                 The file is not on this device, and this device is not signed in to fetch it.\n  \
-                 map.txt, attached to: Trip",
-                exported.folder.display()
-            )
+            "Exported 1 note and no files to dirt-export-1"
+        );
+        assert_eq!(
+            exported.left_out,
+            [
+                "1 file is not in the export.",
+                "The file is not on this device, and this device is not signed in to fetch it.",
+                "  map.txt, attached to: Trip",
+            ]
         );
         assert!(exported.folder.join("notes.json").is_file());
     }

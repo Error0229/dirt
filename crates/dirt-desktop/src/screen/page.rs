@@ -28,7 +28,7 @@ pub fn Page() -> Element {
     let serial = view.serial;
     // While Settings is open over the page, Esc closes Settings and leaves
     // the note: the script must not empty the page then.
-    let done_keys = !*app.settings_open.read();
+    let done_keys = !app.nav.is_open();
     let from = view.from.map(|from| match from {
         Arrival::Above => "above",
         Arrival::Below => "below",

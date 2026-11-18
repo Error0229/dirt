@@ -63,6 +63,7 @@ pub mod gallery;
 pub mod icons;
 pub mod motion;
 mod root;
+pub mod settings;
 pub mod text;
 pub mod time;
 pub mod tokens;

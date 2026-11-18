@@ -10,19 +10,9 @@ use dirt_core::models::{NoteId, Settings};
 use dirt_core::session::{Session, SessionState};
 use dirt_core::sync::worker::{SyncStatus, Trigger};
 use dirt_core::Store;
+use dirt_ui::settings::SettingsNav;
 
 use crate::theme::ResolvedTheme;
-
-/// Where Settings opens: the tab it shows first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SettingsTab {
-    #[default]
-    Appearance,
-    Data,
-    Sync,
-    Account,
-    Devices,
-}
 
 /// Global application state
 #[derive(Clone, Copy)]
@@ -43,8 +33,7 @@ pub struct AppState {
     /// Application settings
     pub settings: Signal<Settings>,
     /// Resolved theme (light/dark based on settings and system preference),
-    /// for the old settings panel and quick capture until they are
-    /// replaced.
+    /// for the old quick capture until it is replaced.
     pub theme: Signal<ResolvedTheme>,
     /// The note store in use: the signed-in account's, or the local one.
     /// It is replaced when the person signs in or out.
@@ -61,10 +50,8 @@ pub struct AppState {
     pub session_state: Signal<SessionState>,
     /// How sync is going, for the interface to render.
     pub sync_status: Signal<SyncStatus>,
-    /// Whether settings panel is open
-    pub settings_open: Signal<bool>,
-    /// The tab Settings shows when it opens.
-    pub settings_tab: Signal<SettingsTab>,
+    /// Whether Settings is open, and where.
+    pub nav: SettingsNav,
     /// Whether quick capture overlay is active
     pub quick_capture_open: Signal<bool>,
     /// Quit was chosen: the main screen hands over what its page holds,
@@ -91,13 +78,6 @@ impl AppState {
     pub fn reread(&self) {
         let mut read = self.notes_read;
         *read.write() += 1;
-    }
-
-    /// Opens Settings at `tab`.
-    pub fn open_settings(&self, tab: SettingsTab) {
-        let (mut open, mut at) = (self.settings_open, self.settings_tab);
-        at.set(tab);
-        open.set(true);
     }
 
     /// Saves this device's settings, as they are now in [`Self::settings`].

@@ -803,6 +803,8 @@
       const first = focusables(modal)[0] || modal;
       first.focus({ preventScroll: true });
     }, 60);
+    const scroller = modal.querySelector('[data-dui-scroll]');
+    if (scroller && railFor(scroller)) setTimeout(() => followRail(scroller), 80);
     const rises = $$('[data-dui-rise]', modal);
     if (modal.dataset.duiModal === 'panel') {
       // It grows out of what opened it: from that point and 6% of its
@@ -922,6 +924,65 @@
   }
   window.addEventListener('pointerup', endSheet);
   window.addEventListener('pointercancel', endSheet);
+
+  // ---- Settings: the rail, a section brought into sight, the code -------
+  // The rail beside the page follows the scroll: its highlight is on the
+  // section at the top, or the last one once the page is at its end. A
+  // press on the rail, or Rust asking (`DirtUi.jump`), brings a section
+  // into sight.
+  const sectionsOf = scroller => $$('[data-dui-section]', scroller);
+  function railFor(scroller) {
+    const modal = scroller.closest('[data-dui-modal]');
+    return modal ? modal.querySelector('[data-dui-rail]') : null;
+  }
+  function markRail(scroller, name) {
+    const rail = railFor(scroller);
+    if (!rail) return;
+    const buttons = $$('[data-dui-jump]', rail);
+    const index = Math.max(0, buttons.findIndex(button => button.dataset.duiJump === name));
+    buttons.forEach((button, at) => button.setAttribute('aria-current', at === index ? 'true' : 'false'));
+    const bar = rail.querySelector('.dui-rail-b');
+    if (bar) bar.style.setProperty('--i', index);
+  }
+  function followRail(scroller) {
+    const sections = sectionsOf(scroller);
+    if (!sections.length) return;
+    const top = scroller.getBoundingClientRect().top;
+    let current = sections[0];
+    sections.forEach(section => { if (section.getBoundingClientRect().top - top - 40 <= 0) current = section; });
+    if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) current = sections[sections.length - 1];
+    markRail(scroller, current.dataset.duiSection);
+  }
+  document.addEventListener('scroll', event => {
+    const scroller = event.target;
+    if (scroller && scroller.matches && scroller.matches('[data-dui-scroll]') && railFor(scroller)) followRail(scroller);
+  }, true);
+  function jump(name, instant) {
+    const section = $$(`[data-dui-section="${name}"]`).filter(element => !element.closest('[inert]')).pop();
+    if (!section) return;
+    const scroller = section.closest('[data-dui-scroll]');
+    if (!scroller) return;
+    const top = section.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 8;
+    scroller.scrollTo({ top, behavior: instant || reduced() ? 'auto' : 'smooth' });
+    markRail(scroller, name);
+  }
+  // "They match": the seven pictures gather to the middle, from the
+  // outside in, shrinking (300 ms, exit), and the tick takes their place.
+  // Rust answers the exchange as they arrive.
+  document.addEventListener('click', event => {
+    const button = event.target.closest && event.target.closest('[data-dui-gather]');
+    if (!button || reduced()) return;
+    const pair = button.closest('.dui-pair');
+    const items = pair ? $$('.dui-sas-i', pair) : [];
+    if (!items.length) return;
+    const [cx, cy] = centreOf(items[0].parentElement);
+    const middle = (items.length - 1) / 2;
+    items.forEach((item, index) => {
+      const [x, y] = centreOf(item);
+      item.animate([{ transform: 'none', opacity: 1 }, { transform: `translate(${cx - x}px, ${cy - y}px) scale(.3)`, opacity: 0 }],
+        { duration: 300, delay: Math.abs(index - middle) * 28, easing: tokens.exit, fill: 'forwards' });
+    });
+  }, true);
 
   // ---- Confirmation in place (sections 6.12, 12) -------------------------
   // The row that asks takes focus as it appears (on Cancel, the safe
@@ -1573,5 +1634,5 @@
     if (document.body) watchPage(); else document.addEventListener('DOMContentLoaded', watchPage);
   }
 
-  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, appendText, paste, back };
+  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, appendText, paste, back, jump };
 })();

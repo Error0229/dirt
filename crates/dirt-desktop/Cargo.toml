@@ -33,7 +33,6 @@ uuid.workspace = true
 open = "5"
 global-hotkey = "0.6"
 tray-icon = "0.19"
-dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
 rfd = "0.15"
 # Copy and Paste for the app's own menu, and copying a note's text: a
 # web view may not read the clipboard without asking.
