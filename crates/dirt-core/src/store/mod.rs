@@ -219,6 +219,18 @@ impl Store {
             .await
     }
 
+    /// Creates a note with this text under an ID the caller made.
+    ///
+    /// For an app that has to name the note before the store has made it:
+    /// the desktop's page makes the note at the first character typed, and
+    /// files attached in the same moment go to that note. A note with this
+    /// ID already is [`Error::InvalidInput`].
+    pub async fn create_note_with_id(&self, id: NoteId, content: &str) -> Result<Note> {
+        let content = content.to_owned();
+        self.write(move |c| notes::create(c, id, &content, now_ms()))
+            .await
+    }
+
     /// Where this store keeps the files attached to its notes.
     #[must_use]
     pub fn shelf(&self) -> Shelf {
@@ -591,6 +603,11 @@ impl Store {
     /// delete. It works for as long as this device holds the note, which is
     /// until the note is purged, thirty days after the delete. A note that
     /// was archived comes back archived.
+    ///
+    /// The note keeps the edit time it had, so it comes back into its place
+    /// in the list and not at the top. Bringing it back is still a change
+    /// to the note, sent to the other devices like an edit, and it brings
+    /// the note back on them too.
     ///
     /// A note that is not deleted is returned as it is. One this device
     /// does not hold is [`Error::NotFound`].

@@ -395,7 +395,7 @@ pub(super) fn restore(connection: &mut Connection, id: &NoteId, now_ms: i64) -> 
         drop(tx);
         return get(connection, id)?.ok_or_else(|| not_found(id));
     }
-    doc.restore(now_ms);
+    doc.bring_back(now_ms);
     let note = save(&tx, id, &doc, Some(row), Origin::Local)?.ok_or_else(|| not_found(id))?;
     tx.commit()?;
     Ok(note)

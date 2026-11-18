@@ -120,6 +120,53 @@ fn restoring_brings_the_note_back_everywhere() {
     assert_eq!(a.text(), "note");
 }
 
+/// Undoing a delete brings the note back with the edit time it had, on
+/// both devices, though it is a change the other device merges like any.
+#[test]
+fn a_note_brought_back_keeps_its_edit_time_everywhere() {
+    let (a, b) = pair("note");
+    b.set_text("note, edited", 40);
+    sync(&a, &b);
+    a.delete();
+    sync(&a, &b);
+    assert!(b.is_deleted());
+
+    let before = a.version_vector();
+    a.bring_back(90);
+    assert!(!a.is_deleted());
+    assert_ne!(a.version_vector(), before, "an edit all the same");
+    assert_eq!(a.edited_at_ms(), Some(40));
+
+    sync(&a, &b);
+    assert!(!b.is_deleted());
+    assert_eq!(b.edited_at_ms(), Some(40));
+    assert_eq!(b.text(), "note, edited");
+
+    // And it can be deleted again, and brought back again.
+    b.delete();
+    sync(&a, &b);
+    assert!(a.is_deleted());
+    b.bring_back(120);
+    sync(&a, &b);
+    assert!(!a.is_deleted());
+    assert_eq!(a.edited_at_ms(), Some(40));
+}
+
+/// An edit the deleting device had not seen still brings the note back
+/// as before, and its time is the note's edit time.
+#[test]
+fn bringing_back_is_no_later_than_an_edit_made_meanwhile() {
+    let (a, b) = pair("note");
+    a.delete();
+    b.set_text("note, still wanted", 60);
+    a.bring_back(90);
+    sync(&a, &b);
+    assert!(!a.is_deleted());
+    assert_eq!(a.text(), "note, still wanted");
+    assert_eq!(a.edited_at_ms(), Some(60));
+    assert_eq!(b.edited_at_ms(), Some(60));
+}
+
 #[test]
 fn a_restored_note_can_be_deleted_again() {
     let (a, b) = pair("note");

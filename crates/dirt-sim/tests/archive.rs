@@ -482,8 +482,12 @@ async fn a_delete_is_undone_from_either_device_and_an_archived_note_comes_back_a
         let list = device.store.list_notes(10, 0).await.unwrap();
         assert_eq!(ids(&list), [listed.id]);
         assert_eq!(list[0].content, "deleted by mistake");
+        // Back with the edit time it had, on both devices: into its place
+        // in the list, not at the top.
+        assert_eq!(list[0].updated_at, listed.updated_at);
         let archive = device.store.list_archived_notes(10, 0).await.unwrap();
         assert_eq!(ids(&archive), [archived.id]);
+        assert_eq!(archive[0].updated_at, archived.updated_at);
         rows_agree_with_documents(&device.store).await;
     }
     assert_eq!(

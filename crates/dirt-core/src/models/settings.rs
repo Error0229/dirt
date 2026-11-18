@@ -80,6 +80,52 @@ impl Accent {
     }
 }
 
+/// How the desktop's list gets out of the way while a note is written
+/// (interface design, section 7.7). Kept on the device, like the theme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FocusStyle {
+    /// The list slides out to the left; the note's column glides to the
+    /// middle. The default.
+    #[default]
+    Slide,
+    /// The list folds to a rail of grains, one for each note.
+    Rail,
+    /// Slide, and a calmer page: warmer paper, larger type.
+    Zen,
+}
+
+impl FocusStyle {
+    /// Every style, in the order the interface offers them.
+    pub const ALL: [Self; 3] = [Self::Slide, Self::Rail, Self::Zen];
+
+    /// The name the style is stored under and the style sheet knows it by.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Slide => "slide",
+            Self::Rail => "rail",
+            Self::Zen => "zen",
+        }
+    }
+
+    /// The name a person reads.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Slide => "Slide",
+            Self::Rail => "Rail",
+            Self::Zen => "Zen",
+        }
+    }
+
+    /// The style stored under `name`, if this build has one of that name.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|style| style.name() == name)
+    }
+}
+
 /// Application settings
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
@@ -93,6 +139,8 @@ pub struct Settings {
     pub accent: Accent,
     /// Global capture hotkey (e.g., "Ctrl+Shift+D")
     pub capture_hotkey: String,
+    /// How the desktop's list gets out of the way while a note is written.
+    pub focus_style: FocusStyle,
 }
 
 impl Default for Settings {
@@ -103,6 +151,7 @@ impl Default for Settings {
             theme: ThemeMode::System,
             accent: Accent::Clay,
             capture_hotkey: "Ctrl+Shift+D".to_string(),
+            focus_style: FocusStyle::Slide,
         }
     }
 }
@@ -125,5 +174,14 @@ mod tests {
             assert_eq!(Accent::from_name(accent.name()), Some(accent));
         }
         assert_eq!(Accent::from_name("wallpaper"), None);
+    }
+
+    #[test]
+    fn a_focus_style_is_found_by_the_name_it_is_stored_under() {
+        for style in FocusStyle::ALL {
+            assert_eq!(FocusStyle::from_name(style.name()), Some(style));
+        }
+        assert_eq!(FocusStyle::default(), FocusStyle::Slide);
+        assert_eq!(FocusStyle::from_name("dim"), None);
     }
 }
