@@ -112,6 +112,12 @@ recording's format.
 
 ### Trial 1 result
 
+> **Superseded in part.** The streaming recommendation below was superseded
+> by the owner's decision of 2026-11-17 that words need not appear while the
+> person speaks. See "Trial 1, second measurement: accuracy after the
+> recording ends", after this section, for the engine's model and how a
+> finished recording is read.
+
 Run on 2026-11-16 and 17. The measuring code is on the branch
 `trial/voice-engine`, in `trials/voice/`; it is not merged.
 
@@ -630,6 +636,479 @@ python -I scripts/analyse.py data/phone-results
 The script runs each configuration three times on the wall clock, and does
 the same with Moonshine as the second model and with whisper's `tiny.en`
 and `base.en`. Kroko's model is run the same way by naming its folder.
+
+### Trial 1, second measurement: accuracy after the recording ends
+
+Run on 2026-11-17, after the owner decided that words need not appear
+while the person speaks: the recording is kept as a note at once, and its
+words are made afterwards on the device that recorded it. So the question
+became which engine and model write the most accurate English text for a
+finished recording, read once, within what a phone can do. Streaming and
+words that change no longer count. The measuring code is on the branch
+`trial/voice-engine`, in `trials/voice/` (`voice-trial read`,
+`scripts/run2.sh`, `scripts/analyse2.py`, `scripts/analyse-long.py`); it is
+not merged.
+
+**What it found, in short**
+
+- **The engine stays sherpa-onnx**, now with an offline model that reads a
+  finished recording. Its offline models come in the same libraries as its
+  streaming ones, so the build costs nothing more than "Trial 1 result"
+  says.
+- **Put NVIDIA's Parakeet TDT 0.6b v2 (8-bit, 631 MiB, CC BY 4.0) to the
+  owner as the default.** It made 4.8% mistakes on 4,598 words of human and
+  synthetic English. whisper `small.en` made 7.1% and whisper
+  `large-v3-turbo` 6.5%; both differences are more than chance. It writes
+  capitals and punctuation. On this laptop it read a 60 second recording
+  in 6.1 s, holding 1.1 GiB.
+- **The smaller alternative is Parakeet TDT-CTC 110m** (130 MiB, CC BY
+  4.0): 6.4% mistakes, 1.8 s for 60 s, 0.6 GiB.
+- **No larger model earns its size.** The only model ahead of Parakeet v2
+  (NVIDIA's Parakeet unified, 4.5%) is the same size, ahead by less than
+  chance, and under a licence of NVIDIA's own. The large whisper models made
+  more mistakes than Parakeet v2, were 3 to 14 times slower on a minute of
+  speech, and held up to twice the memory. If the owner wants a larger one
+  all the same, it is whisper `large-v3-turbo` through sherpa-onnx
+  (989 MiB, 6.5%).
+- **A recording longer than 25 seconds is cut at pauses** found by
+  Silero's model. With the cutter the trial ended with, which keeps every
+  sample, Parakeet v2 made 6.1% mistakes on a five-minute recording, read
+  in 33 s, with no words lost at the joins. whisper `small.en` made 6.6%
+  reading the same recording whole and took 93 s. The trial's first cutter
+  dropped sound between pieces and lost words; step 9 must not do that.
+- **The phone was not run.** Whether a phone can give the default model
+  1.1 GiB, and how long it takes there, is what decides between the
+  default and the smaller model.
+
+#### How it was measured
+
+**The test set** is 227 recordings, 4,598 words, 29 minutes, in five
+groups. None of it was recorded for the trial and no microphone was used.
+Each group was picked by a fixed rule (`scripts/make-set2.py`), never by
+ear.
+
+| Group | Recordings | Words | What it is | Voice |
+|---|---|---|---|---|
+| Clean | 60 | 1,447 | LibriSpeech test-clean (CC BY 4.0): audiobooks read clearly | Human |
+| Other | 60 | 1,353 | LibriSpeech test-other (CC BY 4.0): the same kind of reading, by voices and in recordings that recognisers find harder | Human |
+| Meetings | 31 | 570 | The AMI Meeting Corpus's test split, headset microphones (CC BY 4.0): unscripted talk in meetings, many speakers not native | Human |
+| Calls | 40 | 804 | Earnings-22's test split (CC BY-SA 4.0): company results calls, telephone sound, speakers from many countries, unscripted answers | Human |
+| Thoughts | 36 | 424 | Thoughts of the kind Dirt is for ("Tell Maya the demo moved to Thursday at half past two"), spoken by Windows' two English voices | Synthetic |
+
+Meetings and calls are the nearest thing to a thought said into a phone
+that could be had freely: unscripted, with false starts, accents and poor
+sound. Common Voice was not used: its sentences are read, not said, and
+the dataset comes as a whole. Every recording is 3 to 15 seconds long. A
+synthetic voice flatters a recogniser, so the thoughts group says little
+beyond whether a model writes such sentences sensibly. Some models were
+trained on LibriSpeech's training set (other readers, other books), which
+flatters them on the first two groups.
+
+**Mistakes** are the word error rate: words wrong, missing or added, out
+of the reference's words. Both texts first go through the normaliser
+OpenAI published with Whisper, which the Open ASR Leaderboard also uses.
+It makes everything lower case, drops punctuation, writes numbers as
+digits ("three" and "3", "twenty dollars" and "$20"), makes contractions
+and British spellings one, and drops "um" and "uh". Then words that
+differ only in a space are made the same ("off site" and "offsite", "Q 3"
+and "Q3"). So "Q3" against "Q three" does not decide a ranking. Whether a
+difference is more than chance is asked by drawing the recordings again
+with replacement, group by group, 10,000 times.
+
+**Reading.** Each model read each recording once. sherpa-onnx (version
+2.0.1, greedy decoding, 8-bit models unless marked 32-bit) is handed a
+recording of up to 25 seconds whole, and every recording in the set is
+shorter. whisper.cpp (`whisper-rs` 0.16, beam search of 5) is handed any
+recording whole and steps through it 30 seconds at a time itself. Every
+model ran with 4 threads at high priority.
+
+**Time and memory** are for three clips of LibriSpeech test-clean, 5, 15
+and 60 seconds long, each read three times; the figure is the median. The
+time runs from handing over the sound to having the text, after the model
+was loaded; loading is given apart. Memory is the process's peak working
+set.
+
+**The machine** is the laptop of "Trial 1 result" (Intel Core i5-13500H,
+12 cores, 16 threads, Windows 11).
+
+- **The first timings were disturbed.** Two copies of the measuring
+  program read beside each other (a copy that was timing made the other
+  wait), and an emulator for another task ran. From 15:43 to 16:30, 94% of
+  processor time was in use on average, and the processor ran at 72% of
+  its nominal clock.
+- **Calibration showed by how much.** The program times a fixed piece of
+  arithmetic before each model. It took 0.05 to 0.18 s, so some first
+  timings were three times slower than others.
+- **The disturbed ones were timed again.** The front-runners, and every
+  model first timed at a calibration above 0.1 s, were timed a second time
+  one at a time between 20:52 and 21:55, with the laptop otherwise quiet:
+  44% of processor time in use, the trial's own 4 threads included, and a
+  calibration of 0.05 to 0.07 s. The tables give the second timing where
+  there is one.
+
+**A fixed third for the slowest models.** whisper.cpp spends as much on a
+5 second recording as on a 30 second one. Its `medium.en` and
+`large-v3-turbo` would have taken many hours over the whole set on the
+busy laptop, so they read the first of every three recordings of each
+group (`scripts/third.py`, 77 recordings). `large-v3-turbo` was cut off at
+71 of the 77 when the laptop was taken offline, and the table of the third
+compares every model on those 71.
+
+The 5-bit forms of the large whisper.cpp models, and `distil-large-v3` in
+whisper.cpp, were timed but did not read the set:
+
+- The 5-bit `small.en` and `base.en` were within chance of their full
+  forms, so the 5-bit large ones would add little.
+- `distil-large-v3` read the whole set through sherpa-onnx.
+
+#### Measured on this laptop: mistakes on the whole set
+
+227 recordings, 4,598 words, best first. "cpp" is whisper.cpp; every other
+model ran in sherpa-onnx.
+
+| Model | On disk, MiB | All | Clean | Other | Meetings | Calls | Thoughts | Capitals and punctuation |
+|---|---|---|---|---|---|---|---|---|
+| Parakeet unified en 0.6b | 632 | 4.5% | 0.9% | 2.7% | 7.5% | 13.6% | 1.7% | Yes |
+| **Parakeet TDT 0.6b v2** | 631 | **4.8%** | 1.2% | 2.7% | 10.5% | 13.2% | 0.7% | Yes |
+| Parakeet Ultra (from v3) | 640 | 5.2% | 1.5% | 3.7% | 8.9% | 14.2% | 1.2% | Yes |
+| Parakeet TDT 0.6b v3 | 640 | 5.9% | 1.8% | 3.8% | 11.6% | 15.4% | 0.9% | Yes |
+| Zipformer GigaSpeech | 70 | 6.2% | 1.8% | 5.2% | 12.1% | 13.2% | 2.8% | No |
+| Parakeet Redux (from v3) | 640 | 6.2% | 1.9% | 5.4% | 8.6% | 15.3% | 3.3% | Yes |
+| **Parakeet TDT-CTC 110m** | 130 | **6.4%** | 1.8% | 4.5% | 12.6% | 15.9% | 1.2% | Yes |
+| whisper `large-v3-turbo` | 989 | 6.5% | 1.2% | 3.8% | 14.4% | 18.4% | 0.2% | Yes |
+| whisper `small.en`, cpp | 465 | 7.1% | 2.3% | 6.4% | 15.3% | 14.4% | 0.9% | Yes |
+| whisper `small.en`, cpp, 5-bit | 181 | 7.3% | 2.5% | 6.4% | 14.9% | 15.0% | 1.7% | Yes |
+| whisper `distil-small.en`, cpp | 321 | 7.5% | 2.6% | 5.8% | 14.2% | 16.7% | 3.1% | Yes |
+| whisper `small.en` | 358 | 7.6% | 2.3% | 6.1% | 17.2% | 15.7% | 2.4% | Yes |
+| whisper `distil-small.en` | 285 | 7.8% | 2.8% | 6.6% | 15.4% | 15.4% | 3.8% | Yes |
+| whisper `small.en`, 32-bit | 925 | 7.9% | 2.4% | 6.4% | 17.4% | 16.3% | 2.1% | Yes |
+| Canary 180m flash | 198 | 8.1% | 1.5% | 3.9% | 11.1% | 27.7% | 2.4% | Yes |
+| whisper `distil-large-v3` | 938 | 8.3% | 1.9% | 6.5% | 17.2% | 20.1% | 1.2% | Yes |
+| whisper `base.en`, cpp | 141 | 8.4% | 2.5% | 8.1% | 15.4% | 18.2% | 0.9% | Yes |
+| Moonshine base | 135 | 8.5% | 2.3% | 8.4% | 11.6% | 20.3% | 3.1% | Yes |
+| whisper `base.en`, cpp, 5-bit | 57 | 8.5% | 2.1% | 8.4% | 15.6% | 18.9% | 1.2% | Yes |
+| whisper `base.en`, 32-bit | 279 | 9.6% | 2.8% | 9.1% | 18.2% | 21.1% | 1.4% | Yes |
+| whisper `base.en` | 153 | 10.0% | 2.9% | 8.9% | 20.7% | 20.9% | 2.8% | Yes |
+| Moonshine tiny | 42 | 11.6% | 3.0% | 11.7% | 16.1% | 28.0% | 3.8% | Yes |
+
+"Capitals and punctuation" is "Yes" where most of what the model wrote
+has both. GigaSpeech's zipformer writes in capitals without punctuation.
+
+**Whether a difference is more than chance.** B's mistakes minus A's, in
+points, with the range 95 draws in 100 fell in:
+
+| A | B | B minus A | Range | More than chance? |
+|---|---|---|---|---|
+| Parakeet unified | Parakeet v2 | +0.33 | −0.39 to +1.08 | No |
+| Parakeet v2 | Parakeet Ultra | +0.39 | −0.55 to +1.30 | No |
+| Parakeet v2 | Parakeet v3 | +1.07 | +0.31 to +1.85 | Yes |
+| Parakeet v2 | Zipformer GigaSpeech | +1.30 | +0.47 to +2.13 | Yes |
+| Parakeet v2 | Parakeet 110m | +1.50 | +0.65 to +2.31 | Yes |
+| Parakeet v2 | whisper `large-v3-turbo` | +1.65 | +0.55 to +2.93 | Yes |
+| Parakeet v2 | whisper `distil-large-v3` | +3.41 | +2.14 to +4.82 | Yes |
+| Parakeet 110m | Zipformer GigaSpeech | −0.20 | −0.97 to +0.55 | No |
+| Parakeet 110m | whisper `large-v3-turbo` | +0.15 | −0.80 to +1.35 | No |
+| Parakeet 110m | whisper `small.en`, cpp | +0.76 | +0.07 to +1.48 | Yes |
+| whisper `small.en`, cpp | whisper `small.en`, cpp, 5-bit | +0.17 | −0.34 to +0.85 | No |
+| whisper `base.en`, cpp | whisper `base.en`, cpp, 5-bit | +0.13 | −0.32 to +0.62 | No |
+
+What the mistakes were:
+
+- **Canary 180m flash ran away once.** On one call it wrote "THE" over and
+  over: 118 words for a recording of 24, and 114 of its 223 mistakes on
+  calls. Without that one recording its calls figure would be about 14%.
+  No whisper model ran away like that in this set; `distil-large-v3` once
+  wrote twice what was said. Parakeet and the zipformer are transducers,
+  which cannot repeat themselves that way.
+- **The transducers instead sometimes wrote nothing.** Parakeet v2 wrote
+  nothing for one meeting recording ("it's just uh they'd just be if
+  statements..."), and v3 for that one and two calls full of false starts.
+  whisper's models wrote one to three words for two calls each. An empty
+  result has to be shown as "no words found", not as a note with nothing
+  in it.
+
+#### Measured on this laptop: mistakes on the fixed third
+
+The 71 recordings of the third that every model read, 1,485 words: the
+large whisper.cpp models beside the front-runners.
+
+| Model | On disk, MiB | All | Clean | Other | Meetings | Calls | Thoughts |
+|---|---|---|---|---|---|---|---|
+| Parakeet unified en 0.6b | 632 | 4.1% | 0.4% | 1.7% | 7.3% | 11.3% | 4.1% |
+| **Parakeet TDT 0.6b v2** | 631 | **4.2%** | 0.7% | 2.8% | 7.3% | 11.0% | 0.0% |
+| whisper `large-v3-turbo`, cpp | 1,549 | 5.8% | 0.2% | 3.2% | 16.0% | 12.4% | 0.0% |
+| whisper `large-v3-turbo` | 989 | 6.0% | 0.4% | 3.5% | 13.2% | 14.8% | 0.0% |
+| Parakeet TDT-CTC 110m | 130 | 6.6% | 1.1% | 5.0% | 12.8% | 14.5% | 1.4% |
+| whisper `medium.en`, cpp | 1,463 | 6.9% | 1.1% | 4.3% | 14.2% | 15.9% | 1.4% |
+| whisper `small.en`, cpp | 465 | 7.3% | 1.1% | 6.0% | 16.4% | 13.8% | 0.0% |
+| whisper `distil-large-v3` | 938 | 9.3% | 1.6% | 9.3% | 14.2% | 20.1% | 0.0% |
+
+Parakeet v2 was ahead of whisper.cpp's `large-v3-turbo` by 1.55 points
+(+0.13 to +3.09) and of its `medium.en` by 2.63 (+1.28 to +4.07): both
+more than chance, even on a third of the set. whisper.cpp's `medium.en`
+was not told apart from its `small.en`.
+
+#### Measured on this laptop: time and memory
+
+Median of three, 4 threads. "Again" marks a model timed a second time, one
+at a time, with the laptop quiet. The others were timed once, at the
+calibration shown, where 0.05 to 0.07 s is a quiet laptop.
+
+| Model | 5 s | 15 s | 60 s | Loading | Peak memory, MiB | Calibration |
+|---|---|---|---|---|---|---|
+| **Parakeet TDT 0.6b v2** | 0.49 s | 1.38 s | 6.14 s | 2.6 s | 1,156 | Again, 0.073 |
+| Parakeet unified en 0.6b | 0.44 s | 1.25 s | 5.30 s | 3.5 s | 1,160 | Again, 0.069 |
+| Parakeet TDT 0.6b v3 | 0.37 s | 1.00 s | 4.13 s | 2.2 s | 1,168 | Again, 0.058 |
+| Parakeet Ultra | 0.35 s | 0.87 s | 3.76 s | 3.2 s | 1,167 | 0.054 |
+| Parakeet Redux | 0.41 s | 1.03 s | 4.16 s | 2.9 s | 1,168 | 0.059 |
+| **Parakeet TDT-CTC 110m** | 0.14 s | 0.35 s | 1.79 s | 1.8 s | 604 | 0.055 |
+| Zipformer GigaSpeech | 0.07 s | 0.20 s | 1.15 s | 2.2 s | 558 | Again, 0.055 |
+| Canary 180m flash | 0.65 s | 2.51 s | 9.96 s | 2.3 s | 717 | 0.067 |
+| Moonshine base | 0.15 s | 0.58 s | 2.56 s | 0.8 s | 356 | Again, 0.052 |
+| Moonshine tiny | 0.08 s | 0.37 s | 1.65 s | 0.5 s | 222 | Again, 0.053 |
+| whisper `base.en` | 0.41 s | 1.38 s | 5.68 s | 1.0 s | 737 | 0.054 |
+| whisper `small.en` | 1.99 s | 6.68 s | 24.72 s | 3.2 s | 1,252 | 0.052 |
+| whisper `distil-small.en` | 0.58 s | 1.78 s | 7.69 s | 0.7 s | 945 | Again, 0.053 |
+| whisper `large-v3-turbo` | 1.76 s | 4.56 s | 19.03 s | 2.0 s | 2,096 | Again, 0.052 |
+| whisper `distil-large-v3` | 3.33 s | 7.33 s | 21.90 s | 4.3 s | 1,803 | 0.075 |
+| whisper `base.en`, cpp | 1.65 s | 1.84 s | 6.09 s | 0.2 s | 452 | 0.065 |
+| whisper `base.en`, cpp, 5-bit | 1.72 s | 1.99 s | 6.31 s | 0.1 s | 368 | 0.074 |
+| whisper `small.en`, cpp | 6.37 s | 8.68 s | 22.37 s | 0.8 s | 964 | Again, 0.069 |
+| whisper `small.en`, cpp, 5-bit | 4.63 s | 5.78 s | 19.95 s | 0.2 s | 726 | Again, 0.054 |
+| whisper `distil-small.en`, cpp | 4.11 s | 4.66 s | 19.88 s | 0.4 s | 698 | 0.074 |
+| whisper `medium.en`, cpp | 20.66 s | 24.74 s | 86.62 s | 2.4 s | 2,323 | 0.100 |
+| whisper `medium.en`, cpp, 5-bit | 17.81 s | 21.30 s | 59.66 s | 0.7 s | 1,383 | Again, 0.065 |
+| whisper `large-v3-turbo`, cpp | 27.13 s | 31.10 s | 74.45 s | 2.8 s | 2,108 | 0.081 |
+| whisper `large-v3-turbo`, cpp, 5-bit | 23.58 s | 24.23 s | 75.89 s | 0.5 s | 1,121 | Again, 0.052 |
+| whisper `distil-large-v3`, cpp | 23.91 s | 25.04 s | 77.77 s | 1.4 s | 1,977 | Again, 0.053 |
+
+- **whisper.cpp spends a 30 second window on any recording**, so 5
+  seconds of speech took nearly as long as 15. sherpa-onnx's whisper does
+  not. It read the 5 second clip 3 to 15 times as fast as whisper.cpp did
+  with the same model. On the 60 second clip it was about as fast for
+  `base.en` and `small.en`, and four times as fast for `large-v3-turbo`. Most thoughts
+  last a few seconds, so this is most of the time a person waits.
+- **Parakeet v2 holds about 1.1 GiB** however short the recording, because
+  its 8-bit encoder alone is 622 MiB. Parakeet 110m holds 0.6 GiB, the
+  zipformer 0.55 GiB, and Moonshine base 0.35 GiB.
+- **The sherpa-onnx models timed again were 1.4 to 2.6 times faster**
+  than at first. whisper.cpp's times hardly changed (19.95 against 21.01 s
+  for 60 s with the 5-bit `small.en`; 22.37 against 20.20 s with
+  `small.en`), though the laptop was quieter. Why is not known.
+
+#### Measured on this laptop: a long recording
+
+The design lets listening run to ten minutes. The trial used five, to save
+time: what is tested is what happens at the joins once a recording is
+longer than a model takes at once, and five minutes already has dozens of
+them. The design's ten-minute limit is unchanged, and nothing here
+questions it. Time is also given per minute of sound, so that ten minutes
+can be worked out.
+
+The recording is 36 utterances of LibriSpeech test-clean, one after
+another, from several readers, with 0.4 s of quiet between them: 287
+seconds, 832 words after normalising (`scripts/shorten-long.py` cuts the
+ten-minute recording at the end of the last utterance before 5:00). Each
+reading ran three times; the time is the median.
+
+**How each model handles a long recording.** Parakeet and the other
+sherpa-onnx models' memory grows with what they are handed: Parakeet 110m
+handed the 60 second clip whole held 1,055 MiB, against 604 MiB with it cut
+in pieces. So `voice-trial read` cuts a
+recording longer than 25 seconds into pieces with Silero's model, reads
+them one after another, and joins the text. whisper.cpp can take the whole
+recording and step through it 30 seconds at a time itself; it was also
+run on the same pieces, to compare.
+
+| Model | Read as | Pieces | Time | Per minute of sound | Ten minutes at that rate | Peak memory, MiB | Mistakes | Mistakes within two words of a join, and elsewhere | Three or more words in a row lost or added |
+|---|---|---|---|---|---|---|---|---|---|
+| **Parakeet TDT 0.6b v2** | Pieces | 15 | 32.6 s | 6.8 s | About 68 s | 1,186 | 6.1% | 8.6%; 5.9% | None |
+| Parakeet TDT-CTC 110m | Pieces | 15 | 9.9 s | 2.1 s | About 21 s | 632 | 7.6% | 14.3%; 7.0% | Once: "I couldn't" |
+| whisper `small.en`, cpp | Whole | 1 | 92.9 s | 19.4 s | About 194 s | 1,036 | 6.6% | No joins | None |
+| whisper `small.en`, cpp | Pieces | 15 | 113.1 s | 23.6 s | About 236 s | 959 | 7.5% | 10.0%; 7.2% | None |
+
+- **The mistakes are higher than on the clean group** (1.2% for Parakeet
+  v2) because the chapter is full of invented names and dialect
+  ("Boolooroo", "Ghip-Ghisizzle", "Cap'n Bill", "consid'ble"). Compare the
+  rows with each other, not with the tables above.
+- **The first cutter lost words.** It kept only what Silero heard as speech
+  and 0.2 s either side, threw away the sound between pieces, and cut any
+  stretch longer than the window into equal parts, through words. With it,
+  Parakeet v2 made 7.2% mistakes, a quarter of the words near a join were
+  wrong (24.7%), and three runs of words were lost at joins ("and
+  they're", "I couldn't", "don't worry"). Parakeet 110m made 8.9%, and whisper
+  in pieces 9.6%.
+- **The cutter the trial ended with** cuts in the middle of the latest
+  pause that keeps a piece within 25 seconds and throws nothing away.
+  Where Silero hears no pause in the second half of the window, it cuts at
+  the quietest tenth of a second there (`trials/voice/src/finished.rs`).
+  Recordings shorter than 25 seconds were never cut by either, so the
+  figures for the test set are not touched by this.
+- **Memory does not grow with the length** for a model read in pieces: it
+  is that of the longest piece. Reading ten minutes would hold what five
+  did. whisper.cpp reading the whole recording held 7% more than for a
+  minute.
+
+#### Building
+
+Nothing changes from "Trial 1 result" for the engine. sherpa-onnx's
+offline recogniser (`SherpaOnnxCreateOfflineRecognizer`) and Silero
+(`SherpaOnnxCreateVoiceActivityDetector`) are in the same
+`libsherpa-onnx-c-api` as the streaming recogniser. The program that reads
+a finished recording links the same two libraries on Windows and Android.
+
+The program was cross-compiled here for both Android targets with NDK 26.3
+for API level 24:
+
+- **arm64:** with whisper.cpp and sherpa-onnx, in 74 s, including the 43
+  MiB download of sherpa-onnx's Android archive.
+- **x86_64:** with sherpa-onnx alone, in 29 s, with the archive already
+  there.
+
+Every library in that archive is aligned for 16 KB pages (its LOAD
+segments are `0x4000`) for both ABIs.
+
+To pin the prebuilt libraries by hash: the crate's build script reads the
+archive from `SHERPA_ONNX_ARCHIVE_DIR` instead of downloading it. The real
+build should fetch the archive itself, check it against a SHA-256 kept in
+the repository, and point the variable at it. For 2.0.1 the archives used
+here were:
+
+| Archive | Size | SHA-256 |
+|---|---|---|
+| `sherpa-onnx-v2.0.1-android.tar.bz2` | 43.2 MiB | `39003753ec293425ed56723ea9b972b98841a490af3311670c3060548d654330` |
+| `sherpa-onnx-v2.0.1-win-x64-shared-MT-Release-lib.tar.bz2` | 7.5 MiB | `afa4de3ca4ab0afd53bb4aab40d28ee15608364b549ffc0fe0caf6489bfc39a5` |
+
+The model is not part of the build. The app fetches it once, checks it
+against its own SHA-256, and keeps it in Dirt's storage, as step 9 says.
+
+#### Models
+
+| Model | Through | On disk | Published at | Licence |
+|---|---|---|---|---|
+| Parakeet TDT 0.6b v2, 8-bit | sherpa-onnx | 631 MiB | sherpa-onnx's GitHub release `asr-models`, from huggingface.co/nvidia/parakeet-tdt-0.6b-v2 | CC BY 4.0, by the package's README and NVIDIA's model card |
+| Parakeet TDT-CTC 110m, 8-bit | sherpa-onnx | 130 MiB | The same release, from huggingface.co/nvidia/parakeet-tdt_ctc-110m | CC BY 4.0, by NVIDIA's model card; the package has no licence file |
+| Parakeet unified en 0.6b, 8-bit | sherpa-onnx | 632 MiB | The same release, from huggingface.co/nvidia/parakeet-unified-en-0.6b | NVIDIA Open Model License, by NVIDIA's model card; the package has no licence file |
+| Parakeet TDT 0.6b v3, 8-bit (25 languages) | sherpa-onnx | 640 MiB | The same release, from huggingface.co/nvidia/parakeet-tdt-0.6b-v3 | CC BY 4.0 |
+| Parakeet Ultra and Redux, 8-bit (25 languages) | sherpa-onnx | 640 MiB each | The same release, from huggingface.co/moondream; both are post-trainings of v3 | CC BY 4.0, by the package's README |
+| Canary 180m flash, 8-bit (English, Spanish, German, French) | sherpa-onnx | 198 MiB | The same release, from huggingface.co/nvidia/canary-180m-flash | CC BY 4.0 |
+| Zipformer GigaSpeech (2023-12-12) | sherpa-onnx | 70 MiB | The same release | Apache-2.0 |
+| Moonshine tiny and base, 8-bit | sherpa-onnx | 42 and 135 MiB | The same release | MIT, by its LICENSE |
+| whisper `base.en`, `small.en`, `distil-small.en`, `large-v3-turbo`, `distil-large-v3`, 8-bit | sherpa-onnx | 153, 358, 285, 989 and 938 MiB | The same release | MIT (OpenAI's weights and distil-whisper's) |
+| whisper `base.en`, `small.en`, `medium.en`, `large-v3-turbo`, and their 5-bit forms; `distil-small.en`, `distil-large-v3` | whisper.cpp | 141, 465, 1,463 and 1,549 MiB; 57, 181, 514 and 547 MiB at 5 bits; 321 and 1,449 MiB | huggingface.co/ggerganov/whisper.cpp; huggingface.co/distil-whisper | MIT |
+
+CC BY 4.0 asks that Dirt credit NVIDIA and say the model was converted,
+and asks nothing else.
+
+#### Recommendation
+
+**Engine: sherpa-onnx, in `dirt-voice`**, as "Trial 1 result" set out. It
+reads the finished recording with an offline model in the background.
+Silero's model stays, for the 1.6 seconds and to find the pauses at which
+a long recording is cut.
+
+| | Default: Parakeet TDT 0.6b v2 | Smaller: Parakeet TDT-CTC 110m | Larger: whisper `large-v3-turbo` |
+|---|---|---|---|
+| To fetch | 631 MiB | 130 MiB | 989 MiB (8-bit, sherpa-onnx) |
+| Licence | CC BY 4.0 | CC BY 4.0 | MIT |
+| Mistakes on the whole set | 4.8% | 6.4% | 6.5% |
+| Mistakes on meetings, and on calls | 10.5%, 13.2% | 12.6%, 15.9% | 14.4%, 18.4% |
+| Capitals and punctuation | Yes | Yes | Yes |
+| 5, 15 and 60 s on this laptop | 0.49, 1.38, 6.14 s | 0.14, 0.35, 1.79 s | 1.76, 4.56, 19.03 s |
+| Peak memory | 1.1 GiB | 0.6 GiB | 2.0 GiB |
+| Five minutes, in pieces | 33 s, 6.1% mistakes | 10 s, 7.6% | Not measured |
+| What on a phone would rule it out | Android not letting the app hold 1.1 GiB while it works in the background, or a thought taking much longer to read than it took to say | Little: it is a fifth of the size and three times as fast | Twice the default's memory, for more mistakes |
+
+Put Parakeet v2 to the owner. It made the fewest mistakes of any model
+whose licence asks only for credit, on every group of human speech, and
+it reads a thought in a tenth of its own length on this laptop. Its cost
+is the download and the memory: 631 MiB is many times the app, and
+1.1 GiB is a lot for a phone to give an app that is not on screen.
+
+If a phone run shows that it cannot have that, or the owner would rather
+not ask a person to fetch 631 MiB, Parakeet 110m is the default instead,
+with 1.5 points more mistakes at a fifth of the size. whisper
+`large-v3-turbo` would mean more memory and a larger download in exchange
+for more mistakes. It is listed only because a larger model was asked for.
+
+**For whoever builds step 9:**
+
+- **Cut a recording longer than 25 seconds at pauses, and keep every
+  sample.** Cut in the middle of a pause, never throw away the sound
+  between pieces, and where there is no pause cut at the quietest moment.
+  The trial's first cutter did otherwise and lost words.
+- **Read the pieces one at a time**, so that memory stays that of one
+  piece.
+- **Load the model only to read, and let it go afterwards.** It is 1.1 GiB
+  held for seconds, not for as long as the app is open.
+- **Show an empty result as "no words found".** Parakeet now and then
+  writes nothing for unclear speech.
+- **Credit NVIDIA.** A credit in Settings meets the licence.
+
+#### Not measured
+
+- **Any phone.** Time, memory, loading from a phone's storage, heat, and
+  whether Android lets an app hold 1.1 GiB while it makes words in the
+  background: not measured.
+- **whisper `distil-large-v3.5` and `medium.en` through sherpa-onnx.**
+  Skipped to save time. whisper.cpp's `medium.en` had already made 6.9%
+  mistakes on the third, and `large-v3-turbo` 6.5% on the whole set, both
+  behind Parakeet v2's 4.8%. Neither of the two would likely change the
+  recommendation. To run them if it is ever questioned:
+  `bash scripts/run2.sh sherpa-whisper-distil-large-v3.5
+  sherpa-whisper-medium.en`.
+- **The large whisper.cpp models on the whole set**, their 5-bit forms on
+  any of it, and the last 6 recordings of the third for whisper.cpp's
+  `large-v3-turbo`: see "A fixed third" above.
+- **Ten minutes.** Five were measured; see "a long recording".
+- **Real microphones, rooms, and accents beyond those in the meetings and
+  calls.**
+- **macOS and Linux**: as in "Trial 1 result", from documentation only.
+
+#### The phone's half: the commands
+
+Not run. It needs the owner's word, a phone with USB debugging on, and no
+other device connected. `trials/voice/scripts/phone.sh read NAME...` runs
+the same comparison on a phone, one model at a time. It pushes the
+program, its libraries and the test sets to `/data/local/tmp/voice-trial`.
+Then, for each model, it fetches the model here, pushes it, times the
+three clips three times, reads the whole set once and the long recording
+three times, brings the results back, and removes the model. At the end it
+removes the folder. From `trials/voice`, with the test sets made as its
+README says:
+
+```bash
+bash scripts/build-android.sh aarch64-linux-android "whisper sherpa"
+adb devices                                   # one phone, and the right one
+bash scripts/phone.sh read parakeet-v2 parakeet-110m zipformer-gigaspeech
+RESULTS=data/phone-results2 data/venv/Scripts/python scripts/analyse2.py
+```
+
+For one model by hand it comes to:
+
+```bash
+export MSYS_NO_PATHCONV=1                      # Git Bash must leave /data/... alone
+there=/data/local/tmp/voice-trial
+libs=target/sherpa-onnx-prebuilt/jniLibs/arm64-v8a
+model=sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8
+MODE=fetch KEEP=1 bash scripts/run2.sh parakeet-v2      # fetches it to data/models2
+adb shell "mkdir -p $there/models $there/timing"
+adb push target/aarch64-linux-android/release/voice-trial $there/
+adb push $libs/libsherpa-onnx-c-api.so $libs/libonnxruntime.so $there/
+adb push data/timing/manifest.tsv data/timing/*.wav $there/timing/
+adb push data/models2/$model data/models2/silero_vad.onnx $there/models/
+adb shell "chmod 755 $there/voice-trial"
+adb shell "cd $there && LD_LIBRARY_PATH=. ./voice-trial read --engine sherpa \
+  --kind nemo-transducer --model models/$model \
+  --vad models/silero_vad.onnx --window 25 --threads 4 \
+  --set timing/manifest.tsv --repeat 3 --out parakeet-v2.timing.jsonl"
+mkdir -p data/phone-results2
+adb pull $there/parakeet-v2.timing.jsonl data/phone-results2/
+adb shell "rm -r $there"
+```
+
+Write down the phone's model, its Android version, whether it was on a
+charger, and whether it was warm.
 
 ### Trial 2: capture on Android without the app
 
