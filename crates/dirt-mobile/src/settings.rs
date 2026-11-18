@@ -7,6 +7,7 @@
 //! app, saving an export as one zip file where the person chooses on
 //! Android's own screen, and the clipboard.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,7 +17,8 @@ use dirt_core::session::{Session, SessionError, SessionState};
 use dirt_core::util::now_ms;
 use dirt_ui::components::Sheet;
 use dirt_ui::settings::{
-    settings_nav, ExportTo, Exported, JoinBanner, Linked, SettingsPage, SignIn, Task,
+    settings_nav, ExportTo, Exported, JoinBanner, Linked, SavePhrase, SettingsPage, SignIn, Task,
+    PHRASE_FILE_NAME,
 };
 use dirt_ui::Appearance;
 
@@ -105,14 +107,16 @@ async fn export_to_zip(
 /// Asks the person where the archive goes and waits for Android to copy it
 /// there.
 async fn hand_over(archive: &Archive) -> SaveOutcome {
+    save_through_android(&archive.name, MIME_TYPE, &archive.path).await
+}
+
+/// Asks the person where a copy of the file at `path`, inside the app,
+/// goes, on Android's own screen for that, and waits for Android to write
+/// it there.
+async fn save_through_android(name: &str, mime_type: &str, path: &Path) -> SaveOutcome {
     // This save's own name: its outcome is not another's.
     let request = activity::new_request();
-    if !activity::save_copy(
-        &request,
-        &archive.name,
-        MIME_TYPE,
-        &archive.path.to_string_lossy(),
-    ) {
+    if !activity::save_copy(&request, name, mime_type, &path.to_string_lossy()) {
         return SaveOutcome::Failed(
             "Android's screen for saving a file could not be opened".to_owned(),
         );
@@ -127,6 +131,27 @@ async fn hand_over(archive: &Archive) -> SaveOutcome {
     }
 }
 
+/// Saves the recovery phrase as a text file where the person chooses. The
+/// file is written in the app's own storage for Android to copy, and
+/// removed as soon as Android has, or the person has backed out
+/// (SECURITY.md).
+async fn save_phrase_file(text: String) -> Option<Result<String, String>> {
+    let folder = export_folder();
+    let path = folder.join(PHRASE_FILE_NAME);
+    let written = std::fs::create_dir_all(&folder).and_then(|()| std::fs::write(&path, text));
+    if let Err(error) = written {
+        let _ = std::fs::remove_file(&path);
+        return Some(Err(dirt_core::util::as_sentence(&error)));
+    }
+    let saved = save_through_android(PHRASE_FILE_NAME, "text/plain", &path).await;
+    let _ = std::fs::remove_file(&path);
+    match saved {
+        SaveOutcome::Saved => Some(Ok(PHRASE_FILE_NAME.to_owned())),
+        SaveOutcome::Cancelled => None,
+        SaveOutcome::Failed(why) => Some(Err(format!("The file could not be saved: {why}."))),
+    }
+}
+
 /// Settings, over the main screen.
 #[component]
 pub fn SettingsSheet() -> Element {
@@ -137,6 +162,8 @@ pub fn SettingsSheet() -> Element {
 
     let sign_in: SignIn =
         use_callback(move |session: Session| Box::pin(sign_in(session)) as Task<_>);
+    let save_phrase: SavePhrase =
+        use_callback(move |text: String| Box::pin(save_phrase_file(text)) as Task<_>);
     let export: ExportTo = use_callback(move |format: ExportFormat| {
         let store = app.store.peek().clone();
         let session = app.session.peek().clone();
@@ -175,6 +202,7 @@ pub fn SettingsSheet() -> Element {
                 sign_in,
                 export,
                 copy,
+                save_phrase,
                 open_note,
             }
         }

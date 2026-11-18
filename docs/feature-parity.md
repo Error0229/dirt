@@ -88,7 +88,7 @@ The hotkey is shown in Settings and cannot be changed there.
 | Ask to be let in, and compare the code | Settings → Devices, which begins by itself on a device that waits: seven pictures with their names | Settings → Devices, which begins by itself on a device that waits: seven pictures with their names, and the digits | `dirt auth join` |
 | Let a waiting device in | The banner's Review, Settings → Devices → Add a device, or a waiting device's Let it in | The banner's Review, Settings → Devices → Add a device, or a waiting device's Let it in | `dirt devices approve` |
 | List devices, remove one | Settings → Devices, ✕ on a device and a confirmation in its row | Settings → Devices, ✕ on a device and a confirmation in its row | `dirt devices`, `dirt devices remove <ID>` |
-| Make or remove the recovery phrase | Settings → Devices | Settings → Devices | `dirt auth phrase new`, `dirt auth phrase remove` |
+| Make or remove the recovery phrase | Settings → Devices; Copy, or Save as a file (`dirt-recovery-phrase.txt`, where the person chooses) | Settings → Devices; Copy, or Save as a file through Android's screen for choosing a place | `dirt auth phrase new`, `dirt auth phrase remove` |
 | Get in with the recovery phrase | Settings → Devices on a device that waits: "No other device? Use your recovery phrase." | Settings → Devices on a device that waits: "No other device? Use your recovery phrase." | `dirt auth recover` |
 | Start the account again | Settings → Account → Account actions | Settings → Account → Account actions | `dirt auth reset` |
 | Refuse a reset somebody asked for | Settings → Account, where the request is shown | Settings → Account, where the request is shown | `dirt auth cancel-reset` |

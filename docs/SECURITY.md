@@ -281,6 +281,17 @@ suggestion and history. Before Android 13 there is no such flag, and a
 keyboard may show and keep it. On every version an app in front may read
 the clipboard while it holds the phrase.
 
+**Save as a file** writes the phrase, with what it is, as plain text,
+`dirt-recovery-phrase.txt`, where the person chooses: the system's save
+dialog on the desktop, Android's screen for choosing a place on the phone.
+Dirt does not encrypt it: whoever reads the file and can sign in as the
+person can read their notes, as with a phrase written on paper, and a
+folder that is backed up or synced (a cloud drive, Android's Downloads
+backed up to an account) carries it there too. On Android the text is
+first written in the app's own storage for Android to copy, and removed
+as soon as Android has copied it or the person has backed out; one left
+by an app stopped in between is removed the next time the app starts.
+
 Two values are derived from the phrase with HKDF, each bound to the account.
 One is a key under which the account key is encrypted; the server keeps that
 encrypted copy. The other is a claim code; the server keeps only its hash.

@@ -15,7 +15,8 @@ use dirt_core::session::Session;
 use dirt_core::Store;
 use dirt_ui::components::Panel;
 use dirt_ui::settings::{
-    settings_nav, ExportTo, Exported, JoinBanner, Linked, SettingsPage, SettingsRail, SignIn,
+    settings_nav, ExportTo, Exported, JoinBanner, Linked, SavePhrase, SettingsPage, SettingsRail,
+    SignIn, PHRASE_FILE_NAME,
 };
 use dirt_ui::Appearance;
 use rfd::AsyncFileDialog;
@@ -25,7 +26,8 @@ use crate::state::AppState;
 
 /// In a development build, `DIRT_SIGN_IN_TO_FILE` names a file the
 /// sign-in address is written to instead of opening the browser, and
-/// `DIRT_EXPORT_TO` a folder an export goes into without asking: for
+/// `DIRT_EXPORT_TO` a folder an export, or the recovery phrase's file,
+/// goes into without asking: for
 /// trying the flows on a computer whose browser and dialogs belong to
 /// someone else. A release build ignores both.
 fn test_hook(name: &str) -> Option<std::path::PathBuf> {
@@ -70,6 +72,32 @@ fn copy_secret(text: String) -> Result<(), arboard::Error> {
         set.exclude_from_history()
     };
     set.text(text)
+}
+
+/// Saves the recovery phrase as a text file where the person chooses, in
+/// the system's save dialog. Nothing chosen is nothing written.
+async fn save_phrase_file(text: String) -> Option<Result<String, String>> {
+    let path = match test_hook("DIRT_EXPORT_TO") {
+        Some(folder) => folder.join(PHRASE_FILE_NAME),
+        None => AsyncFileDialog::new()
+            .set_title("Save the recovery phrase")
+            .set_file_name(PHRASE_FILE_NAME)
+            .add_filter("Text", &["txt"])
+            .save_file()
+            .await?
+            .path()
+            .to_path_buf(),
+    };
+    let name = path.file_name().map_or_else(
+        || PHRASE_FILE_NAME.to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    // A few hundred bytes: written at once.
+    Some(
+        std::fs::write(&path, text)
+            .map(|()| name)
+            .map_err(|error| dirt_core::util::as_sentence(&error)),
+    )
 }
 
 /// What Settings is given of the app's session.
@@ -130,6 +158,9 @@ pub fn SettingsPanel() -> Element {
         Box::pin(async move { session.sign_in_with_browser(open_browser).await })
             as dirt_ui::settings::Task<_>
     });
+    let save_phrase: SavePhrase = use_callback(move |text: String| {
+        Box::pin(save_phrase_file(text)) as dirt_ui::settings::Task<_>
+    });
     let export: ExportTo = use_callback(move |format: ExportFormat| {
         let store = app.db_service.peek().clone();
         let session = app.session.peek().clone();
@@ -183,6 +214,7 @@ pub fn SettingsPanel() -> Element {
                     sign_in,
                     export,
                     copy,
+                    save_phrase,
                     open_note,
                 }
             }

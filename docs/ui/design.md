@@ -1731,7 +1731,8 @@ device. It shows up here by itself.") and then compares.
 ### 9.3 Recovery phrase
 
 Settings → Devices → Recovery phrase → **Make one**: the 24 words, numbered,
-in four columns, with **Copy** and "I've written it down". Getting in with the
+in four columns, with **Copy**, **Save as a file** (the owner asked for it,
+2026-11-18) and "I've written it down". Getting in with the
 phrase is offered on the new device's own screen, where it waits for a
 device to let it in: "No other device? Use your recovery phrase."
 
@@ -1777,6 +1778,7 @@ page in its panel beside the rail, Android in its sheet.
 | Answering the code | **They match** sends the answer as it is pressed, naming the code drawn with it; the pictures gather while it goes. After an answer both buttons wait, so a second press sends nothing. If the code changed between the drawing and the answer, the core refuses it, and the comparison comes back with the new pictures and the line "The pictures changed: the other device began again, and nothing was sent. Compare these." The digits are under the pictures, small, with a tooltip saying what they are for |
 | Being let in | On a device that waits, the exchange begins by itself while Settings is open, and stops when it closes. It does not know the other device's name, so it asks "Does your other device show these?". After **They match** on one side: "Waiting for … to say they match too" |
 | How it ends | The tick stays 1.7 s and the list takes its place. A cross stays until **OK**. When the pictures differed, the cross says what `SECURITY.md` promises: someone may be between the devices; start again on a network you trust. A device turned away is signed out at once, so it is told by an error that stays, not in the section that has gone |
+| Saving the phrase | **Save as a file** writes `dirt-recovery-phrase.txt` where the person chooses: the words numbered, then on one line to type, then one paragraph on what they open and how to keep them. The toast names the file and says to keep it somewhere safe. `SECURITY.md` says what such a file exposes |
 | The recovery phrase | Its row says "You have one" or "Not made yet", with **Make one** or **Remove** (which asks). The words leave the screen when "I've written it down" is pressed or Settings closes, and are not shown again. On a device that waits, "No other device? Use your recovery phrase." is offered only when the account has one; with no device to let it in and no phrase, a sentence points to starting again. **Use the phrase** waits for 24 words |
 | Sync | The head of the section is the overview's one sentence for everything (`SyncOverview::headline`), with "Last synced 2 minutes ago" under it and **Sync now** beside it. Its icon never shows "just synced": the page is not drawn again when that ends. Under it, each note that cannot sync, which opens with Settings closed, and each file refused, which opens its note. Signed out, or waiting, it is one sentence from the overview |
 | Appearance | The theme's segments have their words on the desktop and are icons alone on Android, the words in their tooltips. Focus while writing, and the quick-capture keys, are the desktop's only |
