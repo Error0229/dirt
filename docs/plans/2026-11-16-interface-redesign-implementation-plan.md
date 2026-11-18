@@ -61,6 +61,7 @@ Step 1 and step 2 do not wait for them.
 | Chinese: search, tags, voice | Not in this work. English first. Recorded as later work in the system design, section 16.3 |
 | Who settles what the design leaves open or gets wrong | Whoever builds it, writing the answer into the design document |
 | Words on screen while the person speaks (decided 2026-11-17, after trial 1's first result) | Given up. What matters is that the words kept are accurate, and a larger model is welcome for that. Nothing is written while listening; the recording is kept at once as a note and its words are made afterwards. Trial 1's second measurement chooses the engine and the model |
+| Which speech model (decided 2026-11-17, after trial 1's second measurement) | Parakeet TDT-CTC 110m first: 130 MiB, 6.4% of words wrong, about 0.6 GiB while it works, three times as fast as Parakeet TDT 0.6b v2, whose 4.8% is not worth five times the size and twice the memory for now. It is English only, as voice is (system design 16.3); its licence, CC BY 4.0, asks for credit, which step 9 gives in the app, beside the model's name Parakeet v2 stays the step up if the 110m's words prove not good enough |
 
 ## Still the owner's
 
@@ -70,7 +71,6 @@ Each has a default that holds if the step is reached without an answer.
 |---|---|---|
 | PDF in the preview: bundle a renderer (a few MB) or not | Step 6 | Not bundled: a PDF opens in another app on Linux and Android |
 | The speech model: fetched on first use, or shipped in the app | Step 9. Trial 1's second measurement has the sizes: 631 MiB for Parakeet TDT 0.6b v2, 130 MiB for Parakeet TDT-CTC 110m | Fetched on first use |
-| Which speech model, now that words are made after the recording ends: Parakeet TDT 0.6b v2 (631 MiB, 4.8% of words wrong, about 1.1 GiB while it works) or Parakeet TDT-CTC 110m (130 MiB, 6.4%, about 0.6 GiB), both CC BY 4.0, which asks for credit ("Trial 1, second measurement"). A phone run shows whether Android lets the app hold 1.1 GiB in the background | Step 9 | Parakeet TDT 0.6b v2, unless the phone run shows it cannot have the memory; then the 110m |
 | Snap Layouts on Windows 11: accept losing the flyout, or win it back | Step 3 | Accept losing it |
 
 ## Trials
@@ -1024,6 +1024,8 @@ whose licence asks only for credit, on every group of human speech, and
 it reads a thought in a tenth of its own length on this laptop. Its cost
 is the download and the memory: 631 MiB is many times the app, and
 1.1 GiB is a lot for a phone to give an app that is not on screen.
+
+**The owner chose Parakeet TDT-CTC 110m** (2026-11-17; see "Decided"), for its size, speed and memory. Step 9 builds with it. A phone run is still worth doing before step 9, for the time a thought takes to read there.
 
 If a phone run shows that it cannot have that, or the owner would rather
 not ask a person to fetch 631 MiB, Parakeet 110m is the default instead,
