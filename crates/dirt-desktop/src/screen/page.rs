@@ -25,7 +25,10 @@ pub fn Page() -> Element {
     let app = use_context::<AppState>();
     let view = screen.page.read().clone();
     let open = *app.current_note_id.read();
-    let mut focus = screen.focus;
+    let serial = view.serial;
+    // While Settings is open over the page, Esc closes Settings and leaves
+    // the note: the script must not empty the page then.
+    let done_keys = !*app.settings_open.read();
     let from = view.from.map(|from| match from {
         Arrival::Above => "above",
         Arrival::Below => "below",
@@ -61,13 +64,16 @@ pub fn Page() -> Element {
                     div {
                         class: "dk-gutter",
                         role: "toolbar",
+                        // While a note is written the icons go, and come
+                        // back as the pointer nears them (6.4).
+                        "data-dui-near": "64",
                         "aria-label": if open.is_some() { "The note" } else { "The page" },
                         if open.is_some() {
                             IconButton {
                                 icon: Icon::Check,
                                 label: "Done",
                                 shortcut: "Esc",
-                                onclick: move |_| screen.done(),
+                                onclick: move |_| screen.done(false),
                             }
                         }
                         IconButton {
@@ -106,9 +112,10 @@ pub fn Page() -> Element {
                         "aria-label": "Note",
                         placeholder: "What\u{2019}s on your mind?",
                         spellcheck: "false",
-                        oninput: move |event: FormEvent| screen.typed(event.value()),
-                        onfocus: move |_| focus.set(Where::Page),
-                        onblur: move |_| focus.set(Where::Elsewhere),
+                        "data-dui-page": done_keys.then_some(""),
+                        oninput: move |event: FormEvent| screen.typed(serial, &event.value()),
+                        onfocus: move |_| screen.focused(Where::Page),
+                        onblur: move |_| screen.focused(Where::Elsewhere),
                         // The text is given once, when the page is made,
                         // and never as an attribute: rendered again, the
                         // page would write it over what was typed since.
@@ -121,7 +128,7 @@ pub fn Page() -> Element {
                         },
                     }
                     if let Some(note) = open {
-                        AttachmentPanel { key: "{note}", note_id: note, incoming: screen.incoming }
+                        AttachmentPanel { key: "{note}", note_id: note, news: screen.files_news }
                     }
                 }
             }

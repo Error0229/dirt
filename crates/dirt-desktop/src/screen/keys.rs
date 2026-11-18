@@ -46,10 +46,18 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
     }
     let at = *screen.focus.peek();
     let shift = event.modifiers().shift();
+    let alt = event.modifiers().alt();
+    if at == Where::Page {
+        screen.key_on_page();
+    }
+    // Esc, Ctrl Enter and Ctrl N pressed in the page have emptied it
+    // already (the script's `data-dui-page`), unless Settings is open over
+    // it. Ctrl Enter and Ctrl N with Shift or Alt are not done keys there.
+    let emptied = at == Where::Page && !*app.settings_open.peek();
     let mut taken = true;
     if command(event) {
         match (letter(event).as_deref(), event.key()) {
-            (Some("n"), _) => screen.done(),
+            (Some("n"), _) => screen.done(emptied && !shift && !alt),
             (Some("f" | "k"), _) => screen.focus_find(),
             (Some("r"), _) => screen.sync_now(),
             (Some(","), _) => screen.open_settings(),
@@ -71,7 +79,7 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
             {
                 screen.undo(None);
             }
-            (_, Key::Enter) if at == Where::Page => screen.done(),
+            (_, Key::Enter) if at == Where::Page => screen.done(emptied && !shift && !alt),
             (_, _) if is_delete(event) && at == Where::Page => {
                 if let Some(open) = screen.open_note() {
                     if shift {
@@ -88,7 +96,7 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
             let mut open = app.settings_open;
             open.set(false);
         } else if at == Where::Page {
-            screen.done();
+            screen.done(emptied && !shift && !alt && !event.modifiers().ctrl());
         } else {
             taken = false;
         }

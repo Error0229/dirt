@@ -8,7 +8,7 @@
 .dk-body{flex:1;min-height:0;display:flex}
 
 /* ---- The list ---------------------------------------------------------- */
-.dk-side{width:344px;flex:none;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--border);background:var(--bg)}
+.dk-side{position:relative;width:344px;flex:none;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--border);background:var(--bg)}
 .dk-find{padding:12px 12px 10px;flex:none}
 .dk-list-wrap{flex:1;min-height:0}
 .dk-list{padding:2px 8px 10px;min-height:100%}
@@ -57,6 +57,91 @@
    button that has the keyboard's focus. */
 .dk-file-acts{display:flex;gap:0;opacity:0;transition:opacity var(--d-1)}
 .dk-file:hover .dk-file-acts,.dk-file-acts:focus-within{opacity:1}
+
+/* ---- The window's own controls (7.6): Windows, with no title bar -------- */
+.dk-wctl{position:absolute;top:0;right:0;height:44px;display:flex;z-index:30;opacity:.55;transition:opacity 200ms var(--e-std)}
+.dk-wctl::before{content:"";align-self:center;width:1px;height:18px;background:var(--border);margin-right:4px}
+.dk-wctl:hover,.dk-wctl:focus-within{opacity:1}
+.dk-wctl-b{width:46px;height:44px;display:grid;place-items:center;color:var(--text-2);transition:background var(--d-1),color var(--d-1)}
+.dk-wctl-b .dui-i{width:14px;height:14px;stroke-width:1.5}
+.dk-wctl-b:hover{background:var(--surface-2);color:var(--text)}
+.dk-wctl-b.x:hover{background:#C42B1C;color:#fff}
+.dk-wctl-b:focus-visible{outline-offset:-2px}
+/* The close button follows the window's rounded corner (Windows 11). */
+.dk-wctl:not([data-max]) .dk-wctl-b.x{border-top-right-radius:8px}
+
+/* ---- Focus while writing (5.5, 6.4, 7.7) ---------------------------------
+   data-dui-writing="hush" is the first key: only the controls fade.
+   ="on" is focus, laid out by the style chosen (data-dui-focus). The
+   leaving is the base state: the width comes back first, then the list's
+   content. The entering is the state with the attribute: the content goes
+   first, then the width folds, then the note's column follows. */
+.dk-gutter,.dk-wctl,.dk-side>:not(.dk-rail){transition:opacity 200ms var(--e-std)}
+.dk[data-dui-writing] .dk-gutter{opacity:0}
+.dk[data-dui-writing] .dk-wctl{opacity:0}
+.dk[data-dui-writing="hush"] .dk-side>:not(.dk-rail){opacity:.5}
+/* A control comes back only when the pointer goes where it lives, and
+   always while it has the keyboard's focus. */
+.dk[data-dui-writing] .dk-gutter[data-near],.dk[data-dui-writing] .dk-gutter:focus-within{opacity:1}
+.dk[data-dui-writing] .dk-wctl[data-near]{opacity:.6}
+.dk[data-dui-writing] .dk-wctl:hover,.dk[data-dui-writing] .dk-wctl:focus-within{opacity:1}
+
+/* The handle at the left edge: the way back from Slide and Zen. */
+.dk-edge{position:absolute;left:0;top:0;bottom:0;width:14px;z-index:25;display:none}
+.dk-edge::after{content:"";position:absolute;left:5px;top:50%;width:4px;height:44px;margin-top:-22px;border-radius:2px;background:var(--text-3);opacity:0;transition:opacity var(--d-3) var(--e-std),height var(--d-2) var(--sp-pop),margin-top var(--d-2) var(--sp-pop)}
+.dk-edge[data-near]::after{opacity:.9;height:64px;margin-top:-32px}
+
+/* The rail: the list folded to a column of grains (Rail). */
+.dk-rail{position:absolute;inset:0 auto 0 0;width:56px;display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:4px;opacity:0;pointer-events:none;transition:opacity var(--d-3) var(--e-std) 120ms}
+.dk-rail>.dui-icon-btn{margin-bottom:6px;color:var(--text-3);flex:none}
+.dk-rail-dots{flex:1;min-height:0;width:100%;display:flex;flex-direction:column;align-items:center;gap:2px;overflow-y:auto;scrollbar-width:none;padding-bottom:12px}
+.dk-rail-dots::-webkit-scrollbar{display:none}
+.dk-rail-dot{width:32px;height:20px;flex:none;display:grid;place-items:center;border-radius:6px}
+.dk-rail-dot::before{content:"";width:8px;height:7px;border-radius:var(--gr,50%);background:var(--g,var(--text-3));opacity:.9;transition:height var(--d-3) var(--sp-pop),opacity var(--d-1),background var(--d-2),transform var(--d-2) var(--sp-pop)}
+.dk-rail-dot:hover::before{opacity:1;transform:scale(1.35)}
+.dk-rail-dot.on::before{background:var(--accent);opacity:1;width:7px;height:18px;border-radius:4px}
+.dk-rail-month{flex:none;width:24px;margin:6px 0 2px;padding-top:3px;border-top:1px solid var(--border-strong);font-size:9.5px;font-weight:600;line-height:1;text-align:center;color:var(--text-3)}
+
+/* Zen's top and bottom of the text fade into the paper. */
+.dk-main::before,.dk-main::after{content:"";position:absolute;left:0;right:0;height:72px;pointer-events:none;opacity:0;z-index:2;transition:opacity 300ms var(--e-std)}
+.dk-main::before{top:44px;background:linear-gradient(var(--bg),transparent)}
+.dk-main::after{bottom:0;background:linear-gradient(transparent,var(--bg))}
+
+@media (min-width:720px){
+  /* The list's content keeps its width while the list folds, and is cut
+     off, so that its rows are not laid out again at every step. */
+  .dk-side{position:relative;overflow:hidden;transition:width var(--d-glide) var(--sp-glide) 0ms,background-color 400ms var(--e-std),border-color 400ms var(--e-std)}
+  .dk-side>:not(.dk-rail){width:343px;flex-shrink:0}
+  .dk-page{transition:padding var(--d-glide) var(--sp-glide) 0ms}
+  .dk-main{transition:background-color 500ms var(--e-std) 120ms}
+  .dk-text{transition:font-size var(--d-glide) var(--sp-glide) 0ms,line-height var(--d-glide) var(--sp-glide) 0ms,padding var(--d-glide) var(--sp-glide) 0ms}
+  .dk-files{transition:opacity var(--d-3) var(--e-std)}
+
+  /* Every style: the note's column glides to the middle (60 ms after the
+     list starts to fold), and the list's content goes first. */
+  .dk[data-dui-writing="on"] .dk-side{transition:width var(--d-glide) var(--sp-glide) 90ms,background-color 400ms var(--e-std),border-color 400ms var(--e-std)}
+  .dk[data-dui-writing="on"] .dk-side>:not(.dk-rail){transition:opacity 140ms var(--e-in) 0ms}
+  .dk[data-dui-writing="on"] .dk-page{padding-left:max(44px,calc((100% - 680px) / 2));padding-right:max(44px,calc((100% - 680px) / 2));transition:padding var(--d-glide) var(--sp-glide) 150ms}
+
+  /* Slide and Zen: the list leaves to the left; the handle waits there. */
+  .dk[data-dui-writing="on"]:is([data-dui-focus="slide"],[data-dui-focus="zen"]) .dk-side{width:0;border-right-color:transparent}
+  .dk[data-dui-writing="on"]:is([data-dui-focus="slide"],[data-dui-focus="zen"]) .dk-side>*{opacity:0}
+  .dk[data-dui-writing="on"]:is([data-dui-focus="slide"],[data-dui-focus="zen"]) .dk-edge{display:block}
+
+  /* Rail: the list folds to 56 px, and the rail of grains shows in it. */
+  .dk[data-dui-writing="on"][data-dui-focus="rail"] .dk-side{width:56px}
+  .dk[data-dui-writing="on"][data-dui-focus="rail"] .dk-side>:not(.dk-rail){opacity:0;pointer-events:none}
+  .dk[data-dui-writing="on"][data-dui-focus="rail"] .dk-side>.dk-list-wrap{transition:opacity 120ms var(--e-in) 280ms}
+  .dk[data-dui-writing="on"][data-dui-focus="rail"] .dk-rail{opacity:1;pointer-events:auto}
+
+  /* Zen: Slide, and the paper warms, the type grows by 4 px with more
+     line height, the text starts lower, its top and bottom fade, and the
+     files and the window's controls go. It deepens in stages. */
+  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main{background:var(--bg);transition:background-color 600ms var(--e-std) 260ms}
+  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-text{font-size:calc(var(--note-size) + 4px);line-height:1.8;padding-top:56px;transition:font-size var(--d-glide) var(--sp-glide) 300ms,line-height var(--d-glide) var(--sp-glide) 300ms,padding var(--d-glide) var(--sp-glide) 300ms}
+  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::before,.dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::after{opacity:1;transition:opacity 500ms var(--e-std) 420ms}
+  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-files{opacity:0}
+}
 
 /* ---- The keys (Ctrl /) ------------------------------------------------ */
 .dk-keys{padding:22px 28px 28px;overflow-y:auto}

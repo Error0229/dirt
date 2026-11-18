@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_primitives::slider::SliderValue;
 
-use dirt_core::models::Settings;
+use dirt_core::models::{FocusStyle, Settings};
 use dirt_ui::TextSize;
 
 use super::row::SettingRow;
@@ -18,6 +18,7 @@ pub(super) fn ThemeSettingsTab(
     current_theme_value: String,
     on_theme_change: EventHandler<String>,
     on_font_size_change: EventHandler<u32>,
+    on_focus_style_change: EventHandler<String>,
 ) -> Element {
     rsx! {
         SettingRow {
@@ -90,6 +91,38 @@ pub(super) fn ThemeSettingsTab(
                 span {
                     class: "slider-value",
                     "{current_settings.font_size}px"
+                }
+            }
+        }
+
+        SettingRow {
+            label: "Focus while writing",
+            description: "How the list gets out of the way while you write",
+
+            Select::<String> {
+                default_value: current_settings.focus_style.name().to_owned(),
+                on_value_change: move |value: Option<String>| {
+                    if let Some(value) = value {
+                        on_focus_style_change.call(value);
+                    }
+                },
+
+                SelectTrigger {
+                    style: "width: 150px;",
+                    SelectValue {}
+                }
+
+                SelectList {
+                    for (index , style) in FocusStyle::ALL.into_iter().enumerate() {
+                        SelectOption::<String> {
+                            key: "{style.name()}",
+                            index,
+                            value: style.name().to_owned(),
+                            text_value: style.label(),
+                            "{style.label()}"
+                            SelectItemIndicator {}
+                        }
+                    }
                 }
             }
         }

@@ -8,7 +8,7 @@ mod attachments;
 mod quick_capture;
 mod settings;
 
-pub use attachments::AttachmentPanel;
+pub use attachments::{AttachmentPanel, FilesNews};
 pub use quick_capture::QuickCapture;
 pub use settings::SettingsPanel;
 pub mod button;
