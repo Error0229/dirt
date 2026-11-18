@@ -90,16 +90,16 @@ somebody is using.
 
 | # | Do | Expect |
 |---|---|---|
-| A1 | Start the app with no account | The list, with "Not signed in" above it |
+| A1 | Start the app with no account | "Notes", with 🔍, the sync icon (a laptop: this device only) and Settings; the list, a faint feather if there are no notes; the bar "What's on your mind?" at the bottom. Nothing is focused and the keyboard is down |
 | A2 | Settings → Sign in | A browser tab over the app. After "Allow" it closes by itself and Settings says signed in |
 | A3 | Sign in again from a fresh install, and stop the app's process while the browser tab is in front (`adb shell am kill <package>`), then press "Allow" | The app starts again and is signed in |
 | A4 | In another app, share a piece of text to Dirt | Dirt comes forward with the text as the newest note |
 | A5 | The same with Dirt not running | Dirt starts with the text as the newest note |
 | A6 | Share a web page from the browser | A note with the page's title on the first line and its address below |
-| A7 | Add the "Quick capture" widget to the home screen and press it | A blank note to write in |
-| A8 | Type in the search box; press a tag | The list narrows. A note older than the 100 most recent is found. Pressing the tag again, or "All", widens the list |
-| A9 | Open a note found by searching, change it, save | The change is kept; the list is as before |
-| A19 | With more than 100 notes, scroll to the end of the list and press "Show older notes" | 100 more notes appear below. With exactly as many notes as are shown, one more press removes the button |
+| A7 | Add the "Quick capture" widget to the home screen and press it | The app, with a new page grown out of the bar to write on |
+| A8 | 🔍, type a word; then `#`, a tag, another tag, and the last pill | Find slides down under the title with the keyboard up, and the list narrows on every key, the word marked on each card. `#` opens a strip of pills; a picked one fills and moves to the front, and with two the last pill switches between "all of them" and "any of them". A note older than the 100 most recent is found. Archived notes come after the rest, under "Archived". Find's cross, or Back, closes it and the list is whole again |
+| A9 | Open a note found by searching and change it; press ‹ | The note grows out of its card with the cursor at the end and the keyboard up. There is no Save: the change is on its card when the note shrinks back into it |
+| A19 | With more than 100 notes, scroll to the end of the list | 100 more notes appear below as the end comes near, with no button, for as long as there are older ones. The older ones lie under their layers' names ("This week", "Earlier this month", "October") |
 | A10 | Settings → Export JSON, then Markdown | "Exporting...", and then Android's screen for choosing a place, with `dirt-export-<time>.zip` proposed. After "Save" the app says how many notes and files were saved. The zip file holds `notes.json` or `notes.md` and, under `files`, each note's files, the same as the originals. Backing out says nothing was saved |
 | A11 | Change a note on another device. Leave Dirt and come back | The change appears |
 | A12 | Settings with a note that cannot be synced | The note by name, the reason, and what releases it. Pressing it opens the note if the device holds it |
@@ -109,16 +109,28 @@ somebody is using.
 | A17 | With the device offline, change the account's key on another device and write a note there; write a note here; go online and sync | Both notes are on both devices. Nothing is asked of the person |
 | A18 | Settings → Devices → Change the account's key | As D15 |
 | A15 | A sign-in on a physical device | As A2 |
-| A20 | Open a note and press "Attach a file"; choose a photograph | Android's screen for choosing files. The photograph appears under the note with its thumbnail, and after a moment does not say it is waiting to be sent |
+| A20 | Open a note and press the paperclip in its bar; choose a photograph | Android's screen for choosing files. The photograph appears under the note with its thumbnail, and after a moment does not say it is waiting to be sent. Back in the list, the card shows the thumbnail |
 | A21 | On another device attach a picture and a text file to a note; open the note here | Both are listed as not on this device, the picture with its thumbnail |
 | A22 | Press "Open" on the text file | Android offers the apps that show such a file. The one chosen shows it, under its own name |
 | A23 | Press "Save a copy" | Android's screen for choosing a place, with the file's name. The saved copy is the same as the original |
 | A24 | Press "Remove"; sync the other device | The file is gone from the note on both |
 | A25 | In another app, share a picture to Dirt | Dirt is among the apps offered. A note appears at the top of the list, called after the picture, with the picture attached |
-| A26 | Start a new note and press "Attach a file" before saving | The note is saved with the file attached, and stays open |
+| A26 | Tap the bar and, with nothing typed, press the paperclip and choose a file | A note is made of the file, named after it on its card, and the page stays open on it |
 | A27 | Attach a file larger than 10 MiB | It is not attached, and the app says how large a file may be |
 | A28 | Export with a note whose file this device has never opened | The file is in the zip file: it was fetched first |
 | A29 | The same in aeroplane mode | The zip file is saved without the file. The app names the file and the note, and says why, in red |
+| A30 | Tap the bar, type a thought, press ⌄. Tap the bar again, type and erase everything, press Back | The page grows out of the bar with the keyboard up; the first character makes the note, which is at the top of the list when the page shrinks into its card. The emptied page goes back into the bar and leaves no note |
+| A31 | Tap the bar, type a word, press Back and at once tap the bar again and type | Both thoughts are kept, each as typed: nothing typed straight after Back is lost |
+| A32 | Swipe a card left a little and let go; then past the mark. Press **Undo** | The card follows the finger and springs back; past the mark it flies off, the gap folds shut, and "Archived · Undo" shows. **Undo** brings it back into its place |
+| A33 | Press "3 archived" at the end of the list; swipe an archived card left; press **Undo**. Open an archived note | The archived notes, newest first, with ‹. The swipe's background is red, and "Note deleted · Undo". The note's bar has "Back to the list" and the bin. Back goes to the list |
+| A34 | Open a note, press its box | The page shrinks into its card and the card folds away, with "Archived · Undo" |
+| A35 | Pull the list down a little and let go; then past the mark, signed in | The list follows with resistance and settles. Past the mark it holds while the arrow turns, a sync runs, and it settles back |
+| A36 | Signed in, with the network off, write a note; with a note that cannot be synced; signed out. Tap the sync icon each time, and long-press it | A grey dot on the icon and a hollow dot on the card; an amber dot, and a tap opens Settings; a laptop, and a tap opens Settings. A long press gives the words ("Offline · 1 waiting") |
+| A37 | Tap a tag on a card | Find comes down with the tag as a filled pill, and the list narrows to it |
+| A38 | Settings → Appearance: Auto, Light, Dark, an accent, the text size. With Auto, change the system's dark theme while the app is open | The app follows at once and keeps the choice over a restart. With Auto it follows the system's change without restarting, the status bar with it |
+| A39 | Turn "Remove animations" on in Android's accessibility settings while the app is open; come back to it; open a note and swipe a card | From the return, things fade instead of moving; the swiped card still follows the finger |
+| A40 | Back, in turn, with Settings open, a note open, the archived notes shown, Find down with the strip's offers, and nothing open | Each closes what is open, in that order. With nothing open the app goes behind the others, and comes back as it was |
+| A41 | TalkBack on: move through the list, open a note, archive one, sync | Each card is read by its title and its edit time; the bar's icons by their names; the toast is read; the sync icon is read when it changes |
 
 ## CLI
 
@@ -188,7 +200,7 @@ not have: a real phone, Linux, macOS, a screen reader, and a release build.
 | G2 | In it, press "Open the panel", so that it lies over the list's buttons | The panel covers what is behind it down to its bottom edge. (In a window on the screen, the buttons behind were once drawn over its last 20 px; a script's window off the screen does not show whether that is gone) |
 | G3 | Press "Shuffle" several times | The rows slide to their new places. The line under the buttons gives a median frame at the display's rate, and no frame much longer in a release build on a machine doing nothing else |
 | G4 | The gallery on a real phone: `dx build --platform android --target aarch64-linux-android --package dirt-mobile --features gallery`. Shuffle; swipe a card a little and let go, then far; drag the sheet down by its top edge; hold a finger on an icon | Frames at the phone's rate. The card stays under the finger, springs back, and flies off past 96 px with one message to Rust. The sheet follows the finger and closes. The icon's name appears above it and the icon is not pressed |
-| G5 | On the phone, turn on Remove animations in Android's accessibility settings, start the gallery, and shuffle. Then use the gallery's own "Reduced motion" switch with the setting off | With the setting on from the start, the rows change places at once, without sliding. (Changed while the gallery is open, Android's WebView does not notice until the next start; the interface plan's step 4 reads it on return.) The gallery's switch takes effect at the next shuffle, both ways |
+| G5 | On the phone, turn on Remove animations in Android's accessibility settings, start the gallery, and shuffle. Then use the gallery's own "Reduced motion" switch with the setting off | With the setting on from the start, the rows change places at once, without sliding. (Changed while the gallery is open, Android's WebView does not notice until the next start; the app itself reads it again on return, A39.) The gallery's switch takes effect at the next shuffle, both ways |
 | G6 | The gallery on Linux | It looks as it does on Windows, scrollbars included. On a WebKitGTK before 2.44 the springs are the `cubic-bezier` ones, and where View Transitions are missing a new theme cross-fades |
 | G7 | The gallery on macOS | The same, and the toast's **Undo** shows ⌘ Z |
 | G8 | A release build of the desktop app on each system. With text typed in a note, press Ctrl R, F5, Ctrl F, Ctrl P, Ctrl +, Ctrl −, Ctrl 0, F12 and Ctrl Shift I; turn the wheel with Ctrl held; right-click | Nothing of a browser's happens: the text is still there, and there is no find bar, print dialog, zoom, developer tools or browser menu |
