@@ -61,7 +61,7 @@ Step 1 and step 2 do not wait for them.
 | Chinese: search, tags, voice | Not in this work. English first. Recorded as later work in the system design, section 16.3 |
 | Who settles what the design leaves open or gets wrong | Whoever builds it, writing the answer into the design document |
 | Words on screen while the person speaks (decided 2026-11-17, after trial 1's first result) | Given up. What matters is that the words kept are accurate, and a larger model is welcome for that. Nothing is written while listening; the recording is kept at once as a note and its words are made afterwards. Trial 1's second measurement chooses the engine and the model |
-| Which speech model (decided 2026-11-17, after trial 1's second measurement) | Parakeet TDT-CTC 110m first: 130 MiB, 6.4% of words wrong, about 0.6 GiB while it works, three times as fast as Parakeet TDT 0.6b v2, whose 4.8% is not worth five times the size and twice the memory for now. It is English only, as voice is (system design 16.3); its licence, CC BY 4.0, asks for credit, which the app gives where it names what it is built with. Parakeet v2 stays the step up if the 110m's words prove not good enough |
+| Which speech model (decided 2026-11-17, after trial 1's second measurement) | Parakeet TDT-CTC 110m first: 130 MiB, 6.4% of words wrong, about 0.6 GiB while it works, three times as fast as Parakeet TDT 0.6b v2, whose 4.8% is not worth five times the size and twice the memory for now. It is English only, as voice is (system design 16.3); its licence, CC BY 4.0, asks for credit, which step 9 gives in the app, beside the model's name Parakeet v2 stays the step up if the 110m's words prove not good enough |
 
 ## Still the owner's
 
