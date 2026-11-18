@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 
 use dirt_core::export::ExportFormat;
-use dirt_core::models::{Settings, ThemeMode};
+use dirt_core::models::{FocusStyle, Settings, ThemeMode};
 
 use super::button::{Button, ButtonVariant};
 use super::dialog::{DialogContent, DialogRoot, DialogTitle};
@@ -144,6 +144,15 @@ pub fn SettingsPanel() -> Element {
         }
     };
 
+    let on_focus_style_change = {
+        let mut save = save_settings;
+        move |value: String| {
+            let mut new_settings = settings();
+            new_settings.focus_style = FocusStyle::from_name(&value).unwrap_or_default();
+            save(new_settings);
+        }
+    };
+
     rsx! {
         DialogRoot {
             open: true,
@@ -241,6 +250,7 @@ pub fn SettingsPanel() -> Element {
                             current_theme_value: current_theme_value.to_string(),
                             on_theme_change: on_theme_change,
                             on_font_size_change: on_font_size_change,
+                            on_focus_style_change: on_focus_style_change,
                         }
                     },
                     SettingsTab::Data => rsx! {

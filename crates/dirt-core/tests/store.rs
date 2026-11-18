@@ -1,6 +1,6 @@
 //! The local store, through its public interface, on a real file.
 
-use dirt_core::models::{Accent, NoteId, Settings, ThemeMode};
+use dirt_core::models::{Accent, FocusStyle, NoteId, Settings, ThemeMode};
 use dirt_core::notes::NoteDoc;
 use dirt_core::store::{store_path, StoreName};
 use dirt_core::{Error, Store};
@@ -310,6 +310,7 @@ async fn settings_default_until_saved_and_then_round_trip() {
         theme: ThemeMode::Dark,
         accent: Accent::Moss,
         capture_hotkey: "Ctrl+Alt+N".to_owned(),
+        focus_style: FocusStyle::Rail,
     };
     store.save_settings(&chosen).await.unwrap();
     assert_eq!(store.load_settings().await.unwrap(), chosen);
@@ -338,6 +339,36 @@ async fn an_accent_this_build_does_not_know_reads_as_the_default() {
         )
         .unwrap();
     assert_eq!(store.load_settings().await.unwrap().accent, Accent::Clay);
+}
+
+#[tokio::test]
+async fn a_focus_style_this_build_does_not_know_reads_as_the_default() {
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("notes.db");
+    let store = Store::open(&path).unwrap();
+    store
+        .save_settings(&Settings {
+            focus_style: FocusStyle::Zen,
+            ..Settings::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        store.load_settings().await.unwrap().focus_style,
+        FocusStyle::Zen
+    );
+
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute(
+            "UPDATE settings SET value = 'glass' WHERE key = 'focus_style'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        store.load_settings().await.unwrap().focus_style,
+        FocusStyle::Slide
+    );
 }
 
 // ---- Durability and sharing ----

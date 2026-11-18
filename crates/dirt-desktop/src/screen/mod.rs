@@ -7,29 +7,39 @@
 //! the last archive or delete, for Undo. Its methods are what the person
 //! can do here; the parts call them from their buttons and keys.
 
+mod focus;
 mod keys;
 mod list;
 mod page;
+pub mod window;
+pub mod writing;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use dioxus::prelude::*;
-use dirt_core::models::{extract_tags, Note, NoteId};
-use dirt_core::store::{LetGo, NoteCounts, TagCount, TagRule};
+use dirt_core::models::{extract_tags, FocusStyle, Note, NoteId};
+use dirt_core::store::{NoteCounts, TagCount, TagRule};
 use dirt_core::sync::overview::SyncIndicator;
 use dirt_core::sync::worker::Trigger;
+use dirt_core::Store;
 use dirt_ui::components::{use_toasts, ContextMenu, ListExit, MenuItem, Toast, Toasts};
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::find;
 use dirt_ui::time::Clock;
 use dirt_ui::{Appearance, Icon};
 
+use crate::components::FilesNews;
 use crate::state::{AppState, SettingsTab};
+use focus::Edge;
 use keys::KeysPanel;
 use list::Side;
 use page::Page;
+use tokio::sync::broadcast::error::RecvError;
+use window::WindowControls;
+use writing::{Done, Draft, Scribe, Work};
 
 /// The page's text field.
 const PAGE_ID: &str = "dk-page";
@@ -39,6 +49,13 @@ const LIST: &str = "#dk-list";
 
 /// How long typing pauses before what was typed is saved.
 const SAVE_AFTER: Duration = Duration::from_millis(400);
+
+/// How long typing pauses before focus while writing comes in (7.7).
+const FOCUS_AFTER: Duration = Duration::from_millis(600);
+
+/// Text that changes this soon after a key was typed; later, it came by
+/// another way (pasted with the mouse), and focus comes at once.
+const TYPED_WITHIN: Duration = Duration::from_millis(400);
 
 /// How many notes the list holds at first, and how many more it takes
 /// each time scrolling nears its end.
@@ -86,16 +103,30 @@ pub struct PageView {
     pub take_focus: bool,
 }
 
-/// The thought being written: what was typed last, and what the store
-/// has of it.
-#[derive(Debug, Clone, Default)]
-struct Draft {
-    text: String,
-    saved: String,
-    version: u64,
-    /// The note is being made: the first character has been typed and the
-    /// store has not answered yet.
-    creating: bool,
+/// Focus while writing (7.7): how far the screen has gone towards showing
+/// only the note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Writing {
+    /// Everything shows.
+    #[default]
+    No,
+    /// A key was typed on the page: the controls have faded, and the
+    /// layout waits for a pause.
+    FirstKeys,
+    /// Only the note, in the chosen style.
+    Focused,
+}
+
+impl Writing {
+    /// The name the style sheet and the script know it by.
+    #[must_use]
+    pub const fn name(self) -> Option<&'static str> {
+        match self {
+            Self::No => None,
+            Self::FirstKeys => Some("hush"),
+            Self::Focused => Some("on"),
+        }
+    }
 }
 
 /// What the list shows, read from the store at once.
@@ -167,6 +198,20 @@ pub struct Screen {
     pub listing: Signal<Option<Listing>>,
     pub page: Signal<PageView>,
     draft: Signal<Draft>,
+    /// Does the store's work for the page, in order.
+    /// The store the page's note is in: the one in use when it was made
+    /// or opened. Its work goes there even if another store has been taken
+    /// into use since (signing in or out).
+    page_store: CopyValue<Option<Arc<Store>>>,
+    /// How attaching files to the note on the page is going.
+    pub files_news: Signal<FilesNews>,
+    /// The notes the store could not save, with the newest text of each,
+    /// while the error says so.
+    unsaved: Signal<Vec<(NoteId, String)>>,
+    /// Focus while writing.
+    pub writing: Signal<Writing>,
+    /// When a key was last typed on the page.
+    last_key: CopyValue<Option<Instant>>,
     last_undo: Signal<Option<Undo>>,
     serial: Signal<u64>,
     /// In a window narrower than 720 px, the page is over the list.
@@ -174,8 +219,6 @@ pub struct Screen {
     /// The panel of keys (Ctrl /) is open.
     pub keys_open: Signal<bool>,
     pub focus: Signal<Where>,
-    /// Files to attach to the open note, taken by its list of files.
-    pub incoming: Signal<Vec<PathBuf>>,
     /// What time it is, for the times on rows and the sync status.
     pub clock: Signal<Clock>,
 }
@@ -194,26 +237,190 @@ impl Screen {
 
     // ---- Writing ----------------------------------------------------------
 
+    /// The store in use, if one is open.
+    fn store(self) -> Option<Arc<Store>> {
+        self.app.db_service.peek().clone()
+    }
+
+    /// Has the store do `work` after whatever was asked of it before: the
+    /// store the page's note is in, or else the one in use.
+    ///
+    /// It may be asked as the screen goes, so nothing here assumes the
+    /// screen's values are still there.
+    fn ask(self, work: impl IntoIterator<Item = Work>) {
+        let work: Vec<Work> = work.into_iter().collect();
+        if work.is_empty() {
+            return;
+        }
+        let page_store = self
+            .page_store
+            .try_read()
+            .ok()
+            .and_then(|store| store.clone());
+        let in_use = self
+            .app
+            .db_service
+            .try_peek()
+            .ok()
+            .and_then(|store| store.clone());
+        let Some(store) = page_store.or(in_use) else {
+            tracing::error!("No store is open to keep the page in");
+            return;
+        };
+        let session = self
+            .app
+            .session
+            .try_peek()
+            .ok()
+            .and_then(|session| session.clone());
+        Scribe::global().ask(&store, session.as_ref(), work);
+    }
+
+    /// The page's note is in the store in use now.
+    fn page_in_store_in_use(self) {
+        let mut page_store = self.page_store;
+        page_store.set(self.store());
+    }
+
+    /// Leaves the page: what it held is taken as it is and handed to the
+    /// store's queue, to be kept or let go in the store its note is in,
+    /// after whatever was asked before. The page is blank at once; nothing
+    /// is waited for. The page then holds no store.
+    ///
+    /// The screen going (quick capture takes the window, the app quits,
+    /// another store is taken into use) leaves it too, so nothing here
+    /// assumes the screen's values are still there.
+    pub fn leave(mut self) {
+        let left = match self.draft.try_write() {
+            Ok(mut draft) => draft.leave(),
+            Err(error) => {
+                tracing::error!("The page could not be left: {error}");
+                return;
+            }
+        };
+        self.ask(left.work);
+        if let Ok(mut store) = self.page_store.try_write() {
+            *store = None;
+        }
+    }
+
+    /// A write failed. The person is told plainly and given their words: an
+    /// error that stays until it is dismissed, with **Copy text**, which
+    /// ordinary toasts neither replace nor clear. Several failures make one
+    /// error, and **Copy text** gives the newest text of each of their
+    /// notes. If the store could not make the note on the page, the page
+    /// goes back to a thought not yet made, so that the next key makes it,
+    /// with all that is on the page.
+    fn unsaved(mut self, note: NoteId, text: &str, why: &str, making: bool) {
+        if making && self.draft.write().unmade(note) {
+            let mut current = self.app.current_note_id;
+            current.set(None);
+            self.page.write().note = None;
+        }
+        {
+            let mut unsaved = self.unsaved.write();
+            // An error dismissed since: its notes were seen to.
+            if !self.toasts.error_showing() {
+                unsaved.clear();
+            }
+            match unsaved.iter_mut().find(|(held, _)| *held == note) {
+                Some(held) => text.clone_into(&mut held.1),
+                None => unsaved.push((note, text.to_owned())),
+            }
+        }
+        let count = self.unsaved.peek().len();
+        let words = if count == 1 {
+            "A note could not be saved".to_owned()
+        } else {
+            format!("{count} notes could not be saved")
+        };
+        let copy = Callback::new(move |()| self.copy_unsaved());
+        self.toasts.show_error(
+            Toast::new(words)
+                .icon(Icon::Alert)
+                .detail(why.to_owned())
+                .action("Copy text", Icon::Copy, copy),
+        );
+    }
+
+    /// The text of every note that could not be saved, newest of each, on
+    /// the clipboard: **Copy text** on the error.
+    fn copy_unsaved(self) {
+        let texts: Vec<String> = self
+            .unsaved
+            .peek()
+            .iter()
+            .map(|(_, text)| text.clone())
+            .collect();
+        let text = texts.join("\n\n");
+        if let Err(error) = arboard::Clipboard::new().and_then(|mut board| board.set_text(text)) {
+            tracing::error!("Could not copy the text: {error}");
+        }
+    }
+
+    /// What the store's work came to.
+    fn heard(mut self, done: &Done) {
+        match *done {
+            Done::PutAway {
+                note,
+                delete,
+                kept: true,
+            } => {
+                let serial = self.next_serial();
+                let undo = Callback::new(move |()| self.undo(Some(serial)));
+                self.last_undo.set(Some(Undo {
+                    serial,
+                    note,
+                    deleted: delete,
+                }));
+                let toast = if delete {
+                    Toast::new("Note deleted").icon(Icon::Trash)
+                } else {
+                    Toast::new("Archived").icon(Icon::Archive)
+                };
+                self.toasts.show(toast.undo(undo));
+            }
+            Done::Attached { note, ref failed } => {
+                self.files_news.write().attached(note, failed);
+            }
+            Done::Unsaved {
+                note,
+                ref text,
+                ref why,
+                making,
+            } => self.unsaved(note, text, why, making),
+            _ => {}
+        }
+        if done.changed() {
+            self.app.reread();
+        }
+    }
+
     /// The page's text changed: it was typed, pasted or cut. The first
     /// character that is not a space makes the note (6.1); from then on it
     /// saves itself, a moment after typing pauses.
-    pub fn typed(mut self, text: String) {
-        let no_note = self.open_note().is_none();
-        let (version, first) = {
-            let mut draft = self.draft.write();
-            draft.text.clone_from(&text);
-            draft.version += 1;
-            let first = no_note && !draft.creating && !text.trim().is_empty();
-            if first {
-                draft.creating = true;
-            }
-            (draft.version, first)
-        };
-        if first {
+    ///
+    /// `serial` is the page the text was typed on. A page already replaced
+    /// may still say something in the moment it takes to go; that is not
+    /// this page's text.
+    pub fn typed(mut self, serial: u64, text: &str) {
+        if serial != self.page.peek().serial {
+            return;
+        }
+        let new_line = text.matches('\n').count() > self.draft.peek().text().matches('\n').count();
+        let first = self.draft.write().typed(text.to_owned());
+        let version = self.draft.peek().version();
+        self.writing_typed(new_line, version);
+        if let Some(work) = first {
+            let note = self.draft.peek().note();
+            let mut current = self.app.current_note_id;
+            current.set(note);
+            self.page.write().note = note;
+            self.page_in_store_in_use();
             // With the list narrowed to tags, a new page gets them at its
             // end, where they can be seen and removed. The field says so
             // as if they had been typed, and that saves them.
-            let written = extract_tags(&text);
+            let written = extract_tags(text);
             let missing: Vec<String> = self
                 .tags
                 .peek()
@@ -225,107 +432,24 @@ impl Screen {
                 dom::append_text(PAGE, &format!(" {}", missing.join(" ")));
             }
             self.page_over.set(true);
-            spawn(async move { self.create(text).await });
+            self.ask([work]);
             return;
         }
         spawn(async move {
             tokio::time::sleep(SAVE_AFTER).await;
-            if self.draft.peek().version == version {
-                self.save().await;
+            if self.draft.peek().version() == version {
+                let work = self.draft.write().flush();
+                self.ask(work);
             }
         });
     }
 
-    async fn create(mut self, text: String) {
-        let Some(store) = self.app.db_service.peek().clone() else {
-            self.draft.write().creating = false;
-            return;
-        };
-        match store.create_note(&text).await {
-            Ok(note) => {
-                let mut current = self.app.current_note_id;
-                current.set(Some(note.id));
-                self.page.write().note = Some(note.id);
-                {
-                    let mut draft = self.draft.write();
-                    draft.saved = text;
-                    draft.creating = false;
-                }
-                self.app.note_changed();
-                self.save().await;
-            }
-            Err(error) => {
-                tracing::error!("Could not make the note: {error}");
-                self.draft.write().creating = false;
-            }
-        }
-    }
-
-    /// Saves what was typed, if the store does not have it yet.
-    async fn save(mut self) {
-        let Some(id) = self.open_note() else { return };
-        let text = {
-            let draft = self.draft.peek();
-            if draft.text == draft.saved {
-                return;
-            }
-            draft.text.clone()
-        };
-        let Some(store) = self.app.db_service.peek().clone() else {
-            return;
-        };
-        match store.update_note(&id, &text).await {
-            Ok(_) => {
-                if self.open_note() == Some(id) {
-                    self.draft.write().saved = text;
-                }
-                self.app.note_changed();
-            }
-            Err(error) => tracing::error!("Could not save the note: {error}"),
-        }
-    }
-
-    /// Leaves the note on the page: saves it, and lets it go if it was
-    /// emptied again (6.1). Returns the note, unless there was none or it
-    /// was let go.
-    async fn leave(self) -> Option<NoteId> {
-        // A note still being made is waited for, so that it is not lost.
-        for _ in 0..200 {
-            if !self.draft.peek().creating {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        self.save().await;
-        let id = self.open_note()?;
-        if self.draft.peek().text.trim().is_empty() {
-            if let Some(store) = self.app.db_service.peek().clone() {
-                match store.let_go_if_empty(&id).await {
-                    Ok(LetGo::Kept) => {}
-                    Ok(LetGo::Dropped | LetGo::Deleted | LetGo::Gone) => {
-                        self.app.note_changed();
-                        return None;
-                    }
-                    Err(error) => tracing::error!("Could not let the empty note go: {error}"),
-                }
-            }
-        }
-        Some(id)
-    }
-
-    /// A blank page, ready for the next thought.
+    /// A blank page, made afresh: what had the page is replaced, and the
+    /// cursor goes into the new one if `take_focus`.
     fn blank(mut self, take_focus: bool) {
         let serial = self.next_serial();
         let mut current = self.app.current_note_id;
         current.set(None);
-        {
-            let mut draft = self.draft.write();
-            let version = draft.version + 1;
-            *draft = Draft {
-                version,
-                ..Draft::default()
-            };
-        }
         self.page.set(PageView {
             serial,
             take_focus,
@@ -334,27 +458,48 @@ impl Screen {
         self.page_over.set(false);
     }
 
+    /// A blank page in the same field, which the script has emptied as the
+    /// key that left the note was pressed (`data-dui-page`). Whatever was
+    /// typed after that key is in the field already, and is the next
+    /// thought's.
+    fn blank_in_place(mut self) {
+        let serial = self.page.peek().serial;
+        let mut current = self.app.current_note_id;
+        current.set(None);
+        self.page.set(PageView {
+            serial,
+            ..PageView::default()
+        });
+        self.page_over.set(false);
+    }
+
     /// Done with the thought on the page (Esc, Ctrl Enter, ✓, Ctrl N): it
-    /// is saved, and the page is blank again with the cursor in it. With
+    /// is kept, and the page is blank again with the cursor in it. With
     /// nothing written, done does nothing but put the cursor there.
-    pub fn done(self) {
-        let written = self.open_note().is_some() || !self.draft.peek().text.is_empty();
-        if !written {
+    ///
+    /// `emptied` says that the key was pressed in the page and the script
+    /// has already emptied the field, so that the field stays and what is
+    /// typed straight after is kept.
+    pub fn done(self, emptied: bool) {
+        self.calm();
+        if self.draft.peek().is_blank() {
             // In a narrow window the blank page comes over the list, and
             // goes again.
             let mut over = self.page_over;
             if *over.peek() {
                 over.set(false);
                 self.focus_page(Caret::Kept);
-            } else {
+            } else if !emptied {
                 self.new_page();
             }
             return;
         }
-        spawn(async move {
-            self.leave().await;
+        self.leave();
+        if emptied {
+            self.blank_in_place();
+        } else {
             self.blank(true);
-        });
+        }
     }
 
     /// The blank page with the cursor in it. In a window narrower than
@@ -369,7 +514,21 @@ impl Screen {
 
     /// Opens a note on the page. With `edit` the keyboard goes into its
     /// text; without, it stays where it is, for moving through the list.
-    pub fn open(mut self, id: NoteId, edit: bool) {
+    pub fn open(self, id: NoteId, edit: bool) {
+        self.calm();
+        self.show_note(id, edit);
+    }
+
+    /// Opens a note from the rail (7.7): focus stays.
+    pub fn open_from_rail(self, id: NoteId) {
+        self.show_note(id, true);
+    }
+
+    /// Puts a note on the page at once. The list's copy of it is shown
+    /// straight away, so that the arrow keys can move on from it before
+    /// the store has answered; the store's copy follows, and is taken if
+    /// it says more and nothing has been typed yet.
+    fn show_note(mut self, id: NoteId, edit: bool) {
         if self.open_note() == Some(id) {
             self.page_over.set(true);
             if edit {
@@ -387,20 +546,46 @@ impl Screen {
             (Some(was), Some(now)) if now < was => Some(Arrival::Above),
             _ => None,
         };
+        self.leave();
+        // Text of the note still waiting in the queue is newer than the
+        // list's copy and the store's: the note shows that.
+        let waiting = |mut note: Note| {
+            if let Some(text) = Scribe::global().waiting_text(&note.id) {
+                note.content = text;
+            }
+            note
+        };
+        let listed = self
+            .listing
+            .peek()
+            .as_ref()
+            .and_then(|listing| listing.notes.iter().find(|note| note.id == id).cloned())
+            .map(waiting);
+        if let Some(note) = listed {
+            self.show(note, from, edit);
+        } else {
+            self.blank(false);
+        }
+        let shown = self.page.peek().serial;
+        let Some(store) = self.store() else { return };
         spawn(async move {
-            self.leave().await;
-            let Some(store) = self.app.db_service.peek().clone() else {
-                return;
-            };
             let note = match store.get_note(&id).await {
-                Ok(Some(note)) => note,
+                Ok(Some(note)) => waiting(note),
                 Ok(None) => return,
                 Err(error) => {
                     tracing::error!("Could not open the note: {error}");
                     return;
                 }
             };
-            self.show(note, from, edit);
+            if self.page.peek().serial != shown {
+                return;
+            }
+            if self.open_note() != Some(id) {
+                self.show(note, from, edit);
+            } else if self.draft.write().refreshed(&note) {
+                self.page.write().archived = note.archived;
+                dom::set_value(PAGE, &note.content);
+            }
         });
     }
 
@@ -409,16 +594,8 @@ impl Screen {
         let serial = self.next_serial();
         let mut current = self.app.current_note_id;
         current.set(Some(note.id));
-        {
-            let mut draft = self.draft.write();
-            let version = draft.version + 1;
-            *draft = Draft {
-                text: note.content.clone(),
-                saved: note.content.clone(),
-                version,
-                creating: false,
-            };
-        }
+        self.page_in_store_in_use();
+        self.draft.write().show(&note);
         self.page.set(PageView {
             serial,
             note: Some(note.id),
@@ -432,7 +609,7 @@ impl Screen {
 
     /// The page is blank: no note, and nothing typed.
     pub fn page_is_blank(self) -> bool {
-        self.open_note().is_none() && self.draft.peek().text.is_empty()
+        self.draft.peek().is_blank()
     }
 
     /// The notes of the list, in the order shown.
@@ -454,6 +631,64 @@ impl Screen {
                 .iter()
                 .any(|note| note.id == id && note.archived)
         })
+    }
+
+    // ---- Focus while writing (7.7) ------------------------------------------
+
+    /// A key was pressed on the page.
+    pub fn key_on_page(self) {
+        let mut last = self.last_key;
+        last.set(Some(Instant::now()));
+    }
+
+    /// The page's text changed. The first key only fades the controls; the
+    /// column does not move under a word being typed. Focus comes at the
+    /// first pause or the first new line (5.5). Text that came without a
+    /// key, pasted with the mouse, brings it at once.
+    fn writing_typed(mut self, new_line: bool, version: u64) {
+        let now = *self.writing.peek();
+        if now == Writing::Focused {
+            return;
+        }
+        let keyed = self
+            .last_key
+            .peek()
+            .is_some_and(|at| at.elapsed() < TYPED_WITHIN);
+        if new_line || !keyed {
+            self.writing.set(Writing::Focused);
+            return;
+        }
+        if now != Writing::FirstKeys {
+            self.writing.set(Writing::FirstKeys);
+        }
+        spawn(async move {
+            tokio::time::sleep(FOCUS_AFTER).await;
+            if self.draft.peek().version() == version && *self.writing.peek() == Writing::FirstKeys
+            {
+                self.writing.set(Writing::Focused);
+            }
+        });
+    }
+
+    /// Focus while writing ends: the list and the controls come back.
+    pub fn calm(mut self) {
+        if *self.writing.peek() != Writing::No {
+            self.writing.set(Writing::No);
+        }
+    }
+
+    /// The keyboard went somewhere. Into Find or the list, focus ends: the
+    /// person has gone to the list.
+    pub fn focused(mut self, at: Where) {
+        self.focus.set(at);
+        if matches!(at, Where::Find | Where::List) {
+            self.calm();
+        }
+    }
+
+    /// The chosen style of focus while writing.
+    pub fn focus_style(self) -> FocusStyle {
+        self.app.settings.read().focus_style
     }
 
     // ---- Archive, delete, undo (6.19, 6.7) --------------------------------
@@ -490,66 +725,34 @@ impl Screen {
         self.put_away(id, true, After::Blank);
     }
 
-    /// Archives or deletes a note, and says so with **Undo**. If it was the
-    /// note on the page, the page then shows what `after` says.
+    /// Archives or deletes a note, and says so with **Undo** once it is
+    /// done. If it was the note on the page, the page shows what `after`
+    /// says at once, and what was typed in the note is kept first. A note
+    /// emptied on the page is let go as it is left: there is nothing to
+    /// archive or delete then, and nothing to undo.
     fn put_away(mut self, id: NoteId, delete: bool, after: After) {
-        let serial = self.next_serial();
-        let undo = Callback::new(move |()| self.undo(Some(serial)));
         let was_open = self.open_note() == Some(id);
-        spawn(async move {
-            // A note emptied on the page is let go as it is left: there is
-            // nothing to archive or delete, and nothing to undo.
-            if was_open && self.leave().await.is_none() {
-                match after {
-                    After::Blank => self.blank(true),
-                    After::Show(None) => self.blank(false),
-                    After::Show(Some(next)) => {
-                        self.blank(false);
-                        self.open(next, false);
-                    }
-                }
-                return;
-            }
-            let Some(store) = self.app.db_service.peek().clone() else {
-                return;
-            };
-            self.exit.set(if delete {
-                ListExit::Tear
-            } else {
-                ListExit::Fold
-            });
-            let done = if delete {
-                store.delete_note(&id).await
-            } else {
-                store.archive_note(&id).await.map(|_| ())
-            };
-            if let Err(error) = done {
-                tracing::error!("Could not put the note away: {error}");
-                return;
-            }
-            self.last_undo.set(Some(Undo {
-                serial,
-                note: id,
-                deleted: delete,
-            }));
-            if was_open {
-                match after {
-                    After::Blank => self.blank(true),
-                    After::Show(None) => self.blank(false),
-                    After::Show(Some(next)) => {
-                        self.blank(false);
-                        self.open(next, false);
-                    }
-                }
-            }
-            self.app.note_changed();
-            let toast = if delete {
-                Toast::new("Note deleted").icon(Icon::Trash)
-            } else {
-                Toast::new("Archived").icon(Icon::Archive)
-            };
-            self.toasts.show(toast.undo(undo));
+        if was_open {
+            self.calm();
+            self.leave();
+        }
+        let work = [Work::PutAway { note: id, delete }];
+        self.exit.set(if delete {
+            ListExit::Tear
+        } else {
+            ListExit::Fold
         });
+        self.ask(work);
+        if was_open {
+            match after {
+                After::Blank => self.blank(true),
+                After::Show(None) => self.blank(false),
+                After::Show(Some(next)) => {
+                    self.blank(false);
+                    self.open(next, false);
+                }
+            }
+        }
     }
 
     /// Brings an archived note back to the list. Not an edit.
@@ -712,37 +915,39 @@ impl Screen {
         if paths.is_empty() {
             return;
         }
-        if self.open_note().is_some() {
-            self.incoming.set(paths);
-            return;
-        }
-        spawn(async move {
-            let Some(store) = self.app.db_service.peek().clone() else {
-                return;
-            };
-            let tags: Vec<String> = self
-                .tags
-                .peek()
-                .iter()
-                .map(|tag| format!("#{tag}"))
-                .collect();
-            let typed = self.draft.peek().text.clone();
-            let text = if tags.is_empty() {
-                typed
+        let tags: Vec<String> = self
+            .tags
+            .peek()
+            .iter()
+            .map(|tag| format!("#{tag}"))
+            .collect();
+        let (note, made) = self.draft.write().note_for_files(|typed| {
+            if tags.is_empty() {
+                typed.to_owned()
             } else {
                 format!("{} {}", typed.trim_end(), tags.join(" "))
                     .trim_start()
                     .to_owned()
-            };
-            match store.create_note(&text).await {
-                Ok(note) => {
-                    self.app.note_changed();
-                    self.show(note, None, true);
-                    self.incoming.set(paths);
-                }
-                Err(error) => tracing::error!("Could not make a note for the files: {error}"),
             }
         });
+        if made.is_some() {
+            // The blank page becomes the note, with the tags written in.
+            let serial = self.next_serial();
+            let mut current = self.app.current_note_id;
+            current.set(Some(note));
+            self.page_in_store_in_use();
+            let text = self.draft.peek().text().to_owned();
+            self.page.set(PageView {
+                serial,
+                note: Some(note),
+                text,
+                take_focus: true,
+                ..PageView::default()
+            });
+            self.page_over.set(true);
+        }
+        self.files_news.write().asked(note);
+        self.ask(made.into_iter().chain([Work::Attach { note, paths }]));
     }
 
     /// Opens the file dialog, and attaches what is chosen: 📎 and Ctrl
@@ -768,7 +973,7 @@ impl Screen {
 
     /// Copies the note's text: Ctrl Shift C, and the menu.
     pub fn copy_note(self) {
-        let text = self.draft.peek().text.clone();
+        let text = self.draft.peek().text().to_owned();
         if text.is_empty() {
             return;
         }
@@ -1040,22 +1245,64 @@ pub fn MainScreen() -> Element {
             ..PageView::default()
         }),
         draft: Signal::new(Draft::default()),
+        page_store: CopyValue::new(None),
+        files_news: Signal::new(FilesNews::default()),
+        unsaved: Signal::new(Vec::new()),
+        writing: Signal::new(Writing::No),
+        last_key: CopyValue::new(None),
         last_undo: Signal::new(None),
         serial: Signal::new(0),
         page_over: Signal::new(false),
         keys_open: Signal::new(false),
         focus: Signal::new(Where::Elsewhere),
-        incoming: Signal::new(Vec::new()),
         clock,
+    });
+    // What the store's work came to: Undo for a note put away, files
+    // attached, the list to read again.
+    use_future(move || async move {
+        let mut news = Scribe::global().listen();
+        loop {
+            match news.recv().await {
+                Ok(done) => screen.heard(&done),
+                // Some news was missed while the screen was busy: the list
+                // is read again, which is what most news asks for.
+                Err(RecvError::Lagged(_)) => screen.app.reread(),
+                Err(RecvError::Closed) => break,
+            }
+        }
+    });
+    // The screen going (quick capture takes the window) hands over what
+    // the page holds, and so does the app quitting from the tray, which
+    // then waits for the queue. Before another store is taken into use the
+    // app asks for the page through `page_leaver`, and waits for the queue.
+    use_hook(move || {
+        let mut leaver = app.page_leaver;
+        leaver.set(Some(Callback::new(move |()| screen.leave())));
+    });
+    use_drop(move || {
+        let mut leaver = app.page_leaver;
+        if let Ok(mut leaver) = leaver.try_write() {
+            *leaver = None;
+        }
+        screen.leave();
+    });
+    use_effect(move || {
+        if *app.quitting.read() {
+            screen.leave();
+        }
     });
     use_listing(&screen, &app);
     use_tag_offers(&screen, &app);
 
     // A note closed under the page (another store taken into use on
-    // signing in or out) leaves a blank page.
+    // signing in or out) leaves a blank page. What it held belongs to the
+    // store that was let go; the work asked of that store before is done.
     use_effect(move || {
         let open = *app.current_note_id.read();
         if open.is_none() && screen.page.peek().note.is_some() {
+            // Left already, as the app took the other store into use.
+            screen.leave();
+            screen.calm();
             screen.blank(false);
         }
     });
@@ -1072,12 +1319,22 @@ pub fn MainScreen() -> Element {
 
     let over = *screen.page_over.read() || app.current_note_id.read().is_some();
     let has_note = app.current_note_id.read().is_some();
+    let writing = screen.writing.read().name();
+    let style = screen.focus_style().name();
+    let drag = window::use_window_drag();
 
     rsx! {
         style { {include_str!("screen.css")} }
         div {
             class: "dk",
             "data-over": over.then_some(""),
+            // Focus while writing (7.7): the style sheet lays it out, and
+            // the script plays what depends on where the rows are.
+            "data-dui-focus": style,
+            "data-dui-writing": writing,
+            // The window's top row moves it, where there is no title bar.
+            "data-dui-drag": drag.is_some().then_some(window::DRAG_ROW),
+            "data-dui-id": drag,
             // Where the keyboard goes when what had it is taken away, so
             // that the screen's keys are still heard.
             tabindex: "-1",
@@ -1095,8 +1352,10 @@ pub fn MainScreen() -> Element {
             }
             div { class: "dk-body",
                 Side {}
+                Edge {}
                 Page {}
             }
+            WindowControls {}
             ContextMenu { on_paste: move |()| Screen::paste(),
                 if has_note {
                     MenuItem {

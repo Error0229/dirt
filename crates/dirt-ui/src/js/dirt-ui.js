@@ -11,7 +11,10 @@
 //   the circle a new theme spreads in, a toast opening);
 // - tooltips, and focus going into a panel or sheet and back out of it;
 // - the app's own menu on a right click, arrow keys through a group, the
-//   one highlight of a list, and more rows as a list nears its end.
+//   one highlight of a list, and more rows as a list nears its end;
+// - on the desktop: controls shown by the pointer's nearness, the page
+//   emptied as a thought is done, the window moved by its top row, and
+//   focus while writing.
 //
 // Rust renders elements with `data-dui-*` attributes; the script finds
 // them as they appear. Nothing here keeps the app's state.
@@ -1074,8 +1077,204 @@
     mores.delete(mark);
   }
 
+  // ---- Controls shown by nearness (sections 6.4, 7.7) ---------------------
+  // While a note is written, a control comes back only when the pointer
+  // goes to where it lives. An element with `data-dui-near="64"` is marked
+  // `data-near` while the pointer is within that many pixels of it; the
+  // style sheet says what that shows. Only a pointer that moves counts: a
+  // list sliding away under a still pointer brings nothing back. An
+  // element that also has `data-dui-reach` tells Rust once when the
+  // pointer comes onto it.
+  //
+  // A touch on a touch screen shows them all, until the next key.
+  let pointerAt = null, nearFrame = 0, touchShown = false;
+  const nears = () => $$('[data-dui-near]');
+  function setNear(element, near) {
+    if (near === (element.dataset.near !== undefined)) return;
+    if (near) element.dataset.near = ''; else delete element.dataset.near;
+  }
+  function measureNear() {
+    nearFrame = 0;
+    if (!pointerAt) return;
+    const [x, y] = pointerAt;
+    nears().forEach(element => {
+      if (!shown(element)) { setNear(element, false); element._duiReached = false; return; }
+      const box = element.getBoundingClientRect();
+      const dx = Math.max(box.left - x, 0, x - box.right), dy = Math.max(box.top - y, 0, y - box.bottom);
+      setNear(element, Math.hypot(dx, dy) <= (Number(element.dataset.duiNear) || 0));
+      if (element.dataset.duiReach === undefined) return;
+      const on = dx === 0 && dy === 0;
+      if (on && !element._duiReached) tell(element, 'reach');
+      element._duiReached = on;
+    });
+  }
+  function forgetNear() {
+    pointerAt = null;
+    nears().forEach(element => { setNear(element, false); element._duiReached = false; });
+  }
+  document.addEventListener('pointermove', event => {
+    if (event.pointerType === 'touch') return;
+    const was = pointerAt;
+    pointerAt = [event.clientX, event.clientY];
+    if (!was || (was[0] === pointerAt[0] && was[1] === pointerAt[1])) return;
+    if (!nearFrame) nearFrame = requestAnimationFrame(measureNear);
+  }, { passive: true });
+  document.addEventListener('pointerleave', forgetNear);
+  window.addEventListener('blur', forgetNear);
+  document.addEventListener('pointerdown', event => {
+    if (event.pointerType !== 'touch') return;
+    touchShown = true;
+    nears().forEach(element => setNear(element, true));
+  }, true);
+  document.addEventListener('keydown', () => {
+    if (!touchShown) return;
+    touchShown = false;
+    nears().forEach(element => setNear(element, false));
+  }, true);
+
+  // ---- A press that leaves the cursor where it is (section 7.7) -----------
+  // Inside `data-dui-keep-focus` (the rail's grains), a press does not take
+  // the keyboard's focus from the note being written. The click still
+  // happens.
+  document.addEventListener('mousedown', event => {
+    if (event.target.closest && event.target.closest('[data-dui-keep-focus]')) event.preventDefault();
+  }, true);
+
+  // ---- The page: done is at once (sections 6.1, 7.4) ----------------------
+  // Esc, Ctrl Enter and Ctrl N on the page (`data-dui-page`) put the thought
+  // on the pile and give a blank page. The attribute names the command key,
+  // `ctrl` or `meta` (Cmd on a Mac). The rule is the app's own, key for key
+  // (the desktop's `keys::empties_page`): Esc with no modifier, or the
+  // command key with Enter or N and nothing else. Were the two to differ,
+  // the next character would be saved over the note, or the old text would
+  // become a second note. The field is emptied here, as the
+  // key is pressed, before Rust has heard of it: whatever is typed next is
+  // the next thought's, however quickly it comes. Rust keeps what the field
+  // held, from what it had heard before the key.
+  //
+  // It listens before the page's own handlers: Dioxus marks a key the app
+  // takes as handled before a listener after it would hear it. The app's
+  // own menu takes Esc first while it is open; it is listened to before
+  // this.
+  document.addEventListener('keydown', event => {
+    const field = event.target;
+    if (event.defaultPrevented || event.isComposing || !field || !field.matches || !field.matches('[data-dui-page]')) return;
+    const mac = field.dataset.duiPage === 'meta';
+    const command = mac ? event.metaKey : event.ctrlKey;
+    const other = mac ? event.ctrlKey : event.metaKey;
+    if (event.altKey || event.shiftKey || other) return;
+    const done = command
+      ? event.key === 'Enter' || event.key.toLowerCase() === 'n'
+      : event.key === 'Escape';
+    if (!done) return;
+    field.value = '';
+    field.setSelectionRange(0, 0);
+  }, true);
+
+  // ---- The window's top row (section 7.6) ---------------------------------
+  // Where the app draws the window without the system's title bar, any
+  // empty part of its top rows (`data-dui-drag`, the height in pixels)
+  // moves it: a press there tells Rust, which hands the move to the system
+  // until the button is let go. A double-click maximises or restores.
+  const NOT_DRAG = 'button,a,input,textarea,select,label,[role="listbox"],[role="option"],[contenteditable],'
+    + '[data-dui-modal],[data-dui-menu],.dui-find,.dui-taglist,.dui-toast,.dui-sb,[data-dui-resize],[data-dui-no-drag]';
+  // An edge the app draws for resizing (`data-dui-resize`), where the web
+  // view lies over the system's own border: a press there hands the
+  // resizing to the system, from that edge.
+  document.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || event.pointerType !== 'mouse' || !event.target.closest) return;
+    const edge = event.target.closest('[data-dui-resize]');
+    if (!edge) return;
+    event.preventDefault();
+    tell(edge, 'resize');
+  }, true);
+  let lastDragPress = null;
+  document.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || event.pointerType !== 'mouse' || !event.target.closest) return;
+    const area = event.target.closest('[data-dui-drag]');
+    if (!area || event.target.closest(NOT_DRAG)) return;
+    const box = area.getBoundingClientRect();
+    if (event.clientY - box.top > (Number(area.dataset.duiDrag) || 0)) return;
+    event.preventDefault();
+    // A pointer's press carries no count of clicks, and the press that
+    // would is not sent once this one is taken: a second press soon after
+    // the first and in the same place is the double-click. The same place
+    // on the screen: after a short drag the window has moved with the
+    // pointer, and a quick second grab is in the same place in the page.
+    const now = Date.now(), last = lastDragPress;
+    const again = last && now - last.at < 500 && Math.abs(event.screenX - last.x) < 5 && Math.abs(event.screenY - last.y) < 5;
+    lastDragPress = again ? null : { at: now, x: event.screenX, y: event.screenY };
+    tell(area, again ? 'maximize' : 'drag');
+  }, true);
+
+  // ---- Focus while writing (section 7.7) ----------------------------------
+  // Rust says on the screen's root whether a note is being written
+  // (`data-dui-writing`: `hush` at the first key, `on` once focus has come
+  // in) and in which style (`data-dui-focus`). The style sheet lays each
+  // out; what depends on where the rows are is played here. Rail: the rows
+  // fold to the left one after another, then the rail's grains pop in top
+  // to bottom. Leaving any style: the rows come back in a cascade from the
+  // left. Nearness starts again with each change: only a pointer that
+  // moves after it counts.
+  const writers = new Map();
+  function rowsInSight(scope) {
+    const list = scope.querySelector('[data-dui-list]');
+    if (!list) return [];
+    const view = list.getBoundingClientRect();
+    return rowsOf(list).filter(row => {
+      const box = row.getBoundingClientRect();
+      return box.height && box.bottom > view.top && box.top < view.bottom;
+    }).slice(0, 12);
+  }
+  function writingChanged(scope, was, now) {
+    forgetNear();
+    if (reduced() || was === now) return;
+    if (now === 'on' && scope.dataset.duiFocus === 'rail') {
+      const rows = rowsInSight(scope);
+      rows.forEach((row, index) => row.animate(
+        [{ transform: 'none', opacity: 1, transformOrigin: 'left center' },
+          { transform: 'translateX(-24px) scaleX(.4)', opacity: 0, transformOrigin: 'left center' }],
+        { duration: 180, delay: index * 18, easing: tokens.exit, fill: 'forwards' }));
+      setTimeout(() => rows.forEach(row => row.getAnimations().forEach(run => run.cancel())), 760);
+      const pop = spring('pop');
+      const rail = scope.querySelector('[data-dui-rail]');
+      const box = rail ? rail.getBoundingClientRect() : null;
+      if (rail) {
+        $$('button, [data-dui-stop]', rail)
+          .filter(stop => stop.getBoundingClientRect().top < box.bottom)
+          .slice(0, 40)
+          .forEach((stop, index) => stop.animate([{ transform: 'scale(0)', opacity: 0 }, { transform: 'none', opacity: 1 }],
+            { duration: pop.ms, easing: pop.easing, delay: 280 + index * 24, fill: 'backwards' }));
+      }
+    } else if (was === 'on' && now !== 'on') {
+      const snap = spring('snap');
+      rowsInSight(scope).forEach((row, index) => row.animate(
+        [{ transform: 'translateX(-14px)', opacity: 0 }, { transform: 'none', opacity: 1 }],
+        { duration: snap.ms, easing: snap.easing, delay: 230 + index * 22, fill: 'backwards' }));
+    }
+  }
+  function watchWriting(scope) {
+    if (writers.has(scope)) return;
+    const state = { now: scope.dataset.duiWriting || '' };
+    state.observer = new MutationObserver(() => {
+      const now = scope.dataset.duiWriting || '';
+      if (now === state.now) return;
+      const was = state.now;
+      state.now = now;
+      writingChanged(scope, was, now);
+    });
+    state.observer.observe(scope, { attributes: true, attributeFilter: ['data-dui-writing'] });
+    writers.set(scope, state);
+  }
+  function forgetWriting(scope) {
+    const state = writers.get(scope);
+    if (!state) return;
+    state.observer.disconnect();
+    writers.delete(scope);
+  }
+
   // ---- Finding what Rust renders -----------------------------------------
-  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],.dui-confirm';
+  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],.dui-confirm';
   function arrived(element) {
     if (element.matches('[data-dui-list]')) watchList(element);
     if (element.matches('[data-dui-modal]')) watchModal(element);
@@ -1083,14 +1282,18 @@
     if (element.matches('[data-dui-toast]') && !element.classList.contains('dui-toast-ghost')) toastShown(element);
     if (element.matches('.dui-confirm')) confirmShown(element);
     if (element.matches('[data-dui-more]')) watchMore(element);
+    if (element.matches('[data-dui-focus]')) watchWriting(element);
   }
   function left(element, parent) {
     if (element.matches('[data-dui-list]')) forgetList(element);
     if (element.matches('[data-dui-modal]')) forgetModal(element);
     if (element.matches('[data-dui-scroll]')) forgetScroll(element);
     if (element.matches('[data-dui-more]')) forgetMore(element);
+    if (element.matches('[data-dui-focus]')) forgetWriting(element);
     if (element.matches('[data-dui-toast]') && !element.classList.contains('dui-toast-ghost')) {
-      toastGone(element, parent && parent.closest ? parent.closest('.dui-toast-layer') : null);
+      // The copy closes where the toast was: the toast's place, or the
+      // error's above it.
+      toastGone(element, parent && parent.closest ? parent.closest('.dui-toasts, .dui-toasts-err, .dui-toast-layer') : null);
     }
     if (element.matches('.dui-confirm') && parent && parent.closest) {
       const host = parent.closest('[data-dui-confirm-host]');

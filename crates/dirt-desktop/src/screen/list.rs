@@ -18,6 +18,7 @@ use dirt_ui::dom::{self, Caret};
 use dirt_ui::find;
 use dirt_ui::Icon;
 
+use super::focus::Rail;
 use super::keys::{command, is_delete};
 use super::{Listing, Screen, Where, LISTED_NOTES};
 use crate::state::AppState;
@@ -252,7 +253,6 @@ pub fn Side() -> Element {
         !listing.finding && !listing.archived_view && archived_count > 0 && !listing.more;
     let items = items(&listing, clock);
     let indicator = screen.sync_indicator();
-    let mut focus = screen.focus;
 
     rsx! {
         aside { class: "dk-side", "aria-label": "Notes",
@@ -270,7 +270,7 @@ pub fn Side() -> Element {
                         dom::focus(&["#dui-find"], Caret::End);
                     },
                     on_focus: move |inside: bool| {
-                        focus.set(if inside { Where::Find } else { Where::Elsewhere });
+                        screen.focused(if inside { Where::Find } else { Where::Elsewhere });
                     },
                 }
             }
@@ -294,8 +294,8 @@ pub fn Side() -> Element {
                     "data-dui-list": "",
                     "data-dui-exit": exit,
                     onkeydown: move |event: KeyboardEvent| list_key(&screen, &event),
-                    onfocus: move |_| focus.set(Where::List),
-                    onblur: move |_| focus.set(Where::Elsewhere),
+                    onfocus: move |_| screen.focused(Where::List),
+                    onblur: move |_| screen.focused(Where::Elsewhere),
                     div { class: "dui-sel-ind", "aria-hidden": "true" }
                     if listing.archived_view {
                         div { class: "dk-arch-head", "data-key": "archived head",
@@ -378,6 +378,7 @@ pub fn Side() -> Element {
                     onclick: move |_| screen.open_settings(),
                 }
             }
+            Rail {}
         }
     }
 }

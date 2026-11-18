@@ -98,7 +98,9 @@ fn main() {
     // Configure Dioxus to hide window on close instead of exiting
     // Hide window instead of exiting when closed - keeps app running in tray
     let config = without_the_web_views_own_keys(
-        Config::new().with_close_behaviour(WindowCloseBehaviour::WindowHides),
+        Config::new()
+            .with_window(screen::window::builder())
+            .with_close_behaviour(WindowCloseBehaviour::WindowHides),
     );
 
     // Launch the app

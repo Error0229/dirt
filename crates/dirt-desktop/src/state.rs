@@ -67,6 +67,13 @@ pub struct AppState {
     pub settings_tab: Signal<SettingsTab>,
     /// Whether quick capture overlay is active
     pub quick_capture_open: Signal<bool>,
+    /// Quit was chosen: the main screen hands over what its page holds,
+    /// and the app waits a moment for the store's queue before it ends.
+    pub quitting: Signal<bool>,
+    /// Leaves the main screen's page, handing what it holds to the store's
+    /// queue: called before another store is taken into use. None while
+    /// the main screen is not there.
+    pub page_leaver: CopyValue<Option<Callback<()>>>,
 }
 
 impl AppState {

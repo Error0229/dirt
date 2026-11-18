@@ -17,10 +17,11 @@ pull request.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Write a note | On the page, always open beside the list: the first character makes the note, and it saves itself. Esc, Ctrl Enter or ✓ is done and gives a blank page. With the list narrowed to tags, a new page gets them at its end | Yes | `dirt add`, or `dirt "a thought"` |
+| Write a note | On the page, always open beside the list: the first character makes the note, and it saves itself. Esc, Ctrl Enter or ✓ is done and gives a blank page at once; what is typed straight after is the next thought. With the list narrowed to tags, a new page gets them at its end | Yes | `dirt add`, or `dirt "a thought"` |
+| Focus while writing | The first key fades the controls; at the first pause or new line the list goes, by the style chosen in Settings → Appearance: Slide (the default), Rail or Zen. The note's icons, the window's controls and the list's handle come back as the pointer nears them | Not applicable: a note fills the screen | Not applicable |
 | Edit a note | Yes, saved as you type | Yes, with a Save button | `dirt edit <ID>`, in `$VISUAL` or `$EDITOR` |
 | Delete a note | Shift Del in the list, Ctrl Shift Del in a note, or the bin on an archived note. No question first: a toast offers **Undo** | Yes | `dirt delete <ID>` |
-| Bring a deleted note back | **Undo** on the toast, or Ctrl Z outside the text, for the last archive or delete, after the toast has gone too | Not yet: step 4 of the interface plan | `dirt restore <ID>`, by the ID that `dirt delete` printed or the start of it |
+| Bring a deleted note back | **Undo** on the toast, or Ctrl Z outside the text, for the last archive or delete, after the toast has gone too. It comes back into its place in the list | Not yet: step 4 of the interface plan | `dirt restore <ID>`, by the ID that `dirt delete` printed or the start of it |
 | Archive a note, and bring it back to the list | The box on a row under the pointer, Del in the list, the box beside the open note or Ctrl Del in it; **Undo** or Ctrl Z, or "Back to the list" beside an archived note | Not yet: step 4 of the interface plan | `dirt archive <ID>`, `dirt unarchive <ID>` |
 | List the archived notes | "3 archived" at the end of the list, newest first; Esc or ‹ goes back | Not yet: step 4 of the interface plan | `dirt list --archived`, which `--tag` narrows as it does the list |
 | List notes | Most recently edited first, in layers by when each was edited (today, This week, Earlier this month, then by month). 100 at first, and 100 more as scrolling nears the end. Archived notes are left out. A hollow dot marks a note not on the server yet | The 100 most recently edited, and 100 more with each press of "Show older notes". Archived notes are left out | `dirt list`, 10 unless `--limit` says otherwise. Archived notes are left out |
@@ -29,7 +30,9 @@ pull request.
 A deleted note keeps its document, so it can be brought back, with the text
 it had. `dirt restore` does it, and the desktop app's **Undo**; the Android
 app will. A note that was
-archived when it was deleted comes back archived.
+archived when it was deleted comes back archived. It keeps the edit time it
+had, on every device, so it comes back into its place in the list; bringing
+it back still syncs as a change.
 
 In an account, a deleted note is purged thirty days after a device saw it
 deleted: its document goes from the server and from every device, and it
@@ -160,6 +163,7 @@ the head of the note in the Markdown.
 | | Desktop | Android | CLI |
 |---|---|---|---|
 | Light and dark themes | Yes, or follow the system | Light only | Not applicable |
+| The window | Windows: no title bar. Dirt's own minimise, maximise and close at the top right; the top row moves the window and a double-click on it maximises; every edge resizes it. Linux and macOS: the system's title bar, until they are tried (manual checklist) | Not applicable | Not applicable |
 | Text size | Settings → Appearance, Ctrl + and Ctrl − (13 to 20 px, 15 at first). Inter and JetBrains Mono, bundled; the choice of font is gone | No | Not applicable |
 | Shell completions | Not applicable | Not applicable | `dirt completions <shell>` |
 

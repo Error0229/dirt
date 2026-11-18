@@ -33,6 +33,12 @@
 //! | `data-dui-more` | a mark at a list's end | Says once that it has come near; see [`components::LoadMore`] |
 //! | `data-dui-oneline` | a text field | A pasted line break becomes a space |
 //! | `data-dui-home` | a screen | Takes the keyboard's focus whenever it would fall to the page's body, so that the screen's keys are still heard |
+//! | `data-dui-near` | a control that hides | Marked `data-near` while the pointer is within that many pixels of it, counting only a pointer that moves; with `data-dui-reach`, says once that the pointer came onto it ([`events::Outcome::Reach`]) |
+//! | `data-dui-keep-focus` | a group of buttons | A press inside it leaves the keyboard's focus where it was |
+//! | `data-dui-page` | the desktop's page | <kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd> and <kbd>Ctrl N</kbd> empty it as they are pressed, so that what is typed next is the next thought's |
+//! | `data-dui-drag` | a window's root | A press on an empty part of its top rows (the height in pixels) says [`events::Outcome::Drag`], a double-click [`events::Outcome::Maximize`] |
+//! | `data-dui-resize` | an edge of the window | A press on it says [`events::Outcome::Resize`] |
+//! | `data-dui-focus`, `data-dui-writing` | the desktop's screen | Focus while writing: the style, and `hush` or `on`. The rows of its list fold away and come back, and the grains of `data-dui-rail` pop in |
 //!
 //! What the app asks of a field it does not hold (focus, its text) is in
 //! [`dom`].

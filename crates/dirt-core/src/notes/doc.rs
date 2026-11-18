@@ -225,10 +225,30 @@ impl NoteDoc {
             .insert(&mut txn, self.client_id.to_string(), seen);
     }
 
-    /// Brings a deleted note back. This is an ordinary edit.
+    /// Brings a deleted note back. This is an ordinary edit, made at
+    /// `now_ms`.
     pub fn restore(&self, now_ms: i64) {
         let mut txn = self.doc.transact_mut();
         self.record_edit(&mut txn, now_ms);
+    }
+
+    /// Brings a deleted note back where it was: what undoing a delete does.
+    ///
+    /// It is an edit, as [`Self::restore`] is: this device's count rises
+    /// above every deletion marker, so the note comes back on every device
+    /// that merges it, and the change is sent like any other. What differs
+    /// is the time recorded with it. That is the note's edit time as it
+    /// was, not the time now, so the note keeps its place among the others
+    /// and its layer (interface design, 6.19). The edit time is the latest
+    /// of the times recorded, and this one is no later than that, so it
+    /// does not move. A note with no edit time yet is given `now_ms`.
+    ///
+    /// The time decides nothing in a merge: it is only shown, and orders
+    /// the list. What brings the note back is the count.
+    pub fn bring_back(&self, now_ms: i64) {
+        let at = self.edited_at_ms().unwrap_or(now_ms);
+        let mut txn = self.doc.transact_mut();
+        self.record_edit(&mut txn, at);
     }
 
     /// Archives the note, or brings it back to the list.

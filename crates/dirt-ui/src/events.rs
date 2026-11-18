@@ -28,6 +28,21 @@ pub enum Outcome {
     /// Paste was chosen in the app's own menu. Reading the clipboard is
     /// the app's to do; it hands the text back with [`crate::dom::paste`].
     Paste,
+    /// The pointer came onto an element that waits for it
+    /// (`data-dui-reach`): the handle at the window's edge, which brings
+    /// the list back while a note is written.
+    Reach,
+    /// A press began on an empty part of the window's top row
+    /// (`data-dui-drag`): the system moves the window from here until the
+    /// button is let go.
+    Drag,
+    /// A double-click on an empty part of the window's top row: maximise
+    /// or restore, as a title bar's double-click does.
+    Maximize,
+    /// A press began on one of the window's edges that the app draws
+    /// (`data-dui-resize`): the system resizes the window from that edge
+    /// until the button is let go.
+    Resize,
 }
 
 /// One message from the script: which element, and how it ended.

@@ -1707,6 +1707,11 @@ by nearness (6.4's second half) and the window without a title bar (7.6).
   had, as unarchiving does; that is `dirt-core`'s, with its own tests,
   and must still sync as a change.
 
+Both were fixed in 3b; design sections 7.8 and 7.9 say how. 3b built the
+window without a title bar on Windows only: Linux and macOS keep the
+system's title bar until it has been tried there, as the fallback above
+allows.
+
 ### Step 4: Android's main screen
 
 The dock, cards, Find, the note that grows out of its card, swipe to

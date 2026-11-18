@@ -2,7 +2,10 @@
 //! note's text on the page, with what can be done with it.
 //!
 //! A file is attached from the page's paperclip, which opens a file
-//! dialog, or by dropping it on the page; the page hands the files here.
+//! dialog, or by dropping it on the page. The page has the attaching done
+//! in order with the rest of its work (`screen::writing`), so that a file
+//! attached as the note is being made goes to that note, and says here how
+//! it is going ([`FilesNews`]).
 //! A picture shows its thumbnail. A file is opened by handing a copy of it
 //! to the system, saved as a copy where the person says, or removed from
 //! the note. A file the system would run and not show can be saved and not
@@ -20,7 +23,6 @@ use dirt_core::files::{runs_as_a_program, safe_file_name};
 use dirt_core::store::AttachedFile;
 use dirt_core::sync::engine::{file_on_device, FileError};
 use dirt_core::sync::overview::size_words;
-use dirt_core::sync::worker::Trigger;
 use dirt_core::util::as_sentence;
 use dirt_core::NoteId;
 use uuid::Uuid;
@@ -28,7 +30,7 @@ use uuid::Uuid;
 use dirt_ui::components::{IconButton, IconButtonSize};
 use dirt_ui::Icon;
 
-use crate::services::{attach_all, copy_for_opening, open_with_system, save_where_asked};
+use crate::services::{copy_for_opening, open_with_system, save_where_asked};
 use crate::state::AppState;
 
 /// A thumbnail larger than this is not shown. One made by Dirt is a few
@@ -82,13 +84,52 @@ async fn thumbnail_held(state: &AppState, thumbnail: Uuid) -> Option<String> {
     Some(as_data_uri(&picture))
 }
 
+/// How attaching files to a note is going: the page has it done, and the
+/// note's list of files shows it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FilesNews {
+    /// The note the files are for.
+    pub note: Option<NoteId>,
+    /// How many lots of files are still being attached.
+    pub busy: usize,
+    /// What could not be attached, and why.
+    pub message: Option<String>,
+    /// Raised when a lot has been attached.
+    pub serial: u64,
+}
+
+impl FilesNews {
+    /// Files are being attached to `note`.
+    pub fn asked(&mut self, note: NoteId) {
+        if self.note != Some(note) {
+            *self = Self {
+                note: Some(note),
+                serial: self.serial,
+                ..Self::default()
+            };
+        }
+        self.busy += 1;
+        self.message = None;
+    }
+
+    /// Files were attached to `note`, but for those in `failed`.
+    pub fn attached(&mut self, note: NoteId, failed: &[String]) {
+        if self.note != Some(note) {
+            return;
+        }
+        self.busy = self.busy.saturating_sub(1);
+        self.serial += 1;
+        if !failed.is_empty() {
+            self.message = Some(format!("Not attached. {}", failed.join(" ")));
+        }
+    }
+}
+
 /// The files of the open note.
 ///
-/// `incoming` is the files chosen or dropped on the page since they were
-/// last taken: the page owns the paperclip and the place a file is
-/// dropped on, which is all of it, and this component attaches them.
+/// `news` says how attaching files to it is going: the page has that done.
 #[component]
-pub fn AttachmentPanel(note_id: NoteId, incoming: Signal<Vec<PathBuf>>) -> Element {
+pub fn AttachmentPanel(note_id: NoteId, news: Signal<FilesNews>) -> Element {
     let state = use_context::<AppState>();
 
     // Raised by whatever changes the note's files here, to read them again.
@@ -97,10 +138,12 @@ pub fn AttachmentPanel(note_id: NoteId, incoming: Signal<Vec<PathBuf>>) -> Eleme
     let mut message = use_signal(|| None::<String>);
 
     // Read again when the note changes, when a file is added or removed
-    // here, and when a sync has brought something or sent something.
-    // Reading the list fetches nothing, so the rows are there at once.
+    // here, when files have been attached to it, and when a sync has
+    // brought something or sent something. Reading the list fetches
+    // nothing, so the rows are there at once.
     let listed = use_resource(move || {
         let _ = changed();
+        let _ = news.read().serial;
         let sync = (state.sync_status)();
         let _ = (sync.pulled, sync.files_unsent, sync.syncing);
         async move { files_of(&state, note_id).await }
@@ -146,48 +189,6 @@ pub fn AttachmentPanel(note_id: NoteId, incoming: Signal<Vec<PathBuf>>) -> Eleme
                 }
             }
         });
-    });
-
-    let attach = move |paths: Vec<PathBuf>| {
-        if paths.is_empty() {
-            return;
-        }
-        let Some(store) = state.db_service.peek().clone() else {
-            return;
-        };
-        // The attaching is a task of its own, and tells the sync worker
-        // itself when it is done. Turning to another note drops this panel
-        // and whatever it was waiting for, and must not drop files the
-        // person has already chosen.
-        let session = state.session.peek().clone();
-        let attaching = tokio::spawn(async move {
-            let failed = attach_all(store, note_id, paths).await;
-            if let Some(session) = session {
-                session.notify(Trigger::Changed);
-            }
-            failed
-        });
-        // What follows is this panel's own: it shows how the task went,
-        // if the panel is still there to show it.
-        spawn(async move {
-            busy.set(Some("Attaching...".to_owned()));
-            message.set(None);
-            let failed = attaching.await.unwrap_or_default();
-            busy.set(None);
-            if !failed.is_empty() {
-                message.set(Some(format!("Not attached. {}", failed.join(" "))));
-            }
-            changed.set(changed() + 1);
-        });
-    };
-
-    // Files chosen or dropped on the page.
-    use_effect(move || {
-        let paths = incoming();
-        if !paths.is_empty() {
-            incoming.set(Vec::new());
-            attach(paths);
-        }
     });
 
     let open = move |file: AttachedFile| {
@@ -279,9 +280,12 @@ pub fn AttachmentPanel(note_id: NoteId, incoming: Signal<Vec<PathBuf>>) -> Eleme
 
     let files = listed().unwrap_or_default();
     let thumbnails = thumbnails();
-    let working = busy();
+    let news = news.read().clone();
+    let ours = news.note == Some(note_id);
+    let working = busy().or_else(|| (ours && news.busy > 0).then(|| "Attaching...".to_owned()));
+    let said = message().or_else(|| news.message.filter(|_| ours));
 
-    if files.is_empty() && working.is_none() && message().is_none() {
+    if files.is_empty() && working.is_none() && said.is_none() {
         return rsx! {};
     }
 
@@ -290,7 +294,7 @@ pub fn AttachmentPanel(note_id: NoteId, incoming: Signal<Vec<PathBuf>>) -> Eleme
             if let Some(doing) = working {
                 div { class: "dk-files-note", role: "status", "{doing}" }
             }
-            if let Some(text) = message() {
+            if let Some(text) = said {
                 div { class: "dk-files-note", role: "status", "{text}" }
             }
             div { class: "dk-file-tiles",
