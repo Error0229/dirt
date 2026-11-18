@@ -93,7 +93,7 @@ pub fn Page() -> Element {
                             // `dirt_ui::dom`, and never as an attribute:
                             // rendered again, the page would write it over
                             // what was typed since.
-                            oninput: move |event: FormEvent| screen.typed(event.value()),
+                            oninput: move |event: FormEvent| screen.typed(&event.value()),
                         }
                         if let Some(note) = note {
                             AttachmentPanel {

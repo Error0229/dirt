@@ -111,10 +111,25 @@
   // offers `DirtAndroid.bars` to be told whether the page is dark now and
   // the colour of its background, so that the bars match it.
   const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+  // An element with `data-dui-bars` that covers the page (an old screen
+  // with colours of its own) gives the bars its background while it is
+  // there.
+  const hex = colour => {
+    const parts = (colour.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+    if (parts.length < 3) return null;
+    return '#' + parts.map(part => Math.round(part).toString(16).padStart(2, '0')).join('');
+  };
   function tellBars() {
     if (!window.DirtAndroid || !DirtAndroid.bars) return;
-    const dark = root.dataset.theme === 'dark' || (root.dataset.theme !== 'light' && darkQuery.matches);
-    const background = getComputedStyle(root).getPropertyValue('--bg').trim();
+    let dark = root.dataset.theme === 'dark' || (root.dataset.theme !== 'light' && darkQuery.matches);
+    let background = getComputedStyle(root).getPropertyValue('--bg').trim();
+    const cover = $$('[data-dui-bars]').filter(element => element.isConnected).pop();
+    const own = cover ? hex(getComputedStyle(cover).backgroundColor) : null;
+    if (own) {
+      background = own;
+      const [r, g, b] = own.slice(1).match(/../g).map(part => parseInt(part, 16));
+      dark = 0.299 * r + 0.587 * g + 0.114 * b < 128;
+    }
     try { DirtAndroid.bars(dark, background); } catch (error) { /* the activity went away */ }
   }
   darkQuery.addEventListener('change', tellBars);
@@ -610,7 +625,17 @@
     setTimeout(check, 120);
   }
   document.addEventListener('touchstart', event => {
-    pull = null;
+    // A second finger, or a touch that began before the last one ended,
+    // ends a pull in progress: it settles back, as one let go short of the
+    // mark does, and is never left half pulled.
+    if (pull) {
+      const was = pull;
+      pull = null;
+      if (was.mode === 'pull') {
+        root.classList.remove('dui-noselect');
+        settlePull(was.area);
+      }
+    }
     if (event.touches.length !== 1 || !event.target.closest) return;
     const area = event.target.closest('[data-dui-pull]');
     if (!area || area.dataset.duiHeld !== undefined) return;
@@ -1496,7 +1521,7 @@
   }
 
   // ---- Finding what Rust renders -----------------------------------------
-  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],[data-dui-grow],.dui-confirm';
+  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],[data-dui-grow],[data-dui-bars],.dui-confirm';
   function arrived(element) {
     if (element.matches('[data-dui-list]')) watchList(element);
     if (element.matches('[data-dui-modal]')) watchModal(element);
@@ -1506,6 +1531,7 @@
     if (element.matches('[data-dui-more]')) watchMore(element);
     if (element.matches('[data-dui-focus]')) watchWriting(element);
     if (element.matches('[data-dui-grow]')) watchGrow(element);
+    if (element.matches('[data-dui-bars]')) tellBars();
   }
   function left(element, parent) {
     if (element.matches('[data-dui-list]')) forgetList(element);
@@ -1514,6 +1540,7 @@
     if (element.matches('[data-dui-more]')) forgetMore(element);
     if (element.matches('[data-dui-focus]')) forgetWriting(element);
     if (element.matches('[data-dui-grow]')) forgetGrow(element);
+    if (element.matches('[data-dui-bars]')) setTimeout(tellBars, 0);
     if (element.matches('[data-dui-toast]') && !element.classList.contains('dui-toast-ghost')) {
       // The copy closes where the toast was: the toast's place, or the
       // error's above it.

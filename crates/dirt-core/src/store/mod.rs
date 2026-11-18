@@ -361,6 +361,20 @@ impl Store {
         self.read(|c| files::notes_with_files(c)).await
     }
 
+    /// Of the notes `among`, those that have files, each with its revision,
+    /// which rises with every write of the note on this device, a file
+    /// attached or removed among them, and a copy merged from another
+    /// device. What a list asks before it reads the files of the notes it
+    /// shows, so that it reads them again only for a note that changed.
+    /// Each note is looked up by its ID; nothing else is read.
+    pub async fn file_revisions(
+        &self,
+        among: Vec<NoteId>,
+    ) -> Result<std::collections::HashMap<NoteId, i64>> {
+        self.read(move |c| files::revisions_with_files(c, &among))
+            .await
+    }
+
     /// The bytes of a small file this device holds, such as a thumbnail,
     /// read on the store's own thread. `None` if the device does not hold
     /// it, or it is larger than `most` bytes: this is for showing a small

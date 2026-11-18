@@ -103,6 +103,8 @@ fn Legacy(back: View, children: Element) -> Element {
     rsx! {
         div {
             class: "dm-legacy dui-light",
+            // It covers the page: the bars take its colours while it does.
+            "data-dui-bars": "",
             "data-dui-id": "{id}",
             "data-dui-back": "",
             {children}

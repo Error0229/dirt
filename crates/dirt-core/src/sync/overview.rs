@@ -333,6 +333,21 @@ impl SyncIndicator {
             Self::SignedOut => Some("Not syncing. Sign in to sync".to_owned()),
         }
     }
+
+    /// Everything the status says, in one sentence: for a status drawn as
+    /// an icon alone, as on Android's top bar, where a long press is the
+    /// only way to read it. The words come first where they say more than
+    /// "Synced", then the tooltip: "Offline · 2 waiting. Notes wait
+    /// here and go when you're back". A quiet state gives its tooltip, or
+    /// its words when it has none.
+    #[must_use]
+    pub fn in_full(&self, now_ms: i64) -> String {
+        match self.tooltip(now_ms) {
+            Some(tooltip) if !self.is_quiet() => format!("{}. {tooltip}", self.short()),
+            Some(tooltip) => tooltip,
+            None => self.short(),
+        }
+    }
 }
 
 /// What [`SyncIndicator`] is worked out from.
@@ -876,6 +891,31 @@ mod tests {
             SyncIndicator::from_status(&plain, NOW),
             SyncIndicator::of(&SyncOverview::from(&plain), NOW)
         );
+    }
+
+    #[test]
+    fn in_full_the_words_come_first_where_they_say_more_than_synced() {
+        let now = 1_800_000_000_000;
+        assert_eq!(
+            SyncIndicator::Offline { waiting: 2 }.in_full(now),
+            "Offline \u{b7} 2 waiting. Notes wait here and go when you're back"
+        );
+        assert_eq!(
+            SyncIndicator::Problem { notes: 1, files: 0 }.in_full(now),
+            "1 note can't sync. See why"
+        );
+        assert_eq!(
+            SyncIndicator::SignedOut.in_full(now),
+            "This device only. Not syncing. Sign in to sync"
+        );
+        assert_eq!(
+            SyncIndicator::Synced {
+                last_synced_ms: Some(now)
+            }
+            .in_full(now),
+            "Last synced just now"
+        );
+        assert_eq!(SyncIndicator::Syncing.in_full(now), "Syncing");
     }
 
     #[test]

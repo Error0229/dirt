@@ -162,6 +162,30 @@ pub(super) fn notes_with_files(connection: &Connection) -> Result<HashSet<NoteId
     Ok(notes)
 }
 
+/// Of the notes `among`, those that name a file, each with its revision.
+/// Each is looked up by its ID, so a list of a hundred cards costs a
+/// hundred lookups however many notes and files the store holds.
+pub(super) fn revisions_with_files(
+    connection: &Connection,
+    among: &[NoteId],
+) -> Result<std::collections::HashMap<NoteId, i64>> {
+    let mut statement = connection.prepare_cached(
+        "SELECT n.revision FROM notes n \
+          WHERE n.id = ?1 \
+            AND EXISTS (SELECT 1 FROM note_files f WHERE f.note_id = n.id)",
+    )?;
+    let mut found = std::collections::HashMap::new();
+    for id in among {
+        let revision: Option<i64> = statement
+            .query_row([id.as_str()], |row| row.get(0))
+            .optional()?;
+        if let Some(revision) = revision {
+            found.insert(*id, revision);
+        }
+    }
+    Ok(found)
+}
+
 /// One file that a note's document names, with its key.
 pub(super) fn part(connection: &Connection, note: &NoteId, file: Uuid) -> Result<Option<FilePart>> {
     let document: Option<Vec<u8>> = connection

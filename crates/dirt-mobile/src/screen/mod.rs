@@ -33,14 +33,18 @@ use dirt_core::models::{extract_tags, Note, NoteId};
 use dirt_core::store::{LetGo, NoteCounts, TagCount, TagRule};
 use dirt_core::sync::overview::SyncIndicator;
 use dirt_core::sync::worker::Trigger;
-use dirt_ui::components::{card_element_id, use_toasts, GrowFrom, ListExit, Toast, Toasts};
+use dirt_ui::components::{
+    card_element_id, use_toasts, GrowFrom, ListExit, Toast, Toasts, COPY_TEXT, NOTE_NOT_ARCHIVED,
+    NOTE_NOT_BROUGHT_BACK, NOTE_NOT_DELETED, NOTE_NOT_SAVED,
+};
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::find;
 use dirt_ui::time::Clock;
 use dirt_ui::Icon;
-use uuid::Uuid;
 
+use crate::card_files::{CardFiles, CardFilesCache};
 use crate::data::MobileNoteStore;
+use crate::draft::{Draft, Typed};
 use crate::incoming::{
     attach_incoming, discard_all, not_copied_in, note_text, worth_a_note, Capture,
 };
@@ -73,28 +77,6 @@ const CLOSE: Duration = Duration::from_millis(340);
 
 /// A thumbnail larger than this is not shown on a card.
 const MOST_THUMBNAIL_BYTES: u64 = 512 * 1024;
-
-/// What one page holds: what was typed last, and what the store has of it.
-/// Its typing writes here, and its leaving reads it, so that a page left
-/// and a page opened straight after never share one.
-#[derive(Default)]
-pub struct Draft {
-    /// The store the page was opened on. Its writes go there, even if
-    /// another store is taken into use while it is being left.
-    store: Option<Arc<MobileNoteStore>>,
-    /// The note, once there is one.
-    note: Option<NoteId>,
-    text: String,
-    saved: String,
-    version: u64,
-    /// The first character has been typed and the store has not made the
-    /// note yet.
-    creating: bool,
-    /// A save is being written; another waits for it.
-    saving: bool,
-    /// The page has been let go: nothing more is typed into it.
-    left: bool,
-}
 
 /// One page's draft, shared by its typing and its leaving.
 pub type DraftCell = Rc<RefCell<Draft>>;
@@ -185,9 +167,9 @@ pub struct Screen {
     pub files_changed: Signal<u64>,
     last_undo: Signal<Option<Undo>>,
     serial: Signal<u64>,
-    /// Thumbnails read from the store, by the thumbnail's file ID, so that
-    /// a card's picture is read once.
-    thumbs: Signal<HashMap<Uuid, String>>,
+    /// What the cards show of their notes' files, read once for each change
+    /// of a note.
+    card_files: Signal<CardFilesCache>,
     /// The activity is being asked what came from outside the app.
     receiving: Signal<bool>,
     /// What time it is, for the times on cards and the sync status.
@@ -203,6 +185,26 @@ impl Screen {
 
     fn store(self) -> Option<Arc<MobileNoteStore>> {
         self.app.store.peek().clone()
+    }
+
+    /// A write of a note's text failed. It is not tried again: the store
+    /// waits out a busy file itself, so a write that fails is the disk's.
+    /// The person is told why, and given the text it carried to copy.
+    fn not_saved(self, error: &dirt_core::Error, text: &str) {
+        tracing::error!("Could not save a note: {error}");
+        self.toasts.show(
+            Toast::problem(NOTE_NOT_SAVED)
+                .detail(dirt_core::util::as_sentence(error))
+                .copy(COPY_TEXT, text),
+        );
+    }
+
+    /// Something other than a note's text could not be written: an
+    /// archive, a delete, or bringing a note back.
+    fn not_done(self, what: &str, error: &dirt_core::Error) {
+        tracing::error!("{what}: {error}");
+        self.toasts
+            .show(Toast::problem(what).detail(dirt_core::util::as_sentence(error)));
     }
 
     /// Waits until the pages being left have been saved, so that what is
@@ -224,10 +226,7 @@ impl Screen {
             return;
         }
         let serial = self.next_serial();
-        let draft = Rc::new(RefCell::new(Draft {
-            store: self.store(),
-            ..Draft::default()
-        }));
+        let draft = Rc::new(RefCell::new(Draft::blank(self.store())));
         dom::set_value(PAGE, "");
         self.typing.set(false);
         self.page.set(PageView {
@@ -254,8 +253,8 @@ impl Screen {
             .leaving
             .peek()
             .iter()
-            .find(|draft| draft.borrow().note == Some(id))
-            .map(|draft| draft.borrow().text.clone());
+            .find(|draft| draft.borrow().note() == Some(id))
+            .map(|draft| draft.borrow().text().to_owned());
         let listed = self.listing.peek().as_ref().and_then(|listing| {
             listing
                 .notes
@@ -268,13 +267,7 @@ impl Screen {
             .or_else(|| listed.map(|(text, _)| text))
             .unwrap_or_default();
         let serial = self.next_serial();
-        let draft = Rc::new(RefCell::new(Draft {
-            store: self.store(),
-            note: Some(id),
-            text: text.clone(),
-            saved: text.clone(),
-            ..Draft::default()
-        }));
+        let draft = Rc::new(RefCell::new(Draft::of_note(self.store(), id, &text)));
         dom::set_value(PAGE, &text);
         self.typing.set(false);
         self.page.set(PageView {
@@ -290,7 +283,7 @@ impl Screen {
         focus_soon(PAGE, Caret::End);
         spawn(async move {
             self.settled().await;
-            let Some(store) = draft.borrow().store.clone() else {
+            let Some(store) = draft.borrow().store() else {
                 return;
             };
             let found = store.core().get_note(&id).await;
@@ -299,14 +292,8 @@ impl Screen {
             }
             match found {
                 Ok(Some(note)) => {
-                    let untouched = draft.borrow().version == 0;
-                    if untouched {
-                        let mut held = draft.borrow_mut();
-                        if held.text != note.content {
-                            dom::set_value(PAGE, &note.content);
-                            held.text.clone_from(&note.content);
-                        }
-                        held.saved.clone_from(&note.content);
+                    if draft.borrow_mut().read_back(&note.content) {
+                        dom::set_value(PAGE, &note.content);
                     }
                     self.page.write().archived = note.archived;
                 }
@@ -320,7 +307,7 @@ impl Screen {
     /// The page's text changed: typed, pasted or cut. The first character
     /// that is not a space makes the note (6.1); from then on it saves
     /// itself, a moment after typing pauses.
-    pub fn typed(mut self, text: String) {
+    pub fn typed(mut self, text: &str) {
         if !*self.typing.peek() {
             self.typing.set(true);
         }
@@ -329,20 +316,13 @@ impl Screen {
             return;
         }
         let draft = view.draft;
-        let (version, first) = {
-            let mut held = draft.borrow_mut();
-            if held.left {
-                return;
-            }
-            held.text.clone_from(&text);
-            held.version += 1;
-            let first = held.note.is_none() && !held.creating && !text.trim().is_empty();
-            if first {
-                held.creating = true;
-            }
-            (held.version, first)
+        let typed = draft.borrow_mut().typed(text);
+        let version = match typed {
+            Typed::Ignored => return,
+            Typed::Save(version) => Some(version),
+            Typed::Create(_) => None,
         };
-        if first {
+        if let Typed::Create(text) = typed {
             // With the list narrowed to tags, a new page gets them at its
             // end, where they can be seen and removed. The field says so as
             // if they had been typed, and that saves them.
@@ -357,31 +337,35 @@ impl Screen {
             if !missing.is_empty() {
                 dom::append_text(PAGE, &format!(" {}", missing.join(" ")));
             }
-            spawn(async move { self.create(draft, view.serial, text).await });
+            spawn(async move {
+                self.create(draft, view.serial, text).await;
+            });
             return;
         }
         spawn(async move {
             tokio::time::sleep(SAVE_AFTER).await;
-            let current = draft.borrow().version == version;
+            let current = Some(draft.borrow().version()) == version;
             if current {
                 self.save(&draft).await;
             }
         });
     }
 
-    async fn create(mut self, draft: DraftCell, serial: u64, text: String) {
-        let Some(store) = draft.borrow().store.clone() else {
-            draft.borrow_mut().creating = false;
-            return;
+    /// Makes the page's note of `text`, which the draft has said is this
+    /// caller's to make (its first character, files chosen, or the page
+    /// left before the note was made). Returns the note.
+    ///
+    /// If it cannot be made, the person is told, with the text to copy, and
+    /// the page is as it was before its first character, so that the next
+    /// key makes the note with all of it.
+    async fn create(mut self, draft: DraftCell, serial: u64, text: String) -> Option<NoteId> {
+        let Some(store) = draft.borrow().store() else {
+            draft.borrow_mut().create_failed();
+            return None;
         };
         match store.core().create_note(&text).await {
             Ok(note) => {
-                {
-                    let mut held = draft.borrow_mut();
-                    held.note = Some(note.id);
-                    held.saved = text;
-                    held.creating = false;
-                }
+                draft.borrow_mut().created(note.id, &text);
                 let (same_page, open) = {
                     let page = self.page.peek();
                     (page.serial == serial, page.open)
@@ -398,10 +382,12 @@ impl Screen {
                 }
                 self.app.note_changed();
                 self.save(&draft).await;
+                Some(note.id)
             }
             Err(error) => {
-                tracing::error!("Could not make the note: {error}");
-                draft.borrow_mut().creating = false;
+                draft.borrow_mut().create_failed();
+                self.not_saved(&error, &text);
+                None
             }
         }
     }
@@ -410,36 +396,28 @@ impl Screen {
     /// written at a time; one asked for meanwhile is written after it, with
     /// what was typed by then.
     async fn save(self, draft: &DraftCell) {
-        {
-            let mut held = draft.borrow_mut();
-            if held.saving {
-                return;
-            }
-            held.saving = true;
+        if !draft.borrow_mut().begin_save() {
+            return;
         }
-        let store = draft.borrow().store.clone();
+        let store = draft.borrow().store();
         let mut changed = false;
         while let Some(store) = store.as_ref() {
-            let next = {
-                let held = draft.borrow();
-                match held.note {
-                    Some(id) if held.text != held.saved => Some((id, held.text.clone())),
-                    _ => None,
-                }
-            };
+            let next = draft.borrow().to_save();
             let Some((id, text)) = next else { break };
             match store.core().update_note(&id, &text).await {
                 Ok(_) => {
-                    draft.borrow_mut().saved = text;
+                    draft.borrow_mut().saved(&text);
                     changed = true;
                 }
                 Err(error) => {
-                    tracing::error!("Could not save the note: {error}");
+                    // Not tried again; the next change, or leaving the
+                    // page, writes what the page holds then.
+                    self.not_saved(&error, &text);
                     break;
                 }
             }
         }
-        draft.borrow_mut().saving = false;
+        draft.borrow_mut().end_save();
         if changed {
             self.app.note_changed();
         }
@@ -448,34 +426,32 @@ impl Screen {
     /// Saves a page that has been let go, from what it held, and lets its
     /// note go if it was emptied again (6.1). Returns the note, unless
     /// there was none or it was let go.
-    async fn leave(mut self, draft: DraftCell) -> Option<NoteId> {
-        draft.borrow_mut().left = true;
+    async fn leave(mut self, draft: DraftCell, serial: u64) -> Option<NoteId> {
+        draft.borrow_mut().leave();
         self.leaving.write().push(Rc::clone(&draft));
-        let kept = self.settle(&draft).await;
+        let kept = self.settle(&draft, serial).await;
         self.leaving
             .write()
             .retain(|other| !Rc::ptr_eq(other, &draft));
         kept
     }
 
-    async fn settle(self, draft: &DraftCell) -> Option<NoteId> {
+    async fn settle(self, draft: &DraftCell, serial: u64) -> Option<NoteId> {
         // A note still being made is waited for, so that it is not lost.
-        for _ in 0..300 {
-            if !draft.borrow().creating {
-                break;
+        wait_while(|| draft.borrow().is_creating()).await;
+        // A page whose note could not be made is made now, with all it
+        // holds: leaving is the page's last write.
+        let unmade = draft.borrow().unmade();
+        if let Some(text) = unmade {
+            if draft.borrow_mut().claim_create() {
+                self.create(Rc::clone(draft), serial, text).await?;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         self.save(draft).await;
-        for _ in 0..300 {
-            if !draft.borrow().saving {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        wait_while(|| draft.borrow().is_saving()).await;
         let (id, empty, store) = {
             let held = draft.borrow();
-            (held.note?, held.text.trim().is_empty(), held.store.clone())
+            (held.note()?, held.is_empty(), held.store())
         };
         if empty {
             if let Some(store) = store {
@@ -485,6 +461,7 @@ impl Screen {
                         self.app.note_changed();
                         return None;
                     }
+                    // An empty note kept: nothing typed is lost.
                     Err(error) => tracing::error!("Could not let the empty note go: {error}"),
                 }
             }
@@ -518,7 +495,7 @@ impl Screen {
         }
         let (note, empty) = {
             let held = view.draft.borrow();
-            (held.note, held.text.trim().is_empty())
+            (held.note(), held.is_empty())
         };
         let into = match note {
             _ if view.new_page && empty => GrowFrom::Bar(BAR_ID.to_owned()),
@@ -527,7 +504,7 @@ impl Screen {
         };
         self.close_page(into);
         spawn(async move {
-            self.leave(view.draft).await;
+            self.leave(view.draft, view.serial).await;
         });
     }
 
@@ -540,11 +517,11 @@ impl Screen {
         if !view.open {
             return;
         }
-        let note = view.draft.borrow().note;
+        let note = view.draft.borrow().note();
         self.close_page(note.map_or(GrowFrom::Nowhere, |id| GrowFrom::Card(card_element_id(&id))));
         spawn(async move {
             let began = tokio::time::Instant::now();
-            let Some(id) = self.leave(view.draft).await else {
+            let Some(id) = self.leave(view.draft, view.serial).await else {
                 return;
             };
             tokio::time::sleep_until(began + CLOSE).await;
@@ -565,7 +542,7 @@ impl Screen {
         spawn(async move {
             let Some(store) = self.store() else { return };
             if let Err(error) = store.core().unarchive_note(&id).await {
-                tracing::error!("Could not bring the note back: {error}");
+                self.not_done(NOTE_NOT_BROUGHT_BACK, &error);
                 return;
             }
             if self.page.peek().note == Some(id) {
@@ -604,8 +581,16 @@ impl Screen {
                 store.core().archive_note(&id).await.map(|_| ())
             };
             if let Err(error) = done {
-                tracing::error!("Could not put the note away: {error}");
+                self.not_done(
+                    if delete {
+                        NOTE_NOT_DELETED
+                    } else {
+                        NOTE_NOT_ARCHIVED
+                    },
+                    &error,
+                );
                 // A card swiped away comes back.
+                self.exit.set(ListExit::None);
                 self.app.reread();
                 return;
             }
@@ -644,7 +629,7 @@ impl Screen {
                 store.core().unarchive_note(&undo.note).await.map(|_| ())
             };
             if let Err(error) = done {
-                tracing::error!("Could not undo: {error}");
+                self.not_done(NOTE_NOT_BROUGHT_BACK, &error);
                 return;
             }
             self.exit.set(ListExit::None);
@@ -785,55 +770,35 @@ impl Screen {
             let Some(files) = pick_files().await else {
                 return;
             };
-            for _ in 0..300 {
-                if !draft.borrow().creating {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-            let held_note = draft.borrow().note;
+            // One note for the page: a note being made from its first
+            // character is waited for, and one made here is claimed first,
+            // so that a key typed meanwhile does not make another.
+            wait_while(|| draft.borrow().is_creating()).await;
+            let held_note = draft.borrow().note();
             let id = if let Some(id) = held_note {
                 id
-            } else {
-                let (store, typed) = {
-                    let held = draft.borrow();
-                    (held.store.clone(), held.text.clone())
-                };
-                let Some(store) = store else {
-                    discard_all(&files);
-                    return;
-                };
+            } else if draft.borrow_mut().claim_create() {
+                let typed = draft.borrow().text().to_owned();
                 let text = if tags.is_empty() {
-                    typed.clone()
+                    typed
                 } else {
                     format!("{} {}", typed.trim_end(), tags.join(" "))
                         .trim_start()
                         .to_owned()
                 };
-                match store.core().create_note(&text).await {
-                    Ok(note) => {
-                        {
-                            let mut held = draft.borrow_mut();
-                            held.note = Some(note.id);
-                            held.saved = typed;
-                        }
-                        let same = self.page.peek().serial == view.serial;
-                        if same {
-                            let open = self.page.peek().open;
-                            let mut page = self.page.write();
-                            page.note = Some(note.id);
-                            if open {
-                                page.from = GrowFrom::Card(card_element_id(&note.id));
-                            }
-                        }
-                        note.id
-                    }
-                    Err(error) => {
-                        discard_all(&files);
-                        tracing::error!("Could not make a note for the files: {error}");
-                        return;
-                    }
-                }
+                let Some(id) = self.create(Rc::clone(&draft), view.serial, text).await else {
+                    discard_all(&files);
+                    return;
+                };
+                id
+            } else {
+                // Made meanwhile by the page's own typing.
+                wait_while(|| draft.borrow().is_creating()).await;
+                let Some(id) = draft.borrow().note() else {
+                    discard_all(&files);
+                    return;
+                };
+                id
             };
             let failed = attach(&self.app, id, files).await;
             *self.files_changed.write() += 1;
@@ -939,10 +904,20 @@ impl Screen {
             }
             Err(error) => {
                 discard_all(&files);
-                tracing::error!("What was shared could not be saved: {error}");
-                issue.set(Some(format!("What was shared could not be saved: {error}")));
+                self.not_saved(&error, text);
             }
         }
+    }
+}
+
+/// Waits, for at most three seconds, while `busy` holds: a note being
+/// made, a save being written.
+async fn wait_while(busy: impl Fn() -> bool) {
+    for _ in 0..300 {
+        if !busy() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 
@@ -976,29 +951,67 @@ fn use_clock(app: &AppState) -> Signal<Clock> {
     clock
 }
 
-/// The thumbnail of a picture on `note`, if the device has one: from what
-/// was read before, or from the store.
-async fn thumbnail_of(
+/// What the cards show of the files of the notes `shown`: which have
+/// files, the first file's name, and a picture's thumbnail if the device
+/// has it. A note's files are read only when it has changed since they
+/// were last read; a thumbnail is read until the device has it, and then
+/// kept while a card shows it.
+async fn read_card_files(
     store: &MobileNoteStore,
-    note: &NoteId,
-    mut thumbs: Signal<HashMap<Uuid, String>>,
-) -> Option<String> {
-    let files = store.core().attached_files(note).await.ok()?;
-    let picture = files
-        .iter()
-        .find(|file| file.attachment.thumbnail.is_some() && file.thumbnail_on_device)?;
-    let thumbnail = picture.attachment.thumbnail.as_ref()?.file_id;
-    if let Some(known) = thumbs.peek().get(&thumbnail) {
-        return Some(known.clone());
+    shown: Vec<NoteId>,
+    mut cache: Signal<CardFilesCache>,
+) -> (
+    HashSet<NoteId>,
+    HashMap<NoteId, String>,
+    HashMap<NoteId, String>,
+) {
+    let core = store.core();
+    cache.write().reading_from(store.path());
+    let revisions = core.file_revisions(shown).await.unwrap_or_default();
+    let wanted = cache.peek().to_read(&revisions);
+    for note in wanted {
+        let Ok(files) = core.note_attachments(&note).await else {
+            continue;
+        };
+        let read = CardFiles {
+            first_name: files.first().map(|file| file.name.clone()),
+            thumbnail: files
+                .iter()
+                .find_map(|file| file.thumbnail.as_ref().map(|thumb| thumb.file_id)),
+        };
+        cache.write().read(note, revisions[&note], read);
     }
-    let bytes = store
-        .core()
-        .small_file(thumbnail, MOST_THUMBNAIL_BYTES)
-        .await
-        .ok()??;
-    let shown = as_data_uri(&bytes);
-    thumbs.write().insert(thumbnail, shown.clone());
-    Some(shown)
+    cache.write().keep_only(&revisions);
+
+    let with_files: HashSet<NoteId> = revisions.keys().copied().collect();
+    let mut first_file = HashMap::new();
+    let mut thumbnails = HashMap::new();
+    for note in &with_files {
+        let files = cache.peek().files(note).cloned().unwrap_or_default();
+        if let Some(name) = files.first_name {
+            first_file.insert(*note, name);
+        }
+        let Some(thumbnail) = files.thumbnail else {
+            continue;
+        };
+        let known = cache.peek().thumb(&thumbnail).cloned();
+        let shown = match known {
+            Some(shown) => Some(shown),
+            None => match core.small_file(thumbnail, MOST_THUMBNAIL_BYTES).await {
+                Ok(Some(bytes)) => {
+                    let shown = as_data_uri(&bytes);
+                    cache.write().keep_thumb(thumbnail, shown.clone());
+                    Some(shown)
+                }
+                // Not on the device yet: opening the note fetches it.
+                _ => None,
+            },
+        };
+        if let Some(shown) = shown {
+            thumbnails.insert(*note, shown);
+        }
+    }
+    (with_files, first_file, thumbnails)
 }
 
 /// Reads what the list shows from the store, again whenever what it
@@ -1044,24 +1057,15 @@ fn use_listing(screen: &Screen, app: &AppState) {
             } else {
                 HashSet::new()
             };
-            let with_files = core.notes_with_files().await.unwrap_or_default();
-            let mut first_file = HashMap::new();
-            let mut thumbnails = HashMap::new();
-            for note in notes.iter().filter(|note| with_files.contains(&note.id)) {
-                if note.outline().title.is_empty() {
-                    if let Some(file) = core
-                        .note_attachments(&note.id)
-                        .await
-                        .ok()
-                        .and_then(|files| files.into_iter().next())
-                    {
-                        first_file.insert(note.id, file.name);
-                    }
-                }
-                if let Some(picture) = thumbnail_of(&store, &note.id, screen.thumbs).await {
-                    thumbnails.insert(note.id, picture);
-                }
-            }
+            let shown = notes.iter().map(|note| note.id).collect();
+            let (with_files, mut first_file, thumbnails) =
+                read_card_files(&store, shown, screen.card_files).await;
+            // Only a note with no words goes by its first file's name.
+            first_file.retain(|id, _| {
+                notes
+                    .iter()
+                    .any(|note| note.id == *id && note.outline().title.is_empty())
+            });
             let counts = core.note_counts().await.unwrap_or_default();
             let more = notes.len() >= limit;
 
@@ -1171,7 +1175,7 @@ pub fn MainScreen() -> Element {
         files_changed: Signal::new(0),
         last_undo: Signal::new(None),
         serial: Signal::new(0),
-        thumbs: Signal::new(HashMap::new()),
+        card_files: Signal::new(CardFilesCache::default()),
         receiving: Signal::new(false),
         clock,
     });
@@ -1235,9 +1239,18 @@ pub fn MainScreen() -> Element {
         spawn(async move { screen.receive_captures().await });
     });
 
+    // While an old screen (Settings, Devices) covers the main screen, the
+    // main screen is out of reach: no tap, key or screen reader reaches it.
+    let covered = *app.view.read() != View::Main;
+
     rsx! {
         style { {include_str!("screen.css")} }
-        Main {}
-        Page {}
+        div {
+            class: "dm-under",
+            "inert": covered.then_some(""),
+            "aria-hidden": covered.then_some("true"),
+            Main {}
+            Page {}
+        }
     }
 }

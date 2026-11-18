@@ -9,9 +9,13 @@ mod app_shell;
 #[cfg(any(target_os = "android", test))]
 mod bootstrap_config;
 #[cfg(any(target_os = "android", test))]
+mod card_files;
+#[cfg(any(target_os = "android", test))]
 mod config;
 #[cfg(any(target_os = "android", test))]
 mod data;
+#[cfg(any(target_os = "android", test))]
+mod draft;
 #[cfg(any(target_os = "android", test))]
 mod export;
 #[cfg(all(target_os = "android", feature = "gallery"))]
