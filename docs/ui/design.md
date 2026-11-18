@@ -1533,15 +1533,21 @@ where starting the app and its web view takes a second or more.
 | Back, a tap above the sheet, Home | Closes it; what was written stays as a draft and is there next time |
 | Its words | Only the placeholder. No title, no buttons but 🎙 and ✓ |
 
-The note is kept on the phone the moment ✓ is pressed, and it should
-reach the person's other devices without Dirt being opened (decided
-2026-11-16). The sheet starts a short piece of background work that makes
-the thought a note and syncs once, with no web view. That is an event, not
-a timer, so the rule that nothing syncs on a timer holds. Whether Dirt's
-core can run that way on Android is the plan's second trial. If it cannot,
-the thought becomes a note and syncs the next time the app is opened.
-Either way it is never lost in between. A thought written over the lock
-screen waits until the phone is unlocked.
+The note is kept on the phone the moment ✓ is pressed, and it reaches the
+person's other devices without Dirt being opened (decided 2026-11-16; the
+plan's second trial built it on the emulator). At ✓ the sheet writes the
+thought to a file of its own in Dirt's private storage, named by the
+note's ID, which it makes then, so the note is dated when it was written.
+It then asks Android for one short job that makes the thought a note and
+syncs once, with no web view: Dirt's core, loaded on its own. The job
+needs a network, so a thought kept offline waits for one. It is started by
+the capture, never by a timer, so the rule that nothing syncs on a timer
+holds. If Android stops the job half way it runs it again; and the app,
+each time it starts or the person returns to it, makes a note of anything
+still waiting. A thought is never lost in between, and never made twice.
+A recording from 🎙 waits the same way, as a file beside the typed ones,
+and the same job makes it a note; its words are made by a second job on
+the same phone (6.18).
 
 ### 8.6 The lock screen
 
@@ -1552,7 +1558,7 @@ in, and the design uses all of them:
 
 | Way in | Where it works | Opens without unlocking? |
 |---|---|---|
-| A **Quick Settings tile**, "New note", pulled down over the lock screen | Every Android phone | Depends on the phone: some open the sheet over the lock screen, others ask to unlock first. Has to be tried on devices |
+| A **Quick Settings tile**, "New note", pulled down over the lock screen | Every Android phone | Depends on the phone: some open the sheet over the lock screen, others ask to unlock first. Android's own emulator opens it over the lock screen; phones have to be tried |
 | Android's **note-taking role** (Android 14 and later): Dirt chosen as the phone's notes app, opened by the lock screen's note shortcut or a stylus button | Phones and tablets that offer the role, mostly ones with a stylus | Yes: this is what the role is for |
 | A **lock-screen shortcut** to Dirt, on phones that let any app be one (Samsung's One UI does) | Those phones | Only if Dirt's sheet is allowed to show over the lock screen, which it would be |
 | A **lock-screen widget** | Some tablets on Android 15 and 16; not phones | Yes |
@@ -1568,8 +1574,22 @@ shown over the lock screen; one written there is added after it, and both
 appear the next time the sheet opens on an unlocked phone. Opening the app
 from there asks for the phone to be unlocked.
 
+A thought written over the lock screen becomes a note and syncs at once,
+as one written anywhere else: once the phone has been unlocked after it
+started, Android keeps Dirt's storage open while it is locked, and adding
+and syncing show nothing (found on the emulator by the plan's second
+trial). It does not wait for the phone to be unlocked. Android would not
+tell Dirt when that happens unless Dirt were already running, and waiting
+would make nothing safer.
+
+The keyboard over the lock screen is the phone's, not Dirt's, and may
+offer its own buttons there, the clipboard's among them. The field asks
+the keyboard not to learn from what is typed into it over the lock screen.
+What each phone's keyboard shows there has to be tried.
+
 Not possible: capture right after the phone restarts and before it is
-first unlocked. Android keeps every app's storage locked until then.
+first unlocked. Android keeps every app's storage locked until then, and
+the tile says it is unavailable.
 
 ---
 
@@ -1693,10 +1713,10 @@ built.
 | **Short words for each sync state** in `dirt_core::sync::overview` ("Synced", "Offline · 2 waiting", "1 note can't sync") beside the full sentences | The sync status shows one or three words; CLAUDE.md says the words come from the overview, not from a client. The core has them since step 1 of the plan (`SyncIndicator`, 6.6); the apps show them with their main screens | `dirt-core::sync::overview` |
 | **Android: save as you type** | Removes the Save button and an action from every edit | `dirt-mobile` |
 | **Android: theme and text size** | Parity with the desktop | `dirt-mobile`, feature-parity.md |
-| **Android: the capture sheet** (8.5), a native screen kept outside the web view so that it opens at once, with a place on the phone where a thought waits until the app makes it a note | Capture in three actions from outside the app, without waiting for the app to start | `dirt-mobile` |
+| **Android: the capture sheet** (8.5), a native screen kept outside the web view so that it opens at once; a folder in the app's storage where a thought waits, as a file named by its note's ID; and a JobScheduler job that loads the core without the web view, makes the waiting thoughts notes and syncs once. The app takes in what still waits when it starts and when the person returns. The plan's second trial built all of it on the emulator | Capture in three actions from outside the app, without waiting for the app to start, and the thought on the other devices without the app being opened | `dirt-mobile`; `dirt-core`'s store makes a note under an ID it is given |
 | **Android: the widget, the app shortcut, a Quick Settings tile, and the note-taking role** (8.5, 8.6) | Every way in to the capture sheet that Android offers, the lock screen among them | `dirt-mobile` |
 | **SECURITY.md: capture over the lock screen** | It adds a way to write into the phone without unlocking it. What it may and may not show (8.6) belongs in the security document | `docs/SECURITY.md` |
-| **Try lock-screen capture on real phones** | Whether the tile opens over the lock screen is each phone's choice | `docs/MANUAL_CHECKLIST.md` |
+| **Try lock-screen capture on real phones** | Whether the tile opens over the lock screen is each phone's choice, and so is what its keyboard shows there. The plan's second trial answered both only on the emulator | `docs/MANUAL_CHECKLIST.md`, L1 to L9 |
 | **Android: share saves at once** with **Undo**, for text as well as pictures | Already true; keep it, and add the toast | `dirt-mobile` |
 | **Desktop: drop files to make a new note**, and paste a picture | Attach in one action | `dirt-desktop`, `dirt-core::files` |
 | **Load more on scroll** instead of "Show older notes" | One less button; the store already pages | Both apps |
@@ -1720,7 +1740,7 @@ built.
 | **SECURITY.md: voice** | Where speech becomes text, that a kept recording is an encrypted file like any other, and that over the lock screen voice can add and show nothing | `docs/SECURITY.md` |
 | **feature-parity.md: the page, Find and voice** | New rows for every client, the CLI included (`dirt` already takes a thought as an argument) | feature-parity.md |
 | **A crate for what the two apps share**, `dirt-ui`: the tokens, fonts, icons, the motion script and the components | Section 10 asks for one style sheet and shared scripts. Today the two apps share no interface code, and would build everything twice | A new crate, CLAUDE.md |
-| **Android: more Kotlin than one file, and a folder of resources** | The capture sheet, the widgets, the tile, the shortcut and the Talk entry are native screens and services. Today the build takes one Kotlin file and a manifest, and writes two resource files from the build script | `dirt-mobile`'s build |
+| **Android: more Kotlin than one file, and a folder of resources** | The capture sheet, the widgets, the tile, the shortcut and the Talk entry are native screens and services. Today the build takes one Kotlin file and a manifest, and writes two resource files from the build script. The plan's second trial found the way: one Gradle library module, `android/native`, which `dx` copies into its project because `src/main.rs` names it with `#[manganis::ffi]`; it holds any number of Kotlin files, resources, a manifest of its own and Gradle dependencies | `dirt-mobile`'s build |
 | **The desktop's choice of font goes**; text size stays | One typeface, bundled, is part of the design (4.2) | `dirt-desktop`, feature-parity.md |
 | **Other languages, later** | Find's rule of words, tags of ASCII letters, the interface's words and voice are built for English. What changing each would touch is recorded now so that nothing built first makes it harder | System design, section 16.3 |
 | **Accept losing Snap Layouts on Windows 11, or win it back** | The maximise button's flyout belongs to the system's buttons. Keeping it needs a hit-test hook tao lacks: a patch to tao, or Windows code of our own in the desktop crate | Owner's decision |

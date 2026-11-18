@@ -128,6 +128,29 @@ somebody is using.
 | C24 | After C23, on another device: `dirt sync`, then the desktop app or the Android app on that account | The note is out of the list there too, and the app's search still finds it. `dirt unarchive <ID>` on either device brings it back to both lists |
 | C25 | `dirt delete <ID>`, `dirt sync` on another device, then `dirt restore <the start of the ID>` on either | The note is gone from both, and back on both after the restore and a sync, with the text it had |
 
+## Capture from outside the app, on real phones
+
+The capture sheet, its tile and its job (design 8.5 and 8.6) come with the
+interface plan's step 8. Until then the branch `trial/android-capture`
+has them, and its `trials/android-capture/` says how to build and drive
+it. The interface plan's second trial answered these only on the
+emulator. Run each on a Pixel and on a
+Samsung, with a PIN set, the device signed in and let in, and a second
+device to look from. Record the phone, its Android version and its
+keyboard.
+
+| # | Do | Expect |
+|---|---|---|
+| L1 | Add Dirt's "New note" tile to Quick Settings. Lock the phone, wake it, pull Quick Settings down and press the tile | The sheet over the lock screen, the phone still locked, with "Adds a note. Your notes stay locked." above the field and the keyboard up. If the phone asks for the PIN first instead, record that: it is the phone's choice |
+| L2 | In that sheet, type a thought and press ✓. Leave the phone locked; sync the other device after ten seconds | The sheet goes and the phone is still locked. The thought is on the other device, dated when it was typed |
+| L3 | Unlocked, open the sheet from the widget, type a few words and go Home. Lock the phone, open the sheet over the lock screen, type something else and press Back. Unlock and open the sheet again | Over the lock screen the field was empty. Unlocked, both pieces are there, the earlier first |
+| L4 | Over the lock screen, in the sheet, press each of the keyboard's own buttons: the clipboard, the suggestions, its settings | Nothing copied before the lock and no word from a note is shown. Record what each button does |
+| L5 | Over the lock screen, from the sheet, try to reach the app: the recent apps, Back and Home, and Dirt's notification if one shows | The phone asks for the PIN, or shows the lock screen. Nothing of a note is seen |
+| L6 | Samsung: set Dirt as one of the lock screen's shortcuts, lock, and use it. On a phone that offers Android's note-taking role, choose Dirt and use the lock screen's note shortcut | The sheet over the lock screen, as in L1 |
+| L7 | Restart the phone and, before unlocking it, pull Quick Settings down and press the tile | The tile is unavailable, or the phone asks for the PIN. Nothing typed before the restart is lost |
+| L8 | With the battery saver on, and Dirt not opened for a day (on a Samsung, also with Dirt among the "sleeping apps"), capture from the widget and press ✓ | The thought reaches the other device. Record how long it took |
+| L9 | With Dirt's process stopped (`adb shell am force-stop <package>`), press the widget's bar; then again with the app running in the background | Typing works within about a second each time. Film it, or say how it felt |
+
 ## The interface's gallery
 
 The new interface's parts (`dirt-ui`) can be looked at before any screen
@@ -187,6 +210,7 @@ account, A and B:
 
 | Date | Server | Desktop | Android | CLI | Not run |
 |---|---|---|---|---|---|
+| 2026-11-17, the interface plan's second trial, from the branch `trial/android-capture` | The real server on this machine (`dirt-sim`'s `serve`) | Not run | Emulator, Android 16, with no window and a PIN set. L1 passed: the tile opened the sheet over the lock screen with the app's process running and with it stopped. L2 passed: the note was made and synced with the emulator locked, and the CLI had it. L3: the field over the lock screen was empty, and the draft's file then held both pieces, the earlier first; the unlocked sheet, which shows that file, was not looked at. L5: starting the app's own screen left the lock screen in front. L7 passed: the tile said "Unavailable" and nothing started. L9 by `am start` instead of a press (the plan has the figures). **Found:** the emulator's keyboard shows its own buttons over the lock screen, the clipboard's among them | The second device | L4, which was seen and not tried; L6 and L8, which need a real phone; every row on a Pixel and on a Samsung |
 | 2026-11-17, the interface's gallery | None | Windows 11, a development build, its window kept off the screen and driven through the web view's debugging port. G1's circle ran (620 ms on the glide spring) and Inter loaded. G3: the rows slid; the median frame was 16.7 ms in a window on the screen and 17.7 ms off it, and on a machine busy with other builds some shuffles had one long first frame (140 to 360 ms). The panel and the sheet took focus, kept Tab, closed on Esc and gave focus back; a card dragged 60 px sprang back with no message to Rust and one dragged 220 px sent one; reduced motion, by the gallery's switch and by the media query, held from the next shuffle. **Found:** G2's buttons drawn over the panel's last 20 px, while the window was on the screen; what scrolls in a panel now has a colour of its own | Emulator, Android 16, with no window. The gallery ran, and kept the theme and the accent over a restart. With real touches: a card swiped 50 px sprang back with no message to Rust, and one swiped 230 px sent one; the sheet was dragged shut; a long press showed an icon's name and did not press it. G5 as it is written now. **Found:** the emulator drew a single moving box at 12 frames a second and a shuffle at 4 to 15, so it says nothing about G4's frames. Auto is light whatever the system says, the app ends when the system's theme changes while it is open, and "Remove animations" is seen only at the next start: all three are in the interface plan for step 4 | Not run | G4 on a real phone; G6 and G7 (Linux, macOS); G8, which needs a release build and a keyboard: the script that stops the keys was tried in the gallery through the debugging port, and stopped each of them; G9 with a screen reader; G2 again in a window on the screen |
 | 2026-11-13, the first real phone | Production, `https://api.dirt.catjam.dev` | Not run | A Pixel 10 Pro, Android 17, by the owner. A15 passed: signed up with an email code, and the app said it was signed in. A note and a file attached to it were sent; the server then held one account, one device, one note and one file. **Found:** Android warned at the start that the app "isn't 16 KB compatible". The phone runs with 16 KB memory pages and the app's library was linked for 4 KB ones. Fixed in the build script | Not run | A20 to A29 as written, and everything that needs a second device |
 | 2026-11-13, files through R2 | `dirt-trial`, with its R2 bucket | Not run | Emulator, with no window. A2 and A13 on the way: signed in through Clerk and was let in from the CLI, the codes the same. A21 passed, with three files attached on the computer: the picture's thumbnail was there, and "Open" fetched the picture and showed it. A20 with a 684 KiB file that is not a photograph | C13 passed, with three files (1.4 MiB, a text file named in Chinese, a picture). C14 for the phone's file: the copy `dirt save` wrote is the same as the original, byte for byte | The desktop app. A phone that is not an emulator. Removing a file, the limits and the daily sweep on this server |
