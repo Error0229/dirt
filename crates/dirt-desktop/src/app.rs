@@ -3,6 +3,12 @@
 //! The app holds one [`Session`], which says who is signed in, which note
 //! store is in use and how sync is going. Without a server in the build
 //! there is no session and notes stay in the local store.
+//!
+//! Everything is drawn inside `dirt_ui::UiRoot`, which brings the new
+//! interface's style sheet and script and applies the theme, the accent
+//! and the text size from this device's settings. The main screen is the
+//! new one; Settings and quick capture are the old ones until their steps
+//! replace them, and keep the old style sheets for that time.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -12,22 +18,18 @@ use dioxus::desktop::tao::event::{Event, WindowEvent};
 use dioxus::desktop::{use_wry_event_handler, window, LogicalPosition, LogicalSize};
 use dioxus::prelude::*;
 use dirt_core::config::ServerAddress;
-use dirt_core::models::Note;
 use dirt_core::session::{Session, SessionState};
 use dirt_core::sync::worker::{SyncStatus, Trigger};
 use dirt_core::Store;
+use dirt_ui::{Appearance, UiRoot};
 
 use crate::bootstrap_config::load_bootstrap_config;
 use crate::components::{QuickCapture, SettingsPanel};
-use crate::queries::{
-    invalidate_notes_query, set_listed_notes, set_notes_store, set_open_note, use_notes_query,
-    LISTED_NOTES,
-};
+use crate::screen::MainScreen;
 use crate::services::{data_folder, open_local_store};
-use crate::state::AppState;
+use crate::state::{AppState, SettingsTab};
 use crate::theme::{resolve_theme, ResolvedTheme};
 use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
-use crate::views::Home;
 use crate::{HOTKEY_TRIGGERED, TRAY_ENABLED};
 
 /// Set when the window gains focus: the person has come back to the app.
@@ -60,20 +62,39 @@ fn open_stores(server_url: Option<&str>) -> Result<Opened, String> {
     }
 }
 
+/// Where `DIRT_WINDOW_AT=x,y` asks for the window's top left corner, in
+/// screen points, in a development build. That is for looking at the app
+/// without its window covering what the person at the computer is doing:
+/// a place off every screen works. A release build ignores it.
+fn asked_position() -> Option<(f64, f64)> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    let asked = std::env::var("DIRT_WINDOW_AT").ok()?;
+    let (x, y) = asked.split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+}
+
 /// Root application component
 #[component]
+#[allow(clippy::too_many_lines)]
 pub fn App() -> Element {
-    // State signals
-    let mut notes = use_signal(Vec::new);
+    // A window cannot be made at a place that is on no screen, but it can
+    // be moved there: the first render comes before the window is shown.
+    use_hook(|| {
+        if let Some((x, y)) = asked_position() {
+            window().set_outer_position(LogicalPosition::new(x, y));
+        }
+    });
     let mut current_note_id = use_signal(|| None);
-    let search_query = use_signal(String::new);
-    let active_tag_filter = use_signal(|| None::<String>);
-    let listed_notes = use_signal(|| LISTED_NOTES);
+    let open_request = use_signal(|| None);
+    let notes_read = use_signal(|| 0_u64);
+    let mut pulled = use_signal(|| 0_u64);
     let mut settings = use_signal(dirt_core::models::Settings::default);
     let mut theme = use_signal(|| resolve_theme(dirt_core::models::ThemeMode::System));
     let settings_open = use_signal(|| false);
+    let settings_tab = use_signal(SettingsTab::default);
     let mut quick_capture_open = use_signal(|| false);
-    let note_list_visible = use_signal(|| true);
     let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
     let mut db_service: Signal<Option<Arc<Store>>> = use_signal(|| None);
     let mut device_store: Signal<Option<Arc<Store>>> = use_signal(|| None);
@@ -88,6 +109,24 @@ pub fn App() -> Element {
         ServerAddress::on_this_computer(load_bootstrap_config().dirt_api_base_url.as_deref())
             .map(|address| address.map(|address| address.url))
             .map_err(|error| dirt_core::util::as_sentence(&error));
+
+    let state = use_context_provider(|| AppState {
+        current_note_id,
+        open_request,
+        notes_read,
+        pulled,
+        settings,
+        theme,
+        db_service,
+        device_store,
+        startup_error,
+        session,
+        session_state,
+        sync_status,
+        settings_open,
+        settings_tab,
+        quick_capture_open,
+    });
 
     // Open the stores, and the session if there is a server, then load
     // this device's settings.
@@ -124,27 +163,13 @@ pub fn App() -> Element {
             settings.set(loaded_settings);
 
             device_store.set(Some(Arc::new(opened.device)));
-            let notes_store = Arc::new(opened.notes);
-            set_notes_store(Some(notes_store.clone()));
-            db_service.set(Some(notes_store));
+            db_service.set(Some(Arc::new(opened.notes)));
             if let Some(opened_session) = &opened.session {
                 session_state.set(opened_session.state());
                 sync_status.set(opened_session.sync_status());
             }
             session.set(opened.session);
         }
-    });
-
-    // The list is refreshed with the open note in it, whichever note it is.
-    use_effect(move || set_open_note(current_note_id()));
-
-    // The list holds as many notes as the person has asked to see. When
-    // they ask for older ones it is read again, that much longer.
-    use_effect(move || {
-        set_listed_notes(listed_notes());
-        spawn(async move {
-            invalidate_notes_query().await;
-        });
     });
 
     // Follow the session: when the person signs in or out, the store in use
@@ -155,8 +180,8 @@ pub fn App() -> Element {
             let Some(current) = current else { return };
             let mut states = current.watch_state();
             while states.changed().await.is_ok() {
-                let state = *states.borrow_and_update();
-                session_state.set(state);
+                let state_now = *states.borrow_and_update();
+                session_state.set(state_now);
                 let store = current.store();
                 let same_store = db_service
                     .peek()
@@ -164,11 +189,9 @@ pub fn App() -> Element {
                     .is_some_and(|open| open.path() == store.path());
                 if !same_store {
                     current_note_id.set(None);
-                    let store = Arc::new(store);
-                    set_notes_store(Some(store.clone()));
-                    db_service.set(Some(store));
+                    db_service.set(Some(Arc::new(store)));
                 }
-                if state == SessionState::SignedOut {
+                if state_now == SessionState::SignedOut {
                     // The account's store has been let go of above, so its
                     // files can go now. Something may still be reading it
                     // for a moment, a list being loaded for one, so it is
@@ -182,20 +205,27 @@ pub fn App() -> Element {
         }
     });
 
-    // Follow sync: show its status, and reload the list when notes arrive
-    // from another device.
+    // Follow sync: show its status, and read the notes again when a cycle
+    // has brought notes from another device or sent some.
     let _sync_watch = use_resource(move || {
         let current = session();
         async move {
             let Some(current) = current else { return };
             let mut statuses = current.watch_sync();
-            let mut pulled = statuses.borrow().pulled;
+            let mut pulled_before = statuses.borrow().pulled;
+            let mut synced_before = statuses.borrow().last_synced_ms;
             while statuses.changed().await.is_ok() {
                 let status = statuses.borrow_and_update().clone();
-                if status.pulled != pulled {
-                    pulled = status.pulled;
-                    invalidate_notes_query().await;
+                if status.pulled != pulled_before {
+                    pulled_before = status.pulled;
+                    *pulled.write() += 1;
+                    state.reread();
+                } else if status.last_synced_ms != synced_before {
+                    // A cycle that only sent: the notes it sent are on the
+                    // server now, and the list stops marking them.
+                    state.reread();
                 }
+                synced_before = status.last_synced_ms;
                 sync_status.set(status);
             }
         }
@@ -212,15 +242,9 @@ pub fn App() -> Element {
         }
     });
 
-    // Use dioxus-query for reactive notes fetching (called unconditionally - rules of hooks)
-    let notes_query = use_notes_query(db_service.read().clone());
-
-    // Poll for hotkey, tray events, and sync query results to notes signal
+    // Poll for the hotkey, the tray and the window coming back into focus.
     use_future(move || async move {
         let tray_enabled = TRAY_ENABLED.load(Ordering::SeqCst);
-        // Track last query result to detect when the *query* produces new data,
-        // without clobbering optimistic updates in the notes signal.
-        let mut last_query_result: Option<Vec<Note>> = None;
         loop {
             // Process tray menu events
             if tray_enabled {
@@ -261,7 +285,7 @@ pub fn App() -> Element {
                     }
                     current.notify(Trigger::Returned);
                 }
-                invalidate_notes_query().await;
+                state.reread();
             }
 
             // Check if hotkey was triggered
@@ -306,82 +330,34 @@ pub fn App() -> Element {
                 quick_capture_open.set(true);
             }
 
-            // Sync query result to notes signal only when the query itself changes.
-            // Comparing against last_query_result (not notes signal) avoids clobbering
-            // optimistic updates that temporarily diverge from the query.
-            {
-                let query_reader = notes_query.read();
-                let fetched = query_reader.state().ok().cloned();
-                drop(query_reader);
-                if let Some(fetched_notes) = fetched {
-                    let changed = last_query_result
-                        .as_ref()
-                        .is_none_or(|prev| *prev != fetched_notes);
-                    if changed {
-                        tracing::debug!("Notes query returned {} notes", fetched_notes.len());
-                        last_query_result = Some(fetched_notes.clone());
-                        notes.set(fetched_notes);
-                    }
-                }
-            }
-
-            // Poll at ~60fps
             tokio::time::sleep(Duration::from_millis(16)).await;
         }
     });
 
-    use_context_provider(|| AppState {
-        notes,
-        current_note_id,
-        search_query,
-        active_tag_filter,
-        listed_notes,
-        settings,
-        theme,
-        db_service,
-        device_store,
-        startup_error,
-        session,
-        session_state,
-        sync_status,
-        settings_open,
-        quick_capture_open,
-        note_list_visible,
-    });
-
-    let current_theme = theme();
-    let colors = current_theme.palette();
-    let current_settings = settings();
-    let theme_attr = match current_theme {
+    let appearance = Appearance::from_settings(&settings.read());
+    // The old settings panel and quick capture take their colours from
+    // the old style sheets, by this attribute.
+    let legacy_theme = match theme() {
         ResolvedTheme::Light => "light",
         ResolvedTheme::Dark => "dark",
     };
 
     rsx! {
-        // Load theme CSS for Dioxus components
+        // The old style sheets, for Settings and quick capture until their
+        // steps replace them.
         document::Link {
             rel: "stylesheet",
             href: asset!("/assets/dx-components-theme.css"),
         }
         document::Link { rel: "stylesheet", href: asset!("/assets/theme-overrides.css") }
 
-        div {
-            class: "app-container",
-            "data-theme": "{theme_attr}",
-            style: "
-                min-height: 100vh;
-                font-family: {current_settings.font_family}, system-ui, -apple-system, sans-serif;
-                font-size: {current_settings.font_size}px;
-                background: {colors.bg_primary};
-                color: {colors.text_primary};
-            ",
+        UiRoot { appearance,
             if quick_capture_open() {
-                QuickCapture {}
+                div { class: "dk-legacy", "data-theme": legacy_theme, QuickCapture {} }
             } else {
-                Home {}
-
+                MainScreen {}
                 if settings_open() {
-                    SettingsPanel {}
+                    div { class: "dk-legacy", "data-theme": legacy_theme, SettingsPanel {} }
                 }
             }
         }

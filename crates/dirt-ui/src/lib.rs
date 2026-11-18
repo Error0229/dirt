@@ -25,9 +25,17 @@
 //! | Attribute | On | Does |
 //! |---|---|---|
 //! | `data-tip`, `data-kbd` | anything | A tooltip after a hover, a long press on Android, or keyboard focus |
-//! | `data-dui-list` | a list | Its children with `data-key` slide to their new places when the page changes, settle in when new, and are drawn leaving when removed. `data-dui-exit` on the list is `tear` (the default), `fade` or `none`; `data-dui-enter` on a row is `pop` or `none` |
+//! | `data-dui-list` | a list | Its children with `data-key` slide to their new places when the page changes, settle in when new, and are drawn leaving when removed. `data-dui-exit` on the list is `tear` (the default), `fold`, `shrink`, `fade` or `none`; `data-dui-enter` on a row is `pop` or `none`. A child `.dui-sel-ind` is the list's one highlight, moved to the row with the class `sel` |
 //! | `data-dui-scroll` | a scrolling element | The drawn scrollbar ([`components::ScrollArea`] renders it) |
 //! | `data-dui-swipe` | a card | It follows a finger; see [`components::Swipeable`] |
+//! | `data-dui-arrows` | a group of buttons | Up and Down move between them; Up from the first goes to the element the attribute names |
+//! | `data-dui-menu` | the app's menu | Shown on a right click or the menu key; see [`components::ContextMenu`] |
+//! | `data-dui-more` | a mark at a list's end | Says once that it has come near; see [`components::LoadMore`] |
+//! | `data-dui-oneline` | a text field | A pasted line break becomes a space |
+//! | `data-dui-home` | a screen | Takes the keyboard's focus whenever it would fall to the page's body, so that the screen's keys are still heard |
+//!
+//! What the app asks of a field it does not hold (focus, its text) is in
+//! [`dom`].
 //!
 //! What ends in the script and matters to the app (a card swiped away, a
 //! sheet dragged shut, a toast run out) comes back once, as an
@@ -40,13 +48,17 @@
 pub mod appearance;
 pub mod components;
 pub mod contrast;
+pub mod dom;
 pub mod events;
+pub mod find;
 pub mod fonts;
 #[cfg(feature = "gallery")]
 pub mod gallery;
 pub mod icons;
 pub mod motion;
 mod root;
+pub mod text;
+pub mod time;
 pub mod tokens;
 pub mod webview;
 

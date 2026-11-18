@@ -1035,6 +1035,14 @@ impl Store {
         self.read(|c| sync_state::unsynced_count(c)).await
     }
 
+    /// The notes that have not reached the server as they are now: never
+    /// sent, or changed since. Deleted notes are left out. A list marks
+    /// these while the device is signed in (interface design 6.2); on a
+    /// device that is signed out it is every note.
+    pub async fn unsynced_note_ids(&self) -> Result<std::collections::HashSet<NoteId>> {
+        self.read(|c| sync_state::unsynced_ids(c)).await
+    }
+
     /// When a sync cycle last completed, as Unix milliseconds, or `None` if
     /// none ever has.
     pub async fn last_synced_ms(&self) -> Result<Option<i64>> {

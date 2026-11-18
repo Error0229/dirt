@@ -35,6 +35,11 @@ pub fn IconButton(
     #[props(default)]
     pressed: Option<bool>,
     #[props(default)] disabled: bool,
+    /// Left out of the order Tab goes in, though it can still be pressed:
+    /// for a button in a row of a list, where only the chosen row's
+    /// buttons are stops.
+    #[props(default)]
+    skipped_by_tab: bool,
     /// More classes, for where the button sits.
     #[props(default)]
     class: String,
@@ -58,6 +63,7 @@ pub fn IconButton(
             "data-tip": "{label}",
             "data-kbd": shortcut,
             disabled,
+            tabindex: skipped_by_tab.then_some("-1"),
             onclick: move |event| onclick.call(event),
             IconSvg {
                 icon,

@@ -115,7 +115,7 @@ pub(super) fn AccountSettingsTab() -> Element {
             spawn(async move {
                 message.set(Some(match session.move_local_notes().await {
                     Ok(moved) => {
-                        crate::queries::invalidate_notes_query().await;
+                        state.reread();
                         local_waiting.set(0);
                         (
                             MessageKind::Info,

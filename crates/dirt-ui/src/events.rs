@@ -22,6 +22,12 @@ pub enum Outcome {
     Dismiss,
     /// A toast's time ran out and it has closed.
     Expired,
+    /// The end of a list has come near while scrolling: there is room for
+    /// more rows.
+    More,
+    /// Paste was chosen in the app's own menu. Reading the clipboard is
+    /// the app's to do; it hands the text back with [`crate::dom::paste`].
+    Paste,
 }
 
 /// One message from the script: which element, and how it ended.

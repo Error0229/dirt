@@ -22,7 +22,7 @@ use dirt_core::util::as_sentence;
 use super::row::SettingRow;
 use crate::components::button::{Button, ButtonVariant};
 use crate::state::AppState;
-use crate::time_format::format_short_time;
+use dirt_ui::time::{edited_short, Clock};
 
 /// A line the tab shows above everything else: what just happened. `true`
 /// marks a failure.
@@ -666,9 +666,15 @@ fn DeviceRow(
     on_approve: EventHandler<DeviceInfo>,
     on_remove: EventHandler<DeviceInfo>,
 ) -> Element {
-    let seen = match format_short_time(device.last_seen_ms).as_str() {
+    // The list's own words for a time: "4m", "3h", then "Thu", "Oct 3".
+    let when = edited_short(device.last_seen_ms, Clock::now());
+    let ago = when
+        .strip_suffix(['m', 'h'])
+        .is_some_and(|count| count.parse::<u32>().is_ok());
+    let seen = match when.as_str() {
         "now" => "seen just now".to_owned(),
-        ago => format!("seen {ago} ago"),
+        _ if ago => format!("seen {when} ago"),
+        _ => format!("seen {when}"),
     };
     let waiting = device.status == DeviceStatus::Pending;
     let detail = if device.current {

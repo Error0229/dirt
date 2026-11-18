@@ -1,7 +1,8 @@
-//! The files attached to the note that is open: a row for each, under the
-//! editor, with what can be done with it.
+//! The files attached to the note that is open: a tile for each, under the
+//! note's text on the page, with what can be done with it.
 //!
-//! A file is attached from a file dialog, or by dropping it on the editor.
+//! A file is attached from the page's paperclip, which opens a file
+//! dialog, or by dropping it on the page; the page hands the files here.
 //! A picture shows its thumbnail. A file is opened by handing a copy of it
 //! to the system, saved as a copy where the person says, or removed from
 //! the note. A file the system would run and not show can be saved and not
@@ -24,13 +25,11 @@ use dirt_core::util::as_sentence;
 use dirt_core::NoteId;
 use uuid::Uuid;
 
-use crate::components::button::{Button, ButtonVariant};
+use dirt_ui::components::{IconButton, IconButtonSize};
+use dirt_ui::Icon;
+
 use crate::services::{attach_all, copy_for_opening, open_with_system, save_where_asked};
 use crate::state::AppState;
-
-/// The buttons here are smaller than the app's others: a row has three, and
-/// they have to leave room for the file's name.
-const SMALL_BUTTON: &str = "font-size: 12px; padding: 4px 10px; min-height: 0; height: auto;";
 
 /// A thumbnail larger than this is not shown. One made by Dirt is a few
 /// tens of kilobytes; a note may name any file as a thumbnail.
@@ -83,15 +82,14 @@ async fn thumbnail_held(state: &AppState, thumbnail: Uuid) -> Option<String> {
     Some(as_data_uri(&picture))
 }
 
-/// The files of the open note, and the ways to add one.
+/// The files of the open note.
 ///
-/// `dropped` is the files dropped on the editor since they were last
-/// taken: the editor owns the place a file is dropped on, which is all of
-/// it, and this component attaches them.
+/// `incoming` is the files chosen or dropped on the page since they were
+/// last taken: the page owns the paperclip and the place a file is
+/// dropped on, which is all of it, and this component attaches them.
 #[component]
-pub fn AttachmentPanel(note_id: NoteId, dropped: Signal<Vec<PathBuf>>) -> Element {
+pub fn AttachmentPanel(note_id: NoteId, incoming: Signal<Vec<PathBuf>>) -> Element {
     let state = use_context::<AppState>();
-    let colors = (state.theme)().palette();
 
     // Raised by whatever changes the note's files here, to read them again.
     let mut changed = use_signal(|| 0u64);
@@ -183,31 +181,14 @@ pub fn AttachmentPanel(note_id: NoteId, dropped: Signal<Vec<PathBuf>>) -> Elemen
         });
     };
 
-    // Files dropped on the editor.
+    // Files chosen or dropped on the page.
     use_effect(move || {
-        let paths = dropped();
+        let paths = incoming();
         if !paths.is_empty() {
-            dropped.set(Vec::new());
+            incoming.set(Vec::new());
             attach(paths);
         }
     });
-
-    let choose = move |_| {
-        spawn(async move {
-            let chosen = rfd::AsyncFileDialog::new()
-                .set_title("Attach files to the note")
-                .pick_files()
-                .await;
-            if let Some(chosen) = chosen {
-                attach(
-                    chosen
-                        .iter()
-                        .map(|file| file.path().to_path_buf())
-                        .collect(),
-                );
-            }
-        });
-    };
 
     let open = move |file: AttachedFile| {
         spawn(async move {
@@ -300,55 +281,28 @@ pub fn AttachmentPanel(note_id: NoteId, dropped: Signal<Vec<PathBuf>>) -> Elemen
     let thumbnails = thumbnails();
     let working = busy();
 
+    if files.is_empty() && working.is_none() && message().is_none() {
+        return rsx! {};
+    }
+
     rsx! {
-        div {
-            class: "attachments",
-            style: "
-                border-top: 1px solid {colors.border_light};
-                padding: 10px 32px 14px;
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-                max-height: 40%;
-                overflow-y: auto;
-            ",
-
-            div {
-                style: "display: flex; align-items: center; gap: 12px;",
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    style: "{SMALL_BUTTON}",
-                    disabled: working.is_some(),
-                    onclick: choose,
-                    "Attach a file"
-                }
-                span {
-                    style: "font-size: 12px; color: {colors.text_muted};",
-                    if let Some(doing) = working {
-                        "{doing}"
-                    } else if files.is_empty() {
-                        "or drop one on the note"
-                    }
-                }
+        div { class: "dk-files",
+            if let Some(doing) = working {
+                div { class: "dk-files-note", role: "status", "{doing}" }
             }
-
             if let Some(text) = message() {
-                div {
-                    class: "attachments-message",
-                    role: "status",
-                    style: "font-size: 12px; color: {colors.text_secondary};",
-                    "{text}"
-                }
+                div { class: "dk-files-note", role: "status", "{text}" }
             }
-
-            for file in files {
-                AttachmentRow {
-                    key: "{file.attachment.file_id}",
-                    thumbnail: thumbnails.get(&file.attachment.file_id).cloned(),
-                    file: file.clone(),
-                    on_open: open,
-                    on_save: save,
-                    on_remove: remove,
+            div { class: "dk-file-tiles",
+                for file in files {
+                    AttachmentRow {
+                        key: "{file.attachment.file_id}",
+                        thumbnail: thumbnails.get(&file.attachment.file_id).cloned(),
+                        file: file.clone(),
+                        on_open: open,
+                        on_save: save,
+                        on_remove: remove,
+                    }
                 }
             }
         }
@@ -365,8 +319,6 @@ fn AttachmentRow(
     on_save: EventHandler<AttachedFile>,
     on_remove: EventHandler<AttachedFile>,
 ) -> Element {
-    let state = use_context::<AppState>();
-    let colors = (state.theme)().palette();
     let attachment = &file.attachment;
     let name = attachment.name.clone();
     let mut details = format!(
@@ -387,89 +339,37 @@ fn AttachmentRow(
     let (for_open, for_save, for_remove) = (file.clone(), file.clone(), file.clone());
 
     rsx! {
-        div {
-            class: "attachment",
-            style: "display: flex; align-items: center; gap: 12px; min-width: 0;",
-
+        div { class: "dk-file",
             if let Some(picture) = thumbnail {
-                img {
-                    src: "{picture}",
-                    alt: "",
-                    style: "
-                        width: 44px;
-                        height: 44px;
-                        object-fit: cover;
-                        border-radius: 4px;
-                        border: 1px solid {colors.border_light};
-                        flex-shrink: 0;
-                    ",
-                }
+                img { class: "dk-file-thumb", src: "{picture}", alt: "" }
             } else {
-                div {
-                    style: "
-                        width: 44px;
-                        height: 44px;
-                        border-radius: 4px;
-                        border: 1px solid {colors.border_light};
-                        background: {colors.bg_secondary};
-                        color: {colors.text_muted};
-                        font-size: 10px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        overflow: hidden;
-                        flex-shrink: 0;
-                    ",
-                    "{kind}"
-                }
+                div { class: "dk-file-thumb kind", "{kind}" }
             }
-
-            div {
-                style: "flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;",
-                div {
-                    class: "attachment-name",
-                    style: "
-                        font-size: 13px;
-                        color: {colors.text_primary};
-                        white-space: nowrap;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                    ",
-                    title: "{name}",
-                    "{name}"
-                }
-                div {
-                    class: "attachment-details",
-                    style: "font-size: 11px; color: {colors.text_muted};",
-                    "{details}"
-                }
+            div { class: "dk-file-words",
+                div { class: "dk-file-name", "data-tip": "{name}", "{name}" }
+                div { class: "dk-file-details", "{details}" }
             }
-
-            div {
-                style: "display: flex; gap: 2px; flex-shrink: 0;",
+            div { class: "dk-file-acts",
                 if can_open {
-                    Button {
-                        variant: ButtonVariant::Ghost,
-                        style: "{SMALL_BUTTON}",
-                        aria_label: "Open {name}",
+                    IconButton {
+                        icon: Icon::External,
+                        label: "Open in another app",
+                        size: IconButtonSize::Small,
                         onclick: move |_| on_open.call(for_open.clone()),
-                        "Open"
                     }
                 }
-                Button {
-                    variant: ButtonVariant::Ghost,
-                    style: "{SMALL_BUTTON}",
-                    aria_label: "Save a copy of {name}",
-                    title: if can_open { "" } else { "This kind of file can run as a program. Save it, and open it yourself if you trust it." },
+                IconButton {
+                    icon: Icon::Download,
+                    label: if can_open { "Save a copy" } else { "Save a copy. This kind of file can run as a program: open it yourself if you trust it" },
+                    size: IconButtonSize::Small,
                     onclick: move |_| on_save.call(for_save.clone()),
-                    "Save a copy"
                 }
-                Button {
-                    variant: ButtonVariant::Ghost,
-                    style: "{SMALL_BUTTON}",
-                    aria_label: "Remove {name} from the note",
+                IconButton {
+                    icon: Icon::X,
+                    label: "Remove from the note",
+                    size: IconButtonSize::Small,
+                    danger: true,
                     onclick: move |_| on_remove.call(for_remove.clone()),
-                    "Remove"
                 }
             }
         }

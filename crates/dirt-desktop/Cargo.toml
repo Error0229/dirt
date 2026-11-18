@@ -33,8 +33,10 @@ open = "5"
 global-hotkey = "0.6"
 tray-icon = "0.19"
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
-dioxus-query = "0.9.2"
 rfd = "0.15"
+# Copy and Paste for the app's own menu, and copying a note's text: a
+# web view may not read the clipboard without asking.
+arboard = { version = "3", default-features = false }
 thiserror.workspace = true
 single-instance = "0.3"
 # Opens the system browser on the sign-in page.
