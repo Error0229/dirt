@@ -684,7 +684,9 @@ async fn the_notes_not_on_the_server_are_the_unsent_ones_that_are_not_deleted() 
     store.archive_note(&sent.id).await.unwrap();
     assert!(store.unsynced_note_ids().await.unwrap().contains(&sent.id));
 
-    // A note held back by a sync problem has not reached the server either.
+    // A note held back by a sync problem is no longer offered to the
+    // server, and has not reached it either.
+    let offered = store.unsent_count().await.unwrap();
     store
         .flag_note_problem(
             &draft.id,
@@ -693,6 +695,6 @@ async fn the_notes_not_on_the_server_are_the_unsent_ones_that_are_not_deleted() 
         )
         .await
         .unwrap();
-    assert_eq!(store.unsent_count().await.unwrap(), 1);
+    assert_eq!(store.unsent_count().await.unwrap(), offered - 1);
     assert!(store.unsynced_note_ids().await.unwrap().contains(&draft.id));
 }
