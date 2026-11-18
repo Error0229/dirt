@@ -205,6 +205,9 @@ pub struct Screen {
     page_store: CopyValue<Option<Arc<Store>>>,
     /// How attaching files to the note on the page is going.
     pub files_news: Signal<FilesNews>,
+    /// The notes the store could not save, with the newest text of each,
+    /// while the error says so.
+    unsaved: Signal<Vec<(NoteId, String)>>,
     /// Focus while writing.
     pub writing: Signal<Writing>,
     /// When a key was last typed on the page.
@@ -279,19 +282,80 @@ impl Screen {
         page_store.set(self.store());
     }
 
-    /// Hands what the page holds to the store's queue, leaving the page
-    /// blank: the screen is going (quick capture takes the window, the app
-    /// quits, another store is taken into use). Nothing typed is dropped
-    /// with the screen.
-    pub fn hand_over(mut self) {
+    /// Leaves the page: what it held is taken as it is and handed to the
+    /// store's queue, to be kept or let go in the store its note is in,
+    /// after whatever was asked before. The page is blank at once; nothing
+    /// is waited for. The page then holds no store.
+    ///
+    /// The screen going (quick capture takes the window, the app quits,
+    /// another store is taken into use) leaves it too, so nothing here
+    /// assumes the screen's values are still there.
+    pub fn leave(mut self) {
         let left = match self.draft.try_write() {
             Ok(mut draft) => draft.leave(),
             Err(error) => {
-                tracing::error!("The page could not be handed over: {error}");
+                tracing::error!("The page could not be left: {error}");
                 return;
             }
         };
         self.ask(left.work);
+        if let Ok(mut store) = self.page_store.try_write() {
+            *store = None;
+        }
+    }
+
+    /// A write failed. The person is told plainly and given their words: an
+    /// error that stays until it is dismissed, with **Copy text**, which
+    /// ordinary toasts neither replace nor clear. Several failures make one
+    /// error, and **Copy text** gives the newest text of each of their
+    /// notes. If the store could not make the note on the page, the page
+    /// goes back to a thought not yet made, so that the next key makes it,
+    /// with all that is on the page.
+    fn unsaved(mut self, note: NoteId, text: &str, why: &str, making: bool) {
+        if making && self.draft.write().unmade(note) {
+            let mut current = self.app.current_note_id;
+            current.set(None);
+            self.page.write().note = None;
+        }
+        {
+            let mut unsaved = self.unsaved.write();
+            // An error dismissed since: its notes were seen to.
+            if !self.toasts.error_showing() {
+                unsaved.clear();
+            }
+            match unsaved.iter_mut().find(|(held, _)| *held == note) {
+                Some(held) => text.clone_into(&mut held.1),
+                None => unsaved.push((note, text.to_owned())),
+            }
+        }
+        let count = self.unsaved.peek().len();
+        let words = if count == 1 {
+            "A note could not be saved".to_owned()
+        } else {
+            format!("{count} notes could not be saved")
+        };
+        let copy = Callback::new(move |()| self.copy_unsaved());
+        self.toasts.show_error(
+            Toast::new(words)
+                .icon(Icon::Alert)
+                .detail(why.to_owned())
+                .action("Copy text", Icon::Copy, copy),
+        );
+    }
+
+    /// The text of every note that could not be saved, newest of each, on
+    /// the clipboard: **Copy text** on the error.
+    fn copy_unsaved(self) {
+        let texts: Vec<String> = self
+            .unsaved
+            .peek()
+            .iter()
+            .map(|(_, text)| text.clone())
+            .collect();
+        let text = texts.join("\n\n");
+        if let Err(error) = arboard::Clipboard::new().and_then(|mut board| board.set_text(text)) {
+            tracing::error!("Could not copy the text: {error}");
+        }
     }
 
     /// What the store's work came to.
@@ -319,19 +383,12 @@ impl Screen {
             Done::Attached { note, ref failed } => {
                 self.files_news.write().attached(note, failed);
             }
-            // A write that failed after it was tried again. What was typed
-            // is kept in the queue and tried again; the person is told, and
-            // the toast stays until it is dismissed or the note is kept.
-            Done::Unsaved { ref why, .. } => {
-                self.toasts.show(
-                    Toast::new(format!(
-                        "A note could not be saved. {why} Dirt keeps trying."
-                    ))
-                    .icon(Icon::Alert)
-                    .hold(true),
-                );
-            }
-            Done::Kept(_) => self.toasts.clear(),
+            Done::Unsaved {
+                note,
+                ref text,
+                ref why,
+                making,
+            } => self.unsaved(note, text, why, making),
             _ => {}
         }
         if done.changed() {
@@ -387,15 +444,6 @@ impl Screen {
         });
     }
 
-    /// Leaves the page: what it held is taken as it is, and kept or let go
-    /// afterwards, in order with the rest of the store's work. The page is
-    /// left blank at once; nothing is waited for.
-    fn leave(self) -> writing::Left {
-        let mut draft = self.draft;
-        let left = draft.write().leave();
-        left
-    }
-
     /// A blank page, made afresh: what had the page is replaced, and the
     /// cursor goes into the new one if `take_focus`.
     fn blank(mut self, take_focus: bool) {
@@ -446,8 +494,7 @@ impl Screen {
             }
             return;
         }
-        let left = self.leave();
-        self.ask(left.work);
+        self.leave();
         if emptied {
             self.blank_in_place();
         } else {
@@ -499,12 +546,11 @@ impl Screen {
             (Some(was), Some(now)) if now < was => Some(Arrival::Above),
             _ => None,
         };
-        let left = self.leave();
-        self.ask(left.work);
-        // Text typed into the note and not yet in the store is newer than
-        // the list's copy and the store's: the note shows that.
-        let owed = |mut note: Note| {
-            if let Some(text) = Scribe::global().owed_text(&note.id) {
+        self.leave();
+        // Text of the note still waiting in the queue is newer than the
+        // list's copy and the store's: the note shows that.
+        let waiting = |mut note: Note| {
+            if let Some(text) = Scribe::global().waiting_text(&note.id) {
                 note.content = text;
             }
             note
@@ -514,7 +560,7 @@ impl Screen {
             .peek()
             .as_ref()
             .and_then(|listing| listing.notes.iter().find(|note| note.id == id).cloned())
-            .map(owed);
+            .map(waiting);
         if let Some(note) = listed {
             self.show(note, from, edit);
         } else {
@@ -524,7 +570,7 @@ impl Screen {
         let Some(store) = self.store() else { return };
         spawn(async move {
             let note = match store.get_note(&id).await {
-                Ok(Some(note)) => owed(note),
+                Ok(Some(note)) => waiting(note),
                 Ok(None) => return,
                 Err(error) => {
                     tracing::error!("Could not open the note: {error}");
@@ -686,12 +732,11 @@ impl Screen {
     /// archive or delete then, and nothing to undo.
     fn put_away(mut self, id: NoteId, delete: bool, after: After) {
         let was_open = self.open_note() == Some(id);
-        let mut work = Vec::new();
         if was_open {
             self.calm();
-            work.extend(self.leave().work);
+            self.leave();
         }
-        work.push(Work::PutAway { note: id, delete });
+        let work = [Work::PutAway { note: id, delete }];
         self.exit.set(if delete {
             ListExit::Tear
         } else {
@@ -1202,6 +1247,7 @@ pub fn MainScreen() -> Element {
         draft: Signal::new(Draft::default()),
         page_store: CopyValue::new(None),
         files_news: Signal::new(FilesNews::default()),
+        unsaved: Signal::new(Vec::new()),
         writing: Signal::new(Writing::No),
         last_key: CopyValue::new(None),
         last_undo: Signal::new(None),
@@ -1227,11 +1273,22 @@ pub fn MainScreen() -> Element {
     });
     // The screen going (quick capture takes the window) hands over what
     // the page holds, and so does the app quitting from the tray, which
-    // then waits for the queue.
-    use_drop(move || screen.hand_over());
+    // then waits for the queue. Before another store is taken into use the
+    // app asks for the page through `page_leaver`, and waits for the queue.
+    use_hook(move || {
+        let mut leaver = app.page_leaver;
+        leaver.set(Some(Callback::new(move |()| screen.leave())));
+    });
+    use_drop(move || {
+        let mut leaver = app.page_leaver;
+        if let Ok(mut leaver) = leaver.try_write() {
+            *leaver = None;
+        }
+        screen.leave();
+    });
     use_effect(move || {
         if *app.quitting.read() {
-            screen.hand_over();
+            screen.leave();
         }
     });
     use_listing(&screen, &app);
@@ -1243,10 +1300,8 @@ pub fn MainScreen() -> Element {
     use_effect(move || {
         let open = *app.current_note_id.read();
         if open.is_none() && screen.page.peek().note.is_some() {
-            // Kept in the store the note is in: the one let go.
-            screen.hand_over();
-            let mut page_store = screen.page_store;
-            page_store.set(None);
+            // Left already, as the app took the other store into use.
+            screen.leave();
             screen.calm();
             screen.blank(false);
         }

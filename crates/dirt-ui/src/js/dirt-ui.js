@@ -1291,7 +1291,9 @@
     if (element.matches('[data-dui-more]')) forgetMore(element);
     if (element.matches('[data-dui-focus]')) forgetWriting(element);
     if (element.matches('[data-dui-toast]') && !element.classList.contains('dui-toast-ghost')) {
-      toastGone(element, parent && parent.closest ? parent.closest('.dui-toast-layer') : null);
+      // The copy closes where the toast was: the toast's place, or the
+      // error's above it.
+      toastGone(element, parent && parent.closest ? parent.closest('.dui-toasts, .dui-toasts-err, .dui-toast-layer') : null);
     }
     if (element.matches('.dui-confirm') && parent && parent.closest) {
       const host = parent.closest('[data-dui-confirm-host]');

@@ -82,6 +82,8 @@ somebody is using.
 | D43 | Windows: the window's own −, ▢ and ✕ at the top right, maximised and not; Alt F4, Win ↑, Win ↓ | Minimise, maximise and restore (the icon changes), and close to the tray, from which "Open Dirt" brings it back. Under the pointer ✕ is red with white. On Windows 11 the corner of ✕ follows the window's rounded corner when it is not maximised. Hovering ▢ offers no Snap Layouts: that is accepted (design 7.6) |
 | D45 | Type a thought and, at once, Ctrl Alt N; type another and choose Quit in the tray at once; start the app again | Both thoughts are kept whole |
 | D46 | macOS: Ctrl Enter and Ctrl N in the page, then Cmd Enter and Cmd N. Windows: Win Esc in the page | On a Mac, Ctrl Enter and Ctrl N are not done: the page keeps the note and nothing is saved over it. Cmd Enter and Cmd N are done. Win Esc is done and leaves a blank page with no second note |
+| D47 | Make writing fail while the app runs (a full disk, or the store's file made read-only), and type a thought; type another in a second note; press **Copy text**; then mend it and type on the page | "2 notes could not be saved" stays above the toasts, with the reason in its tooltip; archiving a note meanwhile shows its own toast and leaves the error. **Copy text** gives both thoughts' newest words. The next key on the page, once mended, makes the note with all that is on it. Nothing is made again later |
+| D48 | Signed in, type a thought and sign out at once in Settings | The thought is in the account's notes when signing in again (it was kept before the account's store was removed) |
 | D44 | Linux and macOS: start the app | It keeps the system's title bar, until the window without one has been tried there (design 7.6). Everything else is as on Windows |
 
 ## Android app

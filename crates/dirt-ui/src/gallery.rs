@@ -273,6 +273,18 @@ fn Feedback(platform: Platform) -> Element {
                 "Toast that stays"
             }
             Button {
+                onclick: move |_| {
+                    toasts
+                        .show_error(
+                            Toast::new("A note could not be saved")
+                                .icon(Icon::Alert)
+                                .detail("The disk is full.")
+                                .action("Copy text", Icon::Copy, Callback::new(|()| {})),
+                        );
+                },
+                "An error"
+            }
+            Button {
                 kind: ButtonKind::Ghost,
                 onclick: move |_| joining.toggle(),
                 "A device asks to join"

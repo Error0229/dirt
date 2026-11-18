@@ -74,6 +74,9 @@
 .dui-toast-layer{position:fixed;left:0;right:0;bottom:18px;display:grid;justify-items:center;pointer-events:none;z-index:900}
 .android .dui-toast-layer{bottom:calc(var(--dui-toast-lift,80px) + env(safe-area-inset-bottom,0px))}
 .dui-toasts{grid-area:1/1;display:grid;justify-items:center;max-width:100%;min-width:0}
+/* An error, above the toast, staying until it is dismissed. */
+.dui-toasts-err{position:absolute;left:0;right:0;bottom:calc(100% + 8px);display:grid;justify-items:center;pointer-events:none}
+.dui-toasts-err .dui-toast-words .dui-i{color:var(--accent-inverse)}
 .dui-toast{grid-area:1/1;pointer-events:auto;display:flex;align-items:center;gap:10px;min-height:40px;padding:6px 6px 6px 14px;border-radius:12px;background:var(--inverse);color:var(--on-inverse);font-size:13px;box-shadow:var(--shadow-2);position:relative;overflow:hidden;max-width:calc(100vw - 32px)}
 .dui-toast-ghost{pointer-events:none}
 .dui-toast-words{display:flex;align-items:center;gap:8px;min-width:0}

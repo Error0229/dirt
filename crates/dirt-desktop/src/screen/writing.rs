@@ -17,13 +17,13 @@
 //!   it is given one piece after another, in the order given, on a task
 //!   of its own that outlives the screen, and says how each went
 //!   ([`Done`]).
-//! - [`Ledger`] is what the store still owes: the text asked for and not
-//!   yet kept, note by note. A note opened again shows it; a write that
-//!   failed is tried again from it, and the person is told.
+//!   A note opened again while its text waits in the queue shows that
+//!   text. A write that fails is said once, with the words it carried, and
+//!   is not tried again.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -165,6 +165,20 @@ impl Draft {
         };
     }
 
+    /// The store could not make the page's note: the page goes back to a
+    /// thought not yet made, so that the next key makes the note, with all
+    /// that is on the page then (as before the note was named here). Says
+    /// whether the note was the page's.
+    pub fn unmade(&mut self, note: NoteId) -> bool {
+        if self.note != Some(note) {
+            return false;
+        }
+        self.note = None;
+        self.saved.clear();
+        self.version += 1;
+        true
+    }
+
     /// The store's text of the note on the page came after the page showed
     /// it. Taken, and true, if nothing has been typed since; otherwise the
     /// page keeps what was typed.
@@ -210,11 +224,16 @@ pub enum Done {
     },
     /// Files were attached, but for those named in `failed`, with why.
     Attached { note: NoteId, failed: Vec<String> },
-    /// What was typed could not be kept, even when tried again. It stays
-    /// owed, and is tried again now and then and with the next work.
-    Unsaved { note: NoteId, why: String },
-    /// A note that could not be kept before has been now.
-    Kept(NoteId),
+    /// What was typed could not be kept: `text` is what the write carried,
+    /// to be given back to the person, and `why` the store's reason.
+    /// `making` says the store could not make the note at all; later work
+    /// for it is not done, and the note is never made from this.
+    Unsaved {
+        note: NoteId,
+        text: String,
+        why: String,
+        making: bool,
+    },
     /// The work failed; it is logged.
     Failed,
 }
@@ -231,206 +250,30 @@ impl Done {
     }
 }
 
-/// What the store still owes the page, note by note: the text last asked
-/// to be kept that the store does not have yet, and whether the store has
-/// made the note at all.
-///
-/// A note opened again before its text has reached the store shows that
-/// text, not the store's older copy. A write that failed is tried again
-/// from here, and a note whose making failed is made by the next write
-/// asked for it, with the text then owed. Kept apart from the store, so
-/// that it can be tried without one.
-#[derive(Debug, Default)]
-pub struct Ledger {
-    owed: HashMap<NoteId, Owed>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Owed {
-    /// The text asked for last, while the store does not have it.
-    text: Option<String>,
-    /// The store has made the note.
-    made: bool,
-    /// The last write failed, and the note waits to be tried again.
-    failed: bool,
-}
-
-/// What a turn of the queue does with a piece of work.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Step {
-    /// This work, as it is.
-    Do(Work),
-    /// The note was never made, and holds nothing: nothing to do but to
-    /// forget it.
-    Forget(NoteId),
-}
-
-impl Ledger {
-    /// Work was asked for. Its text is owed from now on.
-    pub fn asked(&mut self, work: &Work) {
-        match work {
-            Work::Create { note, text } => {
-                self.owed.insert(
-                    *note,
-                    Owed {
-                        text: Some(text.clone()),
-                        made: false,
-                        failed: false,
-                    },
-                );
-            }
-            Work::Save { note, text } => {
-                let owed = self.owed.entry(*note).or_insert(Owed {
-                    text: None,
-                    made: true,
-                    failed: false,
-                });
-                owed.text = Some(text.clone());
-            }
-            _ => {}
-        }
-    }
-
-    /// The text owed for `note`, if the store does not have it yet.
-    #[must_use]
-    pub fn text_of(&self, note: &NoteId) -> Option<&str> {
-        self.owed.get(note)?.text.as_deref()
-    }
-
-    fn unmade(&self, note: &NoteId) -> bool {
-        self.owed.get(note).is_some_and(|owed| !owed.made)
-    }
-
-    /// What to do, now that the turn of `work` has come. Work comes in the
-    /// order asked, so a note still unmade here is one whose making failed:
-    /// a save makes it, with the text owed; work on its files or its place
-    /// makes it first; and letting it go, if it holds nothing, forgets it.
-    #[must_use]
-    pub fn plan(&self, work: Work) -> Vec<Step> {
-        match work {
-            Work::Save { note, text } if self.unmade(&note) => {
-                vec![Step::Do(Work::Create { note, text })]
-            }
-            Work::LetGoIfEmpty { note } if self.unmade(&note) => {
-                let text = self.text_of(&note).unwrap_or_default();
-                if text.trim().is_empty() {
-                    vec![Step::Forget(note)]
-                } else {
-                    vec![Step::Do(Work::Create {
-                        note,
-                        text: text.to_owned(),
-                    })]
-                }
-            }
-            Work::PutAway { note, .. } | Work::Attach { note, .. } if self.unmade(&note) => {
-                let text = self.text_of(&note).unwrap_or_default().to_owned();
-                vec![Step::Do(Work::Create { note, text }), Step::Do(work)]
-            }
-            work => vec![Step::Do(work)],
-        }
-    }
-
-    /// The store did `work`.
-    pub fn kept(&mut self, work: &Work) {
-        let (Work::Create { note, text } | Work::Save { note, text }) = work else {
-            return;
-        };
-        let Some(owed) = self.owed.get_mut(note) else {
-            return;
-        };
-        owed.made = true;
-        owed.failed = false;
-        if owed.text.as_ref() == Some(text) {
-            owed.text = None;
-        }
-        if owed.text.is_none() {
-            self.owed.remove(note);
-        }
-    }
-
-    /// Writing `work` failed. Its text stays owed, to be tried again.
-    pub fn failed(&mut self, work: &Work) {
-        if let Work::Create { note, .. } | Work::Save { note, .. } = work {
-            if let Some(owed) = self.owed.get_mut(note) {
-                owed.failed = true;
-            }
-        }
-    }
-
-    /// Nothing is owed for `note` any more.
-    pub fn forget(&mut self, note: &NoteId) {
-        self.owed.remove(note);
-    }
-
-    /// A note waits to be tried again.
-    #[must_use]
-    pub fn has_failed(&self) -> bool {
-        self.owed.values().any(|owed| owed.failed)
-    }
-
-    /// The writes to try again: each note whose last write failed, made
-    /// or saved with the text owed.
-    #[must_use]
-    pub fn to_try_again(&self) -> Vec<Work> {
-        self.owed
-            .iter()
-            .filter(|(_, owed)| owed.failed)
-            .map(|(note, owed)| {
-                let text = owed.text.clone().unwrap_or_default();
-                if owed.made {
-                    Work::Save { note: *note, text }
-                } else {
-                    Work::Create { note: *note, text }
-                }
-            })
-            .collect()
-    }
-}
-
-/// How many times a write is tried before it is said to have failed, and
-/// how long to wait before each try after the first. The store already
-/// waits half a minute for a busy file within each try; what is left is
-/// rarer (a full disk, a file that cannot be written).
-const TRIES: [Duration; 3] = [
-    Duration::ZERO,
-    Duration::from_millis(400),
-    Duration::from_millis(1600),
-];
-
-/// How often notes whose writes failed are tried again, while any are.
-const TRY_AGAIN_EVERY: Duration = Duration::from_secs(10);
-
 /// Does one piece of work.
 pub async fn run(store: &Arc<Store>, work: Work) -> Done {
     match work {
-        Work::Create { note, text } => {
-            let made = match store.create_note_with_id(note, &text).await {
-                Ok(_) => Ok(()),
-                // Made by an earlier try that said it failed.
-                Err(error) if matches!(store.get_note(&note).await, Ok(Some(_))) => {
-                    tracing::warn!("The note was there already ({error}); saving it instead");
-                    store.update_note(&note, &text).await.map(|_| ())
-                }
-                Err(error) => Err(error),
-            };
-            match made {
-                Ok(()) => Done::Created(note),
-                Err(error) => {
-                    tracing::error!("Could not make the note: {error}");
-                    Done::Unsaved {
-                        note,
-                        why: dirt_core::util::as_sentence(&error),
-                    }
+        Work::Create { note, text } => match store.create_note_with_id(note, &text).await {
+            Ok(_) => Done::Created(note),
+            Err(error) => {
+                tracing::error!("Could not make the note: {error}");
+                Done::Unsaved {
+                    note,
+                    text,
+                    why: dirt_core::util::as_sentence(&error),
+                    making: true,
                 }
             }
-        }
+        },
         Work::Save { note, text } => match store.update_note(&note, &text).await {
             Ok(_) => Done::Saved(note),
             Err(error) => {
                 tracing::error!("Could not save the note: {error}");
                 Done::Unsaved {
                     note,
+                    text,
                     why: dirt_core::util::as_sentence(&error),
+                    making: false,
                 }
             }
         },
@@ -476,25 +319,59 @@ pub async fn run(store: &Arc<Store>, work: Work) -> Done {
     }
 }
 
-/// Does a write, trying it again after a pause if it fails.
-async fn run_with_tries(store: &Arc<Store>, work: &Work) -> Done {
-    let writes = matches!(work, Work::Create { .. } | Work::Save { .. });
-    let mut done = Done::Failed;
-    for pause in TRIES {
-        if !pause.is_zero() {
-            tokio::time::sleep(pause).await;
-        }
-        done = run(store, work.clone()).await;
-        if !writes || !matches!(done, Done::Unsaved { .. }) {
-            break;
+/// What is done, in place of `work`, for a note the store could not make:
+/// nothing is made later from a failure. What was typed is handed back to
+/// the person, files are not attached, and there is nothing to let go or
+/// to put away.
+fn never_made(work: Work) -> Done {
+    const WHY: &str = "The note could not be made.";
+    match work {
+        Work::Create { note, text } | Work::Save { note, text } => Done::Unsaved {
+            note,
+            text,
+            why: WHY.to_owned(),
+            making: true,
+        },
+        Work::Attach { note, paths } => Done::Attached {
+            note,
+            failed: paths
+                .iter()
+                .map(|path| {
+                    let name = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    format!("{name}: {WHY}")
+                })
+                .collect(),
+        },
+        Work::LetGoIfEmpty { note } => Done::LetGo { note, gone: true },
+        Work::PutAway { note, delete } => Done::PutAway {
+            note,
+            delete,
+            kept: false,
+        },
+    }
+}
+
+impl Work {
+    /// The note the work is for.
+    #[must_use]
+    pub const fn note(&self) -> NoteId {
+        match self {
+            Self::Create { note, .. }
+            | Self::Save { note, .. }
+            | Self::LetGoIfEmpty { note }
+            | Self::PutAway { note, .. }
+            | Self::Attach { note, .. } => *note,
         }
     }
-    done
 }
 
 /// One piece of work, with the store and session it is for: those of the
 /// note when it was asked for, whatever is in use when it is done.
 struct Job {
+    serial: u64,
     store: Arc<Store>,
     session: Option<Session>,
     work: Work,
@@ -502,16 +379,18 @@ struct Job {
 
 /// What the queue's task shares with those who ask of it.
 struct Shared {
-    ledger: Mutex<Ledger>,
+    /// For each note with a create or a save waiting, the newest text
+    /// waiting, and the job that carries it.
+    texts: Mutex<HashMap<NoteId, (u64, String)>>,
     /// Pieces of work asked for and not yet done.
     waiting: AtomicUsize,
+    serial: AtomicU64,
 }
 
 impl Shared {
-    fn ledger(&self) -> std::sync::MutexGuard<'_, Ledger> {
-        // A panic while the ledger was held leaves it as it was: still the
-        // best account of what is owed.
-        self.ledger
+    fn texts(&self) -> std::sync::MutexGuard<'_, HashMap<NoteId, (u64, String)>> {
+        // A panic while the map was held leaves it as it was.
+        self.texts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -521,9 +400,14 @@ impl Shared {
 ///
 /// There is one for the app, on a task of its own. The screen may go
 /// (quick capture takes the window) with work still waiting: the work is
-/// done all the same, only the news of it goes unheard, and the screen
-/// that comes back finds what is still owed. Quitting waits for it
-/// ([`Self::settle`]).
+/// done all the same, and only its news goes unheard. Quitting and taking
+/// another store into use wait for it ([`Self::settle`]).
+///
+/// A write that fails is not tried again. The store already waits out a
+/// busy file inside every write; what still fails is the disk or the file,
+/// which a moment's wait does not mend. It is said once ([`Done::Unsaved`],
+/// with the text the write carried), and the app gives the person their
+/// words.
 #[derive(Clone)]
 pub struct Scribe {
     jobs: UnboundedSender<Job>,
@@ -546,8 +430,9 @@ impl Scribe {
         let (jobs, waiting) = unbounded_channel::<Job>();
         let (news, _) = broadcast::channel(256);
         let shared = Arc::new(Shared {
-            ledger: Mutex::new(Ledger::default()),
+            texts: Mutex::new(HashMap::new()),
             waiting: AtomicUsize::new(0),
+            serial: AtomicU64::new(0),
         });
         tokio::spawn(work_through(waiting, news.clone(), Arc::clone(&shared)));
         Self { jobs, news, shared }
@@ -567,9 +452,13 @@ impl Scribe {
         work: impl IntoIterator<Item = Work>,
     ) {
         for work in work {
-            self.shared.ledger().asked(&work);
+            let serial = self.shared.serial.fetch_add(1, Ordering::SeqCst) + 1;
+            if let Work::Create { note, text } | Work::Save { note, text } = &work {
+                self.shared.texts().insert(*note, (serial, text.clone()));
+            }
             self.shared.waiting.fetch_add(1, Ordering::SeqCst);
             let job = Job {
+                serial,
                 store: Arc::clone(store),
                 session: session.cloned(),
                 work,
@@ -581,10 +470,11 @@ impl Scribe {
         }
     }
 
-    /// The text owed for `note`, newer than the store's, if there is one.
+    /// The newest text waiting in the queue for `note`: newer than the
+    /// store's while it waits.
     #[must_use]
-    pub fn owed_text(&self, note: &NoteId) -> Option<String> {
-        self.shared.ledger().text_of(note).map(str::to_owned)
+    pub fn waiting_text(&self, note: &NoteId) -> Option<String> {
+        self.shared.texts().get(note).map(|(_, text)| text.clone())
     }
 
     /// Waits until everything asked for has been done, or `at_most` has
@@ -601,107 +491,51 @@ impl Scribe {
     }
 }
 
-/// The queue's task: the work in order, and now and then the writes that
-/// failed, again.
+/// The queue's task: the work, in order.
 async fn work_through(
     mut waiting: UnboundedReceiver<Job>,
     news: broadcast::Sender<Done>,
     shared: Arc<Shared>,
 ) {
-    // Where to try a failed note again: the store and session it was for.
-    let mut homes: HashMap<NoteId, (Arc<Store>, Option<Session>)> = HashMap::new();
-    loop {
-        let job = if shared.ledger().has_failed() {
-            if let Ok(job) = tokio::time::timeout(TRY_AGAIN_EVERY, waiting.recv()).await {
-                job
-            } else {
-                try_again(&shared, &homes, &news).await;
-                continue;
-            }
+    // Notes the store could not make. Later work for one is not done.
+    let mut unmade: HashSet<NoteId> = HashSet::new();
+    while let Some(job) = waiting.recv().await {
+        let Job {
+            serial,
+            store,
+            session,
+            work,
+        } = job;
+        let note = work.note();
+        let done = if unmade.contains(&note) {
+            never_made(work)
         } else {
-            waiting.recv().await
+            run(&store, work).await
         };
-        let Some(job) = job else { break };
-        let steps = shared.ledger().plan(job.work);
-        for step in steps {
-            let done = match step {
-                Step::Forget(note) => {
-                    shared.ledger().forget(&note);
-                    Done::LetGo { note, gone: true }
-                }
-                Step::Do(work) => {
-                    let done = run_with_tries(&job.store, &work).await;
-                    record(
-                        &shared,
-                        &mut homes,
-                        (&job.store, &job.session),
-                        &work,
-                        &done,
-                    );
-                    done
-                }
-            };
-            if done.changed() {
-                if let Some(session) = &job.session {
-                    session.notify(Trigger::Changed);
-                }
+        if matches!(done, Done::Unsaved { making: true, .. }) {
+            unmade.insert(note);
+        }
+        {
+            let mut texts = shared.texts();
+            if texts
+                .get(&note)
+                .is_some_and(|(newest, _)| *newest == serial)
+            {
+                texts.remove(&note);
             }
-            // Nobody may be listening: the screen has gone. The work is
-            // done all the same.
-            let _ = news.send(done);
         }
-        shared.waiting.fetch_sub(1, Ordering::SeqCst);
-        // A note that failed earlier is tried again with the next work, as
-        // well as now and then.
-        if shared.ledger().has_failed() {
-            try_again(&shared, &homes, &news).await;
-        }
-    }
-}
-
-/// Writes down in the ledger how a piece of work went.
-fn record(
-    shared: &Shared,
-    homes: &mut HashMap<NoteId, (Arc<Store>, Option<Session>)>,
-    (store, session): (&Arc<Store>, &Option<Session>),
-    work: &Work,
-    done: &Done,
-) {
-    let mut ledger = shared.ledger();
-    match done {
-        Done::Created(_) | Done::Saved(_) => ledger.kept(work),
-        Done::Unsaved { note, .. } => {
-            ledger.failed(work);
-            homes.insert(*note, (Arc::clone(store), session.clone()));
-        }
-        Done::LetGo { note, gone: true } => ledger.forget(note),
-        _ => {}
-    }
-}
-
-/// Tries again each note whose write failed. One that is kept now is said
-/// to have been ([`Done::Kept`]).
-async fn try_again(
-    shared: &Shared,
-    homes: &HashMap<NoteId, (Arc<Store>, Option<Session>)>,
-    news: &broadcast::Sender<Done>,
-) {
-    let again = shared.ledger().to_try_again();
-    for work in again {
-        let (Work::Create { note, .. } | Work::Save { note, .. }) = &work else {
-            continue;
-        };
-        let Some((store, session)) = homes.get(note) else {
-            continue;
-        };
-        let done = run(store, work.clone()).await;
-        if matches!(done, Done::Created(_) | Done::Saved(_)) {
-            shared.ledger().kept(&work);
-            if let Some(session) = session {
+        // The store is let go as soon as its work is done: one being taken
+        // out of use must not be held open here.
+        drop(store);
+        if done.changed() {
+            if let Some(session) = &session {
                 session.notify(Trigger::Changed);
             }
-            let _ = news.send(Done::Kept(*note));
         }
+        // Nobody may be listening: the screen has gone. The work is done
+        // all the same.
+        let _ = news.send(done);
+        shared.waiting.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -969,138 +803,37 @@ mod tests {
         assert_eq!(page.text(), "one!");
     }
 
-    // ---- What the store still owes -------------------------------------
+    // ---- Through the queue -----------------------------------------------
 
-    /// A note whose making failed is made by the next write asked for it,
-    /// with the text owed then: what was typed into it is not lost.
-    #[test]
-    fn a_save_for_a_note_never_made_makes_it() {
-        let note = NoteId::new();
-        let mut ledger = Ledger::default();
-        let create = Work::Create {
-            note,
-            text: "h".into(),
-        };
-        ledger.asked(&create);
-        ledger.failed(&create);
-        let save = Work::Save {
-            note,
-            text: "hello".into(),
-        };
-        ledger.asked(&save);
-        assert_eq!(
-            ledger.plan(save),
-            [Step::Do(Work::Create {
-                note,
-                text: "hello".into()
-            })]
-        );
-        assert_eq!(
-            ledger.to_try_again(),
-            [Work::Create {
-                note,
-                text: "hello".into()
-            }]
-        );
-        ledger.kept(&Work::Create {
-            note,
-            text: "hello".into(),
-        });
-        assert!(!ledger.has_failed());
-        assert_eq!(ledger.text_of(&note), None);
+    /// Everything said about the queue's work since `news` began to listen,
+    /// once it has settled, and then a moment more: anything still coming
+    /// would be work done again.
+    async fn heard_once_settled(
+        scribe: &Scribe,
+        news: &mut broadcast::Receiver<Done>,
+    ) -> Vec<Done> {
+        assert!(scribe.settle(Duration::from_secs(20)).await);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let mut heard = Vec::new();
+        while let Ok(done) = news.try_recv() {
+            heard.push(done);
+        }
+        heard
     }
 
-    /// A failed save stays owed and is tried again; a later save that was
-    /// kept settles it.
-    #[test]
-    fn a_failed_save_stays_owed() {
-        let note = NoteId::new();
-        let mut ledger = Ledger::default();
-        let save = Work::Save {
-            note,
-            text: "one".into(),
-        };
-        ledger.asked(&save);
-        ledger.failed(&save);
-        assert_eq!(ledger.to_try_again(), std::slice::from_ref(&save));
-        assert_eq!(ledger.text_of(&note), Some("one"));
-        ledger.kept(&save);
-        assert!(ledger.to_try_again().is_empty());
+    fn unsaved(heard: &[Done]) -> Vec<(NoteId, String, bool)> {
+        heard
+            .iter()
+            .filter_map(|done| match done {
+                Done::Unsaved {
+                    note, text, making, ..
+                } => Some((*note, text.clone(), *making)),
+                _ => None,
+            })
+            .collect()
     }
 
-    /// The text owed is the newest asked for. The store keeping an older
-    /// one leaves the newer owed, which a note opened again shows.
-    #[test]
-    fn the_newest_text_is_owed_until_it_is_kept() {
-        let note = NoteId::new();
-        let mut ledger = Ledger::default();
-        let older = Work::Save {
-            note,
-            text: "hello".into(),
-        };
-        let newer = Work::Save {
-            note,
-            text: "hello world".into(),
-        };
-        ledger.asked(&older);
-        ledger.asked(&newer);
-        ledger.kept(&older);
-        assert_eq!(ledger.text_of(&note), Some("hello world"));
-        ledger.kept(&newer);
-        assert_eq!(ledger.text_of(&note), None);
-    }
-
-    /// A note never made: let go when it holds nothing, made when it holds
-    /// something, and made before its files or its place are seen to.
-    #[test]
-    fn work_on_a_note_never_made_makes_it_first() {
-        let note = NoteId::new();
-        let mut ledger = Ledger::default();
-        let create = Work::Create {
-            note,
-            text: "x".into(),
-        };
-        ledger.asked(&create);
-        ledger.failed(&create);
-        let put_away = Work::PutAway {
-            note,
-            delete: false,
-        };
-        assert_eq!(
-            ledger.plan(put_away.clone()),
-            [
-                Step::Do(Work::Create {
-                    note,
-                    text: "x".into()
-                }),
-                Step::Do(put_away)
-            ]
-        );
-        assert_eq!(
-            ledger.plan(Work::LetGoIfEmpty { note }),
-            [Step::Do(Work::Create {
-                note,
-                text: "x".into()
-            })]
-        );
-        ledger.asked(&Work::Save {
-            note,
-            text: " ".into(),
-        });
-        assert_eq!(
-            ledger.plan(Work::LetGoIfEmpty { note }),
-            [Step::Forget(note)]
-        );
-        // A note the store has is let go by the store.
-        let held = NoteId::new();
-        assert_eq!(
-            ledger.plan(Work::LetGoIfEmpty { note: held }),
-            [Step::Do(Work::LetGoIfEmpty { note: held })]
-        );
-    }
-
-    /// The queue against a real store: what is asked is done in order, and
-    /// nothing is owed once it has settled.
+    /// The queue against a real store: what is asked is done in order.
     #[tokio::test]
     async fn the_queue_keeps_everything_asked_of_it() {
         let (_folder, store) = temp_store();
@@ -1119,34 +852,151 @@ mod tests {
         assert_eq!(texts(&store).await, expected);
     }
 
-    /// A note that cannot be made is said to be unsaved, and its text
-    /// stays owed: shown if the note is opened again, and tried again.
+    /// The store cannot make the note on the page (here, because the ID is
+    /// taken). The person is told, with the words; the page goes back to a
+    /// thought not yet made, and the next key makes it once, with all of
+    /// it. Nothing makes the first note later.
     #[tokio::test]
-    async fn a_note_that_cannot_be_made_is_said_and_kept_owed() {
+    async fn a_failed_create_of_the_open_note_is_made_by_the_next_key() {
         let (_folder, store) = temp_store();
         let scribe = Scribe::start();
         let mut news = scribe.listen();
-        // The store makes notes only under IDs that begin with their time.
-        let note = NoteId::from_uuid(uuid::Uuid::from_u128(
-            0x0123_4567_89ab_4cde_8f01_2345_6789_abcd,
-        ));
+        let mut page = Draft::default();
+        let first = page.typed("h".into()).unwrap();
+        let taken = page.note().unwrap();
+        store
+            .create_note_with_id(taken, "already here")
+            .await
+            .unwrap();
+        scribe.ask(&store, None, [first]);
+        page.typed("he".into());
+        scribe.ask(&store, None, page.flush());
+
+        let heard = heard_once_settled(&scribe, &mut news).await;
+        assert_eq!(
+            unsaved(&heard),
+            [
+                (taken, "h".to_owned(), true),
+                (taken, "he".to_owned(), true)
+            ]
+        );
+        assert!(page.unmade(taken));
+        assert_eq!(page.note(), None);
+
+        let again = page
+            .typed("hello".into())
+            .expect("the next key makes the note");
+        let made = page.note().unwrap();
+        assert_ne!(made, taken);
+        scribe.ask(&store, None, [again]);
+        let heard = heard_once_settled(&scribe, &mut news).await;
+        assert_eq!(heard, [Done::Created(made)]);
+        assert_eq!(texts(&store).await, ["already here", "hello"]);
+    }
+
+    /// A save of a note already left fails: the person is told once, with
+    /// the words it carried, and nothing tries it again.
+    #[tokio::test]
+    async fn a_failed_save_of_a_note_left_is_told_once() {
+        let (_folder, store) = temp_store();
+        let scribe = Scribe::start();
+        let mut news = scribe.listen();
+        // A note the store has let go of altogether: the save finds none.
+        let gone = store.create_note("x").await.unwrap();
+        store.update_note(&gone.id, "").await.unwrap();
+        store.let_go_if_empty(&gone.id).await.unwrap();
+
+        scribe.ask(
+            &store,
+            None,
+            [Work::Save {
+                note: gone.id,
+                text: "written after all".into(),
+            }],
+        );
+        let heard = heard_once_settled(&scribe, &mut news).await;
+        assert_eq!(
+            unsaved(&heard),
+            [(gone.id, "written after all".to_owned(), false)]
+        );
+        assert_eq!(heard.len(), 1);
+        assert_eq!(scribe.waiting_text(&gone.id), None);
+    }
+
+    /// A note deleted on another device and merged in while a save waits:
+    /// the save is done or told once, and nothing loops.
+    #[tokio::test]
+    async fn a_note_deleted_while_its_save_waits_is_no_loop() {
+        let (_folder, store) = temp_store();
+        let scribe = Scribe::start();
+        let mut news = scribe.listen();
+        let note = store.create_note("first").await.unwrap();
+        store.delete_note(&note.id).await.unwrap();
+        scribe.ask(
+            &store,
+            None,
+            [Work::Save {
+                note: note.id,
+                text: "first, and more".into(),
+            }],
+        );
+        let heard = heard_once_settled(&scribe, &mut news).await;
+        assert_eq!(heard.len(), 1, "{heard:?}");
+        assert!(unsaved(&heard).len() <= 1);
+    }
+
+    /// A note opened again while its save waits shows the waiting text.
+    #[tokio::test]
+    async fn the_text_waiting_in_the_queue_is_known_until_it_is_done() {
+        let (folder, store) = temp_store();
+        let scribe = Scribe::start();
+        let note = store.create_note("hello").await.unwrap();
+        // Something slow ahead of it: a file to copy and encrypt.
+        let big = folder.path().join("big.bin");
+        std::fs::write(&big, vec![7_u8; 6 * 1024 * 1024]).unwrap();
+        let other = store.create_note("other").await.unwrap();
         scribe.ask(
             &store,
             None,
             [
-                Work::Create {
-                    note,
-                    text: "a".into(),
+                Work::Attach {
+                    note: other.id,
+                    paths: vec![big],
                 },
                 Work::Save {
-                    note,
-                    text: "a thought".into(),
+                    note: note.id,
+                    text: "hello world".into(),
                 },
             ],
         );
-        assert!(scribe.settle(Duration::from_secs(20)).await);
-        assert!(matches!(news.recv().await, Ok(Done::Unsaved { .. })));
-        assert_eq!(scribe.owed_text(&note).as_deref(), Some("a thought"));
-        assert_eq!(store.note_count().await.unwrap(), 0);
+        assert_eq!(
+            scribe.waiting_text(&note.id).as_deref(),
+            Some("hello world")
+        );
+        assert!(scribe.settle(Duration::from_secs(30)).await);
+        assert_eq!(scribe.waiting_text(&note.id), None);
+        assert_eq!(
+            store.get_note(&note.id).await.unwrap().unwrap().content,
+            "hello world"
+        );
+    }
+
+    /// Signing out: the page's work is done in the store it was asked of,
+    /// the queue is settled, and then the queue holds that store no more,
+    /// so that it can be removed.
+    #[tokio::test]
+    async fn settling_the_queue_leaves_the_old_store_free() {
+        let (_old_folder, old) = temp_store();
+        let (_new_folder, new) = temp_store();
+        let scribe = Scribe::start();
+        let mut page = Draft::default();
+        let mut work: Vec<Work> = page.typed("signed in".into()).into_iter().collect();
+        page.typed("signed in, then out".into());
+        work.extend(page.leave().work);
+        scribe.ask(&old, None, work);
+        assert!(scribe.settle(Duration::from_secs(10)).await);
+        assert_eq!(texts(&old).await, ["signed in, then out"]);
+        assert!(texts(&new).await.is_empty());
+        assert_eq!(Arc::strong_count(&old), 1, "the queue holds the old store");
     }
 }
