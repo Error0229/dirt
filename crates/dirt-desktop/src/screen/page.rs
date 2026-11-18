@@ -112,7 +112,9 @@ pub fn Page() -> Element {
                         "aria-label": "Note",
                         placeholder: "What\u{2019}s on your mind?",
                         spellcheck: "false",
-                        "data-dui-page": done_keys.then_some(""),
+                        // The keys that empty it, with this computer's
+                        // command key (`keys::empties_page`).
+                        "data-dui-page": done_keys.then_some(super::keys::COMMAND_KEY),
                         oninput: move |event: FormEvent| screen.typed(serial, &event.value()),
                         onfocus: move |_| screen.focused(Where::Page),
                         onblur: move |_| screen.focused(Where::Elsewhere),

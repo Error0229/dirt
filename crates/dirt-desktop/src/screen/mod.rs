@@ -30,7 +30,6 @@ use dirt_ui::dom::{self, Caret};
 use dirt_ui::find;
 use dirt_ui::time::Clock;
 use dirt_ui::{Appearance, Icon};
-use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::components::FilesNews;
 use crate::state::{AppState, SettingsTab};
@@ -38,6 +37,7 @@ use focus::Edge;
 use keys::KeysPanel;
 use list::Side;
 use page::Page;
+use tokio::sync::broadcast::error::RecvError;
 use window::WindowControls;
 use writing::{Done, Draft, Scribe, Work};
 
@@ -199,9 +199,10 @@ pub struct Screen {
     pub page: Signal<PageView>,
     draft: Signal<Draft>,
     /// Does the store's work for the page, in order.
-    scribe: CopyValue<Scribe>,
-    /// What the scribe says of its work, until it is listened to.
-    news: CopyValue<Option<UnboundedReceiver<Done>>>,
+    /// The store the page's note is in: the one in use when it was made
+    /// or opened. Its work goes there even if another store has been taken
+    /// into use since (signing in or out).
+    page_store: CopyValue<Option<Arc<Store>>>,
     /// How attaching files to the note on the page is going.
     pub files_news: Signal<FilesNews>,
     /// Focus while writing.
@@ -238,18 +239,59 @@ impl Screen {
         self.app.db_service.peek().clone()
     }
 
-    /// Has the store do `work` after whatever was asked of it before.
+    /// Has the store do `work` after whatever was asked of it before: the
+    /// store the page's note is in, or else the one in use.
+    ///
+    /// It may be asked as the screen goes, so nothing here assumes the
+    /// screen's values are still there.
     fn ask(self, work: impl IntoIterator<Item = Work>) {
         let work: Vec<Work> = work.into_iter().collect();
         if work.is_empty() {
             return;
         }
-        let Some(store) = self.store() else {
+        let page_store = self
+            .page_store
+            .try_read()
+            .ok()
+            .and_then(|store| store.clone());
+        let in_use = self
+            .app
+            .db_service
+            .try_peek()
+            .ok()
+            .and_then(|store| store.clone());
+        let Some(store) = page_store.or(in_use) else {
             tracing::error!("No store is open to keep the page in");
             return;
         };
-        let session = self.app.session.peek().clone();
-        self.scribe.read().ask(&store, session.as_ref(), work);
+        let session = self
+            .app
+            .session
+            .try_peek()
+            .ok()
+            .and_then(|session| session.clone());
+        Scribe::global().ask(&store, session.as_ref(), work);
+    }
+
+    /// The page's note is in the store in use now.
+    fn page_in_store_in_use(self) {
+        let mut page_store = self.page_store;
+        page_store.set(self.store());
+    }
+
+    /// Hands what the page holds to the store's queue, leaving the page
+    /// blank: the screen is going (quick capture takes the window, the app
+    /// quits, another store is taken into use). Nothing typed is dropped
+    /// with the screen.
+    pub fn hand_over(mut self) {
+        let left = match self.draft.try_write() {
+            Ok(mut draft) => draft.leave(),
+            Err(error) => {
+                tracing::error!("The page could not be handed over: {error}");
+                return;
+            }
+        };
+        self.ask(left.work);
     }
 
     /// What the store's work came to.
@@ -277,6 +319,19 @@ impl Screen {
             Done::Attached { note, ref failed } => {
                 self.files_news.write().attached(note, failed);
             }
+            // A write that failed after it was tried again. What was typed
+            // is kept in the queue and tried again; the person is told, and
+            // the toast stays until it is dismissed or the note is kept.
+            Done::Unsaved { ref why, .. } => {
+                self.toasts.show(
+                    Toast::new(format!(
+                        "A note could not be saved. {why} Dirt keeps trying."
+                    ))
+                    .icon(Icon::Alert)
+                    .hold(true),
+                );
+            }
+            Done::Kept(_) => self.toasts.clear(),
             _ => {}
         }
         if done.changed() {
@@ -304,6 +359,7 @@ impl Screen {
             let mut current = self.app.current_note_id;
             current.set(note);
             self.page.write().note = note;
+            self.page_in_store_in_use();
             // With the list narrowed to tags, a new page gets them at its
             // end, where they can be seen and removed. The field says so
             // as if they had been typed, and that saves them.
@@ -445,11 +501,20 @@ impl Screen {
         };
         let left = self.leave();
         self.ask(left.work);
+        // Text typed into the note and not yet in the store is newer than
+        // the list's copy and the store's: the note shows that.
+        let owed = |mut note: Note| {
+            if let Some(text) = Scribe::global().owed_text(&note.id) {
+                note.content = text;
+            }
+            note
+        };
         let listed = self
             .listing
             .peek()
             .as_ref()
-            .and_then(|listing| listing.notes.iter().find(|note| note.id == id).cloned());
+            .and_then(|listing| listing.notes.iter().find(|note| note.id == id).cloned())
+            .map(owed);
         if let Some(note) = listed {
             self.show(note, from, edit);
         } else {
@@ -459,7 +524,7 @@ impl Screen {
         let Some(store) = self.store() else { return };
         spawn(async move {
             let note = match store.get_note(&id).await {
-                Ok(Some(note)) => note,
+                Ok(Some(note)) => owed(note),
                 Ok(None) => return,
                 Err(error) => {
                     tracing::error!("Could not open the note: {error}");
@@ -483,6 +548,7 @@ impl Screen {
         let serial = self.next_serial();
         let mut current = self.app.current_note_id;
         current.set(Some(note.id));
+        self.page_in_store_in_use();
         self.draft.write().show(&note);
         self.page.set(PageView {
             serial,
@@ -824,6 +890,7 @@ impl Screen {
             let serial = self.next_serial();
             let mut current = self.app.current_note_id;
             current.set(Some(note));
+            self.page_in_store_in_use();
             let text = self.draft.peek().text().to_owned();
             self.page.set(PageView {
                 serial,
@@ -1114,48 +1181,57 @@ pub fn MainScreen() -> Element {
     let app = use_context::<AppState>();
     let toasts = use_toasts();
     let clock = use_clock(&app);
-    let screen = use_context_provider(|| {
-        let (scribe, news) = Scribe::start();
-        Screen {
-            app,
-            toasts,
-            find_text: Signal::new(String::new()),
-            tags: Signal::new(Vec::new()),
-            rule: Signal::new(TagRule::All),
-            tags_open: Signal::new(false),
-            tag_offers: Signal::new(Vec::new()),
-            archived_view: Signal::new(false),
-            limit: Signal::new(LISTED_NOTES),
-            exit: Signal::new(ListExit::None),
-            returned: Signal::new(None),
-            flashing: Signal::new(HashSet::new()),
-            listing: Signal::new(None),
-            page: Signal::new(PageView {
-                take_focus: true,
-                ..PageView::default()
-            }),
-            draft: Signal::new(Draft::default()),
-            scribe: CopyValue::new(scribe),
-            news: CopyValue::new(Some(news)),
-            files_news: Signal::new(FilesNews::default()),
-            writing: Signal::new(Writing::No),
-            last_key: CopyValue::new(None),
-            last_undo: Signal::new(None),
-            serial: Signal::new(0),
-            page_over: Signal::new(false),
-            keys_open: Signal::new(false),
-            focus: Signal::new(Where::Elsewhere),
-            clock,
-        }
+    let screen = use_context_provider(|| Screen {
+        app,
+        toasts,
+        find_text: Signal::new(String::new()),
+        tags: Signal::new(Vec::new()),
+        rule: Signal::new(TagRule::All),
+        tags_open: Signal::new(false),
+        tag_offers: Signal::new(Vec::new()),
+        archived_view: Signal::new(false),
+        limit: Signal::new(LISTED_NOTES),
+        exit: Signal::new(ListExit::None),
+        returned: Signal::new(None),
+        flashing: Signal::new(HashSet::new()),
+        listing: Signal::new(None),
+        page: Signal::new(PageView {
+            take_focus: true,
+            ..PageView::default()
+        }),
+        draft: Signal::new(Draft::default()),
+        page_store: CopyValue::new(None),
+        files_news: Signal::new(FilesNews::default()),
+        writing: Signal::new(Writing::No),
+        last_key: CopyValue::new(None),
+        last_undo: Signal::new(None),
+        serial: Signal::new(0),
+        page_over: Signal::new(false),
+        keys_open: Signal::new(false),
+        focus: Signal::new(Where::Elsewhere),
+        clock,
     });
     // What the store's work came to: Undo for a note put away, files
     // attached, the list to read again.
     use_future(move || async move {
-        let mut news = screen.news;
-        let taken = news.write().take();
-        let Some(mut news) = taken else { return };
-        while let Some(done) = news.recv().await {
-            screen.heard(&done);
+        let mut news = Scribe::global().listen();
+        loop {
+            match news.recv().await {
+                Ok(done) => screen.heard(&done),
+                // Some news was missed while the screen was busy: the list
+                // is read again, which is what most news asks for.
+                Err(RecvError::Lagged(_)) => screen.app.reread(),
+                Err(RecvError::Closed) => break,
+            }
+        }
+    });
+    // The screen going (quick capture takes the window) hands over what
+    // the page holds, and so does the app quitting from the tray, which
+    // then waits for the queue.
+    use_drop(move || screen.hand_over());
+    use_effect(move || {
+        if *app.quitting.read() {
+            screen.hand_over();
         }
     });
     use_listing(&screen, &app);
@@ -1167,7 +1243,10 @@ pub fn MainScreen() -> Element {
     use_effect(move || {
         let open = *app.current_note_id.read();
         if open.is_none() && screen.page.peek().note.is_some() {
-            let _ = screen.leave();
+            // Kept in the store the note is in: the one let go.
+            screen.hand_over();
+            let mut page_store = screen.page_store;
+            page_store.set(None);
             screen.calm();
             screen.blank(false);
         }

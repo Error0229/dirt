@@ -463,6 +463,31 @@ async fn a_note_brought_back_comes_back_into_its_place() {
     );
 }
 
+/// The desktop's page names a note before the store makes it. The store
+/// takes the name only if it is a UUID v7, which carries the note's
+/// creation time, and only once.
+#[tokio::test]
+async fn a_note_is_made_under_an_id_given_only_if_it_is_a_v7_and_new() {
+    let (_folder, store) = temp_store();
+    let id = NoteId::new();
+    let made = store.create_note_with_id(id, "named first").await.unwrap();
+    assert_eq!(made.id, id);
+    assert_eq!(made.content, "named first");
+
+    let again = store.create_note_with_id(id, "twice").await.unwrap_err();
+    assert!(matches!(again, Error::InvalidInput(_)), "{again}");
+
+    let random = NoteId::from_uuid(uuid::Uuid::from_u128(
+        0x0123_4567_89ab_4cde_8f01_2345_6789_abcd,
+    ));
+    let refused = store
+        .create_note_with_id(random, "no time")
+        .await
+        .unwrap_err();
+    assert!(matches!(refused, Error::InvalidInput(_)), "{refused}");
+    assert_eq!(store.note_count().await.unwrap(), 1);
+}
+
 #[tokio::test]
 async fn a_note_this_device_no_longer_holds_cannot_be_brought_back() {
     let (_folder, store) = temp_store();

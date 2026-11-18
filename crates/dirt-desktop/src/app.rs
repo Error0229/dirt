@@ -25,12 +25,16 @@ use dirt_ui::{Appearance, UiRoot};
 
 use crate::bootstrap_config::load_bootstrap_config;
 use crate::components::{QuickCapture, SettingsPanel};
+use crate::screen::writing::Scribe;
 use crate::screen::MainScreen;
 use crate::services::{data_folder, open_local_store};
 use crate::state::{AppState, SettingsTab};
 use crate::theme::{resolve_theme, ResolvedTheme};
 use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
 use crate::{HOTKEY_TRIGGERED, TRAY_ENABLED};
+
+/// How long quitting waits for the store's queue to finish.
+const QUIT_WAITS_AT_MOST: Duration = Duration::from_secs(5);
 
 /// Set when the window gains focus: the person has come back to the app.
 static WINDOW_FOCUSED: AtomicBool = AtomicBool::new(false);
@@ -95,6 +99,7 @@ pub fn App() -> Element {
     let settings_open = use_signal(|| false);
     let settings_tab = use_signal(SettingsTab::default);
     let mut quick_capture_open = use_signal(|| false);
+    let mut quitting = use_signal(|| false);
     let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
     let mut db_service: Signal<Option<Arc<Store>>> = use_signal(|| None);
     let mut device_store: Signal<Option<Arc<Store>>> = use_signal(|| None);
@@ -126,6 +131,7 @@ pub fn App() -> Element {
         settings_open,
         settings_tab,
         quick_capture_open,
+        quitting,
     });
 
     // Open the stores, and the session if there is a server, then load
@@ -271,7 +277,17 @@ pub fn App() -> Element {
                 // Check for quit request
                 if QUIT_REQUESTED.swap(false, Ordering::SeqCst) {
                     tracing::info!("Quit requested from tray");
-                    std::process::exit(0);
+                    // The main screen hands over what its page holds as it
+                    // hears of this; then the store's queue is given a few
+                    // seconds to finish, so that nothing typed is lost.
+                    quitting.set(true);
+                    spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        if !Scribe::global().settle(QUIT_WAITS_AT_MOST).await {
+                            tracing::warn!("Quitting with the store's work unfinished");
+                        }
+                        std::process::exit(0);
+                    });
                 }
             }
 

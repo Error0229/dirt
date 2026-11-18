@@ -1142,7 +1142,12 @@
 
   // ---- The page: done is at once (sections 6.1, 7.4) ----------------------
   // Esc, Ctrl Enter and Ctrl N on the page (`data-dui-page`) put the thought
-  // on the pile and give a blank page. The field is emptied here, as the
+  // on the pile and give a blank page. The attribute names the command key,
+  // `ctrl` or `meta` (Cmd on a Mac). The rule is the app's own, key for key
+  // (the desktop's `keys::empties_page`): Esc with no modifier, or the
+  // command key with Enter or N and nothing else. Were the two to differ,
+  // the next character would be saved over the note, or the old text would
+  // become a second note. The field is emptied here, as the
   // key is pressed, before Rust has heard of it: whatever is typed next is
   // the next thought's, however quickly it comes. Rust keeps what the field
   // held, from what it had heard before the key.
@@ -1154,8 +1159,10 @@
   document.addEventListener('keydown', event => {
     const field = event.target;
     if (event.defaultPrevented || event.isComposing || !field || !field.matches || !field.matches('[data-dui-page]')) return;
-    const command = event.ctrlKey || event.metaKey;
-    if (event.altKey || event.shiftKey) return;
+    const mac = field.dataset.duiPage === 'meta';
+    const command = mac ? event.metaKey : event.ctrlKey;
+    const other = mac ? event.ctrlKey : event.metaKey;
+    if (event.altKey || event.shiftKey || other) return;
     const done = command
       ? event.key === 'Enter' || event.key.toLowerCase() === 'n'
       : event.key === 'Escape';
@@ -1191,10 +1198,12 @@
     event.preventDefault();
     // A pointer's press carries no count of clicks, and the press that
     // would is not sent once this one is taken: a second press soon after
-    // the first and in the same place is the double-click.
+    // the first and in the same place is the double-click. The same place
+    // on the screen: after a short drag the window has moved with the
+    // pointer, and a quick second grab is in the same place in the page.
     const now = Date.now(), last = lastDragPress;
-    const again = last && now - last.at < 500 && Math.abs(event.clientX - last.x) < 5 && Math.abs(event.clientY - last.y) < 5;
-    lastDragPress = again ? null : { at: now, x: event.clientX, y: event.clientY };
+    const again = last && now - last.at < 500 && Math.abs(event.screenX - last.x) < 5 && Math.abs(event.screenY - last.y) < 5;
+    lastDragPress = again ? null : { at: now, x: event.screenX, y: event.screenY };
     tell(area, again ? 'maximize' : 'drag');
   }, true);
 

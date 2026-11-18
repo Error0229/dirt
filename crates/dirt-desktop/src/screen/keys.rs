@@ -22,6 +22,49 @@ pub fn command(event: &KeyboardEvent) -> bool {
     }
 }
 
+/// The command key's name, as the page tells the script
+/// (`data-dui-page`): Cmd on a Mac, Ctrl elsewhere.
+pub const COMMAND_KEY: &str = if cfg!(target_os = "macos") {
+    "meta"
+} else {
+    "ctrl"
+};
+
+/// Whether a key pressed in the page is done and empties it: Esc with no
+/// modifier, or the command key with Enter or N and no other modifier.
+///
+/// The script empties the page on the same keys as they are pressed
+/// (`data-dui-page` in `dirt-ui`'s script), and this is the one place the
+/// rule is written for Rust. The two must agree on every key: if the script
+/// empties the page and the app does not take the key as done, the next
+/// character would be saved over the note; if the app takes it as done
+/// and the script has not emptied the page, the old text would become a
+/// second note.
+fn empties_page(key: &Key, modifiers: Modifiers, mac: bool) -> bool {
+    let (command, other) = if mac {
+        (Modifiers::META, Modifiers::CONTROL)
+    } else {
+        (Modifiers::CONTROL, Modifiers::META)
+    };
+    if modifiers.intersects(Modifiers::ALT | Modifiers::SHIFT | other) {
+        return false;
+    }
+    if modifiers.contains(command) {
+        match key {
+            Key::Enter => true,
+            Key::Character(character) => character.to_lowercase() == "n",
+            _ => false,
+        }
+    } else {
+        *key == Key::Escape
+    }
+}
+
+/// [`empties_page`] for a key pressed here.
+fn empties_the_page(event: &KeyboardEvent) -> bool {
+    empties_page(&event.key(), event.modifiers(), cfg!(target_os = "macos"))
+}
+
 /// The key as a lower-case character, when it is one.
 pub fn letter(event: &KeyboardEvent) -> Option<String> {
     match event.key() {
@@ -46,18 +89,17 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
     }
     let at = *screen.focus.peek();
     let shift = event.modifiers().shift();
-    let alt = event.modifiers().alt();
     if at == Where::Page {
         screen.key_on_page();
     }
-    // Esc, Ctrl Enter and Ctrl N pressed in the page have emptied it
-    // already (the script's `data-dui-page`), unless Settings is open over
-    // it. Ctrl Enter and Ctrl N with Shift or Alt are not done keys there.
-    let emptied = at == Where::Page && !*app.settings_open.peek();
+    // The keys that empty the page have emptied it already, in the script,
+    // unless Settings is open over it (the page then has no
+    // `data-dui-page`). Done by any other key gives a fresh page instead.
+    let emptied = at == Where::Page && !*app.settings_open.peek() && empties_the_page(event);
     let mut taken = true;
     if command(event) {
         match (letter(event).as_deref(), event.key()) {
-            (Some("n"), _) => screen.done(emptied && !shift && !alt),
+            (Some("n"), _) => screen.done(emptied),
             (Some("f" | "k"), _) => screen.focus_find(),
             (Some("r"), _) => screen.sync_now(),
             (Some(","), _) => screen.open_settings(),
@@ -79,7 +121,7 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
             {
                 screen.undo(None);
             }
-            (_, Key::Enter) if at == Where::Page => screen.done(emptied && !shift && !alt),
+            (_, Key::Enter) if at == Where::Page => screen.done(emptied),
             (_, _) if is_delete(event) && at == Where::Page => {
                 if let Some(open) = screen.open_note() {
                     if shift {
@@ -96,7 +138,7 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
             let mut open = app.settings_open;
             open.set(false);
         } else if at == Where::Page {
-            screen.done(emptied && !shift && !alt && !event.modifiers().ctrl());
+            screen.done(emptied);
         } else {
             taken = false;
         }
@@ -180,5 +222,54 @@ pub fn KeysPanel() -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn character(text: &str) -> Key {
+        Key::Character(text.to_owned())
+    }
+
+    /// The keys that are done, on Windows and Linux and on a Mac. The
+    /// script's rule in `dirt-ui.js` is the same, with the command key the
+    /// page names.
+    #[test]
+    fn the_page_is_emptied_by_the_done_keys_alone() {
+        for mac in [false, true] {
+            let command = if mac {
+                Modifiers::META
+            } else {
+                Modifiers::CONTROL
+            };
+            assert!(empties_page(&Key::Escape, Modifiers::empty(), mac));
+            assert!(empties_page(&Key::Enter, command, mac));
+            assert!(empties_page(&character("n"), command, mac));
+            assert!(empties_page(&character("N"), command, mac));
+            // Enter alone is a new line, and a modifier added to a done
+            // key makes it another key.
+            assert!(!empties_page(&Key::Enter, Modifiers::empty(), mac));
+            assert!(!empties_page(&Key::Escape, Modifiers::SHIFT, mac));
+            assert!(!empties_page(&Key::Escape, Modifiers::ALT, mac));
+            assert!(!empties_page(&Key::Enter, command | Modifiers::SHIFT, mac));
+            assert!(!empties_page(
+                &character("n"),
+                command | Modifiers::ALT,
+                mac
+            ));
+            assert!(!empties_page(&character("m"), command, mac));
+        }
+        // Windows and Linux: Win or Super is not the command key, and with
+        // Esc it is not done either.
+        assert!(!empties_page(&Key::Escape, Modifiers::META, false));
+        assert!(!empties_page(&Key::Enter, Modifiers::META, false));
+        assert!(!empties_page(&Key::Escape, Modifiers::CONTROL, false));
+        // A Mac: Ctrl is not the command key.
+        assert!(!empties_page(&Key::Enter, Modifiers::CONTROL, true));
+        assert!(!empties_page(&character("n"), Modifiers::CONTROL, true));
+        assert!(!empties_page(&Key::Escape, Modifiers::CONTROL, true));
+        assert!(!empties_page(&Key::Escape, Modifiers::META, true));
     }
 }

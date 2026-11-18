@@ -224,8 +224,15 @@ impl Store {
     /// For an app that has to name the note before the store has made it:
     /// the desktop's page makes the note at the first character typed, and
     /// files attached in the same moment go to that note. A note with this
-    /// ID already is [`Error::InvalidInput`].
+    /// ID already is [`Error::InvalidInput`], and so is an ID that is not a
+    /// UUID v7: a note's ID begins with the time it was made, which is its
+    /// creation time.
     pub async fn create_note_with_id(&self, id: NoteId, content: &str) -> Result<Note> {
+        if id.as_uuid().get_version_num() != 7 {
+            return Err(Error::InvalidInput(format!(
+                "note {id} has no time in its ID: a note's ID is a UUID v7"
+            )));
+        }
         let content = content.to_owned();
         self.write(move |c| notes::create(c, id, &content, now_ms()))
             .await
