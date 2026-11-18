@@ -1770,10 +1770,11 @@ page in its panel beside the rail, Android in its sheet.
 | The account | The device knows the account by its ID only, not by an address (the server keeps none, `SECURITY.md`), so the row says "Signed in" and "🔒 Encrypted on your devices", or "Waiting to be let in", and shows no address. A device that has to sign in again has a row of its own with **Sign in** |
 | Waiting for the browser | Pressing the button again while it waits stops waiting (its tooltip says Cancel): a sign-in can fail in the browser and never come back |
 | Bringing notes in | The box shows only when there are notes on the device, and is checked. A device that has to wait to be let in brings them in once it is in. Unchecked, or later, Account has a row "12 notes from before you signed in" with **Bring them in** |
-| Signing out | No question, unless it would lose notes or files that have not reached the server: then the row asks, in the overview's words, and **Sign out** goes ahead. Refused on the only device that can read the account, with the reason |
+| Signing out | No question, unless it would lose notes or files that have not reached the server: then the row asks, in the overview's words. **Sign out** there asks the session again first, which syncs; it goes ahead only if what would be lost is still what was said, and otherwise asks again with the new numbers. Refused on the only device that can read the account, with the reason |
 | Account actions | A disclosure under the account's card, closed at first: change the key, start the account again, delete the account, each a confirmation in its row. A device waiting to be let in is offered only starting again, which then waits (the server's seven days). A reset that somebody asked for is not hidden in it: it is a row of the account's card, with when and **Refuse**, since it needs the person |
 | The devices | Each by its name, a phone's icon for a name that says Android or phone and a computer's otherwise: "This device", "Waiting to be let in" (with **Let it in**), or "Seen 4m ago" in the list's own words of time (with ✕, which asks in the row) |
 | Add a device | Looks every two seconds, while Settings is open and for at most five minutes, as an exchange does, and compares with the first device that waits |
+| Answering the code | **They match** sends the answer as it is pressed, naming the code drawn with it; the pictures gather while it goes. After an answer both buttons wait, so a second press sends nothing. If the code changed between the drawing and the answer, the core refuses it, and the comparison comes back with the new pictures and the line "The pictures changed: the other device began again, and nothing was sent. Compare these." The digits are under the pictures, small, with a tooltip saying what they are for |
 | Being let in | On a device that waits, the exchange begins by itself while Settings is open, and stops when it closes. It does not know the other device's name, so it asks "Does your other device show these?". After **They match** on one side: "Waiting for … to say they match too" |
 | How it ends | The tick stays 1.7 s and the list takes its place. A cross stays until **OK**. When the pictures differed, the cross says what `SECURITY.md` promises: someone may be between the devices; start again on a network you trust. A device turned away is signed out at once, so it is told by an error that stays, not in the section that has gone |
 | The recovery phrase | Its row says "You have one" or "Not made yet", with **Make one** or **Remove** (which asks). The words leave the screen when "I've written it down" is pressed or Settings closes, and are not shown again. On a device that waits, "No other device? Use your recovery phrase." is offered only when the account has one; with no device to let it in and no phrase, a sentence points to starting again. **Use the phrase** waits for 24 words |
@@ -1781,15 +1782,22 @@ page in its panel beside the rail, Android in its sheet.
 | Appearance | The theme's segments have their words on the desktop and are icons alone on Android, the words in their tooltips. Focus while writing, and the quick-capture keys, are the desktop's only |
 | Export | JSON is chosen at first. The toast names the folder made, not its whole path |
 | What goes wrong | An action that fails says so in an error that stays, its reason in the tooltip, as 7.9's errors do; one that worked says so in an ordinary toast |
+| Questions left open | Settings closing takes every confirmation away (sign out, the account's actions, removing a device or the phrase), with the word typed for Delete: a question is answered while it is in sight or not at all. Every button that sends something waits while it is sent, so a second press sends nothing |
 | Focus | As 12 asks. A confirmation that goes gives the focus back to its row, and focus that falls out of the panel or sheet goes back into it, never to the screen behind |
 | The banner | Shows the first device that waits and has not been dismissed. It is hidden while Settings is open, and asks again as Settings closes, since the device may have been let in there |
 
 **What did not work as the design assumes.** The core's code was three
 groups of four digits; the seven pictures of 6.13 needed it to give them
-(`ShortCode`, taken from the same bytes, so the digits still match). And a
-long toast at the bottom of the window lies over the list's foot, where the
-gear and the sync status are; a pointer resting there holds the toast, and
-a press meant for the gear lands on the toast.
+(`ShortCode`). The digits come from the same bytes, so until every build
+shows pictures the comparison has the digits too, small under the
+pictures: a build from before shows only digits. And "they match" now
+names the code it was said of: the core refuses an answer for a code that
+has changed since, and the screen then says the pictures changed and shows
+the new ones (`ExchangeView::CodeChanged`). And a long toast at the
+bottom of the window lay over the list's foot, where the gear and the sync
+status are; a pointer resting there held the toast, and a press meant for
+the gear landed on it. On the desktop toasts now sit 58 px up, clear of
+the foot (6.7's "bottom centre", lifted).
 
 ---
 

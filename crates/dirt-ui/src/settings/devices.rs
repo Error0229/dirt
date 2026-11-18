@@ -503,6 +503,9 @@ fn DeviceList(linked: Linked, copy: EventHandler<String>) -> Element {
     };
 
     let mut remove = move |device: DeviceInfo| {
+        if *busy.peek() {
+            return;
+        }
         let Some(session) = linked.session() else {
             return;
         };
@@ -523,6 +526,9 @@ fn DeviceList(linked: Linked, copy: EventHandler<String>) -> Element {
     };
 
     let make_phrase = move |_: MouseEvent| {
+        if *busy.peek() {
+            return;
+        }
         let Some(session) = linked.session() else {
             return;
         };
@@ -547,10 +553,14 @@ fn DeviceList(linked: Linked, copy: EventHandler<String>) -> Element {
     };
 
     let remove_phrase = move |()| {
+        if *busy.peek() {
+            return;
+        }
         let Some(session) = linked.session() else {
             return;
         };
         asking_phrase.set(false);
+        busy.set(true);
         spawn(async move {
             match session.remove_recovery_phrase().await {
                 Ok(()) => toasts.show(Toast::new("Recovery phrase removed")),
@@ -560,6 +570,7 @@ fn DeviceList(linked: Linked, copy: EventHandler<String>) -> Element {
             }
             let mut reload = facts.reload;
             reload += 1;
+            busy.set(false);
         });
     };
 

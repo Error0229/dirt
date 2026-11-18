@@ -233,10 +233,12 @@ key agreement and the code come from Matrix's own implementation.
 3. The new device **reveals** its public key. The approving device checks it
    against the commitment.
 4. Each device derives a shared secret, and from it a **code**: six bytes,
-   shown as seven pictures with their names (Matrix's emoji table), or as
-   three groups of four digits. The apps show the pictures; the CLI shows
-   both, so that it can be compared with either. The person says on each
-   device whether the two are the same.
+   shown as seven pictures with their names (Matrix's emoji table), and
+   as three groups of four digits. Every client shows both. The person
+   says on each device whether the two are the same, and the answer
+   names the code it was given for: one given for a code that has since
+   changed (the new device began again, or something in the middle began
+   it again) is refused, and nothing is sent for it.
 5. If they are, the approving device encrypts the account key under a key
    derived from the shared secret and leaves it with the server. The new
    device opens it, saves it, and tells the server, which only then marks it
@@ -245,8 +247,12 @@ key agreement and the code come from Matrix's own implementation.
 Why the commitment matters: whoever sits in the middle has to fix its key
 towards the approving device before it sees that device's key. It cannot try
 keys until both sides show the same code. It gets one guess at a code of
-about forty bits (forty-two as pictures, forty as digits: both are taken
-from the same bytes).
+42 bits when the pictures are compared, or 39 when the digits are. Both
+come from the same six bytes, the pictures from the first 42 bits and the
+digits from the first 39, so the same pictures always mean the same digits,
+while the same digits leave the last three bits of the pictures unchecked.
+The apps show the digits small under the pictures, so that a device whose
+Dirt is older and shows only digits can still be compared.
 
 The code covers both temporary keys, both devices' IDs and registered public
 keys, the account and a random ID for the exchange. A server that swaps any
@@ -260,9 +266,14 @@ the account, and both devices say that someone may be interfering.
 Optional. An approved device can make one: twenty-four words that stand for
 256 random bits, with a checksum that catches a mistyped word. It is shown
 once and stored nowhere. The apps take it off the screen when the person
-says it is written down or closes Settings. **Copy** puts it on the
-system's clipboard, where other programs can read it until something else
-is copied; the toast says to clear it.
+says it is written down or closes Settings. **Copy** on the desktop puts it
+on the system's clipboard, marked to be kept out of what the system
+remembers of the clipboard: Windows' clipboard history and its cloud
+clipboard (Windows' own flags), and, on macOS and Linux, the history of a
+clipboard manager that follows the convention there (nspasteboard.org's
+concealed type, `x-kde-passwordManagerHint`). A clipboard manager that
+ignores the convention keeps it. On the clipboard itself any program can
+read it until something else is copied, so the toast says to clear it.
 
 Two values are derived from the phrase with HKDF, each bound to the account.
 One is a key under which the account key is encrypted; the server keeps that

@@ -209,6 +209,14 @@ impl SyncOverview {
 /// Settings → Sync on a device that is signed out.
 pub const NOT_SYNCING_SIGNED_OUT: &str = "Not syncing. Notes are on this device only.";
 
+/// Settings → Account on a device whose sync stopped until it signs in
+/// again.
+pub const SIGN_IN_AGAIN_TO_SYNC: &str = "This device has to sign in again before it can sync";
+
+/// Settings → Sync while a change of the account's key is under way, over
+/// the sentence [`SyncOverview::key_change`] gives.
+pub const KEY_BEING_CHANGED: &str = "The key is being changed";
+
 /// Settings → Sync on a device that has signed in and waits to be let in.
 pub const NOT_SYNCING_UNTIL_LET_IN: &str =
     "Not syncing until this device is let in. Notes written here wait on it.";

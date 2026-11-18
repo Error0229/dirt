@@ -10,7 +10,8 @@ use dioxus::prelude::*;
 use dirt_core::session::SessionState;
 use dirt_core::store::{FileProblem, NoteProblem};
 use dirt_core::sync::overview::{
-    SyncIndicator, SyncOverview, JUST_SYNCED_MS, NOT_SYNCING_SIGNED_OUT, NOT_SYNCING_UNTIL_LET_IN,
+    SyncIndicator, SyncOverview, JUST_SYNCED_MS, KEY_BEING_CHANGED, NOT_SYNCING_SIGNED_OUT,
+    NOT_SYNCING_UNTIL_LET_IN,
 };
 use dirt_core::sync::worker::Trigger;
 use dirt_core::util::{as_sentence, now_ms};
@@ -108,7 +109,7 @@ pub(super) fn Sync(linked: Linked, open_note: EventHandler<NoteId>, platform: Pl
                 }
             }
             if let Some(text) = key_change {
-                Row { icon: Icon::Key, title: "The key is being changed", detail: text }
+                Row { icon: Icon::Key, title: KEY_BEING_CHANGED, detail: text }
             }
             for problem in shown.problems {
                 ProblemNote { key: "{problem.note_id}", problem, open_note }

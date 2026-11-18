@@ -44,6 +44,34 @@ fn open_browser(address: &str) -> Result<(), String> {
     webbrowser::open(address).map_err(|error| error.to_string())
 }
 
+/// Puts a secret, the recovery phrase, on the clipboard, marked so that
+/// the system keeps it out of what it remembers of the clipboard: Windows'
+/// clipboard history and its cloud clipboard, and the clipboard managers
+/// that follow the platform's convention on macOS (nspasteboard.org's
+/// concealed type) and Linux (`x-kde-passwordManagerHint`). It is on the
+/// clipboard itself, for any program to read, until something else is
+/// copied (`SECURITY.md`).
+fn copy_secret(text: String) -> Result<(), arboard::Error> {
+    let mut board = arboard::Clipboard::new()?;
+    let set = board.set();
+    #[cfg(windows)]
+    let set = {
+        use arboard::SetExtWindows;
+        set.exclude_from_history().exclude_from_cloud()
+    };
+    #[cfg(target_os = "macos")]
+    let set = {
+        use arboard::SetExtApple;
+        set.exclude_from_history()
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let set = {
+        use arboard::SetExtLinux;
+        set.exclude_from_history()
+    };
+    set.text(text)
+}
+
 /// What Settings is given of the app's session.
 const fn linked(app: &AppState) -> Linked {
     Linked {
@@ -120,7 +148,7 @@ pub fn SettingsPanel() -> Element {
         app.save_settings();
     };
     let copy = move |text: String| {
-        if let Err(error) = arboard::Clipboard::new().and_then(|mut board| board.set_text(text)) {
+        if let Err(error) = copy_secret(text) {
             tracing::error!("Could not copy: {error}");
         }
     };

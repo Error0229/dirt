@@ -174,3 +174,5 @@
      controls are: Find stops short of them. */
   .dk[data-dui-drag] .dk-find{padding-right:151px}
 }
+/* Toasts sit above the list's footer (49 px), so that a long one never lies over the sync status and the gear, and a press meant for them lands on them (design 9.7). */
+:root{--dui-toast-lift:58px}

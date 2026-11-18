@@ -7,7 +7,7 @@ use dirt_core::api::ErrorClass;
 use dirt_core::session::{
     KeyChange, ResetOutcome, SessionError, SessionState, SignOutError, Unsynced,
 };
-use dirt_core::sync::overview::{sign_out_would_lose, SyncOverview};
+use dirt_core::sync::overview::{sign_out_would_lose, SyncOverview, SIGN_IN_AGAIN_TO_SYNC};
 use dirt_core::sync::worker::Trigger;
 use dirt_core::util::as_sentence;
 
@@ -58,8 +58,17 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
     // default, and remembered until the device is let in.
     let mut bring = use_signal(|| true);
     let mut bring_when_in = use_signal(|| false);
-    // What signing out would lose, once it has said so.
-    let mut would_lose = use_signal(|| None::<String>);
+    // What signing out would lose, once it has said so: how many notes and
+    // files, and the words for it.
+    let mut would_lose = use_signal(|| None::<(usize, usize, String)>);
+    // A question left open is not answered later: Settings closing takes
+    // every confirmation away, the word typed for Delete with it.
+    use_effect(move || {
+        if !nav.is_open() {
+            asking.set(None);
+            would_lose.set(None);
+        }
+    });
     // Notes in the local store: those a sign-in would bring, or those
     // written before signing in that are still not in the account.
     let mut local = use_signal(|| 0_usize);
@@ -150,13 +159,29 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
         }
     };
 
+    // Signs out. It is always asked first without losing anything, which
+    // syncs and says what is still unsent now. Only when the person has
+    // agreed to lose just that does it go ahead; anything else asks again.
     let sign_out = {
         let session = session.clone();
-        move |choice: Unsynced| {
+        move |agreed: bool| {
+            if *busy.peek() {
+                return;
+            }
             let session = session.clone();
+            let shown = would_lose
+                .peek()
+                .as_ref()
+                .map(|(notes, files, _)| (*notes, *files));
             busy.set(true);
             spawn(async move {
-                match session.sign_out(choice).await {
+                let mut outcome = session.sign_out(Unsynced::Refuse).await;
+                if let Err(SignOutError::Unsynced { notes, files, .. }) = &outcome {
+                    if agreed && shown == Some((*notes, *files)) {
+                        outcome = session.sign_out(Unsynced::Discard).await;
+                    }
+                }
+                match outcome {
                     Ok(()) => {
                         asking.set(None);
                         would_lose.set(None);
@@ -167,7 +192,8 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
                         files,
                         cause,
                     }) => {
-                        would_lose.set(Some(sign_out_would_lose(notes, files, cause.as_deref())));
+                        let words = sign_out_would_lose(notes, files, cause.as_deref());
+                        would_lose.set(Some((notes, files, words)));
                         asking.set(Some(Asking::SignOut));
                     }
                     Err(error) => {
@@ -184,6 +210,9 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
     let run = {
         let session = session.clone();
         move |action: Asking| {
+            if *busy.peek() {
+                return;
+            }
             let session = session.clone();
             asking.set(None);
             busy.set(true);
@@ -259,11 +288,14 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
             if signed_in {
                 ConfirmInPlace {
                     asking: asking() == Some(Asking::SignOut),
-                    question: format!("{} Sign out all the same?", would_lose().unwrap_or_default()),
+                    question: format!(
+                        "{} Sign out all the same?",
+                        would_lose().map(|(_, _, words)| words).unwrap_or_default()
+                    ),
                     confirm: "Sign out",
                     on_confirm: {
                         let mut sign_out = sign_out.clone();
-                        move |()| sign_out(Unsynced::Discard)
+                        move |()| sign_out(true)
                     },
                     on_cancel: move |()| asking.set(None),
                     div { class: "dui-set-row",
@@ -284,7 +316,7 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
                             disabled: busy(),
                             onclick: {
                                 let mut sign_out = sign_out;
-                                move |_| sign_out(Unsynced::Refuse)
+                                move |_| sign_out(false)
                             },
                             "Sign out"
                         }
@@ -295,7 +327,7 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
                         super::rows::RowIcon { icon: Icon::Alert, tone: "warn" }
                         div { class: "dui-set-words",
                             div { class: "dui-set-t", "Sign in again" }
-                            div { class: "dui-set-s", "This device has to sign in again before it can sync" }
+                            div { class: "dui-set-s", "{SIGN_IN_AGAIN_TO_SYNC}" }
                         }
                         Btn { kind: "primary", onclick: start_sign_in.clone(), "Sign in" }
                     }
@@ -319,6 +351,10 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
                             onclick: {
                                 let session = session;
                                 move |_| {
+                                    if *busy.peek() {
+                                        return;
+                                    }
+                                    busy.set(true);
                                     let session = session.clone();
                                     spawn(async move {
                                         match session.cancel_reset().await {
@@ -334,6 +370,7 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
                                         }
                                         let mut reload = facts.reload;
                                         reload += 1;
+                                        busy.set(false);
                                     });
                                 }
                             },

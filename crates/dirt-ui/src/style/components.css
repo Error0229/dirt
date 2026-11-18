@@ -75,7 +75,8 @@
 .dui-tip-keys{display:flex;gap:3px;flex:none}
 
 /* ---- Toast (6.7) ----------------------------------------------------- */
-.dui-toast-layer{position:fixed;left:0;right:0;bottom:18px;display:grid;justify-items:center;pointer-events:none;z-index:900}
+/* An app lifts toasts above what lies along the bottom of its screen with --dui-toast-lift. */
+.dui-toast-layer{position:fixed;left:0;right:0;bottom:var(--dui-toast-lift,18px);display:grid;justify-items:center;pointer-events:none;z-index:900}
 .android .dui-toast-layer{bottom:calc(var(--dui-toast-lift,80px) + env(safe-area-inset-bottom,0px))}
 .dui-toasts{grid-area:1/1;display:grid;justify-items:center;max-width:100%;min-width:0}
 /* An error, above the toast, staying until it is dismissed. */

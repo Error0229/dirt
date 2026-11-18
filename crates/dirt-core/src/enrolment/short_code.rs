@@ -2,10 +2,14 @@
 //! its name (interface design, section 6.13), and the same code as three
 //! groups of four digits for a screen that cannot draw pictures.
 //!
-//! Both come from the same six bytes of the shared secret, so a device
-//! that shows the pictures and one that shows the digits agree or disagree
-//! together. The pictures and their names are the table of Matrix's
-//! short-code verification, which `vodozemac` gives the indices into.
+//! Both come from the same six bytes of the shared secret: the pictures
+//! from their first 42 bits, six to a picture, and the digits from their
+//! first 39 bits, thirteen to a group. So two devices with the same
+//! pictures have the same digits; two with the same digits agree on 39 of
+//! the pictures' 42 bits, and may still differ in the last picture or two.
+//! Comparing pictures is the stronger check, and is what the apps ask for.
+//! The pictures and their names are the table of Matrix's short-code
+//! verification, which `vodozemac` gives the indices into.
 
 use std::fmt;
 

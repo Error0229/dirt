@@ -287,7 +287,8 @@ pub fn SettingsPage(
     #[props(default)] on_focus_style: EventHandler<FocusStyle>,
     sign_in: SignIn,
     export: ExportTo,
-    /// Puts words on the clipboard: the recovery phrase.
+    /// Puts the recovery phrase on the clipboard, kept out of the
+    /// system's clipboard history where the system allows it.
     copy: EventHandler<String>,
     /// Opens a note, with Settings closed: one that cannot sync.
     open_note: EventHandler<NoteId>,
