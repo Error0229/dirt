@@ -655,6 +655,395 @@ Find out:
 **It decides:** whether design 8.5's background work is built or its
 fallback, and how Android's native code is laid out for steps 8 and 9.
 
+### Trial 2 result
+
+Run on 2026-11-17 on the Android 16 emulator (x86_64, no window) on a
+Windows laptop, with a debug build. The code is on the branch
+`trial/android-capture`, with the scripts and timings in
+`trials/android-capture/`; it is not merged. The server was the real one
+run on the same laptop (`cargo run -p dirt-sim --example serve`), and the
+CLI, with a data folder of its own, was the second device. No phone was
+touched: **every figure and every lock-screen answer below is the
+emulator's.**
+
+**What it found, in short**
+
+- **Design 8.5's background work can be built, and was.** The sheet keeps
+  the thought in a file, under a note ID made at that moment, and asks
+  Android's JobScheduler for one expedited job that needs a network. The
+  job loads the app's Rust library through JNI, in a process where the web
+  view's activity never started, makes the note, and syncs once. A thought
+  reached the CLI as a synced note about 2.6 s after ✓, with the app never
+  opened.
+- **The fallback is kept underneath it, not instead of it.** The app takes
+  in whatever still waits each time it starts and each time the person
+  returns to it. A thought is never lost between ✓ and the note: it is on
+  the disk before the sheet closes.
+- **Native code goes in one Gradle library module**,
+  `crates/dirt-mobile/android/native`, which `dx` 0.7.9 copies into the
+  project it generates because one Rust declaration names it. It can carry
+  any number of Kotlin files, resources and Gradle dependencies of its own.
+- **Over the lock screen** the sheet and the Quick Settings tile open
+  without unlocking, typing works, the app itself cannot be reached, and
+  the store and the secrets can be used. So the thought need not wait for
+  the phone to be unlocked: it becomes a note and syncs at once. Before the
+  first unlock after a restart the tile is unavailable.
+- **The sheet is quicker to type into than the app, but not by as much as
+  hoped on this emulator,** and the keyboard is most of what is left. Real
+  phones are needed for figures that mean anything.
+
+#### Measured: how fast the sheet can be typed into
+
+Every figure is a median, with the least and the most, from the emulator's
+own log. Each run was started with `adb shell am start -W`; "cold" means
+the app's process had been stopped (`am force-stop`), "warm" that it was
+running and the person had gone Home. The figures mean:
+
+- **Shown**: `am start -W`'s `TotalTime`, Android's own figure (the same
+  as logcat's "Displayed" line): from the system taking the start to the
+  window's first frame being drawn. For a translucent window it includes
+  the opening animation.
+- **Field**: from the system's `START` line to the sheet's first frame
+  with the cursor in the field. A hardware keyboard could type from here.
+- **Keyboard**: from the same line to the window being told the on-screen
+  keyboard is showing. This is when a person can type.
+- **App's field**: from the same line to the app's page saying its
+  editor's text box exists. The app was opened with the widget's
+  quick-capture intent, which opens the editor. Its keyboard was not
+  measured, and comes after.
+
+Two sessions. The first followed a fresh start of the emulator, on a
+quiet laptop. In the second the laptop was busy at about half its CPU
+with another task; that session has the app as well as the sheet, so
+compare within it.
+
+| | Session | Runs | Shown | Field | Keyboard | App's field |
+|---|---|---|---|---|---|---|
+| Sheet, cold | 1 | 6 | 964 (925–1078) ms | 633 (590–683) ms | 1532 (1347–2574) ms | |
+| Sheet, warm | 1 | 6 | 968 (678–1315) ms | 261 (89–542) ms | 2326 (2159–2674) ms | |
+| Sheet, cold | 2 | 6 | 2670 (2394–3321) ms | 1788 (1315–2458) ms | 3628 (3444–5033) ms | |
+| Sheet, warm | 2 | 6 | 1260 (1156–1288) ms | 216 (153–350) ms | 2287 (2161–2637) ms | |
+| App, cold | 2 | 5 | 3388 (2955–4389) ms | | | 5731 (5064–7303) ms |
+| App, warm | 2 | 5 | 375 (264–1155) ms | | | |
+
+- **Cold, the sheet's keyboard was up 2.1 s before the app even had its
+  text box** (session 2), and the app's keyboard comes after that.
+- **Warm, the app is quicker to show than the sheet**: Android brings back
+  the screen it had (`HOT`) in about 0.4 s. But that screen is whatever was
+  left open, not an empty editor, and the sheet's field is there in 0.2 s.
+- **The keyboard is the slow part** of the sheet: 1.3 to 2.1 s after its
+  field, warm or cold. The emulator's keyboard is slow to show; over the
+  lock screen it took 4.1 to 8.3 s against 1.4 to 2.5 s unlocked. A phone's
+  should be much quicker, and nothing in Dirt can make it quicker.
+- **Compiling the app ahead of time did not help.** After
+  `cmd package compile -m speed` the sheet's cold field was 1762 ms and its
+  keyboard 4528 ms. The cold start is Android making the process, not
+  Kotlin being interpreted. A release build was not made (no release builds
+  on this machine) and is still to be measured: its Java code is smaller,
+  and its library much smaller.
+- **A process of its own for the sheet** (`android:process=":capture"`)
+  was timed only while the laptop was at full load, which made every figure
+  ten times the others, so it is not compared here. It worked.
+- **From a tap on the widget or the tile** the path is the same as
+  `am start` once Android has the tap; the finger itself was not timed.
+
+#### Measured: the core without the web view
+
+| | Figure |
+|---|---|
+| The app's library, `libmain.so`, debug build, x86_64 | 128 MB (128,244,040 bytes), already without symbols (stripping changed nothing); 30 MB compressed. A release build was not made |
+| Loading it from Kotlin and the first call, in a new process | 138, 175, 193, 304, 413 and 477 ms; 639 ms over the lock screen with the laptop busy |
+| The same where the process already had it | 0 to 8 ms |
+| Opening the secrets in Android's encrypted preferences | 811 ms the first time ever (the key is made); 286 to 1131 ms after; 1.5 to 3.0 s in a new process on the busy laptop |
+| Making the note from the waiting file | 79 to 303 ms |
+| One sync with the local server | 0.5 to 1.4 s; 6.3 s to send the 37 notes of the race below |
+| The whole job, from its start to its end | 1.7 to 4.1 s |
+| From asking for the expedited job to its start | 341 to 652 ms; 4.8 s once, with the emulator busy |
+| From ✓ to the note listed by the CLI after its own sync | About 2.6 s |
+
+#### The answers
+
+**1. Speed.** As measured above. The sheet is a plain Activity with views
+made in code, a translucent theme of the module's own, `singleInstance`
+in a task of its own (`taskAffinity=""`, so the app's screen never comes
+forward behind it) and kept out of the recent apps. It does not load the
+Rust library at all: nothing of it is waited for.
+
+**2. Getting native code into the build.** `dx` 0.7.9 bundles a Gradle
+module when the program declares one with Manganis's foreign-function
+macro:
+
+```rust
+#[cfg(target_os = "android")]
+mod native_module {
+    #[manganis::ffi("/android/native")]
+    extern "Kotlin" {
+        pub type DirtNative;
+    }
+}
+```
+
+The macro leaves a record in the built library. After linking, `dx` reads
+it, copies the folder into the generated project as `plugins/dirtnative`,
+adds it to `settings.gradle`, adds
+`implementation(project(":plugins:dirtnative"))` to the app, and strips
+any version from the module's plugins, since the generated root project
+puts the Android Gradle plugin and Kotlin on the class path. The module is
+an ordinary Android library: Kotlin under `src/main/kotlin`, resources
+under `src/main/res` (layouts, drawables, strings, `values-night`, `xml/`
+for the widget's description and the shortcuts), and a manifest that
+Gradle merges into the app's. `manganis` 0.7 (the version Dioxus brings) is
+the one new dependency of `dirt-mobile`.
+
+- **It survives a clean build**: `dx` copies the folder afresh on every
+  build, so nothing of it lives only in the generated project. The
+  module's classes and resources and its merged manifest were all in the
+  APK.
+- **A `dx` upgrade**: as well as can be judged. It depends on `dx` reading
+  Manganis's records and on the `plugins/` layout, both in `dx` 0.7.9's
+  own source (`packages/cli/src/build/android.rs`); it is how Dioxus's own
+  mobile plugins are bundled, which makes it less likely to go than the
+  `WRY_ANDROID_KOTLIN_FILES_OUT_DIR` folder `build.rs` writes into today.
+  Not yet known: that the record survives a release build, with its
+  link-time optimisation.
+- **Gradle dependencies**: the module's own `build.gradle.kts` can name
+  them. WorkManager 2.9.1 was added there once: it resolved, built, and its
+  classes were in the APK. So both WorkManager and JobScheduler were open;
+  JobScheduler was chosen (4).
+- **Found:** on Android 16, a job that needs a network may not be asked for
+  without the `ACCESS_NETWORK_STATE` permission (`SecurityException` from
+  `schedule()`, which ended the app). It is a normal permission, asked of
+  nobody; the module's manifest has it.
+- An app shortcut's `<meta-data>` must be on the launcher activity, so
+  that one line stays in the app's own manifest; the shortcuts' XML is in
+  the module.
+
+**3. The core without the web view.** It works, with three things changed
+from how the app's Rust code does it today:
+
+- **Loading the library runs nothing of the app.** It has no
+  `JNI_OnLoad`; the app starts when `WryActivity` calls its own `create`.
+  Kotlin loads `libmain.so` with `System.loadLibrary("main")` and calls an
+  exported function. The app opened later in the same process worked, and
+  the job then found the library already loaded.
+- **`ndk_context` cannot be used**: tao sets it in the activity's `create`
+  and clears it in `destroy`, so in the job's process it is empty, or
+  belongs to an activity that may go at any moment. The job is handed a
+  `Context` by Kotlin and the JavaVM from JNI's own `JNIEnv`, and opens the
+  encrypted preferences with those (`EncryptedPrefs::open_with` beside the
+  existing `open`). Nothing of the job sets `ndk_context`.
+- **The data folder comes from Kotlin.** `config::default_mobile_data_directory`
+  works it out from the process's name, which is the package's only in the
+  app's main process; in a `:capture` process it would point at a folder
+  that does not exist. Kotlin passes `Context.getFilesDir()`.
+- **An async runtime per call**: a current-thread tokio runtime, built
+  for the call, ran `Session::open` with background sync off and one sync
+  cycle, as the CLI does.
+
+**4. What runs the work.** Three were tried, each by killing the process
+(`kill -9`) at a chosen point:
+
+| | Killed before the note was made | Killed with the note made, not synced |
+|---|---|---|
+| A plain thread in the sheet's process | Nothing runs again. The thought waits in its file until the app is opened, which makes it a note under its capture-time ID and syncs | Not tried: it would be the same, and the next sync from anywhere sends the note |
+| An expedited JobScheduler job | Android started the process again for the job 24 ms after it died and ran it; the note was made and synced | Run again at once (the process was started 49 ms after it died): it found the note made, made nothing, and synced it |
+| WorkManager | Not run. From its documentation it is JobScheduler underneath, with a database of its own and a start-up step in every process | |
+
+**JobScheduler is recommended**: it is the platform's own, needs no
+dependency, and does what is needed; WorkManager would add a second queue
+for one job. The job is asked for by ✓ and by nothing else: it has no
+period, and it is run again only by Android, when the process running it
+died. It needs a network, so a thought kept offline waits for one; that is
+an event, and the app's own start takes it in too. From documentation, not
+tried: expedited jobs have a quota for each app, and beyond it run as
+ordinary jobs, which Android may put off; a phone's own battery saving may
+put them off too. The note is in the store by then, and the next sync
+from anywhere sends it. The case offline was not tried.
+
+**5. Two at once.** Nothing was lost in any of three:
+
+- The sheet over the open app, in the app's process. The sheet closed, the
+  app took the thought in and showed it, and the job, starting after, had
+  nothing to make and synced.
+- The same with the sheet and its job in a `:capture` process of their
+  own, the app open in its own. Two processes, the same store; the same
+  outcome.
+- A race on purpose: 60 thoughts written into the waiting folder, then the
+  app brought forward and the `:capture` job started at the same moment.
+  The app made 31 notes and the job 30, one of them the thought that
+  started the race; none twice, and all 61 reached the CLI. The job found
+  7 notes made by the app before their files were gone, and 12 files gone
+  between its listing them and reading them; it counted those as left
+  waiting, though none was. Step 8 should tell a file that has gone from
+  one that cannot be read.
+
+**Found:** the app's list did not learn of the note by itself. The sheet
+is translucent, so the page under it is never hidden, and the app's
+"returned" event (the page becoming visible) does not fire when it closes.
+`MainActivity.onResume` now tells the page, which takes in what waits and
+reads the list again; a note the job made is already in the store, and
+reading again is all that is needed.
+
+**The sheet should run in the app's process**: one copy of the library and
+of the store's connections, and when the app is already running the job
+starts with everything loaded. The separate process works as well; it
+would only help if the sheet's start were slowed by the app's, which it is
+not, since the sheet never loads the library.
+
+**6. The lock screen, on the emulator.** With a PIN set
+(`locksettings set-pin`) and the emulator locked:
+
+- **The sheet shows over the lock screen** (`setShowWhenLocked`, and the
+  manifest's `showWhenLocked`), with the lock screen still there under it,
+  and the line "Adds a note. Your notes stay locked." Typing worked.
+- **The Quick Settings tile opens it without unlocking**, pulled down over
+  the lock screen, with the app's process running and with it stopped. The
+  tile uses `startActivityAndCollapse` with a `PendingIntent` (Android 14
+  and later), not `unlockAndRun`, which would ask for the PIN first.
+- **Nothing of a note can be reached from there.** The sheet shows no
+  draft written before the lock; one written over the lock screen was
+  added after it in the draft's file, which is what an unlocked sheet
+  shows. Starting the app's own activity while locked left the lock screen
+  in front, and nothing of the app was shown. The sheet has no way to the
+  app.
+- **The store and the secrets can be used while locked**, once the phone
+  has been unlocked since it started: Android's file encryption keeps an
+  app's storage open from the first unlock. The job made the note and
+  synced with the emulator locked, from a running process and from a
+  stopped one (`deviceLocked=true` in the job's log). The encrypted
+  preferences' key is not made with `setUnlockedDeviceRequired`; if Dirt
+  ever made it so, the job would fail while locked and the thought would
+  wait in its file for the app.
+- **Before the first unlock after a restart** the tile showed
+  "Unavailable" and pressing it did nothing; no process started. Android
+  keeps the app's storage shut then, as design 8.6 says. (An app can be
+  made to run before the first unlock with storage of the device's kind,
+  which the PIN does not protect. That is not recommended, and nothing was
+  built for it.)
+- **Android does not tell an app that is not running that the phone was
+  unlocked.** A receiver for `USER_PRESENT` in the manifest was not called
+  on an unlock (one try), as Android 8's limits on such broadcasts say. So
+  "waits until the phone is unlocked" could not be built without the app
+  running, and it is not needed: the rule that keeps the lock screen safe
+  is that nothing is shown, and the job shows nothing.
+- **Seen, not tried further:** the keyboard over the lock screen (the
+  emulator's Gboard) showed its own row of buttons, the clipboard's among
+  them. Whether the clipboard or learned words show over a lock screen is
+  the keyboard's choice; the field should ask for no personalised learning
+  there (`IME_FLAG_NO_PERSONALIZED_LEARNING`), and phones have to be tried.
+
+The PIN was removed afterwards. **This is the emulator's answer only.**
+Whether a tile or a lock-screen shortcut opens over the lock screen is each
+phone's choice, and Samsung's in particular is not known.
+
+**7. The fallback, and where a thought waits.** A thought waits as a file
+of its own in the app's private storage, named by the note's ID:
+
+```text
+<files>/dirt/waiting/<UUID v7>.txt
+```
+
+- **Kotlin makes the ID**, at ✓, the way `Uuid::now_v7` does (48 bits of
+  Unix milliseconds, then random bits, with the version and variant set),
+  so the sheet needs nothing from Rust. A note's creation time is read
+  from its ID, so it is the time of capture however long the file waited.
+- The file is written whole as `<ID>.tmp`, flushed to the disk, and
+  renamed, so a `.txt` is never half a thought.
+- `take_in` (`dirt-mobile`'s `capture.rs`) makes each a note with
+  `Store::create_note_with_id`, new in `dirt-core`: it makes the note only
+  if no note has that ID, deleted or not, and dates the edit at the time
+  the ID carries (never later than now). Then it removes the file. Taking
+  the same file in twice, at once or after a crash, makes one note; a
+  test shows it.
+- The app runs it when it starts and each time the person returns;
+  the job runs it before its sync.
+
+**8. The pile widget.** A sketch, not built. The app, and the job, write
+the few numbers the drawing needs to a small file each time the notes
+change: how many there are, and how many of each shade in the layers the
+widget draws (no words, no IDs). The widget's provider, in Kotlin, draws
+the heap from those numbers onto a bitmap and gives it to `RemoteViews`,
+adding a grain for each file still waiting. After ✓ the sheet asks the
+widget to redraw, so the new grain is there before the job has run. The
+same numbers serve the "1,254 thoughts" line. Nothing has to be running to
+redraw it: a widget's provider is started by Android on its own.
+
+**9. Voice: where a recording waits, and who makes its words.** Reasoned
+from what the trial found, not built.
+
+- **Where it waits**: beside the typed thoughts, as `<ID>.ogg` in the same
+  waiting folder, written as `.tmp` while it records and renamed at ✓.
+  Its ID is made at the first sound, so the note's time is when the person
+  spoke. Over the lock screen it is the same, since the storage is open.
+- **Who writes it**: design 6.18 has every platform write Ogg Opus from
+  Rust. The sheet would then load the library when 🎙 is pressed, which
+  took 0.1 to 0.6 s in a new process; Kotlin's `AudioRecord` can start
+  hearing at once and hand the sound over when the library is ready, so
+  nothing said is lost. (Android's own `MediaRecorder` writes Ogg Opus from
+  Android 10, by its documentation; that would keep the sheet free of the
+  library, at the cost of a second way of writing the recording.)
+- **The same job carries it.** `take_in` would make a waiting `.ogg` a note
+  named by its length, with the recording attached as its voice recording,
+  which the core encrypts like any file, and the sync sends it. That is the
+  job measured above, unchanged but for the file.
+- **Its words need a second job**, asked for by the first once the note
+  exists, with no need of a network, on the device that recorded it (6.18's
+  rule). It loads the model (68 to 110 MiB) and reads the recording once.
+  An expedited job is for short work; a long recording should be read by an
+  ordinary job, which Android may put off and may stop after some minutes,
+  and which Android runs again if its process dies. If it never runs, the
+  app makes the words the next time it runs, as 6.18 already says. Over
+  the lock screen the model is in the same open storage. Not known: whether
+  the microphone may be used, or its permission asked for, by a sheet over
+  the lock screen; it is safest that a first use there asks for the phone to
+  be unlocked.
+
+#### How Android's native code should be laid out for steps 8 and 9
+
+```text
+crates/dirt-mobile/
+├── Dioxus.toml               # the app's manifest and MainActivity.kt, as today
+├── build.rs                  # the bootstrap config only; the XML it writes today moves into the module
+├── android/
+│   ├── AndroidManifest.xml   # the launcher activity, and its shortcuts' <meta-data>
+│   ├── MainActivity.kt       # the web view's activity only; the old widget goes
+│   └── native/               # a Gradle library module, `:plugins:dirtnative`
+│       ├── build.gradle.kts  # no plugin versions; its own dependencies, if any
+│       └── src/main/
+│           ├── AndroidManifest.xml   # the sheet, the job, the tile, the widgets, the Talk entry, permissions
+│           ├── kotlin/dev/dirt/capture/
+│           │   ├── CaptureActivity.kt    # the sheet
+│           │   ├── CaptureJobService.kt  # the job
+│           │   ├── Waiting.kt            # the waiting folder and the draft
+│           │   ├── Core.kt               # the JNI calls into the library
+│           │   └── …                     # tile, widgets, Talk
+│           └── res/                      # layout, drawable, values, values-night, xml
+└── src/
+    ├── main.rs               # declares the module with #[manganis::ffi]
+    └── capture.rs            # take_in and the JNI functions; no SQL, HTTP or cryptography
+```
+
+`Store::create_note_with_id` belongs in `dirt-core`, as the trial put it.
+The sheet's look should be made with the tokens of `dirt_ui::tokens`, as
+colours written into the module's `values` and `values-night` by a small
+generator, so that the colours are still written once.
+
+#### Still unknown until it is tried on real phones
+
+- Every figure above, the keyboard's above all.
+- Whether the tile, a Samsung lock-screen shortcut and the note-taking role
+  open the sheet over the lock screen on a Pixel and on a Samsung
+  (`docs/MANUAL_CHECKLIST.md`, L1 and L6).
+- What the phone's keyboard offers over the lock screen: the clipboard,
+  suggestions learned from what was typed before.
+- How long a phone's battery saving, or a maker's own (Samsung's "sleeping
+  apps"), puts the job off, and the expedited quota in daily use.
+- A release build: the library's size and load time, and that `dx` still
+  finds the module's record after link-time optimisation.
+- The phone's 16 KB memory pages (found on the owner's Pixel on
+  2026-11-13) with a library loaded from a job.
+- A thought kept offline, then the phone going online.
+
 ## Steps
 
 ### Step 1: what the interface needs from the core
