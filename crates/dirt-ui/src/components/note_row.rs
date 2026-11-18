@@ -3,9 +3,9 @@
 //! [`NoteSummary`] is what a list shows of one note, worked out once from
 //! the note: its first line as the title, the rest as a preview with what
 //! Find matched marked, the tags at its end apart, and when it was edited.
-//! [`NoteRow`] draws it as the desktop's row. The Android app's card shows
-//! the same summary and is built from the same parts, [`Marked`] and
-//! [`TagLinks`].
+//! [`NoteRow`] draws it as the desktop's row. The Android app's card
+//! ([`crate::components::NoteCard`]) shows the same summary and is built
+//! from the same parts, [`Marked`] and [`TagLinks`].
 
 use dioxus::prelude::*;
 use dirt_core::models::{Note, NoteId};
@@ -44,6 +44,9 @@ pub struct NoteSummary {
     /// The note is archived: its title is a shade lighter, and what its
     /// row offers is the bin, not the box.
     pub archived: bool,
+    /// A picture attached to it, as something an `img` can show: Android's
+    /// card shows it as a 44 px thumbnail (section 6.2).
+    pub thumbnail: Option<String>,
 }
 
 impl NoteSummary {
@@ -64,6 +67,7 @@ impl NoteSummary {
             has_files: false,
             waiting: false,
             archived: note.archived,
+            thumbnail: None,
         }
     }
 
@@ -82,6 +86,13 @@ impl NoteSummary {
     #[must_use]
     pub const fn waiting(mut self, waiting: bool) -> Self {
         self.waiting = waiting;
+        self
+    }
+
+    /// The thumbnail of a picture attached to it, if the device has one.
+    #[must_use]
+    pub fn thumbnail(mut self, thumbnail: Option<String>) -> Self {
+        self.thumbnail = thumbnail;
         self
     }
 }
@@ -209,6 +220,7 @@ pub fn NoteRow(
         has_files,
         waiting,
         archived,
+        thumbnail: _,
     } = summary;
     rsx! {
         div {

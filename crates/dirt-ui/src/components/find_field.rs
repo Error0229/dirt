@@ -53,10 +53,16 @@ pub fn FindField(
     /// The text field gained the keyboard's focus (true) or lost it.
     #[props(default)]
     on_focus: Option<EventHandler<bool>>,
+    /// Android: the cross at the end of Find, which closes it.
+    #[props(default)]
+    on_close: Option<EventHandler<()>>,
     #[props(default = DESKTOP_ROOM)] room: f64,
     #[props(default = Platform::current())] platform: Platform,
 ) -> Element {
-    let folded = tokens_fold(&tags, room, has_text);
+    // On Android the picked tags are the filled pills of the strip under
+    // Find ([`TagStrip`]), not tokens in it (section 6.3).
+    let tokens = platform == Platform::Desktop;
+    let folded = tokens && tokens_fold(&tags, room, has_text);
     let all = tags
         .iter()
         .map(|tag| format!("#{tag}"))
@@ -116,7 +122,7 @@ pub fn FindField(
                             "#{tags[0]}"
                             b { "+{tags.len() - 1}" }
                         }
-                    } else {
+                    } else if tokens {
                         for tag in tags.iter().cloned() {
                             span {
                                 key: "{tag}",
@@ -166,6 +172,19 @@ pub fn FindField(
             }
             if platform == Platform::Desktop {
                 {hash()}
+            }
+            if let Some(on_close) = on_close {
+                IconButton {
+                    icon: Icon::X,
+                    label: "Close",
+                    size: IconButtonSize::Small,
+                    class: "dui-find-close",
+                    onclick: move |event: MouseEvent| {
+                        event.stop_propagation();
+                        event.prevent_default();
+                        on_close.call(());
+                    },
+                }
             }
         }
     }
@@ -273,6 +292,76 @@ pub fn TagList(
                             "any of them"
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// The tags under Find on Android (section 6.3): a strip of pills. The
+/// picked ones are filled, at the front, and stay while any are picked;
+/// while the `#` is pressed the rest follow, at most six. With two or more
+/// picked, a last pill switches between "all of them" and "any of them".
+/// There are no counts on Android: a tag that would empty the list is not
+/// offered, as on the desktop.
+///
+/// The strip is always in the page, so that it can open and close; it is
+/// open while `open` or while a tag is picked.
+#[component]
+pub fn TagStrip(
+    open: bool,
+    options: Vec<TagOption>,
+    /// "Any of them" holds, not "all of them".
+    #[props(default)]
+    any: bool,
+    on_pick: EventHandler<String>,
+    /// The last pill was pressed: true for "any of them".
+    on_rule: EventHandler<bool>,
+) -> Element {
+    let mut seen = std::collections::HashSet::new();
+    let mut options: Vec<TagOption> = options
+        .into_iter()
+        .filter(|option| seen.insert(option.tag.clone()))
+        .filter(|option| open || option.picked)
+        .collect();
+    // The picked ones first, in the order they were picked.
+    options.sort_by_key(|option| !option.picked);
+    let picked = options.iter().filter(|option| option.picked).count();
+    let shown = open || picked > 0;
+    let rule = if any { "any of them" } else { "all of them" };
+    rsx! {
+        div {
+            id: TAG_LIST_ID,
+            class: if shown { "dui-strip on" } else { "dui-strip" },
+            role: "group",
+            "aria-label": "Tags",
+            "inert": if shown { None } else { Some("") },
+            onclick: move |event: MouseEvent| event.stop_propagation(),
+            "data-dui-list": "",
+            "data-dui-exit": "fade",
+            for (index , option) in options.into_iter().enumerate() {
+                button {
+                    key: "{option.tag}",
+                    r#type: "button",
+                    class: if option.picked { "dui-pill on" } else { "dui-pill" },
+                    style: "--i:{index}",
+                    "data-key": "{option.tag}",
+                    "data-dui-enter": "none",
+                    "aria-pressed": if option.picked { "true" } else { "false" },
+                    onclick: move |_| on_pick.call(option.tag.clone()),
+                    "#{option.tag}"
+                }
+            }
+            if picked > 1 {
+                button {
+                    r#type: "button",
+                    class: "dui-pill rule",
+                    "data-key": "rule",
+                    "data-dui-enter": "none",
+                    "aria-label": "Notes with {rule}. Press for the other",
+                    onclick: move |_| on_rule.call(!any),
+                    "{rule}"
+                    IconSvg { icon: Icon::ChevronDown, size: IconSize::Small }
                 }
             }
         }
