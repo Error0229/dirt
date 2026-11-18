@@ -1,0 +1,50 @@
+/* Android's main screen (interface design, sections 3, 6 and 8). The
+   components are dirt-ui's; this lays them out. Classes begin with dm-. */
+
+.dm{position:fixed;inset:0;display:flex;flex-direction:column;background:var(--bg);padding-top:env(safe-area-inset-top,0px)}
+.dm-grow{flex:1;min-width:0}
+
+/* The title, with 🔍, the sync status and Settings. */
+.dm-top{display:flex;align-items:center;gap:2px;padding:6px 10px 6px 20px;flex:none}
+.dm-top h1{flex:1;margin:0;font-size:27px;line-height:32px;font-weight:700;letter-spacing:-.025em}
+
+/* Find slides down under the title (glide); closing it slides it back. */
+.dm-find{flex:none;height:0;margin:0 10px;opacity:0;overflow:hidden;transition:height var(--d-glide) var(--sp-glide),margin var(--d-glide) var(--sp-glide),opacity 200ms var(--e-std)}
+.dm-find.on{height:52px;margin:0 10px 4px;opacity:1}
+.dm-find .dui-find{margin:2px 0}
+
+.dm-alarm{display:flex;align-items:center;gap:8px;margin:0 12px 8px;padding:6px 6px 6px 14px;border-radius:var(--r-l);background:var(--danger-soft);color:var(--text);font-size:13px;line-height:1.4;flex:none}
+
+/* The list of cards. */
+.dm-list-wrap{flex:1;min-height:0}
+.dm-scroll{padding:2px 12px 12px}
+.dm-list{display:flex;flex-direction:column;gap:8px}
+.dm-list .dui-layer{margin:10px 6px 0 6px}
+.dm-arch-head{display:flex;align-items:center;gap:6px;padding:0 8px 2px 0;font-size:14px;font-weight:600}
+.dm-arch-n{color:var(--text-3);font-weight:500;font-variant-numeric:tabular-nums}
+.dm-archived{align-self:center;min-height:40px;padding:0 16px;border-radius:var(--r-full);font-size:12.5px;color:var(--text-3)}
+.dm-archived:active{background:var(--surface-2)}
+
+/* The dock, where the thumb is: the bar a new page grows out of. */
+.dm-dock{flex:none;padding:6px 12px calc(24px + env(safe-area-inset-bottom,0px))}
+.dm-bar{display:block;width:100%;height:52px;border-radius:var(--r-bar);background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow-2);text-align:left;padding:0 20px;font-size:16px;color:var(--text-3);transition:transform 140ms var(--e-std)}
+.dm-bar:active{transform:scale(.98)}
+/* While Find has the keyboard, the dock goes, as the keyboard covers it. */
+.dm:has(.dm-find input:focus) .dm-dock{display:none}
+
+/* The page: a note, full screen. */
+.dm-page{padding-top:env(safe-area-inset-top,0px)}
+.dm-page-in{flex:1;min-height:0;display:flex;flex-direction:column}
+.dm-page-bar{display:flex;align-items:center;gap:2px;padding:4px 8px;flex:none;transition:opacity .5s var(--e-std)}
+/* While typing the bar fades; touching the page brings it back. */
+.dm-page-bar.typing{opacity:0;pointer-events:none}
+.dm-page-wrap{flex:1;min-height:0}
+.dm-page-scroll{padding:0 20px 30px}
+.dm-page-body{display:flex;flex-direction:column;min-height:100%}
+.dm-text{display:block;width:100%;min-height:55vh;field-sizing:content;border:0;padding:6px 0;margin:0;resize:none;background:transparent;color:var(--text);font-size:calc(var(--note-size) + 1px);line-height:1.6;overflow-wrap:anywhere}
+.dm-text::placeholder{color:var(--text-3);opacity:1}
+.dm-page-body .dm-files{padding:8px 0 4px}
+
+/* The old screens, Settings and Devices, over the main screen until step 5
+   of the interface's plan replaces them. They keep their own colours. */
+.dm-legacy{position:fixed;inset:0;z-index:550;overflow-y:auto;background:#f9fafb;color:#111827;font-family:system-ui,-apple-system,sans-serif;font-size:16px;line-height:normal;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px)}

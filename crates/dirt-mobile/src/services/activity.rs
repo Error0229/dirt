@@ -18,6 +18,8 @@
 //! - **Files for a note.** [`pick_files`] asks the person which files to
 //!   attach, and [`take_picked`] gives them once they are copied into the
 //!   app. [`open_file`] lends one file to another app, to show.
+//! - **Animations.** [`animations_off`] says whether Android's "Remove
+//!   animations" is on, which the web view reads only when it starts.
 //!
 //! All of it is JNI, as `secure_storage` is, and for the same two reasons
 //! classes are loaded through the Activity's class loader and a Java
@@ -234,4 +236,18 @@ pub fn take_save_outcome(request: &str) -> Option<SaveOutcome> {
         "cancelled" => SaveOutcome::Cancelled,
         other => SaveOutcome::Failed(other.strip_prefix("failed:").unwrap_or(other).to_owned()),
     })
+}
+
+/// Whether Android's "Remove animations" is on: the animators' duration
+/// scale is nought. The web view reads the setting only when it starts
+/// (interface design 5.7), so the app asks each time the person comes back
+/// and hands the answer to the interface's root.
+pub fn animations_off() -> bool {
+    ask("animationsOff", &[])
+}
+
+/// Puts `text` on Android's clipboard: **Copy text** on the error that
+/// says a note could not be saved. Returns `false` if it could not.
+pub fn copy_text(text: &str) -> bool {
+    ask("copyText", &[text])
 }

@@ -43,6 +43,13 @@ pub enum Outcome {
     /// (`data-dui-resize`): the system resizes the window from that edge
     /// until the button is let go.
     Resize,
+    /// A list was pulled down past the mark and let go: sync now. See
+    /// [`crate::components::PullToSync`].
+    Pull,
+    /// Android's Back, handed to the element that takes it: the one with
+    /// `data-dui-back` that comes last in the page. A panel or sheet that
+    /// is open takes it first, as [`Outcome::Dismiss`].
+    Back,
 }
 
 /// One message from the script: which element, and how it ended.

@@ -10,6 +10,7 @@
 use dioxus::prelude::*;
 use dirt_core::sync::overview::SyncIndicator;
 
+use crate::appearance::Platform;
 use crate::icons::{Icon, IconSvg};
 
 /// The icon of a state, and the name the style sheet colours it by.
@@ -43,11 +44,29 @@ pub fn SyncStatus(
     #[props(default)]
     shortcut: Option<String>,
     onclick: EventHandler<MouseEvent>,
+    /// On Android it is an icon in the top bar, with no words: a dot on it
+    /// says that notes wait (grey) or that something needs the person
+    /// (amber). Its words are its name for a screen reader, and what a
+    /// long press shows.
+    #[props(default = Platform::current())]
+    platform: Platform,
 ) -> Element {
     let (icon, state) = looks(indicator);
     let words = indicator.short();
-    let tooltip = indicator.tooltip(now_ms);
+    let compact = platform == Platform::Android;
+    // On Android the words are shown nowhere else, so a long press gives
+    // everything the status says.
+    let tooltip = if compact {
+        Some(indicator.in_full(now_ms))
+    } else {
+        indicator.tooltip(now_ms)
+    };
     let quiet = indicator.is_quiet();
+    let dot = compact
+        && matches!(
+            indicator,
+            SyncIndicator::Offline { waiting: 1.. } | SyncIndicator::Problem { .. }
+        );
     let syncs = !matches!(
         indicator,
         SyncIndicator::Problem { .. } | SyncIndicator::SignedOut
@@ -60,7 +79,7 @@ pub fn SyncStatus(
     rsx! {
         button {
             r#type: "button",
-            class: "dui-sync",
+            class: if compact { "dui-sync compact" } else { "dui-sync" },
             "data-s": state,
             "aria-label": "{words}",
             "aria-description": tooltip.clone(),
@@ -74,8 +93,11 @@ pub fn SyncStatus(
                     IconSvg { icon }
                 }
             }
-            if !quiet {
+            if !quiet && !compact {
                 span { class: "dui-sync-words", "{words}" }
+            }
+            if dot {
+                span { class: "dui-sync-dot", "aria-hidden": "true" }
             }
         }
         span { class: "dui-sr", role: "status", "aria-live": "polite", "{announced}" }

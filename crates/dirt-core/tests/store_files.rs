@@ -1224,3 +1224,48 @@ async fn something_too_large_to_be_a_file_is_not_read_into_memory() {
     let read = store.file_bytes(file).await.unwrap().unwrap();
     assert_eq!(read.len(), usize::try_from(limits::MAX_FILE_BYTES).unwrap());
 }
+
+#[tokio::test]
+async fn a_list_learns_which_of_its_notes_have_files_and_when_they_changed() {
+    let desk = desk();
+    let store = &desk.store;
+    let plain = store.create_note("no files here").await.unwrap();
+    let with = store.create_note("the receipt").await.unwrap();
+    let gone = NoteId::new();
+    let source = desk.a_file("receipt.txt", b"twelve euros");
+    store
+        .attach_file(&with.id, &source, "receipt.txt", "text/plain")
+        .await
+        .unwrap();
+
+    let first = store
+        .file_revisions(vec![plain.id, with.id, gone])
+        .await
+        .unwrap();
+    assert_eq!(
+        first.len(),
+        1,
+        "only the note with a file, and no note that is not there"
+    );
+    let before = first[&with.id];
+
+    // Another file is another write: the revision rises, so a list reads
+    // the note's files again.
+    let second_file = desk.a_file("photo.txt", b"a second file");
+    store
+        .attach_file(&with.id, &second_file, "photo.txt", "text/plain")
+        .await
+        .unwrap();
+    let after = store.file_revisions(vec![with.id]).await.unwrap()[&with.id];
+    assert!(after > before);
+
+    // With its files removed, the note is no longer among them.
+    for file in store.note_attachments(&with.id).await.unwrap() {
+        store.detach_file(&with.id, file.file_id).await.unwrap();
+    }
+    assert!(store
+        .file_revisions(vec![with.id])
+        .await
+        .unwrap()
+        .is_empty());
+}

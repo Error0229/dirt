@@ -373,6 +373,10 @@ pub fn css() -> String {
             accent_properties(accent, Scheme::Dark)
         );
     }
+    // What is inside `.dui-light` is drawn in the light theme, with the
+    // default accent, whatever is chosen: for an old screen of an app, with
+    // colours of its own, kept until the step that replaces it.
+    let _ = write!(css, ".dui-light{{{light}}}");
     css
 }
 

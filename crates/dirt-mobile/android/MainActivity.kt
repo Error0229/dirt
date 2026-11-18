@@ -3,16 +3,25 @@ package dev.dioxus.main
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.PersistableBundle
 import android.provider.OpenableColumns
+import android.provider.Settings
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.widget.RemoteViews
+import androidx.activity.OnBackPressedCallback
 import androidx.annotation.Keep
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -214,6 +223,37 @@ class MainActivity : WryActivity() {
             }.isSuccess
         }
 
+        // Whether Android's "Remove animations" is on: the animators'
+        // duration scale is nought. The web view reads it only when it
+        // starts, so the interface asks each time the person comes back.
+        @Keep
+        @JvmStatic
+        fun animationsOff(): Boolean {
+            val activity = current.get() ?: return false
+            return Settings.Global.getFloat(
+                activity.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1f,
+            ) == 0f
+        }
+
+        // Puts text on the clipboard: what a note that could not be saved
+        // held, for the person to keep. Android may show that it was
+        // copied; the text is marked sensitive, so that it is not shown.
+        @Keep
+        @JvmStatic
+        fun copyText(text: String): Boolean {
+            val activity = current.get() ?: return false
+            return runCatching {
+                val board = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("Dirt", text)
+                clip.description.extras = PersistableBundle().apply {
+                    putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                }
+                board.setPrimaryClip(clip)
+            }.isSuccess
+        }
+
         // Opens the sign-in page in a custom tab: a browser tab laid over
         // the app, which closes when the redirect brings the app forward. A
         // browser without custom tabs opens the page as an ordinary tab.
@@ -298,6 +338,11 @@ class MainActivity : WryActivity() {
         fun takeSaveOutcome(request: String): String? = saveOutcomes.remove(request)
     }
 
+    // Back is the interface's: the page closes what is open (a note, Find,
+    // a sheet), and says when there was nothing to close. The web view's
+    // own history is never gone back through.
+    override val handleBackNavigation: Boolean = false
+
     // A cold start. If it is the sign-in redirect, the app was stopped while
     // the browser was in front.
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -313,6 +358,47 @@ class MainActivity : WryActivity() {
             saveCapture(intent)
         }
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() = askThePageAboutBack()
+        })
+    }
+
+    // Asks the page to close whatever is open. When nothing was, Back does
+    // what it does on Android's home screen: the app goes behind the others
+    // and keeps running.
+    private fun askThePageAboutBack() {
+        val shown = page
+        if (shown == null) {
+            moveTaskToBack(true)
+            return
+        }
+        shown.evaluateJavascript("(window.DirtUi && DirtUi.back()) ? 'taken' : 'not'") { answer ->
+            if (answer != "\"taken\"") moveTaskToBack(true)
+        }
+    }
+
+    // The bars above and below the page take its background, and dark or
+    // light icons to suit it. The page says which, whenever its theme
+    // changes: with Auto, the system's theme decides.
+    private fun paintBars(dark: Boolean, colour: Int) {
+        window.statusBarColor = colour
+        window.navigationBarColor = colour
+        val bars = WindowCompat.getInsetsController(window, window.decorView)
+        bars.isAppearanceLightStatusBars = !dark
+        bars.isAppearanceLightNavigationBars = !dark
+    }
+
+    // What the page may call in the activity, as `DirtAndroid`: only the
+    // bars' colours. The page is the app's own; nothing else is loaded.
+    private class PageCalls(activity: MainActivity) {
+        private val activity = WeakReference(activity)
+
+        @JavascriptInterface
+        fun bars(dark: Boolean, background: String) {
+            val shown = activity.get() ?: return
+            val colour = runCatching { Color.parseColor(background.trim()) }.getOrNull() ?: return
+            shown.runOnUiThread { shown.paintBars(dark, colour) }
+        }
     }
 
     // A warm return: the app was still running.
@@ -329,6 +415,7 @@ class MainActivity : WryActivity() {
 
     override fun onWebViewCreate(webView: WebView) {
         page = webView
+        webView.addJavascriptInterface(PageCalls(this), "DirtAndroid")
     }
 
     // Tells the interface that something arrived for it to ask about. The

@@ -44,6 +44,10 @@
 .dui-icon-btn.danger:hover{color:var(--danger);background:var(--danger-soft)}
 .dui-icon-btn[aria-pressed="true"]{color:var(--accent);background:var(--accent-soft)}
 .dui-icon-btn:disabled{opacity:.45;cursor:default;pointer-events:none}
+/* A finger leaves :hover behind on what it tapped, until it taps something
+   else. Where nothing hovers, an icon button shows it is pressed only while
+   it is. */
+@media (hover:none){.dui-icon-btn:hover:not([aria-pressed="true"]){background:none;color:var(--text-2)}.dui-icon-btn:active:not([aria-pressed="true"]){background:var(--surface-2)}}
 /* 40 dp on Android, whatever the size asked for: a finger needs it. */
 .android .dui-icon-btn,.android .dui-icon-btn.sm{width:40px;height:40px;border-radius:12px}
 
@@ -293,6 +297,63 @@
 @keyframes dui-turn{to{transform:rotate(360deg)}}
 @keyframes dui-fade-in{from{opacity:0}}
 
+/* On Android the status is an icon in the top bar, with a dot when notes
+   wait (grey) or something needs the person (amber). */
+.dui-sync.compact{width:40px;height:40px;padding:0;justify-content:center;position:relative;border-radius:12px}
+.dui-sync.compact .dui-sync-icon .dui-i{width:18px;height:18px}
+.dui-sync-dot{position:absolute;top:8px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--warning);box-shadow:0 0 0 2px var(--bg);animation:dui-tok-in var(--d-4) var(--sp-pop)}
+.dui-sync[data-s="offline"] .dui-sync-dot{background:var(--text-3)}
+
+/* ---- Card (Android, 6.2) ------------------------------------------------ */
+.dui-card{position:relative;flex:none;border-radius:var(--r-card)}
+.dui-card-in{display:flow-root;padding:12px 14px 10px;cursor:default;-webkit-touch-callout:none}
+.dui-card-in:active{background:var(--surface-2)}
+.dui-card-in:focus-visible{outline:2px solid var(--focus);outline-offset:-2px;border-radius:var(--r-card)}
+.dui-card-t{font-weight:560;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dui-card.arch .dui-card-t{color:var(--text-2)}
+.dui-card-s{font-size:13.5px;line-height:1.35;color:var(--text-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin-top:2px;overflow-wrap:anywhere}
+.dui-card-meta{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-3);margin-top:7px;min-width:0;clear:none}
+.dui-card-time{font-variant-numeric:tabular-nums;flex:none}
+.dui-card-mark{display:grid;place-items:center}
+.dui-card-mark .dui-i{width:12px;height:12px}
+.dui-card-tags{margin-left:auto;display:flex;gap:2px;align-items:center;white-space:nowrap;overflow:hidden;min-width:0}
+/* A tag on a card is small, and its target is not: 40 dp around it. */
+.dui-card-tags .dui-tag-link{padding:10px 5px;margin:-10px -1px}
+.dui-card-thumb{float:right;width:44px;height:44px;border-radius:9px;margin:0 0 4px 10px;object-fit:cover;display:block;background:var(--surface-2)}
+/* A note from another device flashes clay-soft once (1.6 s). */
+.dui-card.flash .dui-swipe-in{animation:dui-flash 1.6s var(--e-std)}
+
+/* ---- A page that grows out of its card (Android, 5.5) --------------------- */
+/* Hidden by display, not visibility: Android's WebView was seen to keep a
+   child of the page hidden after it had opened again, its inherited
+   visibility not worked out afresh once the clip had run. */
+.dui-grow{position:fixed;inset:0;z-index:500;background:var(--surface);display:none;flex-direction:column}
+.dui-grow.on,.dui-grow.leaving{display:flex}
+
+/* ---- Pulling a list down to sync (Android, 5.5) --------------------------- */
+.dui-pull{position:relative;min-height:100%;will-change:transform}
+.dui-ptr{position:absolute;top:-44px;left:50%;translate:-50% 0;width:34px;height:34px;border-radius:50%;background:var(--surface);box-shadow:var(--shadow-2);display:grid;place-items:center;color:var(--text-2);opacity:0;pointer-events:none;z-index:2}
+.dui-ptr.armed{color:var(--accent)}
+.dui-ptr.spin .dui-i{animation:dui-turn .8s linear infinite;color:var(--accent)}
+[data-dui-scroll]:has(> [data-dui-pull]){overscroll-behavior-y:contain}
+
+/* ---- Find and its tags on Android (6.1, 6.3) ------------------------------ */
+.android .dui-find{border-radius:23px;padding:4px;gap:2px;min-height:46px}
+.android .dui-find .dui-icon-btn{width:36px;height:36px;border-radius:50%}
+.android .dui-find-input{padding:0 6px}
+.dui-find .dui-find-close{color:var(--text-3)}
+/* The strip of pills under Find. The picked ones are filled; the rest pop
+   in left to right while the # is pressed. */
+.dui-strip{display:flex;align-items:center;gap:6px;padding:0 12px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;height:0;opacity:0;transition:height var(--d-snap) var(--sp-snap),opacity var(--d-2) var(--e-std),padding var(--d-snap) var(--sp-snap);flex:none}
+.dui-strip::-webkit-scrollbar{display:none}
+.dui-strip.on{height:44px;opacity:1;padding-bottom:4px}
+.dui-pill{display:inline-flex;align-items:center;gap:2px;height:36px;padding:0 14px;border-radius:var(--r-full);border:1px solid var(--border);background:var(--surface);color:var(--text-2);font-size:13.5px;white-space:nowrap;flex:none;transition:background var(--d-1),color var(--d-1),border-color var(--d-1),transform var(--d-1) var(--e-std)}
+.dui-pill:active{transform:scale(.94)}
+.dui-pill.on{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:550}
+.dui-pill.rule{border-style:dashed}
+.dui-pill.rule .dui-i{width:12px;height:12px}
+.dui-strip.on .dui-pill{animation:dui-tok-in var(--d-3) var(--sp-pop) backwards;animation-delay:calc(var(--i,0) * 26ms)}
+
 /* ---- The app's own menu (7.4) ---------------------------------------- */
 .dui-menu{position:fixed;z-index:950;min-width:200px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-l);box-shadow:var(--shadow-3);padding:6px;display:none;transform-origin:top left}
 .dui-menu.on{display:block}
@@ -303,5 +364,5 @@
 
 /* Reduced motion: what moves on its own here only fades (5.6). Spinners
    still turn. */
-:root[data-motion="reduced"] .dui-tok,:root[data-motion="reduced"] .dui-taglist.on .dui-tag-opt{animation:none}
-@media (prefers-reduced-motion:reduce){.dui-tok,.dui-taglist.on .dui-tag-opt{animation:none}}
+:root[data-motion="reduced"] .dui-tok,:root[data-motion="reduced"] .dui-taglist.on .dui-tag-opt,:root[data-motion="reduced"] .dui-strip.on .dui-pill,:root[data-motion="reduced"] .dui-sync-dot{animation:none}
+@media (prefers-reduced-motion:reduce){.dui-tok,.dui-taglist.on .dui-tag-opt,.dui-strip.on .dui-pill,.dui-sync-dot{animation:none}}

@@ -33,7 +33,6 @@ tokio = { workspace = true }
 [target.'cfg(target_os = "android")'.dependencies]
 dioxus = { workspace = true, features = ["mobile"] }
 dirt-ui = { path = "../dirt-ui" }
-dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false }
 # JNI bridge for the device's secure storage. `ndk-context` exposes the
 # JavaVM and Activity handles the Dioxus mobile runtime publishes; `jni`
 # is the Rust binding to Android's Java APIs (KeyStore and AndroidX

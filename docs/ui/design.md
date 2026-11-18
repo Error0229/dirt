@@ -352,11 +352,12 @@ Switching cross-fades every colour over 320 ms instead of snapping.
 Auto is the style sheet's own: with no theme chosen, the dark colours are
 under `prefers-color-scheme: dark`. WebView2 answers that from the
 system's setting. Android's WebView answers it from the theme of the
-activity it is in, and the app's is a light one today, so on Android Auto
-is light whatever the system says. Android's main screen (plan, step 4)
-gives the activity a theme that follows the system, and lets the app stay
-open when the system changes: today Android restarts the activity, and
-the app with it.
+activity it is in, so the activity's theme is AppCompat's DayNight, which
+follows the system, and `uiMode` is among the changes the activity takes
+itself: without that, Android restarts the activity when the system's
+theme changes, and the app ends. The bars above and below the page are
+the activity's; the page tells it whether it is dark and its `--bg`
+whenever its look changes, and they take that colour (8.7).
 
 #### 4.1.1 Accent
 
@@ -719,11 +720,11 @@ Spinners still turn, because they carry information.
 - Every animation reads the reduced-motion setting when it starts, so
   changing the setting takes effect at once. That holds wherever the web
   view passes the system's setting on as it changes. Android's WebView
-  reads "Remove animations" once, when it starts: changed while Dirt is
-  open, it is honoured from the next start. Reading it again each time the
-  person returns to the app needs a few lines of native code, which come
-  with Android's main screen (plan, step 4); the root component already
-  takes the answer.
+  reads "Remove animations" once, when it starts, so the app reads
+  `Settings.Global.ANIMATOR_DURATION_SCALE` itself when it starts and each
+  time the person returns to it, and gives the answer to the root
+  component's `reduced_motion`. Changed while Dirt is in front, it is
+  honoured from the next return.
 
 ---
 
@@ -1654,6 +1655,50 @@ What each phone's keyboard shows there has to be tried.
 Not possible: capture right after the phone restarts and before it is
 first unlocked. Android keeps every app's storage locked until then, and
 the tile says it is unavailable.
+
+### 8.7 Settled when the main screen was built
+
+What the sections above left open for Android, settled when its main
+screen was built (implementation plan, step 4). Where 7.8 settled the same
+question for the desktop, Android follows it: load more (100, and 100 more
+within 600 px of the end), "3 archived" at the end of the list until the
+pile, the hollow dot only while signed in and let in, layers only in the
+list, the page's text saved 400 ms after typing pauses and at once when it
+is left, a file chosen on a page with no words making a note of the files
+with the tags chosen in Find as its words.
+
+| | Settled |
+|---|---|
+| Opening a note | The note grows out of its card with the cursor at the end of its text and the keyboard up, so that "tap it, type" is two actions (section 2). Tapping elsewhere in the text moves the cursor there (8.3). Back first puts the keyboard away, as Android does, and then closes the note |
+| Leaving a page | The page closes the moment ⌄, ‹ or Back is pressed, and what it held is saved afterwards from what it held then. A page opened straight after is a page of its own: nothing typed into it is lost to the one being saved, and a note whose first character is still being made is made and saved all the same |
+| A new page let go | Until the grain (step 7), a new page with words closes into its new card at the top of the list, as an old note closes into its own. With nothing written it goes back into the bar (5.5) |
+| Back | Closes, in this order, whatever is open: Settings (the old screen, until step 5), the page, the list of archived notes, the strip's offers, then Find. With nothing open the app goes behind the others and keeps running, as Back does on the home screen |
+| Find | Its cross, or Back, closes it, and the list is whole again: its words and tags go with it. While it has the keyboard the dock goes, as the keyboard would cover it. The search key on the keyboard opens the first note found, as Enter does on the desktop; Backspace in an empty Find takes back the last tag |
+| A tag tapped on a card | Brings Find down with the tag as a filled pill under it, where it is seen and taken back, and narrows the list (one action) |
+| The page's bar | Fades on the first key typed, and comes back when the keyboard goes away or the page is touched anywhere; a touch that brings it back does not also press what is under it. While it is faded its buttons cannot be pressed |
+| Archive and delete from the page | The page goes back into its card first, and then the card is put away: it folds shut (archive) or tears away (delete), with the toast. A note emptied on the page is let go instead, with no toast |
+| A card swiped away | Once it has flown off, the gap it leaves folds shut, archive or delete alike, and the cards below rise into it (snap) |
+| Pull to sync | The list holds at 58 px for as long as the sync runs, at least 600 ms and at most 15 s. Pulled while signed out, the arrow turns and settles and nothing syncs; the sync icon says why. A pull is told from a scroll by the finger's first move: down, with the list at its top. It is read from touch events, because Android's WebView takes a vertical drag of pointer events for its own scrolling |
+| The sync status | An icon with no words (6.6), so a long press gives them: its words and then its tooltip ("Offline · 1 waiting. Notes wait here and go when you're back"), or the tooltip alone for Synced. A tap syncs; with a problem, or signed out, it opens Settings, the old screen until step 5 |
+| A card | Its tags have 40 dp targets around their small type. A long press anywhere else on it gives its edit time in full. Its thumbnail is shown only when the device already has the picture's thumbnail; the list fetches none, and opening the note fetches them as its files do |
+| The mic | The dock is the bar alone, and a page's bar has no 🎙, until voice (step 9): no icon is shown that does nothing |
+| Appearance | Until Settings is rebuilt (step 5), the old Settings screen has a card with the theme, the accents and the text size, drawn by `dirt-ui` |
+| A share | Saved at once as before, with no toast yet: the toast after a share, with **Undo**, comes with capture from outside the app (step 8). One that cannot be saved gives the error below, with the shared text to copy |
+| A write that fails | As on the desktop (7.9): not tried again; the error "A note could not be saved" ("2 notes could not be saved"), the store's reason in its tooltip (a long press), and **Copy text**, which puts the newest text of each page that could not be saved on Android's clipboard. A page whose note could not be made goes back to a thought not yet made, and its next key makes it with all of it; leaving it makes nothing. An archive, a delete or an undo that fails says so the same way ("The note could not be archived", "… deleted", "… brought back"), with nothing to copy |
+| One note for a page | Whatever makes the page's note (its first character, files chosen on it) asks its draft first, so a page makes one note: files chosen while the first character's note is being made wait for it and go to it, and a key typed while the files' note is being made is saved into it |
+| Touch and hover | A finger leaves `:hover` on what it tapped, so where nothing hovers (`hover: none`) an icon button is grey only while it is pressed |
+| The old screens | Settings and Devices are drawn over the main screen, which stays as it was under them, in the light theme whatever is chosen (`.dui-light`), since their own colours are light ones. The main screen under them is inert and hidden from screen readers, and the bars take their colours while they are open (`data-dui-bars`). Toasts stay above them, as they are above the desktop's Settings: an **Undo** just offered can still be pressed, and an error is never hidden |
+| The cards' files | The list asks the store which of the notes it shows have files, with each one's revision (`Store::file_revisions`), and reads a note's files only when its revision changed. A thumbnail is kept while a card shows it, and nothing is kept for another account |
+| A second finger | A new touch while the list is being pulled ends the pull: it settles back, as one let go short of the mark does |
+
+**What did not work as the design assumes.** The page is hidden with
+`display: none` when it is closed, not with `visibility`: Android's WebView
+(133, on the emulator) was seen to keep a child of the page hidden after
+it had opened again, its inherited visibility not worked out afresh once
+the clip had run. And a tap that reaches the page within a few
+milliseconds of Back, faster than a hand can, lands before Back has closed
+the page, so what is typed then goes nowhere; at a hand's pace it goes to
+the new page.
 
 ---
 

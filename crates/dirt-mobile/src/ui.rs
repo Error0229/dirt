@@ -83,7 +83,6 @@ pub enum ButtonVariant {
     // No button uses this style yet.
     #[allow(dead_code)]
     Outline,
-    Ghost,
     Danger,
 }
 
@@ -93,7 +92,6 @@ impl ButtonVariant {
             Self::Primary => "ui-button--primary",
             Self::Secondary => "ui-button--secondary",
             Self::Outline => "ui-button--outline",
-            Self::Ghost => "ui-button--ghost",
             Self::Danger => "ui-button--danger",
         }
     }

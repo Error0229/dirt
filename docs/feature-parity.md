@@ -17,19 +17,18 @@ pull request.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Write a note | On the page, always open beside the list: the first character makes the note, and it saves itself. Esc, Ctrl Enter or ✓ is done and gives a blank page at once; what is typed straight after is the next thought. With the list narrowed to tags, a new page gets them at its end | Yes | `dirt add`, or `dirt "a thought"` |
+| Write a note | On the page, always open beside the list: the first character makes the note, and it saves itself. Esc, Ctrl Enter or ✓ is done and gives a blank page at once; what is typed straight after is the next thought. With the list narrowed to tags, a new page gets them at its end | The bar at the bottom, "What's on your mind?", grows into a page with the keyboard up: the first character makes the note, and it saves itself. ⌄ or Back is done. With the list narrowed to tags, a new page gets them at its end | `dirt add`, or `dirt "a thought"` |
 | Focus while writing | The first key fades the controls; at the first pause or new line the list goes, by the style chosen in Settings → Appearance: Slide (the default), Rail or Zen. The note's icons, the window's controls and the list's handle come back as the pointer nears them | Not applicable: a note fills the screen | Not applicable |
-| Edit a note | Yes, saved as you type | Yes, with a Save button | `dirt edit <ID>`, in `$VISUAL` or `$EDITOR` |
-| Delete a note | Shift Del in the list, Ctrl Shift Del in a note, or the bin on an archived note. No question first: a toast offers **Undo** | Yes | `dirt delete <ID>` |
-| Bring a deleted note back | **Undo** on the toast, or Ctrl Z outside the text, for the last archive or delete, after the toast has gone too. It comes back into its place in the list | Not yet: step 4 of the interface plan | `dirt restore <ID>`, by the ID that `dirt delete` printed or the start of it |
-| Archive a note, and bring it back to the list | The box on a row under the pointer, Del in the list, the box beside the open note or Ctrl Del in it; **Undo** or Ctrl Z, or "Back to the list" beside an archived note | Not yet: step 4 of the interface plan | `dirt archive <ID>`, `dirt unarchive <ID>` |
-| List the archived notes | "3 archived" at the end of the list, newest first; Esc or ‹ goes back | Not yet: step 4 of the interface plan | `dirt list --archived`, which `--tag` narrows as it does the list |
-| List notes | Most recently edited first, in layers by when each was edited (today, This week, Earlier this month, then by month). 100 at first, and 100 more as scrolling nears the end. Archived notes are left out. A hollow dot marks a note not on the server yet | The 100 most recently edited, and 100 more with each press of "Show older notes". Archived notes are left out | `dirt list`, 10 unless `--limit` says otherwise. Archived notes are left out |
+| Edit a note | Yes, saved as you type | Tap its card: the note grows out of it with the cursor at the end of its text, and saves as you type. ‹ or Back closes it into its card | `dirt edit <ID>`, in `$VISUAL` or `$EDITOR` |
+| Delete a note | Shift Del in the list, Ctrl Shift Del in a note, or the bin on an archived note. No question first: a toast offers **Undo** | On an archived note: swipe its card left, or the bin in its bar. No question first: a toast offers **Undo** | `dirt delete <ID>` |
+| Bring a deleted note back | **Undo** on the toast, or Ctrl Z outside the text, for the last archive or delete, after the toast has gone too. It comes back into its place in the list | **Undo** on the toast, for six seconds | `dirt restore <ID>`, by the ID that `dirt delete` printed or the start of it |
+| Archive a note, and bring it back to the list | The box on a row under the pointer, Del in the list, the box beside the open note or Ctrl Del in it; **Undo** or Ctrl Z, or "Back to the list" beside an archived note | Swipe its card left, or the box in the open note's bar; **Undo**, or "Back to the list" in an archived note's bar | `dirt archive <ID>`, `dirt unarchive <ID>` |
+| List the archived notes | "3 archived" at the end of the list, newest first; Esc or ‹ goes back | "3 archived" at the end of the list, newest first; ‹ or Back goes back | `dirt list --archived`, which `--tag` narrows as it does the list |
+| List notes | Most recently edited first, in layers by when each was edited (today, This week, Earlier this month, then by month). 100 at first, and 100 more as scrolling nears the end. Archived notes are left out. A hollow dot marks a note not on the server yet | As cards, in the same layers, 100 at first and 100 more as scrolling nears the end. Archived notes are left out. A hollow dot marks a note not on the server yet, and a picture's thumbnail shows on its card when the device has it | `dirt list`, 10 unless `--limit` says otherwise. Archived notes are left out |
 | Use it before signing in | Yes | Yes | Yes |
 
 A deleted note keeps its document, so it can be brought back, with the text
-it had. `dirt restore` does it, and the desktop app's **Undo**; the Android
-app will. A note that was
+it had. `dirt restore` does it, and the apps' **Undo**. A note that was
 archived when it was deleted comes back archived. It keeps the edit time it
 had, on every device, so it comes back into its place in the list; bringing
 it back still syncs as a change.
@@ -42,24 +41,22 @@ signed in, are not purged: there is no limit for them to count against.
 An archived note is out of the list and is still a note: it syncs, is found
 by a search, opens and can be edited, and is exported. Archiving is not an
 edit. The note keeps its edit time, and a note that another device deleted
-stays deleted when this one archives it. The Android app cannot archive
-yet. A note archived from the CLI, or on a device with a later version,
-leaves its list all the same.
+stays deleted when this one archives it. A note archived from the CLI, or
+on a device with a later version, leaves its list all the same.
 
 ## Finding a note
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Search | Find, at the top of the list (Ctrl F, Ctrl K, `/`): every note, by words, narrowing on every key | Every note, by words | `dirt search`, every note, by words |
-| Narrow to a tag | A tag on any row, or the `#` in Find, which opens a list of the six that would narrow most and stays open for more; several at once, with "all of them" or "any of them" | Tag row above the list, every note | `dirt list --tag`, without the archived notes; `dirt list --archived --tag` for those |
-| Tag counts | How many notes there would be with that tag too, archived ones among them | Of every note, archived ones among them | No |
-| Archived notes among what is found | After the rest, under a line "Archived", their titles a shade lighter | After the rest. Nothing marks them yet: step 4 of the interface plan | After the rest, with `(archived)` at the end of the line, and `"archived"` in `--json` |
+| Search | Find, at the top of the list (Ctrl F, Ctrl K, `/`): every note, by words, narrowing on every key | Find, behind 🔍 at the top, which slides down under the title: every note, by words, narrowing on every key. Its cross, or Back, closes it | `dirt search`, every note, by words |
+| Narrow to a tag | A tag on any row, or the `#` in Find, which opens a list of the six that would narrow most and stays open for more; several at once, with "all of them" or "any of them" | A tag on any card, or the `#` in Find, which opens a strip of pills under it: the six that would narrow most, and the picked ones filled at the front. Several at once, with a last pill for "all of them" or "any of them" | `dirt list --tag`, without the archived notes; `dirt list --archived --tag` for those |
+| Tag counts | How many notes there would be with that tag too, archived ones among them | No numbers. A tag that would leave none is not offered, as on the desktop | No |
+| Archived notes among what is found | After the rest, under a line "Archived", their titles a shade lighter | The same | After the rest, with `(archived)` at the end of the line, and `"archived"` in `--json` |
 
 "By words" is the store's full-text search: a note matches when it holds
 every word typed, in any order, and each word also matches as the start of a
-longer one. The apps show up to 100 notes found; the desktop app shows 100
-more as scrolling nears the end, and the Android app with each press of
-"Show more notes".
+longer one. The apps show up to 100 notes found, and 100 more as scrolling
+nears the end.
 
 Finding keeps archived notes, by words or by a tag: they come after every
 note that is not archived, however well they match. So the number beside a
@@ -74,7 +71,7 @@ answer with 20,000 notes in it.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Quick capture | Global hotkey, Ctrl+Alt+N, and "New Note" in the tray menu | Home-screen widget, which opens a blank note | The command itself |
+| Quick capture | Global hotkey, Ctrl+Alt+N, and "New Note" in the tray menu | Home-screen widget, which opens the app on a new page | The command itself |
 | Take text from another app | No | "Share" to Dirt saves the text as a note at once | A pipe: `some-command \| dirt add` |
 | Take a picture from another app | No | "Share" a picture, or several, to Dirt: a note at once, with the pictures attached, called after them if no text came along | No |
 | Run in the background | Tray icon, with Open and Quit | No | No |
@@ -106,7 +103,7 @@ data folder and the keychain entry, so signing in with either signs in both.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Attach a file to a note | The paperclip beside the note, or Ctrl Shift A, in a file dialog that takes several; or drop files on the page. On the blank page either makes a note of the files | "Attach a file" under the note, on Android's screen for choosing files, which takes several. On a note not saved yet, it saves the note first | `dirt attach <note> <file>`; `--name` and `--type` say what the path does not |
+| Attach a file to a note | The paperclip beside the note, or Ctrl Shift A, in a file dialog that takes several; or drop files on the page. On the blank page either makes a note of the files | The paperclip in the page's bar, on Android's screen for choosing files, which takes several. On a new page with no words it makes a note of the files | `dirt attach <note> <file>`; `--name` and `--type` say what the path does not |
 | List a note's files | Under the open note: each file's name, size and kind, and where it is if it is not both here and on the server | The same | `dirt files <note>`, the same; `--json` |
 | Open a file | "Open in another app", an icon on the file under the pointer, hands a copy to whatever the system uses for files of its kind, fetching the file first if need be. Not offered for a file the system would run | "Open" lends a copy to another app, which Android lets the person choose. Not offered for a file the system would run or install | No: `dirt save`, then open it |
 | Save a copy of a file | "Save a copy", an icon on the file, in a file dialog that proposes the file's name | "Save a copy", on Android's screen for choosing a place | `dirt save <note> <file> [path]`. Does not replace a file that is there unless `--force` |
@@ -128,9 +125,9 @@ plain name in the folder asked for.
 | | Desktop | Android | CLI |
 |---|---|---|---|
 | Sync without being asked | On start, on return to the window, after a change | On start, on return to the app, after a change | After each command that changes a note |
-| Sync now | The sync status at the foot of the list, or Ctrl R | Settings | `dirt sync` |
-| When it last synced, and how many notes and files wait | The sync status at the foot of the list, its tooltip, and Settings → Sync | Settings, and a line above the list | `dirt auth status`, `dirt sync --verbose`. `dirt sync` and any command that changes a note say when a file did not go |
-| Each note that could not be synced, with the reason and what releases it | Settings → Sync, which the sync status opens when there is a problem | Settings | `dirt auth status`, `dirt sync --verbose` |
+| Sync now | The sync status at the foot of the list, or Ctrl R | Pull the list down, or tap the sync icon at the top | `dirt sync` |
+| When it last synced, and how many notes and files wait | The sync status at the foot of the list, its tooltip, and Settings → Sync | The sync icon at the top, with a grey dot when notes wait offline and an amber one when something needs the person; a long press gives its words. And Settings | `dirt auth status`, `dirt sync --verbose`. `dirt sync` and any command that changes a note say when a file did not go |
+| Each note that could not be synced, with the reason and what releases it | Settings → Sync, which the sync status opens when there is a problem | Settings, which the sync icon opens when there is a problem | `dirt auth status`, `dirt sync --verbose` |
 | Each file the server refused, with the reason | Settings → Sync | Settings | `dirt auth status`, `dirt sync`, `dirt files <note>` |
 | Open such a note from the list of them | Yes | Yes | By its ID, which is printed |
 
@@ -162,9 +159,9 @@ the head of the note in the Markdown.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Light and dark themes | Yes, or follow the system | Light only | Not applicable |
+| Light and dark themes | Yes, or follow the system | Settings → Appearance: Auto, which follows the system as it changes, Light or Dark; and the six accents | Not applicable |
 | The window | Windows: no title bar. Dirt's own minimise, maximise and close at the top right; the top row moves the window and a double-click on it maximises; every edge resizes it. Linux and macOS: the system's title bar, until they are tried (manual checklist) | Not applicable | Not applicable |
-| Text size | Settings → Appearance, Ctrl + and Ctrl − (13 to 20 px, 15 at first). Inter and JetBrains Mono, bundled; the choice of font is gone | No | Not applicable |
+| Text size | Settings → Appearance, Ctrl + and Ctrl − (13 to 20 px, 15 at first). Inter and JetBrains Mono, bundled; the choice of font is gone | Settings → Appearance, the same sizes; a note's text is drawn a pixel larger than the size chosen, as design 4.2 has it. The same two fonts | Not applicable |
 | Shell completions | Not applicable | Not applicable | `dirt completions <shell>` |
 
 ## Not built
@@ -172,5 +169,4 @@ the head of the note in the Markdown.
 | What | Where it stands |
 |---|---|
 | `dirt tui` | A stub that prints "Opening TUI..." and does nothing. No design document mentions a terminal interface. Needs a decision: remove it or plan it |
-| Themes and fonts on Android | No design document asks for them |
 | iOS and web clients | Outside the design (section 3.3) |

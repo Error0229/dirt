@@ -105,7 +105,34 @@
     root.classList.toggle('desktop', to.platform === 'desktop');
     root.classList.toggle('android', to.platform === 'android');
     platform = to.platform;
+    tellBars();
   }
+  // Android draws the bars above and below the page itself. The activity
+  // offers `DirtAndroid.bars` to be told whether the page is dark now and
+  // the colour of its background, so that the bars match it.
+  const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+  // An element with `data-dui-bars` that covers the page (an old screen
+  // with colours of its own) gives the bars its background while it is
+  // there.
+  const hex = colour => {
+    const parts = (colour.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+    if (parts.length < 3) return null;
+    return '#' + parts.map(part => Math.round(part).toString(16).padStart(2, '0')).join('');
+  };
+  function tellBars() {
+    if (!window.DirtAndroid || !DirtAndroid.bars) return;
+    let dark = root.dataset.theme === 'dark' || (root.dataset.theme !== 'light' && darkQuery.matches);
+    let background = getComputedStyle(root).getPropertyValue('--bg').trim();
+    const cover = $$('[data-dui-bars]').filter(element => element.isConnected).pop();
+    const own = cover ? hex(getComputedStyle(cover).backgroundColor) : null;
+    if (own) {
+      background = own;
+      const [r, g, b] = own.slice(1).match(/../g).map(part => parseInt(part, 16));
+      dark = 0.299 * r + 0.587 * g + 0.114 * b < 128;
+    }
+    try { DirtAndroid.bars(dark, background); } catch (error) { /* the activity went away */ }
+  }
+  darkQuery.addEventListener('change', tellBars);
   function crossFade(change) {
     root.classList.add('dui-theme-fade');
     change();
@@ -488,6 +515,8 @@
       } else if (Math.abs(dy) > 8 || Math.abs(dx) > 8) swipe.mode = 'none';
     }
     if (swipe.mode !== 'swipe') return;
+    // A swipe is not a long press: the tooltip that was coming does not.
+    if (tipFor) hideTip();
     stats.moves += 1;
     showStats();
     swipe.dx = Math.min(0, dx);
@@ -511,6 +540,10 @@
       const off = card.animate([{ transform: `translateX(${done.dx}px)` }, { transform: 'translateX(-110%)' }],
         { duration: ms, easing: tokens.exit, fill: 'forwards' });
       after(off, ms, () => {
+        // Where it is drawn now, written on it: the copy of it that the
+        // list draws leaving is made from what is written, and would
+        // otherwise come back to where the finger let go.
+        card.style.transform = 'translateX(-110%)';
         tell(card, 'swipe');
         // If Rust keeps the card after all, it comes back.
         setTimeout(() => {
@@ -537,6 +570,220 @@
     event.preventDefault();
     event.stopPropagation();
   }, true);
+
+  // ---- Pulling a list down to sync (sections 5.5 and 8.2) ----------------
+  // The element with `data-dui-pull` is the content of a list that
+  // scrolls. Pulled down while the list is at its top, it follows the
+  // finger with resistance; let go past 62 px it holds at 58 px while the
+  // arrow spins, and Rust is told once. It holds for as long as the
+  // element is marked `data-busy`, and then settles back (400 ms, enter).
+  //
+  // Touch events, not pointer events: the list scrolls natively, and a web
+  // view takes a vertical drag for its own once it begins, cancelling the
+  // pointer. A touch can still be held back from scrolling by its first
+  // move, which is when a pull is told from a scroll.
+  const PULL_PAST = 62, PULL_HOLD = 58;
+  const pullOf = distance => 96 * (1 - Math.exp(-Math.max(0, distance) / 130));
+  let pull = null;
+  function scrollerOf(element) {
+    return element.closest('[data-dui-scroll]') || element.parentElement;
+  }
+  function pullParts(area) {
+    const arrow = area.querySelector(':scope > .dui-ptr');
+    return { arrow, icon: arrow ? arrow.querySelector('.dui-i') : null };
+  }
+  function settlePull(area) {
+    const { arrow, icon } = pullParts(area);
+    const ms = reduced() ? tokens.reducedMs : 400;
+    area.style.transition = `transform ${ms}ms ${tokens.enter}`;
+    area.style.transform = '';
+    if (arrow) {
+      arrow.style.transition = `opacity ${ms}ms ${tokens.enter}`;
+      arrow.style.opacity = '';
+      arrow.classList.remove('armed', 'spin');
+    }
+    if (icon) icon.style.transform = '';
+    setTimeout(() => { area.style.transition = ''; if (arrow) arrow.style.transition = ''; delete area.dataset.duiHeld; }, ms + 40);
+  }
+  function holdPull(area) {
+    const { arrow, icon } = pullParts(area);
+    area.dataset.duiHeld = '';
+    area.style.transition = `transform ${spring('snap').ms}ms ${spring('snap').easing}`;
+    area.style.transform = `translateY(${PULL_HOLD}px)`;
+    if (arrow) { arrow.classList.add('spin'); arrow.style.opacity = '1'; }
+    if (icon) icon.style.transform = '';
+    tell(area, 'pull');
+    // Long enough to be seen, and for Rust to say that sync has begun;
+    // then for as long as it runs, up to a limit.
+    const began = Date.now();
+    const check = () => {
+      if (!area.isConnected) return;
+      const waited = Date.now() - began;
+      if (waited < 600 || (area.dataset.busy !== undefined && waited < 15000)) { setTimeout(check, 120); return; }
+      settlePull(area);
+    };
+    setTimeout(check, 120);
+  }
+  document.addEventListener('touchstart', event => {
+    // A second finger, or a touch that began before the last one ended,
+    // ends a pull in progress: it settles back, as one let go short of the
+    // mark does, and is never left half pulled.
+    if (pull) {
+      const was = pull;
+      pull = null;
+      if (was.mode === 'pull') {
+        root.classList.remove('dui-noselect');
+        settlePull(was.area);
+      }
+    }
+    if (event.touches.length !== 1 || !event.target.closest) return;
+    const area = event.target.closest('[data-dui-pull]');
+    if (!area || area.dataset.duiHeld !== undefined) return;
+    const touch = event.touches[0];
+    pull = { area, x: touch.clientX, y: touch.clientY, mode: null, d: 0 };
+  }, { passive: true, capture: true });
+  document.addEventListener('touchmove', event => {
+    if (!pull) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - pull.x, dy = touch.clientY - pull.y;
+    if (!pull.mode) {
+      if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+      const top = scrollerOf(pull.area).scrollTop <= 0;
+      pull.mode = dy > 0 && Math.abs(dy) > Math.abs(dx) && top ? 'pull' : 'none';
+      if (pull.mode === 'pull') { hideTip(); root.classList.add('dui-noselect'); }
+    }
+    if (pull.mode !== 'pull') return;
+    // The list does not scroll or stretch: the pull is the movement.
+    if (event.cancelable) event.preventDefault();
+    stats.moves += 1;
+    showStats();
+    pull.d = pullOf(dy);
+    const { arrow, icon } = pullParts(pull.area);
+    pull.area.style.transition = 'none';
+    pull.area.style.transform = `translateY(${pull.d}px)`;
+    if (arrow) {
+      arrow.style.transition = 'none';
+      arrow.style.opacity = String(Math.min(1, pull.d / 48));
+      arrow.classList.toggle('armed', pull.d > PULL_PAST);
+    }
+    if (icon && !reduced()) icon.style.transform = `rotate(${pull.d * 3.5}deg)`;
+  }, { passive: false, capture: true });
+  function endPull(event) {
+    if (!pull) return;
+    const done = pull;
+    pull = null;
+    if (done.mode !== 'pull') return;
+    root.classList.remove('dui-noselect');
+    // A touch that was a pull is not also a tap on what it began on.
+    quietClick = true;
+    setTimeout(() => { quietClick = false; }, 60);
+    if (done.d > PULL_PAST && event.type !== 'touchcancel') holdPull(done.area);
+    else settlePull(done.area);
+  }
+  document.addEventListener('touchend', endPull, true);
+  document.addEventListener('touchcancel', endPull, true);
+
+  // ---- A page that grows out of what opened it (sections 5.5 and 10) -----
+  // An element `[data-dui-grow]` is a page over the screen, in the page
+  // always. When it gains the class `on` it grows out of the element whose
+  // ID is in its `data-dui-from` (a card: 440 ms, enter, its text rising
+  // 14 px behind it; the bar it was asked for from, `data-dui-from-kind`
+  // "bar": the glide curve over 560 ms). When it loses `on` it shrinks
+  // back into the element `data-dui-from` names then, wherever that is now
+  // (340 ms, or 320 ms into the bar, standard). Where that element is not
+  // on screen it fades. The movement is a clip-path from the element's
+  // rectangle to the screen.
+  const grows = new Map();
+  function clipOf(element, round) {
+    const box = element.getBoundingClientRect();
+    const radius = round === undefined ? parseFloat(getComputedStyle(element).borderTopLeftRadius) || 16 : round;
+    return `inset(${box.top}px ${innerWidth - box.right}px ${innerHeight - box.bottom}px ${box.left}px round ${radius}px)`;
+  }
+  function onScreen(element) {
+    if (!element || !element.isConnected || !shown(element)) return false;
+    const box = element.getBoundingClientRect();
+    return box.bottom > 0 && box.top < innerHeight && box.width > 0 && box.height > 0;
+  }
+  function growOpened(page, state) {
+    state.runs.forEach(run => run.cancel());
+    state.runs = [];
+    page.classList.remove('leaving');
+    const from = document.getElementById(page.dataset.duiFrom || '');
+    const body = page.querySelector('[data-dui-grow-body]'), bar = page.querySelector('[data-dui-grow-bar]');
+    if (reduced() || !onScreen(from)) {
+      state.runs.push(page.animate([{ opacity: 0 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 200, easing: tokens.standard }));
+      return;
+    }
+    const whole = 'inset(0px 0px 0px 0px round 0px)';
+    if (page.dataset.duiFromKind === 'bar') {
+      const glide = spring('glide');
+      state.runs.push(page.animate([{ clipPath: clipOf(from) }, { clipPath: whole }], { duration: 560, easing: glide.easing }));
+      if (bar) state.runs.push(bar.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, delay: 180, fill: 'backwards' }));
+      return;
+    }
+    state.runs.push(page.animate([{ clipPath: clipOf(from) }, { clipPath: whole }], { duration: 440, easing: tokens.enter }));
+    if (body) state.runs.push(body.animate([{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }],
+      { duration: 380, delay: 60, easing: tokens.enter, fill: 'backwards' }));
+    if (bar) state.runs.push(bar.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, delay: 120, fill: 'backwards' }));
+  }
+  function growClosed(page, state) {
+    state.runs.forEach(run => run.cancel());
+    state.runs = [];
+    // Drawn until it has gone; the style sheet hides a page without `on`.
+    page.classList.add('leaving');
+    const to = document.getElementById(page.dataset.duiFrom || '');
+    const body = page.querySelector('[data-dui-grow-body]');
+    let going, ms;
+    if (reduced() || !onScreen(to)) {
+      ms = reduced() ? tokens.reducedMs : 180;
+      going = page.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
+    } else {
+      ms = page.dataset.duiFromKind === 'bar' ? 320 : 340;
+      going = page.animate([{ clipPath: 'inset(0px 0px 0px 0px round 0px)' }, { clipPath: clipOf(to) }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
+      if (body && page.dataset.duiFromKind !== 'bar') state.runs.push(body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: tokens.standard, fill: 'forwards' }));
+    }
+    state.runs.push(going);
+    after(going, ms, () => {
+      if (page.classList.contains('on')) return;
+      page.classList.remove('leaving');
+      state.runs.forEach(run => run.cancel());
+      state.runs = [];
+    });
+  }
+  function watchGrow(page) {
+    if (grows.has(page)) return;
+    const state = { open: page.classList.contains('on'), runs: [] };
+    state.observer = new MutationObserver(() => {
+      const open = page.classList.contains('on');
+      if (open === state.open) return;
+      state.open = open;
+      if (open) growOpened(page, state); else growClosed(page, state);
+    });
+    state.observer.observe(page, { attributes: true, attributeFilter: ['class'] });
+    grows.set(page, state);
+  }
+  function forgetGrow(page) {
+    const state = grows.get(page);
+    if (!state) return;
+    state.observer.disconnect();
+    grows.delete(page);
+  }
+
+  // ---- Android's Back (section 8.2) ----------------------------------------
+  // The activity asks the page first. A panel or sheet that is open closes;
+  // otherwise the last element in the page with `data-dui-back` that is
+  // drawn is told, and closes whatever it is. With none, the page has
+  // nothing to close and says so: the activity then does what Back does.
+  function back() {
+    const top = openModals().pop();
+    if (top) { tell(top, 'dismiss'); return true; }
+    const takers = $$('[data-dui-back]').filter(element => element.dataset.duiId && shown(element) && !element.closest('[inert]'));
+    const taker = takers.pop();
+    if (!taker) return false;
+    hideTip();
+    tell(taker, 'back');
+    return true;
+  }
 
   // ---- Panels and sheets (sections 5.5, 6.9, 12) -------------------------
   const FOCUSABLE = 'button:not([disabled]),[href],input:not([disabled]),select,textarea,[tabindex]:not([tabindex="-1"])';
@@ -1274,7 +1521,7 @@
   }
 
   // ---- Finding what Rust renders -----------------------------------------
-  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],.dui-confirm';
+  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],[data-dui-grow],[data-dui-bars],.dui-confirm';
   function arrived(element) {
     if (element.matches('[data-dui-list]')) watchList(element);
     if (element.matches('[data-dui-modal]')) watchModal(element);
@@ -1283,6 +1530,8 @@
     if (element.matches('.dui-confirm')) confirmShown(element);
     if (element.matches('[data-dui-more]')) watchMore(element);
     if (element.matches('[data-dui-focus]')) watchWriting(element);
+    if (element.matches('[data-dui-grow]')) watchGrow(element);
+    if (element.matches('[data-dui-bars]')) tellBars();
   }
   function left(element, parent) {
     if (element.matches('[data-dui-list]')) forgetList(element);
@@ -1290,6 +1539,8 @@
     if (element.matches('[data-dui-scroll]')) forgetScroll(element);
     if (element.matches('[data-dui-more]')) forgetMore(element);
     if (element.matches('[data-dui-focus]')) forgetWriting(element);
+    if (element.matches('[data-dui-grow]')) forgetGrow(element);
+    if (element.matches('[data-dui-bars]')) setTimeout(tellBars, 0);
     if (element.matches('[data-dui-toast]') && !element.classList.contains('dui-toast-ghost')) {
       // The copy closes where the toast was: the toast's place, or the
       // error's above it.
@@ -1322,5 +1573,5 @@
     if (document.body) watchPage(); else document.addEventListener('DOMContentLoaded', watchPage);
   }
 
-  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, appendText, paste };
+  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, appendText, paste, back };
 })();
