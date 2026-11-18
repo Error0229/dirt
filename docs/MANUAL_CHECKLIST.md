@@ -131,6 +131,8 @@ somebody is using.
 | A39 | Turn "Remove animations" on in Android's accessibility settings while the app is open; come back to it; open a note and swipe a card | From the return, things fade instead of moving; the swiped card still follows the finger |
 | A40 | Back, in turn, with Settings open, a note open, the archived notes shown, Find down with the strip's offers, and nothing open | Each closes what is open, in that order. With nothing open the app goes behind the others, and comes back as it was |
 | A41 | TalkBack on: move through the list, open a note, archive one, sync | Each card is read by its title and its edit time; the bar's icons by their names; the toast is read; the sync icon is read when it changes |
+| A42 | Hold the store busy for longer than it waits (`run-as <package> sh -c '(echo "BEGIN EXCLUSIVE;"; sleep 45; echo "ROLLBACK;") \| sqlite3 <the store>'`, detached with `nohup … &`), then tap the bar and type | After about half a minute, "A note could not be saved" with **Copy text**, which stays until dismissed; an archive's toast meanwhile shows under it. **Copy text** puts the page's newest words on the clipboard. Once the store is free the next key makes the note with all of it |
+| A43 | Pull the list down, and while pulling put a second finger on the screen | The pull settles back; the list is not left half pulled |
 
 ## CLI
 

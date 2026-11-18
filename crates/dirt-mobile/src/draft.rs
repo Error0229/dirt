@@ -5,15 +5,15 @@
 //! The page's typing writes here and its leaving reads it, so that a page
 //! left and a page opened straight after never share one. Everything that
 //! can make the page's note (the first character typed, files chosen on a
-//! page with no note, the page left before its note was made) asks
+//! page with no note) asks
 //! [`Draft::claim_create`] or goes through [`Draft::typed`], so that one
 //! page makes one note.
 //!
 //! A write the store could not make is not tried again by itself: it is a
-//! failure of the disk, and the person is told (the screen's problem
-//! toast). A create that failed leaves the page as if its note had never
-//! been made, so that the next key, or leaving the page, makes it with
-//! everything typed by then.
+//! failure of the disk, and the person is told (design 6.7's error). A
+//! create that failed leaves the page as if its note had never been made,
+//! so that the next key makes it with everything typed by then. Leaving
+//! the page does not: a note is never made later from a failure.
 
 use std::sync::Arc;
 
@@ -116,8 +116,7 @@ impl Draft {
     }
 
     /// Asks to make the page's note from somewhere other than its typing:
-    /// files chosen on a page with no note, or a page left before its note
-    /// was made. True if it is the caller's to make: no note is made or
+    /// files chosen on a page with no note. True if it is the caller's to make: no note is made or
     /// being made, and the draft now says one is being made, so that a key
     /// typed meanwhile does not make another.
     pub const fn claim_create(&mut self) -> bool {
@@ -140,13 +139,6 @@ impl Draft {
     /// then.
     pub const fn create_failed(&mut self) {
         self.creating = false;
-    }
-
-    /// The text of a page whose note was never made, if there is any that
-    /// is not spaces alone: what leaving the page must make a note of.
-    pub fn unmade(&self) -> Option<String> {
-        (self.note.is_none() && !self.creating && !self.text.trim().is_empty())
-            .then(|| self.text.clone())
     }
 
     /// The page's note was read from the store as it opened, and holds
@@ -256,17 +248,12 @@ mod tests {
     }
 
     #[test]
-    fn a_page_left_before_its_note_was_made_says_what_to_make() {
+    fn a_page_left_takes_no_more_typing() {
         let mut draft = Draft::blank(None);
-        assert_eq!(draft.unmade(), None);
         assert_eq!(draft.typed("b"), Typed::Create("b".to_owned()));
-        assert_eq!(draft.unmade(), None, "it is being made");
-        draft.typed("bread");
         draft.create_failed();
         draft.leave();
-        assert_eq!(draft.unmade(), Some("bread".to_owned()));
-        assert_eq!(draft.typed("bread and"), Typed::Ignored);
-        assert!(draft.claim_create());
+        assert_eq!(draft.typed("bread"), Typed::Ignored);
     }
 
     #[test]

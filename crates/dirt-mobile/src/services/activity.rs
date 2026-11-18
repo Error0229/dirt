@@ -245,3 +245,9 @@ pub fn take_save_outcome(request: &str) -> Option<SaveOutcome> {
 pub fn animations_off() -> bool {
     ask("animationsOff", &[])
 }
+
+/// Puts `text` on Android's clipboard: **Copy text** on the error that
+/// says a note could not be saved. Returns `false` if it could not.
+pub fn copy_text(text: &str) -> bool {
+    ask("copyText", &[text])
+}

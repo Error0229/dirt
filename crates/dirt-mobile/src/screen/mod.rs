@@ -33,10 +33,7 @@ use dirt_core::models::{extract_tags, Note, NoteId};
 use dirt_core::store::{LetGo, NoteCounts, TagCount, TagRule};
 use dirt_core::sync::overview::SyncIndicator;
 use dirt_core::sync::worker::Trigger;
-use dirt_ui::components::{
-    card_element_id, use_toasts, GrowFrom, ListExit, Toast, Toasts, COPY_TEXT, NOTE_NOT_ARCHIVED,
-    NOTE_NOT_BROUGHT_BACK, NOTE_NOT_DELETED, NOTE_NOT_SAVED,
-};
+use dirt_ui::components::{card_element_id, use_toasts, GrowFrom, ListExit, Toast, Toasts};
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::find;
 use dirt_ui::time::Clock;
@@ -48,7 +45,7 @@ use crate::draft::{Draft, Typed};
 use crate::incoming::{
     attach_incoming, discard_all, not_copied_in, note_text, worth_a_note, Capture,
 };
-use crate::services::activity::take_capture;
+use crate::services::activity::{copy_text, take_capture};
 use crate::state::{AppState, View};
 use crate::views::attachments::{attach, choose_files as pick_files};
 use list::Main;
@@ -167,6 +164,9 @@ pub struct Screen {
     pub files_changed: Signal<u64>,
     last_undo: Signal<Option<Undo>>,
     serial: Signal<u64>,
+    /// The newest text of each page (by its number) whose write failed,
+    /// while the error says so: what **Copy text** gives.
+    unsaved: Signal<Vec<(u64, String)>>,
     /// What the cards show of their notes' files, read once for each change
     /// of a note.
     card_files: Signal<CardFilesCache>,
@@ -187,24 +187,62 @@ impl Screen {
         self.app.store.peek().clone()
     }
 
-    /// A write of a note's text failed. It is not tried again: the store
-    /// waits out a busy file itself, so a write that fails is the disk's.
-    /// The person is told why, and given the text it carried to copy.
-    fn not_saved(self, error: &dirt_core::Error, text: &str) {
+    /// A write of a note's text failed: the page numbered `page`, or a
+    /// share. It is not tried again: the store waits out a busy file inside
+    /// every write, so a write that still fails is the disk's. The person
+    /// is told plainly and given their words, as the desktop does (design
+    /// 6.7): an error that stays until it is dismissed, the store's reason
+    /// in its tooltip, and **Copy text**, which gives the newest text of
+    /// each page that could not be saved. Ordinary toasts neither replace
+    /// nor clear it.
+    fn not_saved(mut self, page: u64, error: &dirt_core::Error, text: &str) {
         tracing::error!("Could not save a note: {error}");
-        self.toasts.show(
-            Toast::problem(NOTE_NOT_SAVED)
+        {
+            let mut unsaved = self.unsaved.write();
+            // An error dismissed since: its notes were seen to.
+            if !self.toasts.error_showing() {
+                unsaved.clear();
+            }
+            match unsaved.iter_mut().find(|(held, _)| *held == page) {
+                Some(held) => text.clone_into(&mut held.1),
+                None => unsaved.push((page, text.to_owned())),
+            }
+        }
+        let count = self.unsaved.peek().len();
+        let words = if count == 1 {
+            "A note could not be saved".to_owned()
+        } else {
+            format!("{count} notes could not be saved")
+        };
+        let copy = Callback::new(move |()| {
+            let texts: Vec<String> = self
+                .unsaved
+                .peek()
+                .iter()
+                .map(|(_, text)| text.clone())
+                .collect();
+            if !copy_text(&texts.join("\n\n")) {
+                tracing::error!("Could not copy the text");
+            }
+        });
+        self.toasts.show_error(
+            Toast::new(words)
+                .icon(Icon::Alert)
                 .detail(dirt_core::util::as_sentence(error))
-                .copy(COPY_TEXT, text),
+                .action("Copy text", Icon::Copy, copy),
         );
     }
 
     /// Something other than a note's text could not be written: an
-    /// archive, a delete, or bringing a note back.
+    /// archive, a delete, or bringing a note back. Said as the error is,
+    /// with nothing to copy, since no words were lost.
     fn not_done(self, what: &str, error: &dirt_core::Error) {
         tracing::error!("{what}: {error}");
-        self.toasts
-            .show(Toast::problem(what).detail(dirt_core::util::as_sentence(error)));
+        self.toasts.show_error(
+            Toast::new(what)
+                .icon(Icon::Alert)
+                .detail(dirt_core::util::as_sentence(error)),
+        );
     }
 
     /// Waits until the pages being left have been saved, so that what is
@@ -317,6 +355,15 @@ impl Screen {
         }
         let draft = view.draft;
         let typed = draft.borrow_mut().typed(text);
+        // A page that could not be saved: Copy text gives its newest words.
+        if let Some(held) = self
+            .unsaved
+            .write()
+            .iter_mut()
+            .find(|(page, _)| *page == view.serial)
+        {
+            text.clone_into(&mut held.1);
+        }
         let version = match typed {
             Typed::Ignored => return,
             Typed::Save(version) => Some(version),
@@ -346,14 +393,14 @@ impl Screen {
             tokio::time::sleep(SAVE_AFTER).await;
             let current = Some(draft.borrow().version()) == version;
             if current {
-                self.save(&draft).await;
+                self.save(&draft, view.serial).await;
             }
         });
     }
 
     /// Makes the page's note of `text`, which the draft has said is this
-    /// caller's to make (its first character, files chosen, or the page
-    /// left before the note was made). Returns the note.
+    /// caller's to make (its first character, or files chosen on it).
+    /// Returns the note.
     ///
     /// If it cannot be made, the person is told, with the text to copy, and
     /// the page is as it was before its first character, so that the next
@@ -381,12 +428,12 @@ impl Screen {
                     self.app.current_note_id.set(Some(note.id));
                 }
                 self.app.note_changed();
-                self.save(&draft).await;
+                self.save(&draft, serial).await;
                 Some(note.id)
             }
             Err(error) => {
                 draft.borrow_mut().create_failed();
-                self.not_saved(&error, &text);
+                self.not_saved(serial, &error, &text);
                 None
             }
         }
@@ -395,7 +442,7 @@ impl Screen {
     /// Saves what was typed, if the store does not have it yet. One save is
     /// written at a time; one asked for meanwhile is written after it, with
     /// what was typed by then.
-    async fn save(self, draft: &DraftCell) {
+    async fn save(self, draft: &DraftCell, page: u64) {
         if !draft.borrow_mut().begin_save() {
             return;
         }
@@ -412,7 +459,7 @@ impl Screen {
                 Err(error) => {
                     // Not tried again; the next change, or leaving the
                     // page, writes what the page holds then.
-                    self.not_saved(&error, &text);
+                    self.not_saved(page, &error, &text);
                     break;
                 }
             }
@@ -439,15 +486,10 @@ impl Screen {
     async fn settle(self, draft: &DraftCell, serial: u64) -> Option<NoteId> {
         // A note still being made is waited for, so that it is not lost.
         wait_while(|| draft.borrow().is_creating()).await;
-        // A page whose note could not be made is made now, with all it
-        // holds: leaving is the page's last write.
-        let unmade = draft.borrow().unmade();
-        if let Some(text) = unmade {
-            if draft.borrow_mut().claim_create() {
-                self.create(Rc::clone(draft), serial, text).await?;
-            }
-        }
-        self.save(draft).await;
+        // A page whose note could not be made is not made now: a note is
+        // never made later from a failure (design 6.7), and the error's
+        // Copy text holds what the page held.
+        self.save(draft, serial).await;
         wait_while(|| draft.borrow().is_saving()).await;
         let (id, empty, store) = {
             let held = draft.borrow();
@@ -542,7 +584,7 @@ impl Screen {
         spawn(async move {
             let Some(store) = self.store() else { return };
             if let Err(error) = store.core().unarchive_note(&id).await {
-                self.not_done(NOTE_NOT_BROUGHT_BACK, &error);
+                self.not_done("The note could not be brought back", &error);
                 return;
             }
             if self.page.peek().note == Some(id) {
@@ -583,9 +625,9 @@ impl Screen {
             if let Err(error) = done {
                 self.not_done(
                     if delete {
-                        NOTE_NOT_DELETED
+                        "The note could not be deleted"
                     } else {
-                        NOTE_NOT_ARCHIVED
+                        "The note could not be archived"
                     },
                     &error,
                 );
@@ -629,7 +671,7 @@ impl Screen {
                 store.core().unarchive_note(&undo.note).await.map(|_| ())
             };
             if let Err(error) = done {
-                self.not_done(NOTE_NOT_BROUGHT_BACK, &error);
+                self.not_done("The note could not be brought back", &error);
                 return;
             }
             self.exit.set(ListExit::None);
@@ -904,7 +946,8 @@ impl Screen {
             }
             Err(error) => {
                 discard_all(&files);
-                self.not_saved(&error, text);
+                let share = self.next_serial();
+                self.not_saved(share, &error, text);
             }
         }
     }
@@ -1175,6 +1218,7 @@ pub fn MainScreen() -> Element {
         files_changed: Signal::new(0),
         last_undo: Signal::new(None),
         serial: Signal::new(0),
+        unsaved: Signal::new(Vec::new()),
         card_files: Signal::new(CardFilesCache::default()),
         receiving: Signal::new(false),
         clock,

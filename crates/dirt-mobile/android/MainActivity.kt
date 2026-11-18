@@ -3,11 +3,15 @@ package dev.dioxus.main
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.PersistableBundle
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.webkit.JavascriptInterface
@@ -231,6 +235,23 @@ class MainActivity : WryActivity() {
                 Settings.Global.ANIMATOR_DURATION_SCALE,
                 1f,
             ) == 0f
+        }
+
+        // Puts text on the clipboard: what a note that could not be saved
+        // held, for the person to keep. Android may show that it was
+        // copied; the text is marked sensitive, so that it is not shown.
+        @Keep
+        @JvmStatic
+        fun copyText(text: String): Boolean {
+            val activity = current.get() ?: return false
+            return runCatching {
+                val board = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("Dirt", text)
+                clip.description.extras = PersistableBundle().apply {
+                    putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                }
+                board.setPrimaryClip(clip)
+            }.isSuccess
         }
 
         // Opens the sign-in page in a custom tab: a browser tab laid over
