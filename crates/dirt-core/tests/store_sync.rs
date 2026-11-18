@@ -669,7 +669,8 @@ async fn the_notes_not_on_the_server_are_the_unsent_ones_that_are_not_deleted() 
     store.mark_note_pushed(&sent.id, 1, 5).await.unwrap();
     store.delete_note(&gone.id).await.unwrap();
 
-    let waiting = store.unsynced_note_ids().await.unwrap();
+    let every = vec![sent.id, draft.id, gone.id];
+    let waiting = store.unsynced_note_ids(every.clone()).await.unwrap();
     assert_eq!(waiting, std::iter::once(draft.id).collect());
 
     // An edit, and a change that is not an edit, each make a sent note
@@ -678,11 +679,23 @@ async fn the_notes_not_on_the_server_are_the_unsent_ones_that_are_not_deleted() 
         .update_note(&sent.id, "sent, then edited")
         .await
         .unwrap();
-    assert!(store.unsynced_note_ids().await.unwrap().contains(&sent.id));
+    assert!(store
+        .unsynced_note_ids(every.clone())
+        .await
+        .unwrap()
+        .contains(&sent.id));
     store.mark_note_pushed(&sent.id, 2, 6).await.unwrap();
-    assert!(!store.unsynced_note_ids().await.unwrap().contains(&sent.id));
+    assert!(!store
+        .unsynced_note_ids(every.clone())
+        .await
+        .unwrap()
+        .contains(&sent.id));
     store.archive_note(&sent.id).await.unwrap();
-    assert!(store.unsynced_note_ids().await.unwrap().contains(&sent.id));
+    assert!(store
+        .unsynced_note_ids(every.clone())
+        .await
+        .unwrap()
+        .contains(&sent.id));
 
     // A note held back by a sync problem is no longer offered to the
     // server, and has not reached it either.
@@ -696,5 +709,9 @@ async fn the_notes_not_on_the_server_are_the_unsent_ones_that_are_not_deleted() 
         .await
         .unwrap();
     assert_eq!(store.unsent_count().await.unwrap(), offered - 1);
-    assert!(store.unsynced_note_ids().await.unwrap().contains(&draft.id));
+    assert!(store
+        .unsynced_note_ids(every.clone())
+        .await
+        .unwrap()
+        .contains(&draft.id));
 }

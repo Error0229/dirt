@@ -710,7 +710,7 @@ fn Icons() -> Element {
             }
             span { class: "gal-icon", "data-tip": "Small, 15 px", IconSvg { icon: Icon::Feather, size: IconSize::Small } }
             span { class: "gal-icon", "data-tip": "Large, 22 px", IconSvg { icon: Icon::Feather, size: IconSize::Large } }
-            span { class: "gal-icon", "data-tip": "Not on the server yet", span { class: "gal-wait" } }
+            span { class: "gal-icon", "data-tip": dirt_core::sync::overview::NOT_ON_SERVER_YET, span { class: "gal-wait" } }
         }
     }
 }

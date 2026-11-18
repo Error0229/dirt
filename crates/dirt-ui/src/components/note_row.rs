@@ -9,6 +9,7 @@
 
 use dioxus::prelude::*;
 use dirt_core::models::{Note, NoteId};
+use dirt_core::sync::overview::NOT_ON_SERVER_YET;
 
 use crate::components::icon_button::{IconButton, IconButtonSize};
 use crate::icons::{Icon, IconSvg};
@@ -127,6 +128,13 @@ pub fn TagLinks(
     #[props(default = true)] in_tab_order: bool,
     on_tag: EventHandler<String>,
 ) -> Element {
+    // A tag written twice is one tag, and one button: each button's key is
+    // its tag, and keys must differ.
+    let mut seen = std::collections::HashSet::new();
+    let labels: Vec<String> = labels
+        .into_iter()
+        .filter(|label| seen.insert(label.to_lowercase()))
+        .collect();
     let more = labels.len().saturating_sub(TAGS_SHOWN);
     let rest = labels
         .iter()
@@ -243,8 +251,8 @@ pub fn NoteRow(
                     span {
                         class: "dui-wait",
                         role: "img",
-                        "aria-label": "Not on the server yet",
-                        "data-tip": "Not on the server yet",
+                        "aria-label": NOT_ON_SERVER_YET,
+                        "data-tip": NOT_ON_SERVER_YET,
                     }
                 }
                 if archived {

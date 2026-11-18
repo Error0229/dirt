@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use dioxus::prelude::*;
 use dirt_core::models::{extract_tags, Note, NoteId};
-use dirt_core::store::{NoteCounts, TagCount, TagRule};
+use dirt_core::store::{LetGo, NoteCounts, TagCount, TagRule};
 use dirt_core::sync::overview::SyncIndicator;
 use dirt_core::sync::worker::Trigger;
 use dirt_ui::components::{use_toasts, ContextMenu, ListExit, MenuItem, Toast, Toasts};
@@ -286,7 +286,8 @@ impl Screen {
     }
 
     /// Leaves the note on the page: saves it, and lets it go if it was
-    /// emptied again (6.1). Returns which note it was.
+    /// emptied again (6.1). Returns the note, unless there was none or it
+    /// was let go.
     async fn leave(self) -> Option<NoteId> {
         // A note still being made is waited for, so that it is not lost.
         for _ in 0..200 {
@@ -300,7 +301,11 @@ impl Screen {
         if self.draft.peek().text.trim().is_empty() {
             if let Some(store) = self.app.db_service.peek().clone() {
                 match store.let_go_if_empty(&id).await {
-                    Ok(_) => self.app.note_changed(),
+                    Ok(LetGo::Kept) => {}
+                    Ok(LetGo::Dropped | LetGo::Deleted | LetGo::Gone) => {
+                        self.app.note_changed();
+                        return None;
+                    }
                     Err(error) => tracing::error!("Could not let the empty note go: {error}"),
                 }
             }
@@ -492,8 +497,18 @@ impl Screen {
         let undo = Callback::new(move |()| self.undo(Some(serial)));
         let was_open = self.open_note() == Some(id);
         spawn(async move {
-            if was_open {
-                self.leave().await;
+            // A note emptied on the page is let go as it is left: there is
+            // nothing to archive or delete, and nothing to undo.
+            if was_open && self.leave().await.is_none() {
+                match after {
+                    After::Blank => self.blank(true),
+                    After::Show(None) => self.blank(false),
+                    After::Show(Some(next)) => {
+                        self.blank(false);
+                        self.open(next, false);
+                    }
+                }
+                return;
             }
             let Some(store) = self.app.db_service.peek().clone() else {
                 return;
@@ -899,7 +914,8 @@ fn use_listing(screen: &Screen, app: &AppState) {
                 }
             };
             let waiting = if signed_in {
-                store.unsynced_note_ids().await.unwrap_or_default()
+                let shown = notes.iter().map(|note| note.id).collect();
+                store.unsynced_note_ids(shown).await.unwrap_or_default()
             } else {
                 HashSet::new()
             };

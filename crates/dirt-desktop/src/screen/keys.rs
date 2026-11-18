@@ -62,12 +62,12 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
             }
             (Some("a"), _) if shift => screen.choose_files(),
             (Some("c"), _) if shift => screen.copy_note(),
-            // Outside the text: the text's own undo is the field's. A
-            // blank page has nothing of its own to undo, and is where the
-            // cursor is after a note is archived from it.
+            // Outside the text: the text's own undo is the field's, and
+            // Find's is always Find's. A blank page has nothing of its own
+            // to undo, and is where the cursor is after a note is archived
+            // from it.
             (Some("z"), _)
-                if !shift
-                    && (!matches!(at, Where::Page | Where::Find) || screen.page_is_blank()) =>
+                if !shift && at != Where::Find && (at != Where::Page || screen.page_is_blank()) =>
             {
                 screen.undo(None);
             }

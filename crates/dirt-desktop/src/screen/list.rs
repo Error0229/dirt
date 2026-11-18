@@ -181,6 +181,11 @@ fn list_key(screen: &Screen, event: &KeyboardEvent) {
             }
             true
         }
+        // "/" goes to Find, as everywhere outside the text.
+        Key::Character(ref typed) if typed == "/" && !modifiers.alt() && !modifiers.ctrl() => {
+            screen.focus_find();
+            true
+        }
         // Any letter goes to Find, and is typed there.
         Key::Character(ref typed)
             if !modifiers.alt()

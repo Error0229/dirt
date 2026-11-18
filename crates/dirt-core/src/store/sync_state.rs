@@ -180,24 +180,25 @@ pub(super) fn unsynced_count(connection: &Connection) -> Result<usize> {
     Ok(usize::try_from(count).unwrap_or_default())
 }
 
-/// The live notes holding changes the server has not accepted: never sent,
-/// or changed since they were, the notes held back by a sync problem among
-/// them. What a list marks as "not on the server yet". Deleted notes are
-/// left out: no list shows them.
-pub(super) fn unsynced_ids(connection: &Connection) -> Result<HashSet<NoteId>> {
-    let mut statement = connection.prepare(
-        "SELECT id FROM notes \
-          WHERE deleted = 0 AND (pushed_revision IS NULL OR pushed_revision <> revision)",
+/// Of the notes `among`, the live ones holding changes the server has not
+/// accepted: never sent, or changed since they were, the notes held back by
+/// a sync problem among them. What a list marks as "not on the server yet".
+/// Deleted notes are left out: no list shows them.
+///
+/// Only the notes asked about are looked up, each by its ID's index, so a
+/// list of a hundred rows costs a hundred lookups however large the store,
+/// or however much of it is unsent.
+pub(super) fn unsynced_ids(connection: &Connection, among: &[NoteId]) -> Result<HashSet<NoteId>> {
+    let mut statement = connection.prepare_cached(
+        "SELECT 1 FROM notes \
+          WHERE id = ?1 AND deleted = 0 \
+            AND (pushed_revision IS NULL OR pushed_revision <> revision)",
     )?;
-    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
     let mut ids = HashSet::new();
-    for row in rows {
-        let id = row?;
-        ids.insert(
-            id.parse().map_err(|_| {
-                Error::Database(format!("the store holds an invalid note ID: {id}"))
-            })?,
-        );
+    for id in among {
+        if statement.exists([id.as_str()])? {
+            ids.insert(*id);
+        }
     }
     Ok(ids)
 }

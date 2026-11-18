@@ -53,7 +53,7 @@ pub fn SyncStatus(
         SyncIndicator::Problem { .. } | SyncIndicator::SignedOut
     );
     let announced = if quiet {
-        "Synced".to_owned()
+        SyncIndicator::JustSynced.short()
     } else {
         words.clone()
     };
