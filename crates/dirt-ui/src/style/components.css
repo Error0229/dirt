@@ -103,7 +103,8 @@
 .dui-banner-title{font-size:13.5px;font-weight:550}
 .dui-banner-detail{font-size:12px;color:var(--text-3)}
 .dui-banner-icon{width:32px;height:32px;border-radius:9px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;flex:none}
-.android .dui-banner{top:calc(8px + env(safe-area-inset-top,0px));left:10px;right:10px;translate:none;max-width:none;border:0;border-radius:20px;box-shadow:var(--shadow-3),0 0 0 1px var(--border);padding:12px;transform:translateY(-150%)}
+/* An app keeps its top bar clear of the banner with --dui-banner-top. */
+.android .dui-banner{top:calc(var(--dui-banner-top,8px) + env(safe-area-inset-top,0px));left:10px;right:10px;translate:none;max-width:none;border:0;border-radius:20px;box-shadow:var(--shadow-3),0 0 0 1px var(--border);padding:12px;transform:translateY(-150%)}
 .android .dui-banner.on{transform:none}
 .android .dui-banner-words{flex:1}
 .android .dui-banner-title{font-weight:600}
@@ -423,7 +424,13 @@
 .dui-disclose>div{overflow:hidden}
 .dui-confirm-word{width:96px;height:28px;padding:0 8px;border-radius:7px;border:1px solid var(--border-control);background:var(--surface);font:500 12px var(--mono);text-transform:uppercase}
 .dui-confirm-word:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
-.android .dui-confirm{flex-wrap:wrap}
+/* On a phone the question has the row's width, and its two buttons go under it. */
+.android .dui-confirm{flex-wrap:wrap;justify-content:flex-end}
+.android .dui-confirm-ask{flex-basis:100%}
+.android .dui-confirm-word{flex:1}
+/* A row with more than one control: on a phone its words have the row's width, and the controls go under them. */
+.android .dui-set-stack .dui-set-words{flex-basis:100%}
+.android .dui-set-stack .dui-fill{margin-left:auto}
 .dui-spin{width:22px;height:22px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--accent);animation:dui-turn .9s linear infinite;flex:none}
 .dui-spin.sm{width:14px;height:14px}
 .dui-btn.primary .dui-spin{border-color:color-mix(in srgb,var(--on-accent) 40%,transparent);border-top-color:var(--on-accent)}

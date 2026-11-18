@@ -44,3 +44,5 @@
 .dm-text{display:block;width:100%;min-height:55vh;field-sizing:content;border:0;padding:6px 0;margin:0;resize:none;background:transparent;color:var(--text);font-size:calc(var(--note-size) + 1px);line-height:1.6;overflow-wrap:anywhere}
 .dm-text::placeholder{color:var(--text-3);opacity:1}
 .dm-page-body .dm-files{padding:8px 0 4px}
+/* The banner drops just under the top bar (52 px), so that the gear, Find and the sync status stay in reach while a device waits: Android's banner has no close (design 9.7). */
+:root{--dui-banner-top:58px}

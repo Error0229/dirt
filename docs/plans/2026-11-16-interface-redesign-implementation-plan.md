@@ -1759,6 +1759,17 @@ desktop against `dirt-trial`, with the CLI as the other devices; a note the
 server refuses, offline and a file an export cannot have were done against
 the local server (`docs/MANUAL_CHECKLIST.md`, Runs).
 
+**5b built.** Android's Settings is the same page in the shared sheet,
+with the banner; the old Settings and Devices screens, their styles and
+buttons, and the light theme they were drawn in are gone. Android's own
+parts are callbacks, as the desktop's are: signing in in a browser tab,
+the export as one zip file, the clipboard marked sensitive. Every row of
+the three sections was done on the emulator against `dirt-trial`, but for
+a note that cannot sync: a note too large to sync cannot be typed on the
+phone, since text past a few hundred kilobytes does not reach the app
+from the web view (seen on the desktop too). That is the main screen's,
+and is for step 10.
+
 ### Step 6: files
 
 The file tile, the preview from memory, dropping files to make a note,
@@ -1796,7 +1807,9 @@ for the owner's word.
 
 ### Step 10: finishing
 
-The pile widget. A pass over design section 12, item by item, on both
+The pile widget. Long text in the page: past a few hundred kilobytes it
+does not reach the app from the web view on either app, so the note is
+not made (found in step 5). A pass over design section 12, item by item, on both
 apps. `docs/MANUAL_CHECKLIST.md` rewritten for the new interface. What is
 left of the old interface and its dependencies removed. `README.md` and
 `CLAUDE.md` brought up to date.

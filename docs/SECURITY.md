@@ -274,6 +274,12 @@ clipboard manager that follows the convention there (nspasteboard.org's
 concealed type, `x-kde-passwordManagerHint`). A clipboard manager that
 ignores the convention keeps it. On the clipboard itself any program can
 read it until something else is copied, so the toast says to clear it.
+On Android, **Copy** marks the clip sensitive (`ClipDescription.EXTRA_IS_SENSITIVE`):
+from Android 13 the system's own "copied" preview does not show it, and a
+keyboard that honours the flag (Gboard does) hides it in its clipboard
+suggestion and history. Before Android 13 there is no such flag, and a
+keyboard may show and keep it. On every version an app in front may read
+the clipboard while it holds the phrase.
 
 Two values are derived from the phrase with HKDF, each bound to the account.
 One is a key under which the account key is encrypted; the server keeps that
