@@ -2,9 +2,12 @@
 //! pictures with their names, in a row, the same on both devices.
 //!
 //! The pictures pop in one after another. When **They match** is pressed
-//! they gather to the middle and the tick takes their place; the script
-//! plays that (`data-dui-gather`), and the answer reaches the exchange as
-//! it ends.
+//! the answer goes at once, naming the code that was on screen, and the
+//! pictures gather to the middle while it goes; the script plays that
+//! (`data-dui-gather`). The same code as digits is under the pictures, for
+//! a device whose Dirt is older and shows only digits.
+//!
+//! Both answers can be given once: after a press the buttons wait.
 
 use dioxus::prelude::*;
 use dirt_core::enrolment::ShortCode;
@@ -12,22 +15,30 @@ use dirt_core::enrolment::ShortCode;
 use super::rows::Btn;
 use crate::icons::{Icon, IconSize, IconSvg};
 
-/// How long the pictures take to gather before the tick is drawn.
-pub(super) const GATHER_MS: u64 = 400;
-
 /// The code, and the two answers to it.
 #[component]
 pub fn CodeComparison(
     code: ShortCode,
     /// "Does Work laptop show these?"
     question: String,
-    on_match: EventHandler<()>,
+    /// A line above the pictures, when there is something to say first:
+    /// the pictures changed since the last answer.
+    #[props(default)]
+    note: Option<String>,
+    /// An answer was given for this code: the buttons wait.
+    #[props(default)]
+    answered: bool,
+    /// "They match", with the code that was on screen when it was pressed.
+    on_match: EventHandler<ShortCode>,
     on_differ: EventHandler<()>,
 ) -> Element {
     let pictures = code.pictures();
     let read_out: Vec<&str> = pictures.iter().map(|picture| picture.name).collect();
     rsx! {
         div { class: "dui-pair",
+            if let Some(note) = note {
+                div { class: "dui-pair-note", role: "alert", "{note}" }
+            }
             div { class: "dui-pair-t", "{question}" }
             div { class: "dui-pair-s", "Same pictures, same order: then it's really yours." }
             div {
@@ -45,13 +56,26 @@ pub fn CodeComparison(
                     }
                 }
             }
+            div {
+                class: "dui-sas-digits",
+                "data-tip": "The same code, for a Dirt that shows digits",
+                "{code.digits()}"
+            }
             div { class: "dui-pair-a",
-                Btn { kind: "ghost", onclick: move |_| on_differ.call(()), "They don't" }
+                Btn {
+                    kind: "ghost",
+                    disabled: answered,
+                    onclick: move |_| on_differ.call(()),
+                    "They don't"
+                }
                 button {
                     r#type: "button",
                     class: "dui-btn primary",
                     "data-dui-gather": "",
-                    onclick: move |_| on_match.call(()),
+                    disabled: answered,
+                    // The code is the one drawn with this button, taken as
+                    // it is pressed.
+                    onclick: move |_| on_match.call(code),
                     IconSvg { icon: Icon::Check, size: IconSize::Small }
                     "They match"
                 }

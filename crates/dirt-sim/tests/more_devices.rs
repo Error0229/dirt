@@ -74,8 +74,11 @@ async fn approved_device(server: &Server, laptop: &Client, name: &str) -> Client
     let device = waiting_device(server, name).await;
     let (mut approval, mut join, on_laptop, on_device) = until_codes(laptop, &device).await;
     assert_eq!(on_laptop, on_device);
-    approval.confirm().await.unwrap();
-    assert_eq!(join.confirm().await.unwrap(), ExchangeStep::Done);
+    approval.confirm(approval.code().unwrap()).await.unwrap();
+    assert_eq!(
+        join.confirm(join.code().unwrap()).await.unwrap(),
+        ExchangeStep::Done
+    );
     device
 }
 
@@ -132,7 +135,10 @@ async fn a_second_device_is_approved_by_comparing_a_code_and_reads_the_notes(poo
 
     // The laptop's person confirms first: the key is left, and the phone
     // is still waiting until it has fetched it.
-    assert_eq!(approval.confirm().await.unwrap(), ExchangeStep::Finishing);
+    assert_eq!(
+        approval.confirm(approval.code().unwrap()).await.unwrap(),
+        ExchangeStep::Finishing
+    );
     assert_eq!(server.device_status(device_id(&phone)).await, "pending");
     // The server holds the key only in a form it cannot open.
     let (wrapped,): (Vec<u8>,) = sqlx::query_as("SELECT wrapped FROM enrolment_keys")
@@ -144,7 +150,10 @@ async fn a_second_device_is_approved_by_comparing_a_code_and_reads_the_notes(poo
         .windows(32)
         .any(|window| window == account_key.as_bytes()));
 
-    assert_eq!(join.confirm().await.unwrap(), ExchangeStep::Done);
+    assert_eq!(
+        join.confirm(join.code().unwrap()).await.unwrap(),
+        ExchangeStep::Done
+    );
 
     assert!(phone.session.state().is_ready());
     assert_eq!(phone.account_key().as_bytes(), account_key.as_bytes());
@@ -176,9 +185,15 @@ async fn the_new_device_may_confirm_first(pool: PgPool) {
     let (mut approval, mut join, _, _) = until_codes(&laptop, &phone).await;
 
     // No key has been left yet, so the phone waits.
-    assert_eq!(join.confirm().await.unwrap(), ExchangeStep::Finishing);
+    assert_eq!(
+        join.confirm(join.code().unwrap()).await.unwrap(),
+        ExchangeStep::Finishing
+    );
     assert!(!phone.session.state().is_ready());
-    assert_eq!(approval.confirm().await.unwrap(), ExchangeStep::Finishing);
+    assert_eq!(
+        approval.confirm(approval.code().unwrap()).await.unwrap(),
+        ExchangeStep::Finishing
+    );
     assert_eq!(join.poll().await.unwrap(), ExchangeStep::Done);
     assert_eq!(approval.poll().await.unwrap(), ExchangeStep::Done);
     assert!(phone.session.state().is_ready());
@@ -249,8 +264,8 @@ async fn a_key_left_by_a_server_in_the_middle_is_not_accepted(pool: PgPool) {
     // Suppose both people press "they match" without looking. The laptop
     // seals the key for the device it really talked to. The phone, which
     // talked to the server, cannot open it and accepts nothing.
-    approval.confirm().await.unwrap();
-    let error = join.confirm().await.unwrap_err();
+    approval.confirm(approval.code().unwrap()).await.unwrap();
+    let error = join.confirm(join.code().unwrap()).await.unwrap_err();
     assert!(
         matches!(error, SessionError::Enrolment(EnrolmentError::KeyRejected)),
         "{error}"
@@ -307,7 +322,7 @@ async fn a_device_that_stops_before_it_has_the_key_can_begin_again(pool: PgPool)
     let laptop = laptop_with_a_note(&server).await;
     let phone = waiting_device(&server, "Phone").await;
     let (mut approval, join, _, _) = until_codes(&laptop, &phone).await;
-    approval.confirm().await.unwrap();
+    approval.confirm(approval.code().unwrap()).await.unwrap();
 
     // The key is left, and the phone's app stops before fetching it. The
     // secret it needed to open the key is gone with it.
@@ -322,8 +337,58 @@ async fn a_device_that_stops_before_it_has_the_key_can_begin_again(pool: PgPool)
     // It begins again, with a new code, and this time finishes.
     let (mut approval, mut join, on_laptop, on_phone) = until_codes(&laptop, &phone).await;
     assert_eq!(on_laptop, on_phone);
-    approval.confirm().await.unwrap();
-    assert_eq!(join.confirm().await.unwrap(), ExchangeStep::Done);
+    approval.confirm(approval.code().unwrap()).await.unwrap();
+    assert_eq!(
+        join.confirm(join.code().unwrap()).await.unwrap(),
+        ExchangeStep::Done
+    );
+    phone.session.sync_now().await.unwrap();
+    assert_eq!(phone.notes().await, laptop.notes().await);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn they_match_said_of_a_code_that_has_gone_is_refused_and_seals_nothing(pool: PgPool) {
+    let server = Server::with_sign_in(pool).await;
+    let laptop = laptop_with_a_note(&server).await;
+    let phone = waiting_device(&server, "Phone").await;
+    let (mut approval, join, shown, _) = until_codes(&laptop, &phone).await;
+
+    // While the person looks at the code, the new device begins again: or
+    // a server in the middle starts an exchange of its own in its name,
+    // timed for that moment. The laptop's next look takes the new
+    // commitment.
+    drop(join);
+    let mut join = phone.session.begin_join().await.unwrap();
+    assert_eq!(approval.poll().await.unwrap(), ExchangeStep::Waiting);
+
+    // "They match", said of the code that was on screen, is refused before
+    // the new code is there ...
+    assert!(matches!(
+        approval.confirm(shown).await,
+        Err(SessionError::CodeChanged)
+    ));
+    // ... and once it is.
+    let ExchangeStep::Compare { code: on_phone } = join.poll().await.unwrap() else {
+        panic!("the phone should show its new code");
+    };
+    let ExchangeStep::Compare { code: on_laptop } = approval.poll().await.unwrap() else {
+        panic!("the laptop should show the new code");
+    };
+    assert_ne!(on_laptop, shown);
+    assert!(matches!(
+        approval.confirm(shown).await,
+        Err(SessionError::CodeChanged)
+    ));
+    // Nothing was sealed for a code the person never saw.
+    assert_eq!(enrolment_rows(&server).await.1, 0);
+    assert_eq!(server.device_status(device_id(&phone)).await, "pending");
+
+    // The new code, compared, lets the phone in; saying it twice is one
+    // answer.
+    assert_eq!(on_laptop, on_phone);
+    approval.confirm(on_laptop).await.unwrap();
+    approval.confirm(on_laptop).await.unwrap();
+    assert_eq!(join.confirm(on_phone).await.unwrap(), ExchangeStep::Done);
     phone.session.sync_now().await.unwrap();
     assert_eq!(phone.notes().await, laptop.notes().await);
 }
@@ -382,8 +447,11 @@ async fn when_two_devices_answer_only_the_first_goes_on(pool: PgPool) {
     );
     assert_eq!(server.device_status(device_id(&phone)).await, "pending");
 
-    on_laptop.confirm().await.unwrap();
-    assert_eq!(join.confirm().await.unwrap(), ExchangeStep::Done);
+    on_laptop.confirm(on_laptop.code().unwrap()).await.unwrap();
+    assert_eq!(
+        join.confirm(join.code().unwrap()).await.unwrap(),
+        ExchangeStep::Done
+    );
 }
 
 // ---- The recovery phrase ----
@@ -724,8 +792,11 @@ async fn an_exchange_survives_a_request_whose_answer_is_lost(pool: PgPool) {
         "sending twice changed nothing"
     );
 
-    approval.confirm().await.unwrap();
-    assert_eq!(join.confirm().await.unwrap(), ExchangeStep::Done);
+    approval.confirm(approval.code().unwrap()).await.unwrap();
+    assert_eq!(
+        join.confirm(join.code().unwrap()).await.unwrap(),
+        ExchangeStep::Done
+    );
     assert_eq!(approval.poll().await.unwrap(), ExchangeStep::Done);
 }
 
@@ -738,7 +809,10 @@ async fn the_new_device_can_still_call_it_off_after_the_key_was_left(pool: PgPoo
 
     // The laptop's person confirms. Then the phone's person looks properly
     // and says the codes differ.
-    assert_eq!(approval.confirm().await.unwrap(), ExchangeStep::Finishing);
+    assert_eq!(
+        approval.confirm(approval.code().unwrap()).await.unwrap(),
+        ExchangeStep::Finishing
+    );
     join.reject(CancelReason::Mismatch).await.unwrap();
 
     assert_eq!(
@@ -1014,8 +1088,8 @@ mod on_screen {
         .await;
         assert_eq!(code_on(&approving), code_on(&joining));
 
-        approving.answer(Answer::Match);
-        joining.answer(Answer::Match);
+        approving.answer(Answer::Match(code_on(&approving).unwrap()));
+        joining.answer(Answer::Match(code_on(&joining).unwrap()));
 
         eventually("both screens say done", || async {
             approving.view() == ExchangeView::Step(ExchangeStep::Done)
@@ -1023,6 +1097,46 @@ mod on_screen {
         })
         .await;
         assert!(phone.session.state().is_ready());
+    }
+
+    #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+    async fn a_screen_answering_a_code_that_has_gone_is_shown_the_new_one(pool: PgPool) {
+        let server = Server::with_sign_in(pool).await;
+        let laptop = laptop_with_a_note(&server).await;
+        let phone = waiting_device(&server, "Phone").await;
+        let (approving, joining) = both_screens(&laptop, &phone, quick()).await;
+        eventually("both screens show a code", || async {
+            code_on(&approving).is_some() && code_on(&joining).is_some()
+        })
+        .await;
+        let shown = code_on(&approving).unwrap();
+
+        // The phone begins again before the person on the laptop answers.
+        drop(joining);
+        let joining = Exchange::join(phone.session.begin_join().await.unwrap(), quick());
+        eventually("the phone shows a new code", || async {
+            code_on(&joining).is_some_and(|code| code != shown)
+        })
+        .await;
+        approving.answer(Answer::Match(shown));
+
+        // The laptop says the pictures changed, shows the new ones, and has
+        // sent nothing.
+        let new = code_on(&joining).unwrap();
+        eventually("the laptop says the code changed", || async {
+            approving.view() == ExchangeView::CodeChanged { code: new }
+        })
+        .await;
+        assert_eq!(enrolment_rows(&server).await.1, 0);
+
+        // Answered for the new code, it finishes.
+        approving.answer(Answer::Match(new));
+        joining.answer(Answer::Match(new));
+        eventually("both screens say done", || async {
+            approving.view() == ExchangeView::Step(ExchangeStep::Done)
+                && joining.view() == ExchangeView::Step(ExchangeStep::Done)
+        })
+        .await;
     }
 
     #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
@@ -1119,8 +1233,8 @@ mod on_screen {
         // The person presses "They match" on the laptop just as its network
         // drops. The key cannot be left with the server.
         laptop.transport.set_offline(true);
-        approving.answer(Answer::Match);
-        joining.answer(Answer::Match);
+        approving.answer(Answer::Match(code_on(&approving).unwrap()));
+        joining.answer(Answer::Match(code_on(&joining).unwrap()));
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(!phone.session.state().is_ready());
 

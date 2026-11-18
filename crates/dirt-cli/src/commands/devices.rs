@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use dirt_core::api::{DeviceInfo, DeviceStatus};
 use dirt_core::enrolment::{CancelReason, ShortCode};
-use dirt_core::session::{ExchangeStep, Session};
+use dirt_core::session::{ExchangeStep, Session, SessionError};
 use dirt_core::util::as_sentence;
 
 use crate::cli::DeviceCommands;
@@ -171,7 +171,16 @@ async fn approve(session: &Session, prefix: Option<&str>) -> Result<(), CliError
                 println!("Code: {code}");
                 if ask("Does the other device show the same pictures, or the same digits? [y/N] ")?
                 {
-                    approval.confirm().await.map_err(failed)?;
+                    match approval.confirm(code).await {
+                        // The other device began again while the person
+                        // looked: nothing was sent, and the new code is
+                        // shown at the next look.
+                        Err(SessionError::CodeChanged) => {
+                            println!("The other device began again. Nothing was sent.");
+                            continue;
+                        }
+                        other => other.map_err(failed)?,
+                    };
                     println!("Waiting for the other device to confirm too.");
                 } else {
                     approval.reject(CancelReason::Mismatch).await;
@@ -226,7 +235,16 @@ pub async fn join(session: &Session) -> Result<(), CliError> {
                 println!("Code: {code}");
                 if ask("Does the other device show the same pictures, or the same digits? [y/N] ")?
                 {
-                    join.confirm().await.map_err(failed)?;
+                    match join.confirm(code).await {
+                        // The other device began again while the person
+                        // looked: nothing was sent, and the new code is
+                        // shown at the next look.
+                        Err(SessionError::CodeChanged) => {
+                            println!("The other device began again. Nothing was sent.");
+                            continue;
+                        }
+                        other => other.map_err(failed)?,
+                    };
                     println!("Waiting for the other device to confirm too.");
                 } else {
                     join.reject(CancelReason::Mismatch).await.map_err(failed)?;

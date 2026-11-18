@@ -138,6 +138,11 @@ pub enum SessionError {
     /// prepared for them.
     #[error("the account's devices kept changing; try again")]
     DevicesKeptChanging,
+    /// "They match" was said of a code that is no longer the one the two
+    /// devices compare: the other device began again in the meantime.
+    /// Nothing was sent; the new code has to be compared.
+    #[error("the other device began again, so the code changed; compare the new one")]
+    CodeChanged,
 }
 
 /// Why the device was not signed out.

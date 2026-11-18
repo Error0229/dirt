@@ -134,7 +134,7 @@ async fn what_an_approval_stores(pool: PgPool) {
     approval.poll().await.unwrap();
     join.poll().await.unwrap();
     approval.poll().await.unwrap();
-    approval.confirm().await.unwrap();
+    approval.confirm(approval.code().unwrap()).await.unwrap();
     let (messages, longest): (i64, i32) =
         sqlx::query_as("SELECT count(*), COALESCE(max(length(body)), 0) FROM enrolment_messages")
             .fetch_one(&pool)
@@ -144,7 +144,10 @@ async fn what_an_approval_stores(pool: PgPool) {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(join.confirm().await.unwrap(), ExchangeStep::Done);
+    assert_eq!(
+        join.confirm(join.code().unwrap()).await.unwrap(),
+        ExchangeStep::Done
+    );
     println!(
         "\nan approval exchange: {messages} messages on the server at its end, the longest {longest} bytes \
          (allowed: {} of {} bytes)",

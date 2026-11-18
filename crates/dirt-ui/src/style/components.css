@@ -453,3 +453,5 @@
 .dui-words b{color:var(--text-3);font-weight:500;margin-right:4px}
 .dui-phrase-in{width:100%;max-width:420px;min-height:84px;padding:8px 10px;border-radius:var(--r-m);border:1px solid var(--border-control);background:var(--surface);font:500 12.5px/1.6 var(--mono);resize:vertical}
 .dui-phrase-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.dui-sas-digits{font:500 11.5px var(--mono);color:var(--text-3);letter-spacing:.06em;margin-top:-2px}
+.dui-pair-note{font-size:12.5px;color:var(--warning);font-weight:550;max-width:360px}

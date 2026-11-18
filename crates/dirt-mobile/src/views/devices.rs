@@ -68,7 +68,7 @@ fn closing_words(view: &ExchangeView, joining: bool) -> Option<(bool, String)> {
             true,
             "The other device did not answer. Nothing was changed; try again.".to_owned(),
         ),
-        ExchangeView::Step(_) => return None,
+        ExchangeView::Step(_) | ExchangeView::CodeChanged { .. } => return None,
     };
     Some(words)
 }
@@ -201,11 +201,19 @@ fn ExchangePanel(
     };
 
     match view() {
-        Some(ExchangeView::Step(ExchangeStep::Compare { code })) => rsx! {
-            p { style: "{TEXT}", "Both devices should show this code:" }
+        Some(
+            ExchangeView::Step(ExchangeStep::Compare { code }) | ExchangeView::CodeChanged { code },
+        ) => rsx! {
+            p { style: "{TEXT}", "Both devices should show these pictures, or these digits:" }
             p {
-                style: "margin: 0; font-size: 30px; font-weight: 700; letter-spacing: 2px; font-family: monospace; text-align: center;",
-                "{code}"
+                style: "margin: 0; font-size: 18px; line-height: 1.6; text-align: center;",
+                for picture in code.pictures() {
+                    span { style: "display: inline-block; margin: 0 6px;", "{picture.emoji} {picture.name}" }
+                }
+            }
+            p {
+                style: "margin: 0; font-size: 18px; letter-spacing: 2px; font-family: monospace; text-align: center;",
+                "{code.digits()}"
             }
             p { style: "{TEXT}",
                 "Compare it with the other device. If they differ, someone may be between the two."
@@ -214,7 +222,7 @@ fn ExchangePanel(
                 r#type: "button",
                 block: true,
                 variant: ButtonVariant::Primary,
-                onclick: move |_| answer(Answer::Match),
+                onclick: move |_| answer(Answer::Match(code)),
                 "They match"
             }
             UiButton {

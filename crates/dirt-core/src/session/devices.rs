@@ -83,6 +83,30 @@ fn cancel(exchange: &str, reason: CancelReason) -> Vec<u8> {
     .encode()
 }
 
+/// What becomes of "they match", said of `given`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Said {
+    /// It is the code on screen now: go ahead.
+    Now,
+    /// It was said of this code already, and acted on.
+    Again,
+    /// It is not the code the devices compare now. Nothing may be sent for
+    /// it: the person compared a code that is gone.
+    Stale,
+}
+
+/// Whether "they match", said of `given`, may be acted on, when the code
+/// compared now is `showing` and the last one confirmed `confirmed`.
+fn said(showing: Option<ShortCode>, confirmed: Option<ShortCode>, given: ShortCode) -> Said {
+    if confirmed == Some(given) {
+        Said::Again
+    } else if showing == Some(given) {
+        Said::Now
+    } else {
+        Said::Stale
+    }
+}
+
 // ---- The new device's side ----
 
 enum JoinPhase {
@@ -110,6 +134,8 @@ pub struct Join {
     /// tried again on every poll, so a request that fails does not leave
     /// the exchange stuck.
     unsent_reveal: Option<Vec<u8>>,
+    /// The code the person said matched, once they have.
+    confirmed: Option<ShortCode>,
     phase: JoinPhase,
 }
 
@@ -227,13 +253,29 @@ impl Join {
         }
     }
 
-    /// The person says the two codes are the same.
-    pub async fn confirm(&mut self) -> Result<ExchangeStep, SessionError> {
-        if let JoinPhase::Comparing(_) = self.phase {
-            if let JoinPhase::Comparing(agreed) =
-                std::mem::replace(&mut self.phase, JoinPhase::Moving)
-            {
-                self.phase = JoinPhase::AwaitingAccountKey(agreed);
+    /// The code the two devices compare now, if there is one.
+    #[must_use]
+    pub fn code(&self) -> Option<ShortCode> {
+        match &self.phase {
+            JoinPhase::Comparing(agreed) => Some(agreed.code()),
+            _ => None,
+        }
+    }
+
+    /// The person says the two codes are the same: `code`, the one they
+    /// were shown. Refused with [`SessionError::CodeChanged`] if that is
+    /// no longer the code compared.
+    pub async fn confirm(&mut self, code: ShortCode) -> Result<ExchangeStep, SessionError> {
+        match said(self.code(), self.confirmed, code) {
+            Said::Stale => return Err(SessionError::CodeChanged),
+            Said::Again => {}
+            Said::Now => {
+                if let JoinPhase::Comparing(agreed) =
+                    std::mem::replace(&mut self.phase, JoinPhase::Moving)
+                {
+                    self.phase = JoinPhase::AwaitingAccountKey(agreed);
+                    self.confirmed = Some(code);
+                }
             }
         }
         self.poll().await
@@ -329,6 +371,8 @@ pub struct Approval {
     /// This device's answer, until the server has taken it. Sending it is
     /// tried again on every poll.
     unsent_key: Option<Vec<u8>>,
+    /// The code the person said matched, once they have.
+    confirmed: Option<ShortCode>,
     phase: ApprovalPhase,
 }
 
@@ -526,9 +570,27 @@ impl Approval {
         })
     }
 
-    /// The person says the two codes are the same. The account key is
-    /// encrypted for the new device and left with the server.
-    pub async fn confirm(&mut self) -> Result<ExchangeStep, SessionError> {
+    /// The code the two devices compare now, if there is one.
+    #[must_use]
+    pub fn code(&self) -> Option<ShortCode> {
+        match &self.phase {
+            ApprovalPhase::Comparing(agreed) => Some(agreed.code()),
+            _ => None,
+        }
+    }
+
+    /// The person says the two codes are the same: `code`, the one they
+    /// were shown. The account key is encrypted for the new device and
+    /// left with the server. Refused with [`SessionError::CodeChanged`],
+    /// and nothing sent, if that is no longer the code compared: the new
+    /// device may have begun again, or a server in the middle may have
+    /// begun it again, between the code shown and the answer.
+    pub async fn confirm(&mut self, code: ShortCode) -> Result<ExchangeStep, SessionError> {
+        match said(self.code(), self.confirmed, code) {
+            Said::Stale => return Err(SessionError::CodeChanged),
+            Said::Again => return self.poll().await,
+            Said::Now => {}
+        }
         let ApprovalPhase::Comparing(agreed) = &self.phase else {
             return self.poll().await;
         };
@@ -544,6 +606,7 @@ impl Approval {
             wrapped: agreed.seal_key(keys.current()),
         };
         self.api.put_enrolment_key(self.target.id, &wrapped).await?;
+        self.confirmed = Some(code);
         self.phase = ApprovalPhase::AwaitingCompletion;
         self.check_completion().await
     }
@@ -656,6 +719,7 @@ impl Session {
             exchange: joining.exchange().to_owned(),
             cursor: posted.seq,
             unsent_reveal: None,
+            confirmed: None,
             phase: JoinPhase::AwaitingKey(joining),
         })
     }
@@ -682,6 +746,7 @@ impl Session {
             exchange: None,
             cursor: 0,
             unsent_key: None,
+            confirmed: None,
             phase: ApprovalPhase::AwaitingCommit,
         })
     }
@@ -863,5 +928,33 @@ impl Session {
         drop(account_store);
         self.forget_account(&secrets)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn code(first: u8) -> ShortCode {
+        ShortCode::new(
+            [first, 1, 2, 3, 4, 5, 6],
+            (1000 + u16::from(first), 2000, 3000),
+        )
+    }
+
+    #[test]
+    fn they_match_is_acted_on_only_for_the_code_compared_now() {
+        let (a, b) = (code(10), code(20));
+        // The code on screen: go ahead.
+        assert_eq!(said(Some(a), None, a), Said::Now);
+        // The other device began again: what was said of the old code
+        // sends nothing, while the new one is compared and before it is.
+        assert_eq!(said(Some(b), None, a), Said::Stale);
+        assert_eq!(said(None, None, a), Said::Stale);
+        // A second press, or a request tried again: nothing new.
+        assert_eq!(said(None, Some(a), a), Said::Again);
+        // Confirmed once, then begun again: the old answer is not the new.
+        assert_eq!(said(Some(b), Some(a), a), Said::Again);
+        assert_eq!(said(Some(b), Some(a), b), Said::Now);
     }
 }

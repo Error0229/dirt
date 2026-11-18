@@ -13,11 +13,11 @@ use std::time::{Duration, Instant};
 
 use dioxus::prelude::*;
 use dirt_core::api::{DeviceInfo, DeviceStatus};
-use dirt_core::enrolment::CancelReason;
+use dirt_core::enrolment::{CancelReason, ShortCode};
 use dirt_core::session::{Answer, Exchange, ExchangeStep, ExchangeView, Pace, SessionState};
 use dirt_core::util::as_sentence;
 
-use super::code::{CodeComparison, Outcome, GATHER_MS};
+use super::code::{CodeComparison, Outcome};
 use super::rows::{Btn, Card, Note, Row, RowIcon, Spinner};
 use super::{facts, settings_nav, Linked};
 use crate::components::{use_toasts, ConfirmInPlace, IconButton, IconButtonSize, Toast};
@@ -32,6 +32,11 @@ const LOOK_FOR: Duration = Duration::from_secs(300);
 
 /// How long the drawn tick stays before the list takes its place.
 const TICK_STAYS: Duration = Duration::from_millis(1700);
+
+/// What the person is told when "they match" came for a code that had
+/// gone: the other device began again, and nothing was sent.
+const CODE_CHANGED: &str =
+    "The pictures changed: the other device began again, and nothing was      sent. Compare these.";
 
 /// What the person is told when the pictures differed (SECURITY.md,
 /// "Approving a device").
@@ -130,7 +135,14 @@ fn Pairing(
             }
         }
     });
-    let answer = move |answer: Answer| {
+    // The code an answer has been given for. A second press of either
+    // button sends nothing more; a new code can be answered.
+    let mut answered = use_signal(|| None::<ShortCode>);
+    let mut answer = move |code: ShortCode, answer: Answer| {
+        if *answered.peek() == Some(code) {
+            return;
+        }
+        answered.set(Some(code));
         if let Some(current) = exchange.peek().as_ref() {
             current.answer(answer);
         }
@@ -139,21 +151,20 @@ fn Pairing(
         .clone()
         .unwrap_or_else(|| "your other device".to_owned());
     match view() {
-        Some(ExchangeView::Step(ExchangeStep::Compare { code })) => rsx! {
+        Some(
+            ExchangeView::Step(ExchangeStep::Compare { code }) | ExchangeView::CodeChanged { code },
+        ) => rsx! {
             CodeComparison {
                 code,
                 question: other.as_ref().map_or_else(
                     || "Does your other device show these?".to_owned(),
                     |other| format!("Does {other} show these?"),
                 ),
-                on_match: move |()| {
-                    // The pictures gather first (the script plays it).
-                    spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(GATHER_MS)).await;
-                        answer(Answer::Match);
-                    });
-                },
-                on_differ: move |()| answer(Answer::Mismatch),
+                note: matches!(view(), Some(ExchangeView::CodeChanged { .. }))
+                    .then(|| CODE_CHANGED.to_owned()),
+                answered: answered() == Some(code),
+                on_match: move |shown: ShortCode| answer(shown, Answer::Match(shown)),
+                on_differ: move |()| answer(code, Answer::Mismatch),
             }
         },
         Some(ExchangeView::Step(ExchangeStep::Finishing)) => rsx! {
@@ -258,7 +269,7 @@ fn JoinHere(linked: Linked, joining: Signal<bool>) -> Element {
                 "No device answered".to_owned(),
                 "Nothing was changed.".to_owned(),
             ))),
-            ExchangeView::Step(_) => {}
+            ExchangeView::Step(_) | ExchangeView::CodeChanged { .. } => {}
         }
     };
 
@@ -376,7 +387,7 @@ impl Ending {
                 "No answer".to_owned(),
                 "Nothing was changed. Start again from the new device.".to_owned(),
             ),
-            ExchangeView::Step(_) => return None,
+            ExchangeView::Step(_) | ExchangeView::CodeChanged { .. } => return None,
         };
         Some(Self {
             good,
