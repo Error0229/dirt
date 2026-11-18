@@ -946,7 +946,9 @@ Dirt on the one already in shows the banner.
 ### 6.9 Panel (desktop Settings) and sheet (Android Settings)
 
 One scrolling page in six sections: Account, Devices, Sync, Appearance,
-Voice (6.18), Export. On the desktop a rail on the left jumps to each section and follows
+Voice (6.18), Export. Voice comes with voice itself (the plan's step 9);
+until then the page has the other five, since a section with nothing in it
+would be a heading over nothing. On the desktop a rail on the left jumps to each section and follows
 the scroll. On Android it is a sheet with a grabber. Each section is a card
 of rows: an icon square, a title, one line of grey detail, and at most one
 control on the right.
@@ -1490,7 +1492,7 @@ What 7.6, 7.7 and 6.4's second half left open, settled in step 3b.
 | Close | ✕ hides the window to the tray, as the system's close did, with the tooltip "Close to tray" and <kbd>Alt F4</kbd> |
 | Linux and macOS | Keep the system's title bar for now: the window without one has not been tried there (the plan's fallback; manual checklist D44). The Linux handles and the macOS traffic lights of 7.6 come when they can be tried |
 | Snap Layouts | Built without the flyout, the default of the owner's decision (section 11). Snapping by dragging to an edge, and <kbd>Win Z</kbd>, are the system's and still work |
-| The style | Settings → Appearance → Focus while writing, kept on the device as `focus_style`. Settings is the old panel until step 5 |
+| The style | Settings → Appearance → Focus while writing, kept on the device as `focus_style` |
 | Find beside the window's controls | Narrower than 720 px the list reaches the top right corner, where the window's controls are, so Find stops short of them there |
 
 ---
@@ -1713,7 +1715,8 @@ account" is checked by default. Back in the app, sync starts on its own.
 
 ### 9.2 Letting a new device in
 
-1. The new device signs in. It shows seven emoji and waits.
+1. The new device signs in. It waits, and shows the seven pictures once a
+   device already in answers.
 2. Every device already in shows the banner "Work laptop wants to join".
 3. **Review** opens Settings at Devices with the same seven emoji.
 4. **They match**. The tick draws itself; the device appears in the list.
@@ -1749,7 +1752,44 @@ returns and the app is next used, sync runs and the dots disappear.
 
 Settings → Export: choose JSON or Markdown, **Export**, choose where. The
 button fills as it works; a toast says how many notes went where. Files that
-couldn't be had are listed in the toast's place as a short list with reasons.
+couldn't be had are listed under the button, as a short list with reasons,
+since a toast is too small and too short-lived for them (9.7).
+
+### 9.7 Settled when Settings was built
+
+What 6.8 to 6.13 and 9.1 to 9.6 left open, settled when Settings was built
+(implementation plan, step 5). The page, its sections, its rows and the
+banner are `dirt_ui::settings`, the same for both apps; the desktop puts the
+page in its panel beside the rail, Android in its sheet.
+
+| | Settled |
+|---|---|
+| Where it opens | The gear and <kbd>Ctrl ,</kbd> open it where it was left. The sync status opens it at Sync when there is a problem, at Account when signed out, and at Devices on a device waiting to be let in. **Review** opens it at Devices, comparing. Signing in and then having to wait jumps to Devices |
+| The rail | Its highlight is on the last section whose top has passed the top of the page, and on the last section once the page is at its end, as the mockup has it |
+| Counting the actions (section 2) | Scrolling the page is not counted, as the mockup's own count does not count it: Export and the theme are "Settings, then the control", wherever the page is. With the rail instead of the wheel it is one more |
+| The account | The device knows the account by its ID only, not by an address (the server keeps none, `SECURITY.md`), so the row says "Signed in" and "🔒 Encrypted on your devices", or "Waiting to be let in", and shows no address. A device that has to sign in again has a row of its own with **Sign in** |
+| Waiting for the browser | Pressing the button again while it waits stops waiting (its tooltip says Cancel): a sign-in can fail in the browser and never come back |
+| Bringing notes in | The box shows only when there are notes on the device, and is checked. A device that has to wait to be let in brings them in once it is in. Unchecked, or later, Account has a row "12 notes from before you signed in" with **Bring them in** |
+| Signing out | No question, unless it would lose notes or files that have not reached the server: then the row asks, in the overview's words, and **Sign out** goes ahead. Refused on the only device that can read the account, with the reason |
+| Account actions | A disclosure under the account's card, closed at first: change the key, start the account again, delete the account, each a confirmation in its row. A device waiting to be let in is offered only starting again, which then waits (the server's seven days). A reset that somebody asked for is not hidden in it: it is a row of the account's card, with when and **Refuse**, since it needs the person |
+| The devices | Each by its name, a phone's icon for a name that says Android or phone and a computer's otherwise: "This device", "Waiting to be let in" (with **Let it in**), or "Seen 4m ago" in the list's own words of time (with ✕, which asks in the row) |
+| Add a device | Looks every two seconds, while Settings is open and for at most five minutes, as an exchange does, and compares with the first device that waits |
+| Being let in | On a device that waits, the exchange begins by itself while Settings is open, and stops when it closes. It does not know the other device's name, so it asks "Does your other device show these?". After **They match** on one side: "Waiting for … to say they match too" |
+| How it ends | The tick stays 1.7 s and the list takes its place. A cross stays until **OK**. When the pictures differed, the cross says what `SECURITY.md` promises: someone may be between the devices; start again on a network you trust. A device turned away is signed out at once, so it is told by an error that stays, not in the section that has gone |
+| The recovery phrase | Its row says "You have one" or "Not made yet", with **Make one** or **Remove** (which asks). The words leave the screen when "I've written it down" is pressed or Settings closes, and are not shown again. On a device that waits, "No other device? Use your recovery phrase." is offered only when the account has one; with no device to let it in and no phrase, a sentence points to starting again. **Use the phrase** waits for 24 words |
+| Sync | The head of the section is the overview's one sentence for everything (`SyncOverview::headline`), with "Last synced 2 minutes ago" under it and **Sync now** beside it. Its icon never shows "just synced": the page is not drawn again when that ends. Under it, each note that cannot sync, which opens with Settings closed, and each file refused, which opens its note. Signed out, or waiting, it is one sentence from the overview |
+| Appearance | The theme's segments have their words on the desktop and are icons alone on Android, the words in their tooltips. Focus while writing, and the quick-capture keys, are the desktop's only |
+| Export | JSON is chosen at first. The toast names the folder made, not its whole path |
+| What goes wrong | An action that fails says so in an error that stays, its reason in the tooltip, as 7.9's errors do; one that worked says so in an ordinary toast |
+| Focus | As 12 asks. A confirmation that goes gives the focus back to its row, and focus that falls out of the panel or sheet goes back into it, never to the screen behind |
+| The banner | Shows the first device that waits and has not been dismissed. It is hidden while Settings is open, and asks again as Settings closes, since the device may have been let in there |
+
+**What did not work as the design assumes.** The core's code was three
+groups of four digits; the seven pictures of 6.13 needed it to give them
+(`ShortCode`, taken from the same bytes, so the digits still match). And a
+long toast at the bottom of the window lies over the list's foot, where the
+gear and the sync status are; a pointer resting there holds the toast, and
+a press meant for the gear lands on the toast.
 
 ---
 

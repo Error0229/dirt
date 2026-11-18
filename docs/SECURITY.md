@@ -232,9 +232,11 @@ key agreement and the code come from Matrix's own implementation.
    key.
 3. The new device **reveals** its public key. The approving device checks it
    against the commitment.
-4. Each device derives a shared secret, and from it a **code** of three
-   groups of four digits. Both show it. The person says on each device
-   whether the two are the same.
+4. Each device derives a shared secret, and from it a **code**: six bytes,
+   shown as seven pictures with their names (Matrix's emoji table), or as
+   three groups of four digits. The apps show the pictures; the CLI shows
+   both, so that it can be compared with either. The person says on each
+   device whether the two are the same.
 5. If they are, the approving device encrypts the account key under a key
    derived from the shared secret and leaves it with the server. The new
    device opens it, saves it, and tells the server, which only then marks it
@@ -243,7 +245,8 @@ key agreement and the code come from Matrix's own implementation.
 Why the commitment matters: whoever sits in the middle has to fix its key
 towards the approving device before it sees that device's key. It cannot try
 keys until both sides show the same code. It gets one guess at a code of
-about forty bits.
+about forty bits (forty-two as pictures, forty as digits: both are taken
+from the same bytes).
 
 The code covers both temporary keys, both devices' IDs and registered public
 keys, the account and a random ID for the exchange. A server that swaps any
@@ -256,7 +259,10 @@ the account, and both devices say that someone may be interfering.
 
 Optional. An approved device can make one: twenty-four words that stand for
 256 random bits, with a checksum that catches a mistyped word. It is shown
-once and stored nowhere.
+once and stored nowhere. The apps take it off the screen when the person
+says it is written down or closes Settings. **Copy** puts it on the
+system's clipboard, where other programs can read it until something else
+is copied; the toast says to clear it.
 
 Two values are derived from the phrase with HKDF, each bound to the account.
 One is a key under which the account key is encrypted; the server keeps that

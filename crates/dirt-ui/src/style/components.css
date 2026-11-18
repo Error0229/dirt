@@ -408,7 +408,7 @@
 .dui-set-lock .dui-i{width:12px;height:12px}
 .dui-set-link{display:block;margin:10px 2px 0;font-size:12.5px;color:var(--accent);font-weight:500}
 .dui-set-link:hover{text-decoration:underline}
-.dui-set-list{margin:0;padding:10px 14px 12px 32px;border-top:1px solid var(--border);font-size:12.5px;color:var(--text-2);display:grid;gap:4px}
+.dui-set-list{margin:0;padding:10px 14px 12px;list-style:none;white-space:pre-wrap;border-top:1px solid var(--border);font-size:12.5px;color:var(--text-2);display:grid;gap:4px}
 .dui-avatar{width:40px;height:40px;border-radius:50%;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;flex:none}
 .dui-avatar.off{background:var(--surface-2);color:var(--text-3)}
 .dui-check{font-size:13px;color:var(--text-2);cursor:pointer}

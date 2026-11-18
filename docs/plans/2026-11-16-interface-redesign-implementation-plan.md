@@ -1745,6 +1745,20 @@ device. The old settings screens are deleted.
 devices", "Sync" and "Export" has been done once on each app against the
 trial server.
 
+**Split in two.** 5a is the shared page and the desktop; 5b is Android.
+
+**5a built.** `dirt_ui::settings` is the page in five sections (Voice comes
+with step 9), the rail, the code comparison, the recovery words and the
+banner; each app gives it what only the app can do (the browser for
+signing in, where an export goes, the clipboard, opening a note). The
+desktop's old Settings, its tabs and the controls only it used are gone.
+What it settled is in design section 9.7. The core gives the code as
+seven pictures (`dirt_core::enrolment::ShortCode`), and the overview the
+head of Settings → Sync. Every row of the three sections was done on the
+desktop against `dirt-trial`, with the CLI as the other devices; a note the
+server refuses, offline and a file an export cannot have were done against
+the local server (`docs/MANUAL_CHECKLIST.md`, Runs).
+
 ### Step 6: files
 
 The file tile, the preview from memory, dropping files to make a note,

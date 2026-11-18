@@ -12,6 +12,9 @@ use crate::appearance::Platform;
 use crate::components::{use_toasts, Segment, Segmented, Toast};
 use crate::icons::Icon;
 
+/// The list of files left out, brought into sight when it appears.
+const LEFT_OUT_ID: &str = "dui-set-left-out";
+
 #[component]
 pub(super) fn ExportSection(export: ExportTo, platform: Platform) -> Element {
     let toasts = use_toasts();
@@ -30,7 +33,13 @@ pub(super) fn ExportSection(export: ExportTo, platform: Platform) -> Element {
                 None => {}
                 Some(Ok(done)) => {
                     toasts.show(Toast::new(done.said).icon(Icon::Check));
+                    let some_left_out = !done.left_out.is_empty();
                     left_out.set(done.left_out);
+                    if some_left_out {
+                        // Once it has been drawn.
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        crate::dom::reveal(LEFT_OUT_ID);
+                    }
                 }
                 Some(Err(reason)) => {
                     toasts.show_error(Toast::new("Nothing was exported").detail(reason));
@@ -68,7 +77,7 @@ pub(super) fn ExportSection(export: ExportTo, platform: Platform) -> Element {
                 }
             }
             if !left_out.read().is_empty() {
-                ul { class: "dui-set-list", role: "status",
+                ul { id: LEFT_OUT_ID, class: "dui-set-list", role: "status",
                     for (index , line) in left_out.read().iter().enumerate() {
                         li { key: "{index}", "{line}" }
                     }
