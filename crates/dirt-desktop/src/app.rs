@@ -6,9 +6,9 @@
 //!
 //! Everything is drawn inside `dirt_ui::UiRoot`, which brings the new
 //! interface's style sheet and script and applies the theme, the accent
-//! and the text size from this device's settings. The main screen is the
-//! new one; Settings and quick capture are the old ones until their steps
-//! replace them, and keep the old style sheets for that time.
+//! and the text size from this device's settings. The main screen and
+//! Settings are the new ones; quick capture is the old one until its step
+//! replaces it, and keeps the old style sheets for that time.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -24,11 +24,12 @@ use dirt_core::Store;
 use dirt_ui::{Appearance, UiRoot};
 
 use crate::bootstrap_config::load_bootstrap_config;
-use crate::components::{QuickCapture, SettingsPanel};
+use crate::components::QuickCapture;
 use crate::screen::writing::Scribe;
 use crate::screen::MainScreen;
 use crate::services::{data_folder, open_local_store};
-use crate::state::{AppState, SettingsTab};
+use crate::settings::SettingsPanel;
+use crate::state::AppState;
 use crate::theme::{resolve_theme, ResolvedTheme};
 use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
 use crate::{HOTKEY_TRIGGERED, TRAY_ENABLED};
@@ -97,8 +98,7 @@ pub fn App() -> Element {
     let mut pulled = use_signal(|| 0_u64);
     let mut settings = use_signal(dirt_core::models::Settings::default);
     let mut theme = use_signal(|| resolve_theme(dirt_core::models::ThemeMode::System));
-    let settings_open = use_signal(|| false);
-    let settings_tab = use_signal(SettingsTab::default);
+    let nav = dirt_ui::settings::use_settings_nav();
     let mut quick_capture_open = use_signal(|| false);
     let mut quitting = use_signal(|| false);
     let page_leaver = use_hook(|| CopyValue::new(None::<Callback<()>>));
@@ -130,8 +130,7 @@ pub fn App() -> Element {
         session,
         session_state,
         sync_status,
-        settings_open,
-        settings_tab,
+        nav,
         quick_capture_open,
         quitting,
         page_leaver,
@@ -366,16 +365,16 @@ pub fn App() -> Element {
     });
 
     let appearance = Appearance::from_settings(&settings.read());
-    // The old settings panel and quick capture take their colours from
-    // the old style sheets, by this attribute.
+    // The old quick capture takes its colours from the old style sheets,
+    // by this attribute.
     let legacy_theme = match theme() {
         ResolvedTheme::Light => "light",
         ResolvedTheme::Dark => "dark",
     };
 
     rsx! {
-        // The old style sheets, for Settings and quick capture until their
-        // steps replace them.
+        // The old style sheets, for quick capture until its step replaces
+        // it.
         document::Link {
             rel: "stylesheet",
             href: asset!("/assets/dx-components-theme.css"),
@@ -387,9 +386,7 @@ pub fn App() -> Element {
                 div { class: "dk-legacy", "data-theme": legacy_theme, QuickCapture {} }
             } else {
                 MainScreen {}
-                if settings_open() {
-                    div { class: "dk-legacy", "data-theme": legacy_theme, SettingsPanel {} }
-                }
+                SettingsPanel {}
             }
         }
     }

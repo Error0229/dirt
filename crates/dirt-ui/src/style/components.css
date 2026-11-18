@@ -75,7 +75,8 @@
 .dui-tip-keys{display:flex;gap:3px;flex:none}
 
 /* ---- Toast (6.7) ----------------------------------------------------- */
-.dui-toast-layer{position:fixed;left:0;right:0;bottom:18px;display:grid;justify-items:center;pointer-events:none;z-index:900}
+/* An app lifts toasts above what lies along the bottom of its screen with --dui-toast-lift. */
+.dui-toast-layer{position:fixed;left:0;right:0;bottom:var(--dui-toast-lift,18px);display:grid;justify-items:center;pointer-events:none;z-index:900}
 .android .dui-toast-layer{bottom:calc(var(--dui-toast-lift,80px) + env(safe-area-inset-bottom,0px))}
 .dui-toasts{grid-area:1/1;display:grid;justify-items:center;max-width:100%;min-width:0}
 /* An error, above the toast, staying until it is dismissed. */
@@ -366,3 +367,92 @@
    still turn. */
 :root[data-motion="reduced"] .dui-tok,:root[data-motion="reduced"] .dui-taglist.on .dui-tag-opt,:root[data-motion="reduced"] .dui-strip.on .dui-pill,:root[data-motion="reduced"] .dui-sync-dot{animation:none}
 @media (prefers-reduced-motion:reduce){.dui-tok,.dui-taglist.on .dui-tag-opt,.dui-strip.on .dui-pill,.dui-sync-dot{animation:none}}
+
+/* ---- Settings (6.9 to 6.13, 9) --------------------------------------- */
+/* The panel on the desktop is the rail beside the page; the sheet on
+   Android is the page alone. */
+.dui-set-panel{display:flex;flex:1;min-height:0}
+.dui-rail{width:184px;padding:14px 8px;border-right:1px solid var(--border);background:var(--bg);flex:none;position:relative}
+.dui-rail-t{font-weight:700;font-size:15px;padding:4px 10px 12px;letter-spacing:-.01em}
+.dui-rail-b{position:relative}
+.dui-rail button{position:relative;z-index:1;display:flex;gap:10px;align-items:center;width:100%;height:34px;padding:0 10px;border-radius:8px;color:var(--text-2);font-size:13.5px;transition:color var(--d-2)}
+.dui-rail button:hover{color:var(--text)}
+.dui-rail button[aria-current="true"]{color:var(--text);font-weight:550}
+.dui-rail-ind{position:absolute;left:0;right:0;top:0;height:34px;border-radius:8px;background:var(--surface-2);transform:translateY(calc(var(--i,0) * 34px));transition:transform var(--d-3) var(--e-out)}
+.dui-set-wrap{flex:1}
+/* The frame its sections are measured in (the script's jump and rail). */
+.dui-set{padding:4px 28px 28px;position:relative}
+.android .dui-set{padding:0 16px 40px}
+.dui-set-sec{padding-top:22px;scroll-margin-top:8px}
+.dui-set-sec h3{font-size:11.5px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;margin:0 0 8px 2px}
+.dui-set-card{border:1px solid var(--border);border-radius:var(--r-m);background:var(--surface);overflow:hidden}
+.dui-set-row{display:flex;align-items:center;gap:12px;min-height:54px;padding:9px 14px;border-top:1px solid var(--border);width:100%;text-align:left}
+.android .dui-set-row{min-height:56px;flex-wrap:wrap}
+.dui-set-card>:first-child,.dui-set-card>[data-dui-confirm-host]:first-child>*{border-top:0}
+.dui-set-card [data-dui-confirm-host]>.dui-confirm{border-top:1px solid var(--border)}
+.dui-set-card>[data-dui-confirm-host]:first-child>.dui-confirm{border-top:0}
+.dui-set-words{flex:1;min-width:0}
+.dui-set-t{font-size:14px;font-weight:500}
+.dui-set-t.danger{color:var(--danger)}
+.dui-set-s{font-size:12.5px;color:var(--text-3);margin-top:1px}
+.dui-set-ic{width:32px;height:32px;border-radius:9px;background:var(--surface-2);display:grid;place-items:center;color:var(--text-2);flex:none}
+.dui-set-ic.ok{background:color-mix(in srgb,var(--success) 15%,transparent);color:var(--success)}
+.dui-set-ic.warn{background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning)}
+.dui-set-ic.danger{color:var(--danger)}
+.dui-set-press{transition:background var(--d-1)}
+.dui-set-press:hover{background:var(--surface-2)}
+.dui-set-go{color:var(--text-3);flex:none}
+.dui-set-add{color:var(--accent);font-weight:550;font-size:14px;min-height:46px}
+.dui-set-add .dui-set-ic{background:var(--accent-soft);color:var(--accent)}
+.dui-set-note{font-size:13px;color:var(--text-3)}
+.dui-set-lock{display:inline-block;vertical-align:-2px;margin-right:4px}
+.dui-set-lock .dui-i{width:12px;height:12px}
+.dui-set-link{display:block;margin:10px 2px 0;font-size:12.5px;color:var(--accent);font-weight:500}
+.dui-set-link:hover{text-decoration:underline}
+.dui-set-list{margin:0;padding:10px 14px 12px;list-style:none;white-space:pre-wrap;border-top:1px solid var(--border);font-size:12.5px;color:var(--text-2);display:grid;gap:4px}
+.dui-avatar{width:40px;height:40px;border-radius:50%;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;flex:none}
+.dui-avatar.off{background:var(--surface-2);color:var(--text-3)}
+.dui-check{font-size:13px;color:var(--text-2);cursor:pointer}
+.dui-check input{accent-color:var(--accent);width:16px;height:16px;margin:0}
+.dui-keys{display:flex;gap:3px}
+.dui-disc-btn{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-3);margin:12px 2px 8px;font-weight:500}
+.dui-disc-btn .dui-i{transition:transform var(--d-3) var(--e-std)}
+.dui-disc-btn.on .dui-i{transform:rotate(90deg)}
+.dui-disclose{display:grid;grid-template-rows:0fr;transition:grid-template-rows var(--d-3) var(--e-std)}
+.dui-disclose.on{grid-template-rows:1fr}
+.dui-disclose>div{overflow:hidden}
+.dui-confirm-word{width:96px;height:28px;padding:0 8px;border-radius:7px;border:1px solid var(--border-control);background:var(--surface);font:500 12px var(--mono);text-transform:uppercase}
+.dui-confirm-word:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.android .dui-confirm{flex-wrap:wrap}
+.dui-spin{width:22px;height:22px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--accent);animation:dui-turn .9s linear infinite;flex:none}
+.dui-spin.sm{width:14px;height:14px}
+.dui-btn.primary .dui-spin{border-color:color-mix(in srgb,var(--on-accent) 40%,transparent);border-top-color:var(--on-accent)}
+/* The export's button fills as it works. */
+.dui-fill{position:relative;display:inline-flex;border-radius:7px;overflow:hidden;flex:none}
+.dui-fill.on::after{content:"";position:absolute;left:0;bottom:0;height:2px;background:var(--accent);animation:dui-fill 2.4s var(--e-std) forwards}
+@keyframes dui-fill{from{width:0}to{width:92%}}
+/* Pairing, the code, the tick, the phrase. */
+.dui-pair{padding:18px 16px 16px;border-top:1px solid var(--border);display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;background:var(--bg);animation:dui-confirm-in var(--d-4) var(--e-out)}
+.dui-set-card>.dui-pair:first-child{border-top:0}
+.dui-pair-t{font-weight:600;font-size:14.5px}
+.dui-pair-s{font-size:12.5px;color:var(--text-3);max-width:340px}
+.dui-pair-a{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;justify-content:center}
+.dui-sas{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin:8px 0 6px;width:100%;max-width:420px}
+.dui-sas-i{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 0;border-radius:10px;background:var(--surface);border:1px solid var(--border);opacity:0;animation:dui-sas-in var(--d-4) var(--sp-pop) forwards;animation-delay:calc(var(--i) * 45ms)}
+.dui-sas-i span{font-size:24px;line-height:1}
+.android .dui-sas-i span{font-size:21px}
+.dui-sas-i small{font-size:10px;color:var(--text-3);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px}
+@keyframes dui-sas-in{from{opacity:0;transform:translateY(8px) scale(.85)}to{opacity:1;transform:none}}
+.dui-big-check{width:52px;height:52px;border-radius:50%;background:var(--success);color:var(--bg);display:grid;place-items:center;animation:dui-pop var(--d-4) var(--sp-pop)}
+.dui-big-check.no{background:var(--danger);color:var(--on-danger)}
+.dui-big-check .dui-i{width:26px;height:26px;stroke-width:2.6;stroke-dasharray:30;stroke-dashoffset:30;animation:dui-draw 450ms 120ms var(--e-out) forwards}
+@keyframes dui-pop{from{transform:scale(.4);opacity:0}}
+@keyframes dui-draw{to{stroke-dashoffset:0}}
+.dui-words{display:grid;grid-template-columns:repeat(4,1fr);gap:4px 8px;width:100%;margin:6px 0;padding:0;list-style:none;user-select:text;-webkit-user-select:text}
+.android .dui-words{grid-template-columns:repeat(3,1fr)}
+.dui-words li{font:500 12px var(--mono);text-align:left;padding:4px 6px;border-radius:6px;background:var(--surface);border:1px solid var(--border);opacity:0;animation:dui-sas-in var(--d-3) var(--e-out) forwards;animation-delay:calc(var(--i) * 18ms)}
+.dui-words b{color:var(--text-3);font-weight:500;margin-right:4px}
+.dui-phrase-in{width:100%;max-width:420px;min-height:84px;padding:8px 10px;border-radius:var(--r-m);border:1px solid var(--border-control);background:var(--surface);font:500 12.5px/1.6 var(--mono);resize:vertical}
+.dui-phrase-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.dui-sas-digits{font:500 11.5px var(--mono);color:var(--text-3);letter-spacing:.06em;margin-top:-2px}
+.dui-pair-note{font-size:12.5px;color:var(--warning);font-weight:550;max-width:360px}

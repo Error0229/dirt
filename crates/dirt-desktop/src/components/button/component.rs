@@ -8,6 +8,7 @@ pub enum ButtonVariant {
     Secondary,
     #[allow(dead_code)]
     Outline,
+    #[allow(dead_code)]
     Ghost,
 }
 

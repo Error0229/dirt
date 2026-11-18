@@ -134,6 +134,49 @@ impl SyncOverview {
         Some(format!("{what} {verb} waiting to be sent"))
     }
 
+    /// The one sentence at the head of Settings → Sync (interface design,
+    /// sections 9.4 and 9.5): what holds for everything on this device,
+    /// beside the notes and files listed under it.
+    #[must_use]
+    pub fn headline(&self) -> String {
+        if self.syncing {
+            return "Syncing...".to_owned();
+        }
+        let waiting = notes_and_files(self.unsent, self.files_unsent);
+        match &self.failure {
+            Some(failure) if failure.class == ErrorClass::TryAgainLater => {
+                return match waiting {
+                    Some((what, several)) => {
+                        let verbs = if several {
+                            "wait here and go"
+                        } else {
+                            "waits here and goes"
+                        };
+                        format!("Offline. {what} {verbs} when you're back.")
+                    }
+                    None => "Offline. Nothing is waiting.".to_owned(),
+                };
+            }
+            Some(failure) => return failure.advice(),
+            None => {}
+        }
+        if let Some(waiting) = self.waiting() {
+            return format!("{waiting}.");
+        }
+        if self.problems.is_empty() && self.file_problems.is_empty() {
+            "Everything on this device has reached the server.".to_owned()
+        } else {
+            "Everything else has reached the server.".to_owned()
+        }
+    }
+
+    /// When the last sync was, as a line of its own: "Last synced 2
+    /// minutes ago", or "Not synced yet".
+    #[must_use]
+    pub fn last_synced_in_full(&self, now_ms: i64) -> String {
+        last_synced_in_full(self.last_synced_ms, now_ms)
+    }
+
     /// The whole view as lines of text, for an interface that has only
     /// text.
     #[must_use]
@@ -162,6 +205,21 @@ impl SyncOverview {
         lines
     }
 }
+
+/// Settings → Sync on a device that is signed out.
+pub const NOT_SYNCING_SIGNED_OUT: &str = "Not syncing. Notes are on this device only.";
+
+/// Settings → Account on a device whose sync stopped until it signs in
+/// again.
+pub const SIGN_IN_AGAIN_TO_SYNC: &str = "This device has to sign in again before it can sync";
+
+/// Settings → Sync while a change of the account's key is under way, over
+/// the sentence [`SyncOverview::key_change`] gives.
+pub const KEY_BEING_CHANGED: &str = "The key is being changed";
+
+/// Settings → Sync on a device that has signed in and waits to be let in.
+pub const NOT_SYNCING_UNTIL_LET_IN: &str =
+    "Not syncing until this device is let in. Notes written here wait on it.";
 
 /// How long after a cycle completes the status shows that it has just
 /// synced, in milliseconds. An app that shows [`SyncIndicator::JustSynced`]
@@ -576,6 +634,59 @@ mod tests {
             kind,
             text: text.map(str::to_owned),
         }
+    }
+
+    #[test]
+    fn the_head_of_settings_says_what_holds_for_everything() {
+        let base = SyncOverview::default();
+        assert_eq!(
+            base.headline(),
+            "Everything on this device has reached the server."
+        );
+        let waiting = SyncOverview {
+            unsent: 2,
+            ..SyncOverview::default()
+        };
+        assert_eq!(waiting.headline(), "2 notes are waiting to be sent.");
+        let offline = SyncOverview {
+            failure: Some(failed(ErrorClass::TryAgainLater)),
+            ..waiting
+        };
+        assert_eq!(
+            offline.headline(),
+            "Offline. 2 notes wait here and go when you're back."
+        );
+        let one = SyncOverview {
+            unsent: 1,
+            ..offline.clone()
+        };
+        assert_eq!(
+            one.headline(),
+            "Offline. 1 note waits here and goes when you're back."
+        );
+        let nothing = SyncOverview {
+            unsent: 0,
+            ..offline
+        };
+        assert_eq!(nothing.headline(), "Offline. Nothing is waiting.");
+        let again = SyncOverview {
+            failure: Some(failed(ErrorClass::StopUntilSignedIn)),
+            ..SyncOverview::default()
+        };
+        assert_eq!(again.headline(), "This device has to sign in again.");
+        let problem = SyncOverview {
+            problems: vec![problem(Some("Too long"), ProblemKind::RetryAfterEdit)],
+            ..SyncOverview::default()
+        };
+        assert_eq!(
+            problem.headline(),
+            "Everything else has reached the server."
+        );
+        let syncing = SyncOverview {
+            syncing: true,
+            ..problem
+        };
+        assert_eq!(syncing.headline(), "Syncing...");
     }
 
     #[test]

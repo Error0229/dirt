@@ -15,6 +15,7 @@ mod gallery;
 mod hotkey;
 mod screen;
 mod services;
+mod settings;
 mod state;
 mod theme;
 mod tray;

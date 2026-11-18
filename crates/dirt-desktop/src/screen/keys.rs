@@ -95,7 +95,7 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
     // The keys that empty the page have emptied it already, in the script,
     // unless Settings is open over it (the page then has no
     // `data-dui-page`). Done by any other key gives a fresh page instead.
-    let emptied = at == Where::Page && !*app.settings_open.peek() && empties_the_page(event);
+    let emptied = at == Where::Page && !app.nav.is_open() && empties_the_page(event);
     let mut taken = true;
     if command(event) {
         match (letter(event).as_deref(), event.key()) {
@@ -134,9 +134,8 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
             _ => taken = false,
         }
     } else if event.key() == Key::Escape {
-        if *app.settings_open.peek() {
-            let mut open = app.settings_open;
-            open.set(false);
+        if app.nav.is_open() {
+            app.nav.close();
         } else if at == Where::Page {
             screen.done(emptied);
         } else {

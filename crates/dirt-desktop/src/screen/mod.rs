@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 
 use dioxus::prelude::*;
 use dirt_core::models::{extract_tags, FocusStyle, Note, NoteId};
+use dirt_core::session::SessionState;
 use dirt_core::store::{NoteCounts, TagCount, TagRule};
 use dirt_core::sync::overview::SyncIndicator;
 use dirt_core::sync::worker::Trigger;
@@ -32,7 +33,8 @@ use dirt_ui::time::Clock;
 use dirt_ui::{Appearance, Icon};
 
 use crate::components::FilesNews;
-use crate::state::{AppState, SettingsTab};
+use crate::state::AppState;
+use dirt_ui::settings::Section;
 use focus::Edge;
 use keys::KeysPanel;
 use list::Side;
@@ -1008,8 +1010,18 @@ impl Screen {
     /// where a problem is explained, or where to sign in.
     pub fn sync_now(self) {
         match self.sync_indicator() {
-            SyncIndicator::Problem { .. } => self.app.open_settings(SettingsTab::Sync),
-            SyncIndicator::SignedOut => self.app.open_settings(SettingsTab::Account),
+            SyncIndicator::Problem { .. } => self.app.nav.open_at(Section::Sync),
+            // A device that waits to be let in waits in Devices.
+            SyncIndicator::SignedOut => self.app.nav.open_at(
+                if matches!(
+                    *self.app.session_state.peek(),
+                    SessionState::WaitingForApproval { .. }
+                ) {
+                    Section::Devices
+                } else {
+                    Section::Account
+                },
+            ),
             _ => {
                 if let Some(session) = self.app.session.peek().as_ref() {
                     session.notify(Trigger::Manual);
@@ -1033,8 +1045,9 @@ impl Screen {
         self.app.save_settings();
     }
 
+    /// The gear, and <kbd>Ctrl ,</kbd>: Settings, where it was.
     pub fn open_settings(self) {
-        self.app.open_settings(SettingsTab::Appearance);
+        self.app.nav.toggle();
     }
 
     /// To the page's text: back from the list, and after done.

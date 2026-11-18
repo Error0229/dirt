@@ -15,6 +15,9 @@ pub struct Segment {
     pub label: String,
     /// An icon before the word.
     pub icon: Option<Icon>,
+    /// The word is not shown, only the icon: the word is its tooltip and
+    /// its name for a screen reader.
+    pub icon_only: bool,
 }
 
 impl Segment {
@@ -25,6 +28,7 @@ impl Segment {
             value: value.into(),
             label: label.into(),
             icon: None,
+            icon_only: false,
         }
     }
 
@@ -32,6 +36,13 @@ impl Segment {
     #[must_use]
     pub const fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    /// With its icon alone shown, the word in its tooltip.
+    #[must_use]
+    pub const fn icon_only(mut self) -> Self {
+        self.icon_only = true;
         self
     }
 }
@@ -80,6 +91,8 @@ pub fn Segmented(
                     role: "radio",
                     "aria-checked": if index == chosen { "true" } else { "false" },
                     tabindex: if index == chosen { "0" } else { "-1" },
+                    "aria-label": segment.icon_only.then(|| segment.label.clone()),
+                    "data-tip": segment.icon_only.then(|| segment.label.clone()),
                     onmounted: move |event| buttons.mounted(index, event.data()),
                     onclick: {
                         let value = segment.value;
@@ -88,7 +101,9 @@ pub fn Segmented(
                     if let Some(icon) = segment.icon {
                         IconSvg { icon, size: IconSize::Small }
                     }
-                    "{segment.label}"
+                    if !segment.icon_only {
+                        "{segment.label}"
+                    }
                 }
             }
         }

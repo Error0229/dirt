@@ -803,6 +803,8 @@
       const first = focusables(modal)[0] || modal;
       first.focus({ preventScroll: true });
     }, 60);
+    const scroller = modal.querySelector('[data-dui-scroll]');
+    if (scroller && railFor(scroller)) setTimeout(() => followRail(scroller), 80);
     const rises = $$('[data-dui-rise]', modal);
     if (modal.dataset.duiModal === 'panel') {
       // It grows out of what opened it: from that point and 6% of its
@@ -922,6 +924,77 @@
   }
   window.addEventListener('pointerup', endSheet);
   window.addEventListener('pointercancel', endSheet);
+
+  // ---- Settings: the rail, a section brought into sight, the code -------
+  // The rail beside the page follows the scroll: its highlight is on the
+  // section at the top, or the last one once the page is at its end. A
+  // press on the rail, or Rust asking (`DirtUi.jump`), brings a section
+  // into sight.
+  const sectionsOf = scroller => $$('[data-dui-section]', scroller);
+  // Where a section starts in the page it scrolls in. Measured by offsets,
+  // not by boxes on screen: as Settings opens it grows from a point, and
+  // its boxes are a small fraction of their size.
+  function topIn(element, scroller) {
+    let top = 0;
+    for (let at = element; at && at !== scroller; at = at.offsetParent) top += at.offsetTop;
+    return top;
+  }
+  function railFor(scroller) {
+    const modal = scroller.closest('[data-dui-modal]');
+    return modal ? modal.querySelector('[data-dui-rail]') : null;
+  }
+  function markRail(scroller, name) {
+    const rail = railFor(scroller);
+    if (!rail) return;
+    const buttons = $$('[data-dui-jump]', rail);
+    const index = Math.max(0, buttons.findIndex(button => button.dataset.duiJump === name));
+    buttons.forEach((button, at) => button.setAttribute('aria-current', at === index ? 'true' : 'false'));
+    const bar = rail.querySelector('.dui-rail-b');
+    if (bar) bar.style.setProperty('--i', index);
+  }
+  function followRail(scroller) {
+    const sections = sectionsOf(scroller);
+    if (!sections.length) return;
+    let current = sections[0];
+    sections.forEach(section => { if (topIn(section, scroller) - scroller.scrollTop - 40 <= 0) current = section; });
+    if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) current = sections[sections.length - 1];
+    markRail(scroller, current.dataset.duiSection);
+  }
+  document.addEventListener('scroll', event => {
+    const scroller = event.target;
+    if (scroller && scroller.matches && scroller.matches('[data-dui-scroll]') && railFor(scroller)) followRail(scroller);
+  }, true);
+  // Asked as Settings opens, it may come before the panel or sheet is
+  // open; it waits for it, a little.
+  function jump(name, instant, tries = 20) {
+    const section = $$(`[data-dui-section="${name}"]`).filter(element => !element.closest('[inert]')).pop();
+    if (!section) {
+      if (tries > 0) setTimeout(() => jump(name, instant, tries - 1), 25);
+      return;
+    }
+    const scroller = section.closest('[data-dui-scroll]');
+    if (!scroller) return;
+    const top = topIn(section, scroller) - 8;
+    scroller.scrollTo({ top, behavior: instant || reduced() ? 'auto' : 'smooth' });
+    markRail(scroller, name);
+  }
+  // "They match": the seven pictures gather to the middle, from the
+  // outside in, shrinking (300 ms, exit), and the tick takes their place.
+  // Rust answers the exchange as they arrive.
+  document.addEventListener('click', event => {
+    const button = event.target.closest && event.target.closest('[data-dui-gather]');
+    if (!button || reduced()) return;
+    const pair = button.closest('.dui-pair');
+    const items = pair ? $$('.dui-sas-i', pair) : [];
+    if (!items.length) return;
+    const [cx, cy] = centreOf(items[0].parentElement);
+    const middle = (items.length - 1) / 2;
+    items.forEach((item, index) => {
+      const [x, y] = centreOf(item);
+      item.animate([{ transform: 'none', opacity: 1 }, { transform: `translate(${cx - x}px, ${cy - y}px) scale(.3)`, opacity: 0 }],
+        { duration: 300, delay: Math.abs(index - middle) * 28, easing: tokens.exit, fill: 'forwards' });
+    });
+  }, true);
 
   // ---- Confirmation in place (sections 6.12, 12) -------------------------
   // The row that asks takes focus as it appears (on Cancel, the safe
@@ -1187,11 +1260,21 @@
   // ---- Where the keyboard goes when nothing has it -----------------------
   // A button that is pressed and then taken away (a row archived, a view
   // closed) leaves the focus on the page's body, where a screen's keys are
-  // not heard. An element with `data-dui-home` takes it instead.
+  // not heard. An element with `data-dui-home` takes it instead. While a
+  // panel or sheet is open the focus stays in it: a confirmation that has
+  // gone gives it back to its row first, and otherwise the panel takes it.
+  const lost = () => {
+    const at = document.activeElement;
+    return !at || at === document.body || at === root;
+  };
   document.addEventListener('focusout', () => {
     setTimeout(() => {
-      const at = document.activeElement;
-      if (at && at !== document.body && at !== root) return;
+      if (!lost()) return;
+      const top = openModals().pop();
+      if (top) {
+        setTimeout(() => { if (lost()) (focusables(top)[0] || top).focus({ preventScroll: true }); }, 0);
+        return;
+      }
       const home = document.querySelector('[data-dui-home]');
       if (home && shown(home)) home.focus({ preventScroll: true });
     }, 0);
@@ -1573,5 +1656,5 @@
     if (document.body) watchPage(); else document.addEventListener('DOMContentLoaded', watchPage);
   }
 
-  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, appendText, paste, back };
+  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, appendText, paste, back, jump };
 })();

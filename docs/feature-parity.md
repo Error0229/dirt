@@ -82,19 +82,19 @@ The hotkey is shown in Settings and cannot be changed there.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Sign in | Settings → Account, in the system browser | Settings, in a browser tab over the app | `dirt auth login`; `--no-browser` prints the address |
+| Sign in | Settings → Account → Sign in, in the system browser; the button waits with a spinner | Settings, in a browser tab over the app | `dirt auth login`; `--no-browser` prints the address |
 | Sign out | Yes | Yes | `dirt auth logout` |
-| Move notes written before signing in into the account | Yes | Yes | `dirt auth login --move-local-notes` |
-| Ask to be let in, and compare the code | Settings → Devices | Settings → Devices | `dirt auth join` |
-| Let a waiting device in | Settings → Devices | Settings → Devices | `dirt devices approve` |
-| List devices, remove one | Settings → Devices | Settings → Devices | `dirt devices`, `dirt devices remove <ID>` |
+| Move notes written before signing in into the account | A box checked by default under Sign in; afterwards "Bring them in" in Settings → Account | Yes | `dirt auth login --move-local-notes` |
+| Ask to be let in, and compare the code | Settings → Devices, which begins by itself on a device that waits: seven pictures with their names | Settings → Devices | `dirt auth join` |
+| Let a waiting device in | The banner's Review, Settings → Devices → Add a device, or a waiting device's Let it in | Settings → Devices | `dirt devices approve` |
+| List devices, remove one | Settings → Devices, ✕ on a device and a confirmation in its row | Settings → Devices | `dirt devices`, `dirt devices remove <ID>` |
 | Make or remove the recovery phrase | Settings → Devices | Settings → Devices | `dirt auth phrase new`, `dirt auth phrase remove` |
-| Get in with the recovery phrase | Settings → Devices | Settings → Devices | `dirt auth recover` |
-| Start the account again | Settings → Devices | Settings → Devices | `dirt auth reset` |
-| Refuse a reset somebody asked for | Settings → Devices | Settings → Devices | `dirt auth cancel-reset` |
-| Delete the account | Settings → Devices | Settings → Devices | `dirt auth delete-account` |
-| Change the account's key | Settings → Devices | Settings → Devices | `dirt auth change-key`, or `dirt devices remove <ID> --change-key` |
-| How far a key change has got | Settings → Sync, Settings → Devices | Settings, Settings → Devices | `dirt sync --verbose` |
+| Get in with the recovery phrase | Settings → Devices on a device that waits: "No other device? Use your recovery phrase." | Settings → Devices | `dirt auth recover` |
+| Start the account again | Settings → Account → Account actions | Settings → Devices | `dirt auth reset` |
+| Refuse a reset somebody asked for | Settings → Account, where the request is shown | Settings → Devices | `dirt auth cancel-reset` |
+| Delete the account | Settings → Account → Account actions, with DELETE typed | Settings → Devices | `dirt auth delete-account` |
+| Change the account's key | Settings → Account → Account actions | Settings → Devices | `dirt auth change-key`, or `dirt devices remove <ID> --change-key` |
+| How far a key change has got | Settings → Sync, and the key's row under Account actions | Settings, Settings → Devices | `dirt sync --verbose` |
 
 The desktop app and the CLI on one computer are one device. They share the
 data folder and the keychain entry, so signing in with either signs in both.
@@ -139,11 +139,11 @@ which come from `dirt_core::sync::overview`.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Every note and its files, the notes as JSON | Settings → Data | Settings → Export | `dirt export --folder <folder>` |
-| The same, the notes as Markdown | Settings → Data | Settings → Export | `dirt export --folder <folder> --format markdown` |
+| Every note and its files, the notes as JSON | Settings → Export | Settings → Export | `dirt export --folder <folder>` |
+| The same, the notes as Markdown | Settings → Export | Settings → Export | `dirt export --folder <folder> --format markdown` |
 | What is written | A new folder, `dirt-export-<time>`, inside the folder chosen in a dialog | One zip file holding what the folder would, saved through Android's screen for choosing a place | The folder named, which must not be there yet |
 | A file this device does not hold | Fetched first | Fetched first | Fetched first |
-| A file that cannot be had | Left out. The app names it, with the reason | Left out. The app names it, with the reason | Left out and named with the reason, and the command fails |
+| A file that cannot be had | Left out. Listed under Export, with the reason | Left out. The app names it, with the reason | Left out and named with the reason, and the command fails |
 | The notes' text alone, naming their files | No | No | `dirt export`, to standard output or `--output <file>` |
 
 An export is `notes.json` or `notes.md` and, beside it, `files/<note
@@ -159,7 +159,7 @@ the head of the note in the Markdown.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Light and dark themes | Yes, or follow the system | Settings → Appearance: Auto, which follows the system as it changes, Light or Dark; and the six accents | Not applicable |
+| Light and dark themes | Settings → Appearance: Auto, which follows the system, Light or Dark; and the six accents | Settings → Appearance: Auto, which follows the system as it changes, Light or Dark; and the six accents | Not applicable |
 | The window | Windows: no title bar. Dirt's own minimise, maximise and close at the top right; the top row moves the window and a double-click on it maximises; every edge resizes it. Linux and macOS: the system's title bar, until they are tried (manual checklist) | Not applicable | Not applicable |
 | Text size | Settings → Appearance, Ctrl + and Ctrl − (13 to 20 px, 15 at first). Inter and JetBrains Mono, bundled; the choice of font is gone | Settings → Appearance, the same sizes; a note's text is drawn a pixel larger than the size chosen, as design 4.2 has it. The same two fonts | Not applicable |
 | Shell completions | Not applicable | Not applicable | `dirt completions <shell>` |

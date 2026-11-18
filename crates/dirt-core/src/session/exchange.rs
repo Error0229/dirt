@@ -15,12 +15,14 @@ use tokio::task::JoinHandle;
 use super::devices::{Approval, ExchangeStep, Join};
 use super::SessionError;
 use crate::enrolment::CancelReason;
+use crate::enrolment::ShortCode;
 
 /// What the person says about the codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Answer {
-    /// The two codes are the same.
-    Match,
+    /// The two codes are the same: this one, the code the person was
+    /// shown. It is refused if the code has changed since.
+    Match(ShortCode),
     /// The two codes differ.
     Mismatch,
     /// The person does not want to go on.
@@ -38,6 +40,10 @@ pub enum ExchangeView {
     /// Nothing happened for too long, and polling has stopped. The person
     /// can start again.
     TimedOut,
+    /// "They match" was said of a code that is gone: the other device
+    /// began again, and this is its new code. Nothing was sent for the old
+    /// one. The person compares this one.
+    CodeChanged { code: ShortCode },
 }
 
 impl ExchangeView {
@@ -48,7 +54,7 @@ impl ExchangeView {
             self,
             Self::Step(
                 ExchangeStep::Waiting | ExchangeStep::Compare { .. } | ExchangeStep::Finishing
-            )
+            ) | Self::CodeChanged { .. }
         )
     }
 }
@@ -84,10 +90,10 @@ impl Side {
         }
     }
 
-    async fn confirm(&mut self) -> Result<ExchangeStep, SessionError> {
+    async fn confirm(&mut self, code: ShortCode) -> Result<ExchangeStep, SessionError> {
         match self {
-            Self::Join(join) => join.confirm().await,
-            Self::Approval(approval) => approval.confirm().await,
+            Self::Join(join) => join.confirm(code).await,
+            Self::Approval(approval) => approval.confirm(code).await,
         }
     }
 
@@ -172,6 +178,9 @@ async fn drive(
     // leads to fails for want of a network, it is made again at the next
     // look: the person pressed the button once and is not asked twice.
     let mut unanswered: Option<Answer> = None;
+    // Set when "they match" came for a code that had gone, until the
+    // person answers again: the code on screen is then a new one.
+    let mut changed = false;
     loop {
         tokio::select! {
             answer = inbox.recv() => match answer {
@@ -183,16 +192,31 @@ async fn drive(
         }
         pause = pace.every;
 
+        if unanswered.is_some() {
+            changed = false;
+        }
         let outcome = match unanswered {
-            Some(Answer::Match) => side.confirm().await,
+            Some(Answer::Match(code)) => side.confirm(code).await,
             Some(Answer::Mismatch) => side.reject(CancelReason::Mismatch).await,
             Some(Answer::Decline) => side.reject(CancelReason::Declined).await,
             None => side.poll().await,
         };
         let view = match outcome {
+            Ok(ExchangeStep::Compare { code }) if changed => {
+                unanswered = None;
+                ExchangeView::CodeChanged { code }
+            }
             Ok(step) => {
                 unanswered = None;
                 ExchangeView::Step(step)
+            }
+            // Said of a code that is gone. The exchange goes on: the next
+            // look, straight away, shows the code compared now.
+            Err(SessionError::CodeChanged) => {
+                unanswered = None;
+                changed = true;
+                pause = Duration::ZERO;
+                shown.clone()
             }
             // A request that failed for want of a network is tried again at
             // the next look, the person's answer included. Anything else

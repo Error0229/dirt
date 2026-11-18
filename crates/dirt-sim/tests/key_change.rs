@@ -75,8 +75,11 @@ async fn let_in(approver: &Client, device: &Client) {
         panic!("the approving device should show a code");
     };
     assert_eq!(on_device, on_approver);
-    approval.confirm().await.unwrap();
-    assert_eq!(join.confirm().await.unwrap(), ExchangeStep::Done);
+    approval.confirm(approval.code().unwrap()).await.unwrap();
+    assert_eq!(
+        join.confirm(join.code().unwrap()).await.unwrap(),
+        ExchangeStep::Done
+    );
 }
 
 /// A further device of Alice's, let in by `approver`.
@@ -583,8 +586,11 @@ async fn an_approval_that_spans_a_key_change_hands_over_the_new_key(pool: PgPool
         panic!("the phone should show a code");
     };
     assert_eq!(on_tablet, on_phone);
-    approval.confirm().await.unwrap();
-    assert_eq!(join.confirm().await.unwrap(), ExchangeStep::Done);
+    approval.confirm(approval.code().unwrap()).await.unwrap();
+    assert_eq!(
+        join.confirm(join.code().unwrap()).await.unwrap(),
+        ExchangeStep::Done
+    );
 
     let on_tablet = secrets_of(&tablet);
     assert_eq!(on_tablet.key_version, 2);
