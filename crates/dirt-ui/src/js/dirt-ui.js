@@ -1146,6 +1146,11 @@
   // key is pressed, before Rust has heard of it: whatever is typed next is
   // the next thought's, however quickly it comes. Rust keeps what the field
   // held, from what it had heard before the key.
+  //
+  // It listens before the page's own handlers: Dioxus marks a key the app
+  // takes as handled before a listener after it would hear it. The app's
+  // own menu takes Esc first while it is open; it is listened to before
+  // this.
   document.addEventListener('keydown', event => {
     const field = event.target;
     if (event.defaultPrevented || event.isComposing || !field || !field.matches || !field.matches('[data-dui-page]')) return;
@@ -1157,7 +1162,7 @@
     if (!done) return;
     field.value = '';
     field.setSelectionRange(0, 0);
-  });
+  }, true);
 
   // ---- The window's top row (section 7.6) ---------------------------------
   // Where the app draws the window without the system's title bar, any
@@ -1165,7 +1170,18 @@
   // moves it: a press there tells Rust, which hands the move to the system
   // until the button is let go. A double-click maximises or restores.
   const NOT_DRAG = 'button,a,input,textarea,select,label,[role="listbox"],[role="option"],[contenteditable],'
-    + '[data-dui-modal],[data-dui-menu],.dui-find,.dui-taglist,.dui-toast,.dui-sb,[data-dui-no-drag]';
+    + '[data-dui-modal],[data-dui-menu],.dui-find,.dui-taglist,.dui-toast,.dui-sb,[data-dui-resize],[data-dui-no-drag]';
+  // An edge the app draws for resizing (`data-dui-resize`), where the web
+  // view lies over the system's own border: a press there hands the
+  // resizing to the system, from that edge.
+  document.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || event.pointerType !== 'mouse' || !event.target.closest) return;
+    const edge = event.target.closest('[data-dui-resize]');
+    if (!edge) return;
+    event.preventDefault();
+    tell(edge, 'resize');
+  }, true);
+  let lastDragPress = null;
   document.addEventListener('pointerdown', event => {
     if (event.button !== 0 || event.pointerType !== 'mouse' || !event.target.closest) return;
     const area = event.target.closest('[data-dui-drag]');
@@ -1173,7 +1189,13 @@
     const box = area.getBoundingClientRect();
     if (event.clientY - box.top > (Number(area.dataset.duiDrag) || 0)) return;
     event.preventDefault();
-    tell(area, event.detail >= 2 ? 'maximize' : 'drag');
+    // A pointer's press carries no count of clicks, and the press that
+    // would is not sent once this one is taken: a second press soon after
+    // the first and in the same place is the double-click.
+    const now = Date.now(), last = lastDragPress;
+    const again = last && now - last.at < 500 && Math.abs(event.clientX - last.x) < 5 && Math.abs(event.clientY - last.y) < 5;
+    lastDragPress = again ? null : { at: now, x: event.clientX, y: event.clientY };
+    tell(area, again ? 'maximize' : 'drag');
   }, true);
 
   // ---- Focus while writing (section 7.7) ----------------------------------

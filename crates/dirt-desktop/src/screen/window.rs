@@ -6,6 +6,11 @@
 //! maximises or restores it. Windows keeps its own resize border and its
 //! shadow for a window without one, and snaps a window dragged to an edge.
 //!
+//! The system keeps its resize border on the left, the right and the
+//! bottom, outside the page. At the top the web view lies over it, so the
+//! app draws the top edge and its corners itself ([`TopEdges`]), and a
+//! press there hands the resizing to the system.
+//!
 //! Elsewhere the window keeps the system's title bar, which is the plan's
 //! fallback for a platform where the window has not been seen to move and
 //! resize without it: Linux and macOS are still to be tried
@@ -17,7 +22,8 @@
 //! that press until the button is let go.
 
 use dioxus::desktop::tao::event::{Event, WindowEvent};
-use dioxus::desktop::{use_wry_event_handler, window, WindowBuilder};
+use dioxus::desktop::tao::window::ResizeDirection;
+use dioxus::desktop::{use_wry_event_handler, window, LogicalSize, WindowBuilder};
 use dioxus::prelude::*;
 use dirt_ui::events::{use_outcome, Outcome};
 use dirt_ui::{Icon, IconSize, IconSvg};
@@ -38,6 +44,10 @@ pub const fn frameless() -> bool {
 pub fn builder() -> WindowBuilder {
     let builder = WindowBuilder::new()
         .with_title("Dirt")
+        // Wide enough for the list and the page side by side (720 px and
+        // up); narrower, the page comes over the list.
+        .with_inner_size(LogicalSize::new(1100.0, 720.0))
+        .with_min_inner_size(LogicalSize::new(360.0, 320.0))
         .with_decorations(!frameless());
     #[cfg(windows)]
     let builder = {
@@ -58,6 +68,30 @@ pub fn use_window_drag() -> Option<String> {
         _ => {}
     });
     frameless().then_some(id)
+}
+
+/// The window's top edge and its two top corners, a few pixels deep,
+/// which resize it as the system's border would. Not while the window is
+/// maximised, when it cannot be resized.
+#[component]
+fn TopEdges() -> Element {
+    let resize = |direction: ResizeDirection| {
+        move |outcome: Outcome| {
+            if outcome == Outcome::Resize {
+                if let Err(error) = window().drag_resize_window(direction) {
+                    tracing::warn!("The window could not be resized: {error}");
+                }
+            }
+        }
+    };
+    let top = use_outcome(resize(ResizeDirection::North));
+    let left = use_outcome(resize(ResizeDirection::NorthWest));
+    let right = use_outcome(resize(ResizeDirection::NorthEast));
+    rsx! {
+        div { class: "dk-edge-n", "aria-hidden": "true", "data-dui-resize": "", "data-dui-id": top }
+        div { class: "dk-edge-nw", "aria-hidden": "true", "data-dui-resize": "", "data-dui-id": left }
+        div { class: "dk-edge-ne", "aria-hidden": "true", "data-dui-resize": "", "data-dui-id": right }
+    }
 }
 
 /// Dirt's own minimise, maximise and close (Windows and Linux, 7.6). At
@@ -87,6 +121,9 @@ pub fn WindowControls() -> Element {
         (Icon::Square, "Maximise")
     };
     rsx! {
+        if !maximized() {
+            TopEdges {}
+        }
         div {
             class: "dk-wctl",
             role: "group",

@@ -37,6 +37,7 @@
 //! | `data-dui-keep-focus` | a group of buttons | A press inside it leaves the keyboard's focus where it was |
 //! | `data-dui-page` | the desktop's page | <kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd> and <kbd>Ctrl N</kbd> empty it as they are pressed, so that what is typed next is the next thought's |
 //! | `data-dui-drag` | a window's root | A press on an empty part of its top rows (the height in pixels) says [`events::Outcome::Drag`], a double-click [`events::Outcome::Maximize`] |
+//! | `data-dui-resize` | an edge of the window | A press on it says [`events::Outcome::Resize`] |
 //! | `data-dui-focus`, `data-dui-writing` | the desktop's screen | Focus while writing: the style, and `hush` or `on`. The rows of its list fold away and come back, and the grains of `data-dui-rail` pop in |
 //!
 //! What the app asks of a field it does not hold (focus, its text) is in

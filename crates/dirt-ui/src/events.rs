@@ -39,6 +39,10 @@ pub enum Outcome {
     /// A double-click on an empty part of the window's top row: maximise
     /// or restore, as a title bar's double-click does.
     Maximize,
+    /// A press began on one of the window's edges that the app draws
+    /// (`data-dui-resize`): the system resizes the window from that edge
+    /// until the button is let go.
+    Resize,
 }
 
 /// One message from the script: which element, and how it ended.

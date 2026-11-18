@@ -70,6 +70,13 @@
 /* The close button follows the window's rounded corner (Windows 11). */
 .dk-wctl:not([data-max]) .dk-wctl-b.x{border-top-right-radius:8px}
 
+/* The top edge and its corners, where the web view lies over the
+   system's resize border: a press there resizes the window. */
+.dk-edge-n,.dk-edge-nw,.dk-edge-ne{position:absolute;top:0;height:5px;z-index:40}
+.dk-edge-n{left:8px;right:8px;cursor:ns-resize}
+.dk-edge-nw{left:0;width:8px;cursor:nwse-resize}
+.dk-edge-ne{right:0;width:8px;cursor:nesw-resize}
+
 /* ---- Focus while writing (5.5, 6.4, 7.7) ---------------------------------
    data-dui-writing="hush" is the first key: only the controls fade.
    ="on" is focus, laid out by the style chosen (data-dui-focus). The
@@ -141,6 +148,9 @@
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-text{font-size:calc(var(--note-size) + 4px);line-height:1.8;padding-top:56px;transition:font-size var(--d-glide) var(--sp-glide) 300ms,line-height var(--d-glide) var(--sp-glide) 300ms,padding var(--d-glide) var(--sp-glide) 300ms}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::before,.dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::after{opacity:1;transition:opacity 500ms var(--e-std) 420ms}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-files{opacity:0}
+  /* The note's icons stay beside its first line, which starts lower. */
+  .dk-gutter{transition:opacity 200ms var(--e-std),top var(--d-glide) var(--sp-glide)}
+  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-gutter{top:114px;transition:opacity 200ms var(--e-std),top var(--d-glide) var(--sp-glide) 300ms}
 }
 
 /* ---- The keys (Ctrl /) ------------------------------------------------ */
@@ -160,4 +170,7 @@
   .dk[data-over] .dk-main{display:flex;position:absolute;inset:0;z-index:20}
   .dk-new{display:inline-grid}
   .dk-page{padding:0 56px 0 20px}
+  /* The list reaches the window's top right, where the window's own
+     controls are: Find stops short of them. */
+  .dk[data-dui-drag] .dk-find{padding-right:151px}
 }
