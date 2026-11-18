@@ -88,10 +88,12 @@ impl Draft {
         &self.text
     }
 
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub const fn version(&self) -> u64 {
         self.version
     }
 
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub const fn is_creating(&self) -> bool {
         self.creating
     }
@@ -192,6 +194,7 @@ impl Draft {
 
     /// The page was left with no words: its note, if it has one, is to be
     /// let go.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub fn is_empty(&self) -> bool {
         self.text.trim().is_empty()
     }
