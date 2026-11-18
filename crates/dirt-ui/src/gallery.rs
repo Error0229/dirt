@@ -605,13 +605,22 @@ fold every 30 minutes #baking #bread #weekend",
             }
             div { "data-dui-list": "", "data-dui-exit": "none", role: "listbox", "aria-label": "Notes",
                 div { class: "dui-sel-ind", "aria-hidden": "true" }
-                for (index , note) in notes.iter().enumerate() {
-                    if index == 1 {
-                        LayerLine { key: "line", name: "This week" }
-                    }
+                for (index , note) in notes.iter().enumerate().take(1) {
                     NoteRow {
                         key: "{note.id}",
-                        summary: NoteSummary::of(note, &found, clock).waiting(index == 0).files(index == 1, None),
+                        summary: NoteSummary::of(note, &found, clock).waiting(true),
+                        selected: chosen() == Some(index),
+                        on_open: move |()| chosen.set(Some(index)),
+                        on_tag: move |tag: String| toggle(tag),
+                        on_archive: move |()| {},
+                        on_delete: move |()| {},
+                    }
+                }
+                LayerLine { name: "This week" }
+                for (index , note) in notes.iter().enumerate().skip(1) {
+                    NoteRow {
+                        key: "{note.id}",
+                        summary: NoteSummary::of(note, &found, clock).files(index == 1, None),
                         selected: chosen() == Some(index),
                         on_open: move |()| chosen.set(Some(index)),
                         on_tag: move |tag: String| toggle(tag),
