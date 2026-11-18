@@ -1721,6 +1721,19 @@ component both need is added there by whichever step reaches it first.
 
 **Done when:** the same count as step 3, for the Android column.
 
+**Built.** What it settled is in design section 8.7. Of the rows step 2
+left to it: Back is the page's (the activity asks `DirtUi.back()`, which
+closes a sheet, the note, the archived notes or Find, and otherwise the
+app goes behind the others); pull to sync and the note growing out of its
+card are in the script; Auto follows the system, with the activity on
+AppCompat's DayNight theme and `uiMode` among the changes it takes itself;
+"Remove animations" is read when the app starts and each time the person
+returns. The new parts in `dirt-ui` are `NoteCard`, `GrowPage`,
+`PullToSync`, `TagStrip`, Find's cross and the sync status's dot. The
+toast after a share stays with step 8. Until step 5, Settings and Devices
+are the old screens over the main one, and Settings has an Appearance
+card with the theme, the accents and the text size.
+
 ### Step 5: Settings and the flows
 
 One page in six sections on both apps: account, devices with the code
