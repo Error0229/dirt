@@ -23,8 +23,24 @@ use rfd::AsyncFileDialog;
 use crate::services::export_into;
 use crate::state::AppState;
 
+/// In a development build, `DIRT_SIGN_IN_TO_FILE` names a file the
+/// sign-in address is written to instead of opening the browser, and
+/// `DIRT_EXPORT_TO` a folder an export goes into without asking: for
+/// trying the flows on a computer whose browser and dialogs belong to
+/// someone else. A release build ignores both.
+fn test_hook(name: &str) -> Option<std::path::PathBuf> {
+    if cfg!(debug_assertions) {
+        std::env::var_os(name).map(std::path::PathBuf::from)
+    } else {
+        None
+    }
+}
+
 /// Opens the sign-in page in the system browser.
 fn open_browser(address: &str) -> Result<(), String> {
+    if let Some(file) = test_hook("DIRT_SIGN_IN_TO_FILE") {
+        return std::fs::write(file, address).map_err(|error| error.to_string());
+    }
     webbrowser::open(address).map_err(|error| error.to_string())
 }
 
@@ -45,15 +61,20 @@ async fn export_to_folder(
     format: ExportFormat,
 ) -> Option<Result<Exported, String>> {
     let store = store?;
-    let chosen = AsyncFileDialog::new()
-        .set_title("Choose a folder to export into")
-        .pick_folder()
-        .await?;
+    let chosen = match test_hook("DIRT_EXPORT_TO") {
+        Some(folder) => folder,
+        None => AsyncFileDialog::new()
+            .set_title("Choose a folder to export into")
+            .pick_folder()
+            .await?
+            .path()
+            .to_path_buf(),
+    };
     let exported = export_into(
         store.as_ref(),
         session.as_ref(),
         format,
-        chosen.path(),
+        &chosen,
         chrono::Utc::now().timestamp_millis(),
     )
     .await;

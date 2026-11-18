@@ -10,7 +10,7 @@ use dioxus::prelude::*;
 use dirt_core::session::SessionState;
 use dirt_core::store::{FileProblem, NoteProblem};
 use dirt_core::sync::overview::{
-    SyncIndicator, SyncOverview, NOT_SYNCING_SIGNED_OUT, NOT_SYNCING_UNTIL_LET_IN,
+    SyncIndicator, SyncOverview, JUST_SYNCED_MS, NOT_SYNCING_SIGNED_OUT, NOT_SYNCING_UNTIL_LET_IN,
 };
 use dirt_core::sync::worker::Trigger;
 use dirt_core::util::{as_sentence, now_ms};
@@ -68,10 +68,13 @@ pub(super) fn Sync(linked: Linked, open_note: EventHandler<NoteId>, platform: Pl
         shown.problems.clone_from(&read.problems);
         shown.file_problems.clone_from(&read.file_problems);
     }
-    let indicator = SyncIndicator::of(&shown, now);
+    // The worker counts the problems at every change; the lists may not
+    // have been read yet. "Just synced" lasts a moment and this section
+    // is not drawn again when it ends, so its icon is what comes after.
+    let indicator = SyncIndicator::from_status(&status, now + JUST_SYNCED_MS);
     let tone = match indicator {
         SyncIndicator::Problem { .. } => "warn",
-        SyncIndicator::Synced { .. } | SyncIndicator::JustSynced => "ok",
+        SyncIndicator::Synced { .. } => "ok",
         _ => "",
     };
     let icon = match indicator {

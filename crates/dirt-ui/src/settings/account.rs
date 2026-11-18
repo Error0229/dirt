@@ -63,6 +63,8 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
     // written before signing in that are still not in the account.
     let mut local = use_signal(|| 0_usize);
     let _count = use_resource(move || {
+        // Notes are written while Settings is closed: counted as it opens.
+        let _ = nav.is_open();
         let state = *linked.state.read();
         let _ = facts.reload.read();
         let session = linked.session.read().clone();
@@ -190,9 +192,10 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
                 .as_ref()
                 .is_some_and(|me| me.recovery_available);
             spawn(async move {
-                let said: Result<String, SessionError> = match action {
-                    Asking::ChangeKey => session.change_account_key().await.map(|change| {
-                        match change {
+                let said: Result<String, SessionError> =
+                    match action {
+                        Asking::ChangeKey => session.change_account_key().await.map(|change| {
+                            match change {
                             KeyChange::Changed { .. } if had_phrase => {
                                 "Key changed. The recovery phrase no longer works: make a new one"
                                     .to_owned()
@@ -202,24 +205,24 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
                                 "Another device has just changed the key".to_owned()
                             }
                         }
-                    }),
-                    Asking::StartAgain => {
-                        session.reset_account().await.map(|outcome| match outcome {
-                            ResetOutcome::Done => {
-                                "The account was started again. This is its only device now"
-                                    .to_owned()
-                            }
-                            ResetOutcome::Scheduled { effective_at_ms } => format!(
+                        }),
+                        Asking::StartAgain => {
+                            session.reset_account().await.map(|outcome| match outcome {
+                                ResetOutcome::Done => {
+                                    "The account was started again. This is its only device now"
+                                        .to_owned()
+                                }
+                                ResetOutcome::Scheduled { effective_at_ms } => format!(
                                 "Asked for. Its other devices can refuse until {}; then ask again",
                                 when(effective_at_ms)
                             ),
-                        })
-                    }
-                    Asking::Delete => session.delete_account().await.map(|()| {
-                        "The account was deleted. Its notes are still on this device".to_owned()
-                    }),
-                    Asking::SignOut => Ok(String::new()),
-                };
+                            })
+                        }
+                        Asking::Delete => session.delete_account().await.map(|()| {
+                            "The account was deleted. Its notes are still on this device".to_owned()
+                        }),
+                        Asking::SignOut => Ok(String::new()),
+                    };
                 match said {
                     Ok(said) => toasts.show(Toast::new(said)),
                     Err(error) => toasts

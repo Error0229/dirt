@@ -957,9 +957,14 @@
     const scroller = event.target;
     if (scroller && scroller.matches && scroller.matches('[data-dui-scroll]') && railFor(scroller)) followRail(scroller);
   }, true);
-  function jump(name, instant) {
+  // Asked as Settings opens, it may come before the panel or sheet is
+  // open; it waits for it, a little.
+  function jump(name, instant, tries = 20) {
     const section = $$(`[data-dui-section="${name}"]`).filter(element => !element.closest('[inert]')).pop();
-    if (!section) return;
+    if (!section) {
+      if (tries > 0) setTimeout(() => jump(name, instant, tries - 1), 25);
+      return;
+    }
     const scroller = section.closest('[data-dui-scroll]');
     if (!scroller) return;
     const top = section.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 8;

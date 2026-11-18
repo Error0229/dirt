@@ -229,7 +229,7 @@ fn JoinHere(linked: Linked) -> Element {
                 toasts.show_error(Toast::new("Nothing was shared").detail(why));
             }
             ExchangeView::Failed(reason) => {
-                ended.set(Some(("Nothing was shared".to_owned(), reason)))
+                ended.set(Some(("Nothing was shared".to_owned(), reason)));
             }
             ExchangeView::TimedOut => ended.set(Some((
                 "No device answered".to_owned(),
@@ -393,7 +393,7 @@ fn DeviceList(linked: Linked, copy: EventHandler<String>) -> Element {
                 exchange.set(Some(Rc::new(Exchange::approve(approval, Pace::default()))));
             }
             Err(error) => {
-                toasts.show_error(Toast::new("Could not compare").detail(as_sentence(&error)))
+                toasts.show_error(Toast::new("Could not compare").detail(as_sentence(&error)));
             }
         }
     };
@@ -409,11 +409,14 @@ fn DeviceList(linked: Linked, copy: EventHandler<String>) -> Element {
             asking_phrase.set(false);
         }
     });
-    // The banner's Review: compare with that device.
+    // The banner's Review: compare with that device. Taking it writes the
+    // signal read here, so it is taken only when there is one: taking
+    // nothing would write it again, and run this again, for ever.
     use_effect(move || {
-        let _ = nav.review.read();
-        if let Some(device) = nav.take_review() {
-            approve(device);
+        if nav.review.read().is_some() {
+            if let Some(device) = nav.take_review() {
+                approve(device);
+            }
         }
     });
     // Looking for a new device, every two seconds while asked to.
@@ -500,7 +503,7 @@ fn DeviceList(linked: Linked, copy: EventHandler<String>) -> Element {
                         .collect(),
                 )),
                 Err(error) => {
-                    toasts.show_error(Toast::new("No phrase was made").detail(as_sentence(&error)))
+                    toasts.show_error(Toast::new("No phrase was made").detail(as_sentence(&error)));
                 }
             }
             let mut reload = facts.reload;
