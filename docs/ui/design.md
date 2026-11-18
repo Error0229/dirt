@@ -651,7 +651,7 @@ this document are approximate; the tokens here are the real ones.
 | Slide in | The list's content fades out (140 ms, exit); 90 ms later the list folds to nothing (glide); 60 ms after that the note's column glides to the middle (glide). Three moves, overlapping, each led by the one before |
 | Rail in | The rows fold to the left one after another, 18 ms apart; the list narrows to 56 px (glide); then the dots pop into the rail top to bottom, 24 ms apart (pop) |
 | Zen in | As Slide, then the paper warms (600 ms, standard, from 260 ms), the type grows by 4 px (glide, from 300 ms), and the top and bottom of the text fade in last (500 ms, from 420 ms). It deepens in stages |
-| Out, any style | Reversed and quicker: the width returns first (glide), then the list's content fades in from 200 ms, the rows arriving in a cascade from the left, 22 ms apart (snap) |
+| Out, any style | Reversed and quicker: the width returns first (glide) while the list's content fades in (200 ms, standard), the rows in sight arriving in a cascade from the left, 14 px, from 230 ms, 22 ms apart (snap) |
 | The pointer during focus | A control fades in (200 ms) only when the pointer comes within 64 px of it: the note's icons in the gutter, the window's controls in the top corner, the list's handle at the left edge. Moving anywhere else shows nothing, and the layout never moves |
 
 **Voice (6.18)**
@@ -1254,7 +1254,7 @@ not exist at all.
 | Editing an archived note | Leaves it archived. Only "back to the list" or **Undo** brings it back | |
 | Two devices choose differently | One choice holds, the same on every device, as for any single value in a note | |
 | Its tags | Narrowing to a tag is finding, so archived notes with the tag are shown, after the rest and under the same line "Archived". The count beside a tag counts them, and a tag that only archived notes carry is still offered: a thought put away can be found by its tag | |
-| Deleted, then brought back | Comes back archived. (A delete undone takes a new edit time, so it comes back at the top of the list: 7.8) | |
+| Deleted, then brought back | Comes back archived, and into its place: it keeps the edit time it had (7.8) | |
 | A build from before archive | Shows archived notes in its list, and keeps the mark when it edits one | |
 
 Why both: with only delete, clearing a done thought loses it, so people
@@ -1378,7 +1378,9 @@ top row of the page to themselves; the note's icons sit beside the note
 - **Close** hides the window to the tray; Dirt keeps running so the hotkey
   works. **Quit** is in the tray menu.
 - **Resizing** from the edges still works: Windows keeps its resize border
-  for a window without decorations; on Linux the app adds invisible 6 px
+  for a window without decorations on the left, the right and the bottom,
+  but at the top the web view lies over it, so the app draws the top edge
+  and its corners there (7.9); on Linux the app adds invisible 6 px
   handles on each edge and corner that start the system's own resize.
 - **Shadow and corners:** Windows draws its shadow (`with_undecorated_shadow`)
   and, on Windows 11, rounds the corners. The top-right ✕ follows the
@@ -1433,7 +1435,7 @@ macOS a private API the Mac App Store refuses).
 What the sections above left open, settled when the desktop's main screen
 was built (implementation plan, step 3a). Focus while writing (7.7), the
 controls shown by nearness (6.4's second half) and the window without a
-title bar (7.6) came after it, in step 3b.
+title bar (7.6) came after it, in step 3b, and what that settled is in 7.9.
 
 | | Settled |
 |---|---|
@@ -1453,12 +1455,40 @@ title bar (7.6) came after it, in step 3b.
 | Where the keyboard goes | When what had the keyboard is taken away (a row archived, the archived notes closed), the screen takes it, so that its keys still work |
 | An archived row leaving | Until the pile, it folds shut where it was (on the exit curve, at most 320 ms) while the rows below rise into its place (snap); no grain falls |
 
-**What did not work as the design assumes.** A delete undone brings the
-note back with a new edit time, so its row comes back at the top of the
-list and not "into its place" (5.5, "Undo"): the store's restore records
-the note anew. An archive undone does come back into its place, since
-archiving is not an edit. Changing the store's restore is left to a later
-step, with its own tests, since the edit time is part of what syncs.
+**A delete undone, into its place** (found in 3a, settled in 3b). The
+store's restore brought the note back with a new edit time, so its row came
+back at the top of the list. Bringing a note back is still an edit: this
+device's count of edits rises above every deletion marker, which is what
+brings the note back on every device and sends the change. The time it
+records is now the note's edit time as it was, not the time now. The edit
+time is the latest time recorded, so it does not move, and the note comes
+back into its place and its layer, on every device. The time decides
+nothing in a merge; it is shown, and orders the list (`NoteDoc::bring_back`,
+with tests in `dirt-core` and `dirt-sim`).
+
+### 7.9 Settled when focus while writing and the window were built
+
+What 7.6, 7.7 and 6.4's second half left open, settled in step 3b.
+
+| | Settled |
+|---|---|
+| Leaving a note never waits | Done, opening another note and archiving or deleting the open one change the page at once. What the page held is taken as it was, and kept or let go afterwards, in order, by one queue of the store's work that outlives the screen (`screen::writing`). The first character makes the note under an ID the app makes (`Store::create_note_with_id`), so files attached in that moment go to it |
+| Esc and the next thought | Esc, Ctrl Enter and Ctrl N pressed in the page empty it in the script as the key goes down, before the app hears it (`data-dui-page`). What is typed straight after is the next thought's. ✓, and Ctrl N from elsewhere, give a fresh page as before |
+| Opening a note | The list's copy of it is shown at once, so ↓ pressed twice moves two rows; the store's copy follows, and is taken if it differs and nothing has been typed yet |
+| When focus begins | At the first key on the page only the controls fade (200 ms): the note's icons and the window's to nothing, the list to half. Focus comes after 600 ms with no key, or at the first new line. Text that changes with no key in the 400 ms before (pasted with the mouse) brings it at once, as the mockup does |
+| When focus ends | Done (Esc and the rest), a note opened from the list, the keyboard going into Find or the list, the handle at the left edge, the rail's chevron, archiving or deleting the open note. A note opened from the rail keeps it. It never ends by itself, and a mouse move alone never ends it |
+| Narrower than 720 px | Only the controls fade; the list is already under the page, so there is nothing to fold |
+| Nearness | A control is near when the pointer is within 64 px of its box: the note's gutter, and the window's controls as one group. The left edge's handle is 14 px wide, grows when the pointer is within 60 px of it and brings the list back when the pointer is on it. Only a pointer that moves counts, and only after focus began: a resting pointer, or a list sliding away under one, brings nothing back. A touch on a touch screen shows them all until the next key |
+| The rail | The notes the list holds, newest first, with the archived ones when Find holds something, as the list does. A month's initial, over a short line, where the month changes, not above the first. Each grain is one of four slightly irregular rounds, chosen by its note's grain (6.17). The rail scrolls; its scrollbar is not drawn |
+| Zen | The note's icons move down with its first line, which starts 56 px lower |
+| The window's size | 1100 by 720 px at first, no smaller than 360 by 320. Where it was left (7.1) is not kept yet |
+| Resizing (Windows) | The system's border is outside the page on the left, the right and the bottom. At the top the web view lies over it, so the app draws a 5 px top edge and 8 px corners, and a press there hands the resizing to the system |
+| The top row | A press on an empty part of the top 52 px moves the window; a second press within 500 ms and 5 px is the double-click, and maximises or restores. A pointer's press carries no count of clicks, so the script counts them |
+| Close | ✕ hides the window to the tray, as the system's close did, with the tooltip "Close to tray" and <kbd>Alt F4</kbd> |
+| Linux and macOS | Keep the system's title bar for now: the window without one has not been tried there (the plan's fallback; manual checklist D44). The Linux handles and the macOS traffic lights of 7.6 come when they can be tried |
+| Snap Layouts | Built without the flyout, the default of the owner's decision (section 11). Snapping by dragging to an edge, and <kbd>Win Z</kbd>, are the system's and still work |
+| The style | Settings → Appearance → Focus while writing, kept on the device as `focus_style`. Settings is the old panel until step 5 |
+| Find beside the window's controls | Narrower than 720 px the list reaches the top right corner, where the window's controls are, so Find stops short of them there |
 
 ---
 
