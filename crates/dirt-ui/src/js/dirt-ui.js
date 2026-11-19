@@ -1663,18 +1663,29 @@
     dust(x, y, colour);
     pileGrows(list);
   }
+  // The row is held out of sight at once, and what to play is decided a
+  // frame later: the change that marks the row may also be the one that
+  // closes an Android page to its grain, whose watcher can hear of it
+  // after the list's does.
   function settle(row, list) {
+    const hold = row.animate([{ opacity: 0 }, { opacity: 0 }], { duration: 3000, fill: 'forwards' });
+    requestAnimationFrame(() => toss(row, list, hold));
+    // A page that is not being drawn runs no frame: the row comes back.
+    setTimeout(() => { if (hold.playState !== 'finished' && !row._duiTossed) hold.cancel(); }, 1000);
+  }
+  function toss(row, list, hold) {
     const now = performance.now();
     const from = gathering && now - gathering.at < 1200 ? gathering
       : pageShot && now - pageShot.at < 1500 ? pageShot : null;
     gathering = null;
     pageShot = null;
     if (!from || reduced() || document.hidden || !shown(row)) {
+      hold.cancel();
       row.animate([{ opacity: 0 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 200, easing: tokens.standard });
       return;
     }
+    row._duiTossed = true;
     const colour = row.dataset.duiGrain || 'hsl(32 46% 60%)';
-    const hold = row.animate([{ opacity: 0 }, { opacity: 0 }], { duration: 3000, fill: 'forwards' });
     // The row it lands on is brought into sight first.
     const scroller = scrollerOf(list);
     const view = scroller.getBoundingClientRect(), box = row.getBoundingClientRect();
