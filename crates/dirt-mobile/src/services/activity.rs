@@ -84,6 +84,35 @@ fn with_activity<T>(
     result.map_err(|error| error.to_string())
 }
 
+/// The app's own files folder, as Android gives it to the activity
+/// (`Context.getFilesDir`): where the capture sheet and its job keep and
+/// look for things too (`config::default_mobile_data_directory`).
+pub fn files_dir() -> Option<std::path::PathBuf> {
+    let ctx = ndk_context::android_context();
+    // SAFETY: as in `with_activity`: the process-global VM pointer the
+    // runtime publishes, valid for the life of the process.
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }.ok()?;
+    let mut env = vm.attach_current_thread().ok()?;
+    let found = env.with_local_frame(8, |env| {
+        // SAFETY: the host Activity the runtime gave `ndk_context`, used as
+        // a `JObject` for this call only.
+        let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+        let folder = env
+            .call_method(&activity, "getFilesDir", "()Ljava/io/File;", &[])?
+            .l()?;
+        let path = env
+            .call_method(&folder, "getAbsolutePath", "()Ljava/lang/String;", &[])?
+            .l()?;
+        let path: String = env.get_string(&JString::from(path))?.into();
+        Ok::<_, jni::errors::Error>(path)
+    });
+    if found.is_err() && env.exception_check().unwrap_or(false) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+    }
+    found.ok().map(std::path::PathBuf::from)
+}
+
 /// Calls a static method of the activity that takes nothing and returns a
 /// text or null. What comes back may be private, so it is never logged.
 fn take_text(method: &str) -> Option<String> {

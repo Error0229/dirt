@@ -20,7 +20,12 @@ const val TAG = "DirtCapture"
 class CaptureJob : JobService() {
     override fun onStartJob(params: JobParameters): Boolean {
         Thread {
-            val outcome = runCatching { Core.takeIn(applicationContext, filesDir.absolutePath) }
+            // One run at a time: asking for the job again stops a run
+            // Android-side, while its thread carries on. A run waits for
+            // the one before it, then takes in what is left.
+            val outcome = synchronized(TAKING_IN) {
+                runCatching { Core.takeIn(applicationContext, filesDir.absolutePath) }
+            }
             Log.i(TAG, "job: ${outcome.getOrElse { failure -> "failed: $failure" }}")
             // Not asked for again on a failure: what was made is in the
             // store, and the next sync from anywhere sends it; what is not
@@ -36,6 +41,7 @@ class CaptureJob : JobService() {
 
     companion object {
         private const val JOB = 7401
+        private val TAKING_IN = Any()
 
         // Asks for the job. Asking again while it waits replaces it: one
         // run takes in every thought that waits.
@@ -44,6 +50,9 @@ class CaptureJob : JobService() {
             fun job(expedited: Boolean): JobInfo {
                 val builder = JobInfo.Builder(JOB, ComponentName(context, CaptureJob::class.java))
                     .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    // Kept across a restart of the phone: a thought kept
+                    // offline is not left waiting for the app.
+                    .setPersisted(true)
                 if (expedited && Build.VERSION.SDK_INT >= 31) builder.setExpedited(true)
                 return builder.build()
             }

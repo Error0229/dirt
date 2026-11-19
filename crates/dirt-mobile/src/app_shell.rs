@@ -198,8 +198,14 @@ pub fn AppShell() -> Element {
                 }
             };
             // Thoughts the capture sheet left waiting become notes now, if
-            // its job has not made them already.
-            take_in(note_store.core(), &default_mobile_data_directory()).await;
+            // its job has not made them already, and are sent: the sync the
+            // session began as it opened may have run before they were made.
+            let taken = take_in(note_store.core(), &default_mobile_data_directory()).await;
+            if taken.made > 0 {
+                if let Some(opened) = &opened_session {
+                    opened.notify(Trigger::Changed);
+                }
+            }
             store.set(Some(note_store));
 
             if let Some(opened) = &opened_session {

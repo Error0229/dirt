@@ -5,6 +5,8 @@
     <string name="dirt_capture_hint">What’s on your mind?</string>
     <string name="dirt_capture_done">Done</string>
     <string name="dirt_capture_locked">Adds a note. Your notes stay locked.</string>
+    <string name="dirt_capture_not_kept">The thought could not be kept. It is still here.</string>
+    <item name="dirt_capture_field" type="id" />
     <string name="dirt_widget_label">Dirt</string>
     <string name="dirt_widget_bar">Write a thought</string>
     <string name="dirt_open_dirt">Open Dirt</string>

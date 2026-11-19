@@ -177,18 +177,24 @@ pub mod android {
         };
         runtime.block_on(async {
             let mut said = Vec::new();
-            let session = server.as_deref().and_then(|url| {
-                let opened = EncryptedPrefs::open_with(vm, context, &slot_name(url))
+            let session = match server.as_deref().map(|url| {
+                EncryptedPrefs::open_with(vm, context, &slot_name(url))
                     .map_err(|error| error.to_string())
                     .and_then(|secrets| {
                         crate::app_shell::session_with(url, secrets, data_folder.clone(), false)
-                    });
-                opened
-                    .map_err(|error| said.push(format!("no session: {error}")))
-                    .ok()
-            });
-            // Signed out, or with no session, the thought still becomes a
-            // note, in the store a signed-out app uses.
+                    })
+            }) {
+                Some(Ok(session)) => Some(session),
+                // Which store the device writes in is the session's to say:
+                // signed in, the account's. Without it, a thought taken into
+                // the local store would be where the app, signed in, never
+                // shows it. The files wait for the app, which says what is
+                // wrong.
+                Some(Err(error)) => return format!("no session, so nothing taken in: {error}"),
+                None => None,
+            };
+            // Signed out the session's store is the local one; and a build
+            // with no server has only that.
             let store = session.as_ref().map_or_else(
                 || Store::open_in(&data_folder, &StoreName::Local),
                 |session| Ok(session.store()),

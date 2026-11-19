@@ -49,8 +49,8 @@ pub struct AppState {
     /// A note to open, asked for from outside the main screen: Settings →
     /// Sync opens a note that can't sync.
     pub open_request: Signal<Option<NoteId>>,
-    /// Raised when the activity may hold something from outside the app:
-    /// a share, or the widget asking for a page. The main screen asks.
+    /// Raised when the activity may hold something another app shared.
+    /// The main screen asks.
     pub capture_ready: Signal<u64>,
 }
 

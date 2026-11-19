@@ -982,8 +982,10 @@ impl Screen {
                 self.exit.set(ListExit::None);
                 self.app.note_changed();
                 // **Undo** takes the note away again, as if nothing had
-                // been shared.
-                let undo = Callback::new(move |()| self.unshare(note.id));
+                // been shared: from the store it was made in, whatever is
+                // open by the time **Undo** is pressed.
+                let made_in = Arc::clone(&store);
+                let undo = Callback::new(move |()| self.unshare(&made_in, note.id));
                 self.toasts
                     .show(Toast::new("Saved to Dirt").icon(Icon::Check).undo(undo));
             }
@@ -999,9 +1001,9 @@ impl Screen {
 impl Screen {
     /// **Undo** on the toast after a share: the note it made is deleted,
     /// and no toast says so.
-    fn unshare(self, note: NoteId) {
+    fn unshare(self, store: &Arc<MobileNoteStore>, note: NoteId) {
+        let store = Arc::clone(store);
         spawn(async move {
-            let Some(store) = self.store() else { return };
             match store.core().delete_note(&note).await {
                 Ok(()) => self.app.note_changed(),
                 Err(error) => self.not_done("The note could not be deleted", &error),

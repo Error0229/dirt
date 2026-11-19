@@ -2,7 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- No backup and no transfer to a new phone: Dirt's database and the
+         thoughts waiting for it are not encrypted by Dirt, and its keys
+         would not open elsewhere (res/xml/dirt_data_extraction.xml in
+         android/native; docs/SECURITY.md). -->
     <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/dirt_data_extraction"
         android:allowNativeHeapPointerTagging="false"
         android:extractNativeLibs="true"
         android:hasCode="true"

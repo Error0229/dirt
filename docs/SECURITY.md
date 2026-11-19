@@ -291,6 +291,13 @@ Quick Settings tile and the phone's note-taking role open (interface design
   Android's own file encryption covers them. A small file, `dirt/look`,
   holds the theme and the accent chosen, for the sheet and the widget; it
   says nothing about any note.
+- **Nothing of it goes into a backup.** Android's cloud backup and its
+  transfer to a new phone take nothing of Dirt (`allowBackup="false"`,
+  and data extraction rules that leave out every folder): the database,
+  the waiting thoughts and the draft are not encrypted by Dirt, and the
+  device's keys would not open on another phone. A new phone gets the
+  account's notes by signing in and being let in. Notes on a phone that
+  was never signed in are not carried to a new one: export them first.
 - **The job runs the app's own code, and nothing else.** It loads the app's
   library and opens the device's secrets in Android's encrypted
   preferences, as the app does, makes the note and syncs once. It is asked

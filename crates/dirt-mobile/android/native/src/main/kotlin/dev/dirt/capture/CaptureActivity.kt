@@ -109,6 +109,9 @@ class CaptureActivity : Activity() {
             gravity = Gravity.BOTTOM
         }
         field = EditText(this).apply {
+            // An ID of its own, so that Android keeps its text if the sheet
+            // is ever made again (a change the sheet does not take itself).
+            id = R.id.dirt_capture_field
             setHint(R.string.dirt_capture_hint)
             setTextColor(getColor(R.color.dirt_text))
             setHintTextColor(getColor(R.color.dirt_text_3))
@@ -154,8 +157,11 @@ class CaptureActivity : Activity() {
         fitAboveTheKeyboard(root)
 
         // A draft left earlier comes back, but never over the lock screen.
-        draftBefore = Waiting.draft(this)
-        if (!locked && draftBefore.isNotEmpty()) {
+        // Made again after a change, the sheet keeps the draft it opened
+        // with (the file may hold what was written since), and the field
+        // keeps its own text.
+        draftBefore = savedInstanceState?.getString(DRAFT_BEFORE) ?: Waiting.draft(this)
+        if (savedInstanceState == null && !locked && draftBefore.isNotEmpty()) {
             field.setText(draftBefore)
             field.setSelection(draftBefore.length)
             showKeep(true)
@@ -236,14 +242,18 @@ class CaptureActivity : Activity() {
         val id = runCatching { Waiting.keep(this, text) }.getOrElse { failure ->
             // Not on the disk: the words stay in the sheet, to keep again or
             // copy.
+            // Fixed words: the error's own may name a path, and this can
+            // show over the lock screen.
             Log.w(TAG, "the thought could not be kept: $failure")
-            Toast.makeText(this, failure.message ?: "The thought could not be kept", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, R.string.dirt_capture_not_kept, Toast.LENGTH_LONG).show()
             return
         }
         kept = true
-        // A draft from before the lock was not shown, and stays for the
-        // unlocked sheet.
-        if (!locked) Waiting.setDraft(this, "")
+        // Unlocked, the draft was this thought, and goes. Over the lock
+        // screen the draft from before was not shown and stays as it was:
+        // a pause meanwhile (an assistant over the sheet) may have added
+        // this thought to it, which ✓ has now kept.
+        Waiting.setDraft(this, if (locked) draftBefore else "")
         Log.i(TAG, "kept $id locked=$locked")
         // Whatever goes wrong asking for the job, the thought is in its file
         // and the app takes it in when it next starts or comes back.
@@ -295,16 +305,23 @@ class CaptureActivity : Activity() {
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(DRAFT_BEFORE, draftBefore)
+    }
+
     // Left behind (Home, another app): gone, so that the next opening is a
-    // new sheet and not this one brought back.
+    // new sheet and not this one brought back. Not when it is only being
+    // made again for a change.
     override fun onStop() {
         super.onStop()
-        if (!isFinishing) finish()
+        if (!isFinishing && !isChangingConfigurations) finish()
     }
 
     private companion object {
         const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
+        const val DRAFT_BEFORE = "draft_before"
 
         // The design's curves (5.4).
         val STANDARD = PathInterpolator(0.2f, 0f, 0f, 1f)
