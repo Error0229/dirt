@@ -85,7 +85,8 @@ async fn an_archived_note_leaves_the_list_and_keeps_its_edit_time() {
         store.note_counts().await.unwrap(),
         NoteCounts {
             listed: 1,
-            archived: 1
+            archived: 1,
+            ..store.note_counts().await.unwrap()
         }
     );
     assert_eq!(store.note_count().await.unwrap(), 2);

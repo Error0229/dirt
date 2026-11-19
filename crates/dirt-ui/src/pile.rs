@@ -22,6 +22,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use dirt_core::models::{Grain, PileNote, PileSummary};
+use dirt_core::store::NoteCounts;
 
 /// The widest the heap may be under the list, in CSS pixels. Wider than
 /// that, its grains get smaller instead.
@@ -260,18 +261,63 @@ pub struct PileView {
     pub summary: PileSummary,
     /// Which notes the heap is made of, as one number.
     made_of: u64,
+    /// What the store's counts were when the notes were read: how many
+    /// there were, and their mark ([`NoteCounts::live_mark`]).
+    read_for: Option<(usize, i64)>,
 }
 
 impl PileView {
-    /// The pile of `notes`, as [`dirt_core::Store::pile`] gives them, where
-    /// local time is `utc_offset_secs` ahead of UTC.
+    /// The pile now, given the store's counts from the same reading of the
+    /// list, where local time is `utc_offset_secs` ahead of UTC.
     ///
-    /// The heap is worked out again only when the notes are not those
-    /// `before` was made of: an edit or an archive moves no grain, and
-    /// most changes are edits. It is worked out away from the screen's
-    /// own thread: on a debug build 5,000 grains take about 16 ms
-    /// (`docs/ui/design.md`, 6.17).
-    pub async fn of(notes: Vec<PileNote>, before: Option<&Self>, utc_offset_secs: i32) -> Self {
+    /// The list is read again at every pause in typing, every sync and
+    /// every page loaded, and [`dirt_core::Store::pile`] reads every live
+    /// note. So the notes are read (`read`) only when the counts say they
+    /// may have changed since `before` read them: a note made, deleted or
+    /// brought back. An edit or an archive reads nothing; the numbers of
+    /// the line are the counts' own. The heap is worked out again only
+    /// when the notes read are not those it was made of, away from the
+    /// screen's own thread: on a debug build 5,000 grains take about
+    /// 16 ms (`docs/ui/design.md`, 6.17). If the notes cannot be read, the
+    /// pile is as it was.
+    pub async fn read<F, Fut>(
+        before: Option<Self>,
+        counts: NoteCounts,
+        utc_offset_secs: i32,
+        read: F,
+    ) -> Self
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = dirt_core::Result<Vec<PileNote>>>,
+    {
+        let key = (counts.listed + counts.archived, counts.live_mark);
+        let counted = |mut view: Self| {
+            view.summary.thoughts = key.0;
+            view.summary.archived = counts.archived;
+            view
+        };
+        if let Some(before) = before
+            .as_ref()
+            .filter(|before| before.read_for == Some(key))
+        {
+            return counted(before.clone());
+        }
+        match read().await {
+            Ok(notes) => {
+                let mut view = Self::of(notes, before.as_ref(), utc_offset_secs).await;
+                view.read_for = Some(key);
+                counted(view)
+            }
+            Err(error) => {
+                tracing::error!("Could not read the pile: {error}");
+                before.unwrap_or_default()
+            }
+        }
+    }
+
+    /// The pile of `notes`, as [`dirt_core::Store::pile`] gives them. The
+    /// heap is `before`'s if it was made of the same notes.
+    async fn of(notes: Vec<PileNote>, before: Option<&Self>, utc_offset_secs: i32) -> Self {
         let summary = PileSummary::of(&notes, utc_offset_secs);
         let made_of = {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -285,6 +331,7 @@ impl PileView {
                 heap: Arc::clone(&before.heap),
                 summary,
                 made_of,
+                read_for: None,
             };
         }
         let started = std::time::Instant::now();
@@ -300,6 +347,7 @@ impl PileView {
             heap: Arc::new(heap),
             summary,
             made_of,
+            read_for: None,
         }
     }
 }
@@ -605,6 +653,61 @@ mod tests {
             })
             .collect();
         assert_eq!(shapes.len(), 4);
+    }
+
+    /// The store is asked for the notes only when the counts say they
+    /// may have changed: not for an edit or an archive, whose numbers come
+    /// from the counts.
+    #[tokio::test]
+    async fn the_notes_are_read_only_when_the_counts_say_they_changed() {
+        let mut notes = notes(5);
+        let counts = |listed, archived, live_mark| NoteCounts {
+            listed,
+            archived,
+            live_mark,
+        };
+        let reads = std::cell::Cell::new(0);
+        let read = |notes: Vec<PileNote>| {
+            reads.set(reads.get() + 1);
+            async move { Ok(notes) }
+        };
+
+        let first = PileView::read(None, counts(5, 0, 15), 0, || read(notes.clone())).await;
+        assert_eq!((reads.get(), first.summary.thoughts), (1, 5));
+        assert_eq!(first.heap.grains, 5);
+
+        // An edit: the same counts. Nothing is read.
+        let edited = PileView::read(Some(first.clone()), counts(5, 0, 15), 0, || {
+            read(notes.clone())
+        })
+        .await;
+        assert_eq!(reads.get(), 1);
+        assert_eq!(edited, first);
+
+        // An archive: one note more archived, the same notes. Nothing is
+        // read, and the line says so.
+        let archived =
+            PileView::read(Some(edited), counts(4, 1, 15), 0, || read(notes.clone())).await;
+        assert_eq!(reads.get(), 1);
+        assert_eq!(
+            (archived.summary.thoughts, archived.summary.archived),
+            (5, 1)
+        );
+        assert!(Arc::ptr_eq(&archived.heap, &first.heap));
+
+        // A note made: read, and the heap worked out again.
+        notes.extend(super::tests::notes(1));
+        let made =
+            PileView::read(Some(archived), counts(5, 1, 21), 0, || read(notes.clone())).await;
+        assert_eq!(reads.get(), 2);
+        assert_eq!((made.summary.thoughts, made.heap.grains), (6, 6));
+
+        // A read that fails leaves the pile as it was.
+        let failed = PileView::read(Some(made.clone()), counts(6, 1, 28), 0, || async {
+            Err(dirt_core::Error::Database("closed".to_owned()))
+        })
+        .await;
+        assert_eq!(failed, made);
     }
 
     /// How long the heap takes to work out, on piles of several sizes. It

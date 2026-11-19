@@ -531,6 +531,139 @@ async fn the_store_at_the_note_limit_for_the_interface() {
     );
 }
 
+/// What one reading of the list costs at the note limit, as the apps read
+/// it at every pause in typing, every sync and every page loaded: with
+/// the pile's notes read each time, as step 7 first did, and with them
+/// read only when the counts move. Then the plan of the pile's statement,
+/// and what an index holding the ID would save it, tried on a copy.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "a measurement, not a check"]
+async fn a_reading_of_the_list_with_and_without_the_pile() {
+    let notes = usize::try_from(limits::MAX_NOTES_PER_ACCOUNT).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let page = "a sentence of a long note, forty chars. ".repeat(50);
+    for (name, long) in [("short.db", false), ("long.db", true)] {
+        let path = folder.path().join(name);
+        let store = dirt_core::Store::open(&path).unwrap();
+        for number in 0..notes {
+            let text = if long {
+                format!(
+                    "note {number}
+{page}"
+                )
+            } else {
+                format!(
+                    "note {number}: something worth remembering, about a line long #tag{}",
+                    number % 50
+                )
+            };
+            let note = store.create_note(&text).await.unwrap();
+            if number % 10 == 0 {
+                store.archive_note(&note.id).await.unwrap();
+            }
+        }
+        println!(
+            "
+{notes} notes of {}, a database of {} MB:",
+            if long { "2,000 characters" } else { "a line" },
+            std::fs::metadata(&path).unwrap().len() / 1_000_000
+        );
+        // A reading of the list as the desktop does it, signed out.
+        let reading = |with_pile: bool| {
+            let store = &store;
+            async move {
+                let began = Instant::now();
+                let listed = store.list_notes(100, 0).await.unwrap();
+                let _files = store.notes_with_files().await.unwrap();
+                let _counts = store.note_counts().await.unwrap();
+                if with_pile {
+                    let pile = store.pile().await.unwrap();
+                    assert!(pile.len() > listed.len());
+                }
+                began.elapsed()
+            }
+        };
+        for (what, with_pile) in [
+            ("the pile read every time (before)", true),
+            ("the pile read only when the counts move (after)", false),
+        ] {
+            reading(with_pile).await;
+            let mut times = Vec::new();
+            for _ in 0..9 {
+                times.push(reading(with_pile).await);
+            }
+            times.sort();
+            println!(
+                "a reading of the list, {what}: median {:.1?}, fastest {:.1?}, slowest {:.1?}",
+                times[4], times[0], times[8]
+            );
+        }
+        timed!("Store::pile alone", store.pile());
+        drop(store);
+
+        // The pile's statement, as SQLite plans it, and with an index that
+        // holds the ID too, on a copy, so that no store of this program
+        // has it.
+        let copy = folder.path().join(format!("copy-{name}"));
+        std::fs::copy(&path, &copy).unwrap();
+        let connection = rusqlite::Connection::open(&copy).unwrap();
+        let plan = |sql: &str| -> Vec<String> {
+            let mut statement = connection
+                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                .unwrap();
+            statement
+                .query_map([], |row| row.get::<_, String>(3))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        let time = |sql: &str| {
+            let mut times = Vec::new();
+            for _ in 0..7 {
+                let began = Instant::now();
+                let mut statement = connection.prepare(sql).unwrap();
+                let rows = statement
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .unwrap()
+                    .count();
+                times.push(began.elapsed());
+                assert!(rows > 0);
+            }
+            times.sort();
+            times[3]
+        };
+        let pile_sql =
+            "SELECT id, edited_at, archived FROM notes INDEXED BY notes_by_edit WHERE deleted = 0";
+        println!(
+            "the pile's plan: {:?}, median {:.1?}",
+            plan(pile_sql),
+            time(pile_sql)
+        );
+        let bytes = || -> i64 {
+            connection
+                .query_row(
+                    "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        let before = bytes();
+        connection
+            .execute_batch(
+                "CREATE INDEX notes_for_the_pile ON notes (deleted, archived, edited_at DESC, id)",
+            )
+            .unwrap();
+        let covering = "SELECT id, edited_at, archived FROM notes INDEXED BY notes_for_the_pile WHERE deleted = 0";
+        println!(
+            "with an index holding the ID: {:?}, median {:.1?}, the database {} KB larger",
+            plan(covering),
+            time(covering),
+            (bytes() - before) / 1000
+        );
+    }
+}
+
 /// The largest file that may be attached: the limit is on the file as it
 /// is stored, which is a little longer than the file.
 fn largest_file_bytes() -> u64 {

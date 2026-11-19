@@ -174,6 +174,32 @@ The pile (`Store::pile`, and `dirt_core::models`):
 | Each of the 20,000 notes' shade and layer, and the line under the pile | 1.2 ms |
 | The answer in memory | 640 KB |
 
+The apps read the list again at every pause in typing, every sync and
+every page loaded. Measured on 2026-11-18 on a debug build of this laptop
+(`a_reading_of_the_list_with_and_without_the_pile` in `dirt-sim`'s
+`tests/limits.rs`), a reading signed out (the 100 newest notes, the notes
+with files, the counts), 20,000 notes, a tenth archived:
+
+| A reading of the list | Notes of a line (12 MB) | Notes of 2,000 characters (143 MB) |
+|---|---|---|
+| With the pile's notes read each time, as step 7 of the interface plan first did | 75 ms | 113 ms |
+| With them read only when the counts move, as the apps do now | 4.9 ms | 6.3 ms |
+| `Store::pile` alone | 62 ms | 91 ms |
+| The pile's statement with an index that also holds the ID, tried on a copy | 14 ms (54 ms without) | 22 ms (72 ms without) |
+
+The counts carry a mark, the sum of the row numbers of the notes that are
+not deleted, read in the list's index alone. The pile's notes are read
+when the number of notes or the mark changes: a note made, deleted or
+brought back, not an edit or an archive. The pile's statement is not a
+scan of the table: it searches the list's index, which holds the edit time
+and the archived mark, and looks up each note's row for its ID alone. An
+index holding the ID as well would make that read three to four times as
+quick, for about 1 MB more per 20,000 notes and one more index to write
+with every note's every save. With the read now made once per new
+thought, about 60 to 90 ms on a debug build away from the screen, that is
+not worth a change to the schema; it would be if the pile were read more
+often.
+
 What the measuring changed:
 
 - **A chosen tag was looked up once for each tag of each note.** The first

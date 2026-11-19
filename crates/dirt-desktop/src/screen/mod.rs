@@ -1219,24 +1219,14 @@ fn use_listing(screen: &Screen, app: &AppState) {
             }
             let counts = store.note_counts().await.unwrap_or_default();
             let more = notes.len() >= limit;
+            // The pile's notes are read only when the counts say they may
+            // have changed: not at every pause in typing (6.17).
             let before = listing_signal
                 .peek()
                 .as_ref()
                 .map(|listing| listing.pile.clone());
-            let pile = if finding || archived_view {
-                before.unwrap_or_default()
-            } else {
-                match store.pile().await {
-                    Ok(pile) => {
-                        let offset = Clock::now().utc_offset_secs;
-                        PileView::of(pile, before.as_ref(), offset).await
-                    }
-                    Err(error) => {
-                        tracing::error!("Could not read the pile: {error}");
-                        before.unwrap_or_default()
-                    }
-                }
-            };
+            let offset = Clock::now().utc_offset_secs;
+            let pile = PileView::read(before, counts, offset, || store.pile()).await;
 
             // What a sync has just brought: new to the list, or edited
             // since it was last read, and not the note being written.

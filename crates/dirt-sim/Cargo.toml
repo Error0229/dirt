@@ -41,6 +41,9 @@ uuid.workspace = true
 [dev-dependencies]
 # Makes a picture for a test to attach.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Reads a store's query plans and tries an index on a copy of it, for a
+# measurement in `tests/limits.rs`.
+rusqlite.workspace = true
 
 [lints]
 workspace = true

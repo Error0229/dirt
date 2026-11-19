@@ -1233,7 +1233,7 @@ the row or card a new thought lands on asks for with `data-dui-settle`.
 | Its words | "1,254 thoughts since Nov 2025": a comma between thousands, and the month's first three letters with the year, whatever the pile's age. "3 archived" under it, a button that lists them. Pointing at the heap says "1,254 thoughts", and a screen reader reads the same |
 | Its size | No wider than 250 px under the list; above about 3,700 grains they get smaller to fit. The pile widget is the plan's step 10 |
 | Reduced motion | The settled row fades in; no words gather, no grain flies, no dust, and the heap does not drop a grain. An Android page fades. An archived row fades with no grain |
-| What it costs | Measured on this laptop, a debug build: 1,000 grains 2.4 ms, 5,000 grains 16 ms, 20,000 grains 92 ms, the picture 34 KB, 101 KB and 271 KB. Worked out on a thread for blocking work, only when the notes it is made of change. Reading the notes is `Store::pile`'s (`docs/LIMITS.md`) |
+| What it costs | Measured on this laptop, a debug build: 1,000 grains 2.4 ms, 5,000 grains 16 ms, 20,000 grains 92 ms, the picture 34 KB, 101 KB and 271 KB. Worked out on a thread for blocking work, only when the notes it is made of change. The notes themselves are read (`Store::pile`) only when the store's counts say they may have changed, a note made, deleted or brought back, and not at every reading of the list: at 20,000 notes that keeps a reading at 5–6 ms instead of 75–113 ms (`docs/LIMITS.md`) |
 
 ### 6.18 Voice
 
