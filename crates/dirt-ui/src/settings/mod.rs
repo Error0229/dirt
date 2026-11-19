@@ -303,6 +303,10 @@ pub fn SettingsPage(
     save_phrase: SavePhrase,
     /// Opens a note, with Settings closed: one that cannot sync.
     open_note: EventHandler<NoteId>,
+    /// Notes written before signing in were brought into the account: the
+    /// app's list reads its notes again. A sync would too, but offline
+    /// none comes.
+    notes_brought: EventHandler<()>,
     #[props(default = Platform::current())] platform: Platform,
 ) -> Element {
     let nav = settings_nav();
@@ -330,7 +334,7 @@ pub fn SettingsPage(
                     "aria-labelledby": "dui-set-h-{part.name()}",
                     h3 { id: "dui-set-h-{part.name()}", "{part.label()}" }
                     match part {
-                        Section::Account => rsx! { account::Account { linked, sign_in } },
+                        Section::Account => rsx! { account::Account { linked, sign_in, notes_brought } },
                         Section::Devices => rsx! { devices::Devices { linked, copy, save_phrase } },
                         Section::Sync => rsx! { sync::Sync { linked, open_note, platform } },
                         Section::Appearance => rsx! {

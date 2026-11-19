@@ -215,6 +215,7 @@ pub fn SettingsPanel() -> Element {
                     export,
                     copy,
                     save_phrase,
+                    notes_brought: move |()| app.reread(),
                     open_note,
                 }
             }

@@ -1,6 +1,8 @@
 /* Android's main screen (interface design, sections 3, 6 and 8). The
    components are dirt-ui's; this lays them out. Classes begin with dm-. */
 
+/* What lies under Settings. Its children are fixed to the screen, so it is given the screen's size itself: when the sheet opens it steps back (.dui-steps-back), and its transform and clip then frame them, scaled, instead of a box with no height that hides them. */
+.dm-under{position:fixed;inset:0}
 .dm{position:fixed;inset:0;display:flex;flex-direction:column;background:var(--bg);padding-top:env(safe-area-inset-top,0px)}
 .dm-grow{flex:1;min-width:0}
 
