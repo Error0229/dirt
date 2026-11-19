@@ -274,6 +274,15 @@ pub type SignIn = Callback<Session, Task<Result<SessionState, SessionError>>>;
 /// failed.
 pub type ExportTo = Callback<ExportFormat, Task<Option<Result<Exported, String>>>>;
 
+/// What an app does when the person saves the recovery phrase as a file.
+///
+/// It asks where, and writes the text there. Nothing when the person chose
+/// nowhere; the file's name when it was saved; the reason when it failed.
+pub type SavePhrase = Callback<String, Task<Option<Result<String, String>>>>;
+
+/// The name the recovery phrase's file is offered under.
+pub const PHRASE_FILE_NAME: &str = "dirt-recovery-phrase.txt";
+
 /// The page of Settings, for the app's panel or sheet.
 #[component]
 pub fn SettingsPage(
@@ -290,8 +299,14 @@ pub fn SettingsPage(
     /// Puts the recovery phrase on the clipboard, kept out of the
     /// system's clipboard history where the system allows it.
     copy: EventHandler<String>,
+    /// Saves the recovery phrase as a text file where the person chooses.
+    save_phrase: SavePhrase,
     /// Opens a note, with Settings closed: one that cannot sync.
     open_note: EventHandler<NoteId>,
+    /// Notes written before signing in were brought into the account: the
+    /// app's list reads its notes again. A sync would too, but offline
+    /// none comes.
+    notes_brought: EventHandler<()>,
     #[props(default = Platform::current())] platform: Platform,
 ) -> Element {
     let nav = settings_nav();
@@ -319,8 +334,8 @@ pub fn SettingsPage(
                     "aria-labelledby": "dui-set-h-{part.name()}",
                     h3 { id: "dui-set-h-{part.name()}", "{part.label()}" }
                     match part {
-                        Section::Account => rsx! { account::Account { linked, sign_in } },
-                        Section::Devices => rsx! { devices::Devices { linked, copy } },
+                        Section::Account => rsx! { account::Account { linked, sign_in, notes_brought } },
+                        Section::Devices => rsx! { devices::Devices { linked, copy, save_phrase } },
                         Section::Sync => rsx! { sync::Sync { linked, open_note, platform } },
                         Section::Appearance => rsx! {
                             look::Look { appearance, on_appearance, focus_style, on_focus_style, platform }

@@ -47,7 +47,7 @@ fn notes(count: usize) -> String {
 }
 
 #[component]
-pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
+pub(super) fn Account(linked: Linked, sign_in: SignIn, notes_brought: EventHandler<()>) -> Element {
     let toasts = use_toasts();
     let nav = settings_nav();
     let facts = facts();
@@ -99,10 +99,13 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn) -> Element {
         spawn(async move {
             match session.move_local_notes().await {
                 Ok(0) => {}
-                Ok(moved) => toasts.show(Toast::new(format!(
-                    "Brought {} into the account",
-                    notes(moved)
-                ))),
+                Ok(moved) => {
+                    notes_brought.call(());
+                    toasts.show(Toast::new(format!(
+                        "Brought {} into the account",
+                        notes(moved)
+                    )));
+                }
                 Err(error) => toasts.show_error(
                     Toast::new("The notes could not be brought in").detail(as_sentence(&error)),
                 ),

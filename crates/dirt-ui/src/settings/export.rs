@@ -54,7 +54,7 @@ pub(super) fn ExportSection(export: ExportTo, platform: Platform) -> Element {
     };
     rsx! {
         div { class: "dui-set-card",
-            div { class: "dui-set-row",
+            div { class: "dui-set-row dui-set-stack",
                 div { class: "dui-set-words",
                     div { class: "dui-set-t", "Every note and file" }
                     div { class: "dui-set-s",

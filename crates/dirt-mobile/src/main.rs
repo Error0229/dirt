@@ -27,9 +27,9 @@ mod screen;
 #[cfg(target_os = "android")]
 mod services;
 #[cfg(target_os = "android")]
-mod state;
+mod settings;
 #[cfg(target_os = "android")]
-mod ui;
+mod state;
 #[cfg(target_os = "android")]
 mod views;
 

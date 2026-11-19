@@ -274,6 +274,38 @@ clipboard manager that follows the convention there (nspasteboard.org's
 concealed type, `x-kde-passwordManagerHint`). A clipboard manager that
 ignores the convention keeps it. On the clipboard itself any program can
 read it until something else is copied, so the toast says to clear it.
+On Android, **Copy** marks the clip sensitive (`ClipDescription.EXTRA_IS_SENSITIVE`):
+from Android 13 the system's own "copied" preview does not show it, and a
+keyboard that honours the flag (Gboard does) hides it in its clipboard
+suggestion and history. Before Android 13 there is no such flag, and a
+keyboard may show and keep it. On every version an app in front may read
+the clipboard while it holds the phrase.
+
+**Save as a file** writes the phrase as plain text,
+`dirt-recovery-phrase.txt`, where the person chooses. Saving it means:
+
+- **The file is the account's key.** The phrase opens the recovery copy of
+  the account key, so whoever has the file and can sign in as the person
+  (their email, through Clerk) can let a device of theirs in and read
+  every note, as with a phrase written on paper. Dirt does not encrypt the
+  file, and cannot tell when it has been copied or read.
+- **It goes where the person puts it, and travels with that place.** On the
+  desktop it is written once, by the system's save dialog, to the path
+  chosen; on Android, Android's screen for choosing a place writes it
+  there (Downloads, a cloud drive's folder). A folder that is backed up or
+  synced carries the file to wherever that goes.
+- **Dirt keeps no copy.** The desktop writes nothing anywhere else. Android
+  can only save a file the app already has, so the text is written first
+  to the app's private storage (`files/dirt/export/`, which no other app
+  can read), Android streams it from there to the place chosen, and the
+  app deletes it as soon as Android has finished or the person has backed
+  out. If the app is stopped in between, the whole folder is deleted the
+  next time it starts, as it is for exports. The phrase is otherwise only
+  in the app's memory while it is on screen.
+- **Removing it from the account is the way to end it.** Removing the
+  recovery phrase, making a new one, or changing the account's key makes a
+  saved file useless; deleting the file alone does not end a copy made
+  of it.
 
 Two values are derived from the phrase with HKDF, each bound to the account.
 One is a key under which the account key is encrypted; the server keeps that

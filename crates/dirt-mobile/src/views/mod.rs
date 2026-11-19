@@ -1,11 +1,7 @@
-//! The old screens, until step 5 of the interface's plan replaces them:
-//! Settings and Devices, and the list of a note's files under its page.
+//! The list of a note's files under its page, from the old interface,
+//! until step 6 of the interface's plan replaces it.
 //!
-//! The main screen is the new one, in `crate::screen`.
+//! The main screen is the new one, in `crate::screen`; Settings is in
+//! `crate::settings`.
 
 pub mod attachments;
-mod devices;
-mod settings;
-
-pub use devices::Devices;
-pub use settings::Settings;

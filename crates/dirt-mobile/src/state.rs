@@ -7,20 +7,9 @@ use dirt_core::models::{NoteId, Settings};
 use dirt_core::session::{Session, SessionState};
 use dirt_core::sync::worker::{SyncStatus, Trigger};
 use dirt_core::Store;
+use dirt_ui::settings::SettingsNav;
 
 use crate::data::MobileNoteStore;
-
-/// What is on screen over the main screen, which is always there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum View {
-    /// The main screen alone: the list, Find, the dock and the note.
-    Main,
-    /// Settings: the account and sync, the old screen until step 5 of the
-    /// interface's plan replaces it.
-    Settings,
-    /// The account's devices: letting one in, the recovery phrase.
-    Devices,
-}
 
 /// Context object passed via `use_context_provider` to every component.
 ///
@@ -28,7 +17,8 @@ pub enum View {
 /// downstream components can mutate state without prop drilling.
 #[derive(Clone, Copy)]
 pub struct AppState {
-    pub view: Signal<View>,
+    /// Whether Settings is open over the main screen, and where.
+    pub nav: SettingsNav,
     /// A failure that the main screen shows: the local database could not
     /// be opened, the device's secure storage could not be used, or what
     /// was shared could not be saved.

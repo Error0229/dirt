@@ -7,9 +7,8 @@
 //!
 //! Everything is drawn inside `dirt_ui::UiRoot`, which brings the new
 //! interface's style sheet and script and applies the theme, the accent
-//! and the text size from this device's settings. The main screen is the
-//! new one and is always there; Settings and Devices are the old screens,
-//! drawn over it until step 5 of the interface's plan replaces them.
+//! and the text size from this device's settings. The main screen is always
+//! there; Settings is a sheet over it (`crate::settings`).
 //!
 //! Signing in leaves the app for the browser. Android brings the person
 //! back through the custom address `dev.dirt.app://callback`, which
@@ -35,7 +34,6 @@ use dirt_core::session::{Session, SessionConfig, SessionError, SessionState};
 use dirt_core::store::StoreName;
 use dirt_core::sync::worker::{SyncStatus, Timing, Trigger};
 use dirt_core::Store;
-use dirt_ui::events::{use_outcome, Outcome};
 use dirt_ui::{Appearance, UiRoot};
 
 use crate::bootstrap_config::load_bootstrap_config;
@@ -44,9 +42,8 @@ use crate::data::MobileNoteStore;
 use crate::screen::MainScreen;
 use crate::services::activity::{animations_off, take_redirect};
 use crate::services::secure_storage::EncryptedPrefs;
-use crate::state::{AppState, View};
-use crate::ui::MOBILE_UI_STYLES;
-use crate::views::{Devices, Settings as SettingsView};
+use crate::settings::SettingsSheet;
+use crate::state::AppState;
 
 /// Where the sign-in service sends the browser afterwards. The manifest
 /// registers the app for this address.
@@ -89,29 +86,6 @@ async fn finish_sign_in(session: &Session, redirect: &str) -> Option<String> {
     }
 }
 
-/// An old screen, drawn over the main screen with its own colours. Back
-/// goes to `back`.
-#[component]
-fn Legacy(back: View, children: Element) -> Element {
-    let state = use_context::<AppState>();
-    let id = use_outcome(move |outcome| {
-        if outcome == Outcome::Back {
-            let mut view = state.view;
-            view.set(back);
-        }
-    });
-    rsx! {
-        div {
-            class: "dm-legacy dui-light",
-            // It covers the page: the bars take its colours while it does.
-            "data-dui-bars": "",
-            "data-dui-id": "{id}",
-            "data-dui-back": "",
-            {children}
-        }
-    }
-}
-
 #[component]
 #[allow(clippy::too_many_lines)]
 pub fn AppShell() -> Element {
@@ -122,7 +96,7 @@ pub fn AppShell() -> Element {
             .map(|address| address.map(|address| address.url))
             .map_err(|error| dirt_core::util::as_sentence(&error));
 
-    let view = use_signal(|| View::Main);
+    let nav = dirt_ui::settings::use_settings_nav();
     let mut startup_issue = use_signal(|| None::<String>);
     let mut store: Signal<Option<Arc<MobileNoteStore>>> = use_signal(|| None);
     let mut device_store: Signal<Option<Store>> = use_signal(|| None);
@@ -138,7 +112,7 @@ pub fn AppShell() -> Element {
     let mut capture_ready = use_signal(|| 0_u64);
 
     let state = use_context_provider(|| AppState {
-        view,
+        nav,
         startup_issue,
         store,
         device_store,
@@ -339,26 +313,11 @@ pub fn AppShell() -> Element {
     });
 
     let appearance = Appearance::from_settings(&settings.read());
-    let current_view = view();
 
     rsx! {
         UiRoot { appearance, reduced_motion: reduced_motion(),
             MainScreen {}
-            match current_view {
-                View::Main => rsx! {},
-                View::Settings => rsx! {
-                    Legacy { back: View::Main,
-                        style { "{MOBILE_UI_STYLES}" }
-                        SettingsView {}
-                    }
-                },
-                View::Devices => rsx! {
-                    Legacy { back: View::Settings,
-                        style { "{MOBILE_UI_STYLES}" }
-                        Devices {}
-                    }
-                },
-            }
+            SettingsSheet {}
         }
     }
 }

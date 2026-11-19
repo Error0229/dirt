@@ -19,7 +19,7 @@ use dirt_core::util::as_sentence;
 
 use super::code::{CodeComparison, Outcome};
 use super::rows::{Btn, Card, Note, Row, RowIcon, Spinner};
-use super::{facts, settings_nav, Linked};
+use super::{facts, settings_nav, Linked, SavePhrase};
 use crate::components::{use_toasts, ConfirmInPlace, IconButton, IconButtonSize, Toast};
 use crate::icons::{Icon, IconSize, IconSvg};
 use crate::time::{edited_short, Clock};
@@ -36,7 +36,7 @@ const TICK_STAYS: Duration = Duration::from_millis(1700);
 /// What the person is told when "they match" came for a code that had
 /// gone: the other device began again, and nothing was sent.
 const CODE_CHANGED: &str =
-    "The pictures changed: the other device began again, and nothing was      sent. Compare these.";
+    "The pictures changed: the other device began again, and nothing was sent. Compare these.";
 
 /// What the person is told when the pictures differed (SECURITY.md,
 /// "Approving a device").
@@ -67,7 +67,11 @@ fn seen(device: &DeviceInfo, clock: Clock) -> String {
 }
 
 #[component]
-pub(super) fn Devices(linked: Linked, copy: EventHandler<String>) -> Element {
+pub(super) fn Devices(
+    linked: Linked,
+    copy: EventHandler<String>,
+    save_phrase: SavePhrase,
+) -> Element {
     let toasts = use_toasts();
     // While this device is being let in. When it is turned away it is
     // signed out at once, and the section that was letting it in goes
@@ -80,7 +84,7 @@ pub(super) fn Devices(linked: Linked, copy: EventHandler<String>) -> Element {
         if *was_waiting.peek() && now == SessionState::SignedOut && *joining.peek() {
             joining.set(false);
             toasts.show_error(Toast::new("Nothing was shared").detail(
-                "The pictures differed, or the other device turned this one away.                  Sign in again to try again.",
+                "The pictures differed, or the other device turned this one away. Sign in again to try again.",
             ));
         }
         if *was_waiting.peek() != waiting {
@@ -98,7 +102,7 @@ pub(super) fn Devices(linked: Linked, copy: EventHandler<String>) -> Element {
             Card { Note { text: "Sign in to use Dirt on more than one device." } }
         },
         SessionState::WaitingForApproval { .. } => rsx! { JoinHere { linked, joining } },
-        SessionState::Ready { .. } => rsx! { DeviceList { linked, copy } },
+        SessionState::Ready { .. } => rsx! { DeviceList { linked, copy, save_phrase } },
     }
 }
 
@@ -400,7 +404,7 @@ impl Ending {
 /// A device that is in: the account's devices, letting another in, and
 /// the recovery phrase.
 #[component]
-fn DeviceList(linked: Linked, copy: EventHandler<String>) -> Element {
+fn DeviceList(linked: Linked, copy: EventHandler<String>, save_phrase: SavePhrase) -> Element {
     let nav = settings_nav();
     let facts = facts();
     let toasts = use_toasts();
@@ -670,6 +674,20 @@ fn DeviceList(linked: Linked, copy: EventHandler<String>) -> Element {
                         copy.call(text);
                         toasts.show(Toast::new("Copied. Clear it from the clipboard after").icon(Icon::Copy));
                     },
+                    on_save: move |text: String| {
+                        spawn(async move {
+                            match save_phrase.call(text).await {
+                                None => {}
+                                Some(Ok(name)) => toasts.show(
+                                    Toast::new(format!("Saved as {name}. Keep it somewhere safe"))
+                                        .icon(Icon::Download),
+                                ),
+                                Some(Err(reason)) => toasts.show_error(
+                                    Toast::new("The phrase was not saved").detail(reason),
+                                ),
+                            }
+                        });
+                    },
                     on_done: move |()| words.set(None),
                 }
             } else {
@@ -695,15 +713,38 @@ fn DeviceList(linked: Linked, copy: EventHandler<String>) -> Element {
     }
 }
 
+/// What the recovery phrase's file holds: the words, numbered and on one
+/// line, and what they are, so that a file found later explains itself.
+pub(super) fn phrase_file(words: &[String]) -> String {
+    let numbered: Vec<String> = words
+        .iter()
+        .enumerate()
+        .map(|(index, word)| format!("{:>2}. {word}", index + 1))
+        .collect();
+    format!(
+        "Dirt recovery phrase\n\n{}\n\nThe same, to type: {}\n\n\
+         With these words a new device gets into your Dirt account when no \
+         other device is left. Anyone who has them and can sign in as you \
+         can read your notes. Keep this file somewhere only you can reach, \
+         or print it and delete it.\n",
+        numbered.join("\n"),
+        words.join(" ")
+    )
+}
+
 /// The recovery phrase, once, as it is made: the 24 words, numbered, in
-/// four columns, with **Copy** and "I've written it down".
+/// four columns, with **Copy**, **Save as a file** and "I've written it
+/// down".
 #[component]
 pub fn RecoveryWords(
     words: Vec<String>,
     on_copy: EventHandler<String>,
+    /// Saves the phrase as a text file: given the file's text.
+    on_save: EventHandler<String>,
     on_done: EventHandler<()>,
 ) -> Element {
     let all = words.join(" ");
+    let file = phrase_file(&words);
     rsx! {
         div { class: "dui-pair",
             div { class: "dui-pair-t", "Your recovery phrase" }
@@ -718,6 +759,7 @@ pub fn RecoveryWords(
             }
             div { class: "dui-pair-a",
                 Btn { kind: "ghost", icon: Icon::Copy, onclick: move |_| on_copy.call(all.clone()), "Copy" }
+                Btn { kind: "ghost", icon: Icon::Download, onclick: move |_| on_save.call(file.clone()), "Save as a file" }
                 Btn { kind: "primary", onclick: move |_| on_done.call(()), "I've written it down" }
             }
         }
@@ -727,6 +769,20 @@ pub fn RecoveryWords(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_phrase_s_file_numbers_the_words_and_says_what_they_are() {
+        let words: Vec<String> = (1..=24).map(|n| format!("w{n}")).collect();
+        let file = phrase_file(&words);
+        assert!(file.starts_with("Dirt recovery phrase\n\n 1. w1\n 2. w2\n"));
+        assert!(file.contains("\n24. w24\n"));
+        assert!(file.contains("The same, to type: w1 w2 w3"));
+        assert!(file.ends_with(
+            "\n\nWith these words a new device gets into your Dirt account when no other \
+             device is left. Anyone who has them and can sign in as you can read your notes. \
+             Keep this file somewhere only you can reach, or print it and delete it.\n"
+        ));
+    }
 
     #[test]
     fn a_phone_is_told_from_a_computer_by_its_name() {

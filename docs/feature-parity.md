@@ -82,19 +82,19 @@ The hotkey is shown in Settings and cannot be changed there.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Sign in | Settings → Account → Sign in, in the system browser; the button waits with a spinner | Settings, in a browser tab over the app | `dirt auth login`; `--no-browser` prints the address |
+| Sign in | Settings → Account → Sign in, in the system browser; the button waits with a spinner | Settings → Account → Sign in, in a browser tab over the app; the button waits with a spinner | `dirt auth login`; `--no-browser` prints the address |
 | Sign out | Yes | Yes | `dirt auth logout` |
-| Move notes written before signing in into the account | A box checked by default under Sign in; afterwards "Bring them in" in Settings → Account | Yes | `dirt auth login --move-local-notes` |
-| Ask to be let in, and compare the code | Settings → Devices, which begins by itself on a device that waits: seven pictures with their names | Settings → Devices | `dirt auth join` |
-| Let a waiting device in | The banner's Review, Settings → Devices → Add a device, or a waiting device's Let it in | Settings → Devices | `dirt devices approve` |
-| List devices, remove one | Settings → Devices, ✕ on a device and a confirmation in its row | Settings → Devices | `dirt devices`, `dirt devices remove <ID>` |
-| Make or remove the recovery phrase | Settings → Devices | Settings → Devices | `dirt auth phrase new`, `dirt auth phrase remove` |
-| Get in with the recovery phrase | Settings → Devices on a device that waits: "No other device? Use your recovery phrase." | Settings → Devices | `dirt auth recover` |
-| Start the account again | Settings → Account → Account actions | Settings → Devices | `dirt auth reset` |
-| Refuse a reset somebody asked for | Settings → Account, where the request is shown | Settings → Devices | `dirt auth cancel-reset` |
-| Delete the account | Settings → Account → Account actions, with DELETE typed | Settings → Devices | `dirt auth delete-account` |
-| Change the account's key | Settings → Account → Account actions | Settings → Devices | `dirt auth change-key`, or `dirt devices remove <ID> --change-key` |
-| How far a key change has got | Settings → Sync, and the key's row under Account actions | Settings, Settings → Devices | `dirt sync --verbose` |
+| Move notes written before signing in into the account | A box checked by default under Sign in; afterwards "Bring them in" in Settings → Account | As on the desktop: a box checked by default under Sign in; afterwards "Bring them in" | `dirt auth login --move-local-notes` |
+| Ask to be let in, and compare the code | Settings → Devices, which begins by itself on a device that waits: seven pictures with their names | Settings → Devices, which begins by itself on a device that waits: seven pictures with their names, and the digits | `dirt auth join` |
+| Let a waiting device in | The banner's Review, Settings → Devices → Add a device, or a waiting device's Let it in | The banner's Review, Settings → Devices → Add a device, or a waiting device's Let it in | `dirt devices approve` |
+| List devices, remove one | Settings → Devices, ✕ on a device and a confirmation in its row | Settings → Devices, ✕ on a device and a confirmation in its row | `dirt devices`, `dirt devices remove <ID>` |
+| Make or remove the recovery phrase | Settings → Devices; Copy, or Save as a file (`dirt-recovery-phrase.txt`, where the person chooses) | Settings → Devices; Copy, or Save as a file through Android's screen for choosing a place | `dirt auth phrase new`, `dirt auth phrase remove` |
+| Get in with the recovery phrase | Settings → Devices on a device that waits: "No other device? Use your recovery phrase." | Settings → Devices on a device that waits: "No other device? Use your recovery phrase." | `dirt auth recover` |
+| Start the account again | Settings → Account → Account actions | Settings → Account → Account actions | `dirt auth reset` |
+| Refuse a reset somebody asked for | Settings → Account, where the request is shown | Settings → Account, where the request is shown | `dirt auth cancel-reset` |
+| Delete the account | Settings → Account → Account actions, with DELETE typed | Settings → Account → Account actions, with DELETE typed | `dirt auth delete-account` |
+| Change the account's key | Settings → Account → Account actions | Settings → Account → Account actions | `dirt auth change-key`, or `dirt devices remove <ID> --change-key` |
+| How far a key change has got | Settings → Sync, and the key's row under Account actions | Settings → Sync, and the key's row under Account actions | `dirt sync --verbose` |
 
 The desktop app and the CLI on one computer are one device. They share the
 data folder and the keychain entry, so signing in with either signs in both.
@@ -126,9 +126,9 @@ plain name in the folder asked for.
 |---|---|---|---|
 | Sync without being asked | On start, on return to the window, after a change | On start, on return to the app, after a change | After each command that changes a note |
 | Sync now | The sync status at the foot of the list, or Ctrl R | Pull the list down, or tap the sync icon at the top | `dirt sync` |
-| When it last synced, and how many notes and files wait | The sync status at the foot of the list, its tooltip, and Settings → Sync | The sync icon at the top, with a grey dot when notes wait offline and an amber one when something needs the person; a long press gives its words. And Settings | `dirt auth status`, `dirt sync --verbose`. `dirt sync` and any command that changes a note say when a file did not go |
-| Each note that could not be synced, with the reason and what releases it | Settings → Sync, which the sync status opens when there is a problem | Settings, which the sync icon opens when there is a problem | `dirt auth status`, `dirt sync --verbose` |
-| Each file the server refused, with the reason | Settings → Sync | Settings | `dirt auth status`, `dirt sync`, `dirt files <note>` |
+| When it last synced, and how many notes and files wait | The sync status at the foot of the list, its tooltip, and Settings → Sync | The sync icon at the top, with a grey dot when notes wait offline and an amber one when something needs the person; a long press gives its words. And Settings → Sync | `dirt auth status`, `dirt sync --verbose`. `dirt sync` and any command that changes a note say when a file did not go |
+| Each note that could not be synced, with the reason and what releases it | Settings → Sync, which the sync status opens when there is a problem | Settings → Sync, which the sync icon opens when there is a problem | `dirt auth status`, `dirt sync --verbose` |
+| Each file the server refused, with the reason | Settings → Sync | Settings → Sync | `dirt auth status`, `dirt sync`, `dirt files <note>` |
 | Open such a note from the list of them | Yes | Yes | By its ID, which is printed |
 
 Nothing syncs on a timer. An app left open and untouched shows what it had
@@ -143,7 +143,7 @@ which come from `dirt_core::sync::overview`.
 | The same, the notes as Markdown | Settings → Export | Settings → Export | `dirt export --folder <folder> --format markdown` |
 | What is written | A new folder, `dirt-export-<time>`, inside the folder chosen in a dialog | One zip file holding what the folder would, saved through Android's screen for choosing a place | The folder named, which must not be there yet |
 | A file this device does not hold | Fetched first | Fetched first | Fetched first |
-| A file that cannot be had | Left out. Listed under Export, with the reason | Left out. The app names it, with the reason | Left out and named with the reason, and the command fails |
+| A file that cannot be had | Left out. Listed under Export, with the reason | Left out. Listed under Export, with the reason | Left out and named with the reason, and the command fails |
 | The notes' text alone, naming their files | No | No | `dirt export`, to standard output or `--output <file>` |
 
 An export is `notes.json` or `notes.md` and, beside it, `files/<note
