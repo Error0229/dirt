@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The shortcut's icon: the sprout on a round of Clay. A launcher shows it
+     in its own shape. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="48" android:viewportHeight="48">
+    <path android:fillColor="@color/dirt_accent_clay"
+        android:pathData="M24,0a24,24 0 1 1 0,48a24,24 0 1 1 0,-48z" />
+    <group android:translateX="8" android:translateY="7">
+        <path android:pathData="M16,25v-8" android:strokeColor="@color/dirt_on_accent_clay"
+            android:strokeWidth="2.2" android:strokeLineCap="round" />
+        <path android:fillColor="@color/dirt_on_accent_clay"
+            android:pathData="M16,17c0,-4.2 2.8,-7 7,-7 0,4.2 -2.8,7 -7,7z" />
+        <path android:fillColor="@color/dirt_on_accent_clay" android:fillAlpha="0.75"
+            android:pathData="M16,18.5c0,-3.3 -2.2,-5.5 -5.5,-5.5 0,3.3 2.2,5.5 5.5,5.5z" />
+        <path android:pathData="M8.5,25h15" android:strokeColor="@color/dirt_on_accent_clay"
+            android:strokeAlpha="0.55" android:strokeWidth="2.2" android:strokeLineCap="round" />
+    </group>
+</vector>

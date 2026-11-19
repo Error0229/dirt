@@ -489,6 +489,59 @@ async fn a_note_is_made_under_an_id_given_only_if_it_is_a_v7_and_new() {
     assert_eq!(store.note_count().await.unwrap(), 1);
 }
 
+/// A thought that waited outside the store (Android's capture sheet) is
+/// taken in under the ID it was written with, dated then, and only once,
+/// even after it was deleted.
+#[tokio::test]
+async fn a_thought_that_waited_is_taken_in_once_and_dated_when_it_was_written() {
+    let (_folder, store) = temp_store();
+    let hour_ago = chrono::Utc::now().timestamp_millis() - 3_600_000;
+    let id = NoteId::from_uuid(uuid::Uuid::new_v7(uuid::Timestamp::from_unix(
+        uuid::NoContext,
+        u64::try_from(hour_ago / 1000).unwrap(),
+        u32::try_from(hour_ago % 1000).unwrap() * 1_000_000,
+    )));
+    let made = store
+        .take_in_note(id, "buy salt")
+        .await
+        .unwrap()
+        .expect("made");
+    assert_eq!((made.id, made.content.as_str()), (id, "buy salt"));
+    assert_eq!(made.created_at, hour_ago);
+    assert_eq!(made.updated_at, hour_ago);
+
+    assert!(store.take_in_note(id, "again").await.unwrap().is_none());
+    store.delete_note(&id).await.unwrap();
+    assert!(store
+        .take_in_note(id, "after a delete")
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(store.note_count().await.unwrap(), 0);
+
+    // An ID from a clock ahead of this one is dated now, not later.
+    let ahead = chrono::Utc::now().timestamp_millis() + 86_400_000;
+    let later = NoteId::from_uuid(uuid::Uuid::new_v7(uuid::Timestamp::from_unix(
+        uuid::NoContext,
+        u64::try_from(ahead / 1000).unwrap(),
+        0,
+    )));
+    let dated = store
+        .take_in_note(later, "tomorrow")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(dated.updated_at <= chrono::Utc::now().timestamp_millis());
+
+    let random = NoteId::from_uuid(uuid::Uuid::from_u128(
+        0x0123_4567_89ab_4cde_8f01_2345_6789_abcd,
+    ));
+    assert!(matches!(
+        store.take_in_note(random, "no time").await,
+        Err(Error::InvalidInput(_))
+    ));
+}
+
 #[tokio::test]
 async fn a_note_this_device_no_longer_holds_cannot_be_brought_back() {
     let (_folder, store) = temp_store();

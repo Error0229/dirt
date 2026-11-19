@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A long press on the app's icon: New note, the capture sheet (8.1). A
+     static shortcut names its target by package, and a resource cannot say
+     ${applicationId}: the package is written out, and is the one `dx`
+     gives the app (com.example. and the crate's name in camel case). -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/dirt_shortcut"
+        android:shortcutId="new_note"
+        android:shortcutShortLabel="@string/dirt_new_note">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="dev.dirt.capture.CaptureActivity"
+            android:targetPackage="com.example.DirtMobile" />
+    </shortcut>
+</shortcuts>

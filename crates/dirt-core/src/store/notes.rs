@@ -243,9 +243,22 @@ pub(super) fn create(
     text: &str,
     now_ms: i64,
 ) -> Result<Note> {
+    create_if_new(connection, id, text, now_ms)?
+        .ok_or_else(|| Error::InvalidInput(format!("note {id} already exists")))
+}
+
+/// Makes the note, unless a note has this ID already, deleted or not:
+/// then `None`, and nothing is written. The check and the making are one
+/// transaction, so two writers taking the same note in make it once.
+pub(super) fn create_if_new(
+    connection: &mut Connection,
+    id: NoteId,
+    text: &str,
+    now_ms: i64,
+) -> Result<Option<Note>> {
     let tx = write_transaction(connection)?;
     if load(&tx, &id)?.is_some() {
-        return Err(Error::InvalidInput(format!("note {id} already exists")));
+        return Ok(None);
     }
     let doc = NoteDoc::new(client_id(&tx)?);
     doc.set_text(text, now_ms);
@@ -256,7 +269,7 @@ pub(super) fn create(
     }
     let note = save(&tx, &id, &doc, None, Origin::Local)?.ok_or_else(|| not_found(&id))?;
     tx.commit()?;
-    Ok(note)
+    Ok(Some(note))
 }
 
 pub(super) fn update(

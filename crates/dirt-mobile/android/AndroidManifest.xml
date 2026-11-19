@@ -24,6 +24,10 @@
             android:name="dev.dioxus.main.MainActivity">
             <meta-data android:name="android.app.func_name" android:value="ANativeActivity_onCreate" />
             <meta-data android:name="android.app.lib_name" android:value="dioxusmain" />
+            <!-- A long press on the app's icon: New note, the capture sheet
+                 (android/native). Android reads it from the launcher's
+                 activity, so it is here and its list is there. -->
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/dirt_shortcuts" />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -74,17 +78,5 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/dirt_file_paths" />
         </provider>
-
-        <receiver
-            android:enabled="true"
-            android:exported="true"
-            android:name="dev.dioxus.main.QuickCaptureWidgetProvider">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/dirt_quick_capture_widget_info" />
-        </receiver>
     </application>
 </manifest>

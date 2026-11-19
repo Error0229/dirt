@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Merged into the app's manifest by Gradle: every native way in to
+     capture, declared beside its code (interface design 8.5, 8.6). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- A job that waits for a network may not be asked for without this
+         (found on Android 16 by the plan's second trial: SecurityException
+         from schedule()). A normal permission: nobody is asked. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application>
+        <!-- The capture sheet. A task of its own, with no affinity to the
+             app's, so that opening it never brings the app's screen up
+             under it; never among the recent apps. It shows over the lock
+             screen, where it adds and shows nothing (8.6). CREATE_NOTE
+             makes it what Android's note-taking role opens, on phones that
+             offer the role. -->
+        <activity
+            android:name="dev.dirt.capture.CaptureActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            android:taskAffinity=""
+            android:theme="@style/DirtCapture"
+            android:windowSoftInputMode="stateAlwaysVisible|adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.CREATE_NOTE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Makes the waiting thoughts notes and syncs once. Asked for by
+             the sheet's tick and by nothing else. -->
+        <service
+            android:name="dev.dirt.capture.CaptureJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!-- The Quick Settings tile, "New note". -->
+        <service
+            android:name="dev.dirt.capture.CaptureTile"
+            android:exported="true"
+            android:icon="@drawable/dirt_sprout"
+            android:label="@string/dirt_new_note"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- The home screen's bar. -->
+        <receiver
+            android:name="dev.dirt.capture.CaptureWidget"
+            android:exported="true"
+            android:label="@string/dirt_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/dirt_capture_widget" />
+        </receiver>
+    </application>
+</manifest>

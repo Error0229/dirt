@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The capture sheet's, the widget's and the tile's words and look. The
+     colours are in dirt_colours.xml, made from dirt_ui::tokens. -->
+<resources>
+    <string name="dirt_capture_hint">What’s on your mind?</string>
+    <string name="dirt_capture_done">Done</string>
+    <string name="dirt_capture_locked">Adds a note. Your notes stay locked.</string>
+    <string name="dirt_widget_label">Dirt</string>
+    <string name="dirt_widget_bar">Write a thought</string>
+    <string name="dirt_open_dirt">Open Dirt</string>
+    <string name="dirt_new_note">New note</string>
+
+    <!-- What dims the screen behind the sheet: the mockup's. -->
+    <color name="dirt_scrim">#61140F0B</color>
+
+    <!-- The sheet's window: drawn over whatever is on screen, which shows
+         through around it. The sheet draws its own dimming and moves
+         itself, so the window has no animation of its own. -->
+    <style name="DirtCapture" parent="@android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

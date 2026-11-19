@@ -47,9 +47,7 @@ use crate::card_files::{CardFiles, CardFilesCache};
 use crate::data::MobileNoteStore;
 use crate::draft::{Draft, Typed};
 use crate::files::{attach, choose_files as pick_files};
-use crate::incoming::{
-    attach_incoming, discard_all, not_copied_in, note_text, worth_a_note, Capture,
-};
+use crate::incoming::{attach_incoming, discard_all, not_copied_in, note_text, worth_a_note};
 use crate::services::activity::{copy_text, take_capture};
 use crate::state::AppState;
 use list::Main;
@@ -936,12 +934,13 @@ impl Screen {
 
     // ---- What comes from outside the app (8.1) --------------------------------
 
-    /// Deals with what was asked of the app from outside it, if anything
-    /// was. What was shared is saved as a note straight away: capture does
-    /// not wait for the person, who finds the note at the top of the list.
-    /// Shared pictures are attached to it, and a note made of pictures
-    /// alone is called after them. The widget asks for a new page. Neither
-    /// takes the person out of a page they are writing on.
+    /// Deals with what another app shared, if anything waits. It is saved
+    /// as a note straight away: capture does not wait for the person, who
+    /// finds the note at the top of the list, and a toast with **Undo**
+    /// says so (8.1). Shared pictures are attached to it, and a note made
+    /// of pictures alone is called after them. It does not take the person
+    /// out of a page they are writing on. (The widget, the shortcut and the
+    /// tile open the capture sheet, which is not the app: `capture`.)
     async fn receive_captures(mut self) {
         if *self.receiving.peek() {
             return;
@@ -949,14 +948,8 @@ impl Screen {
         self.receiving.set(true);
         // More than one may be waiting: two shares can arrive before either
         // is asked for.
-        while let Some(capture) = take_capture() {
-            match capture {
-                Capture::Blank => {
-                    self.app.nav.close();
-                    self.new_page();
-                }
-                Capture::Shared { text, files } => self.keep_shared(&text, files).await,
-            }
+        while let Some(shared) = take_capture() {
+            self.keep_shared(&shared.text, shared.files).await;
         }
         self.receiving.set(false);
     }
@@ -988,6 +981,11 @@ impl Screen {
                 }
                 self.exit.set(ListExit::None);
                 self.app.note_changed();
+                // **Undo** takes the note away again, as if nothing had
+                // been shared.
+                let undo = Callback::new(move |()| self.unshare(note.id));
+                self.toasts
+                    .show(Toast::new("Saved to Dirt").icon(Icon::Check).undo(undo));
             }
             Err(error) => {
                 discard_all(&files);
@@ -995,6 +993,20 @@ impl Screen {
                 self.not_saved(share, &error, text);
             }
         }
+    }
+}
+
+impl Screen {
+    /// **Undo** on the toast after a share: the note it made is deleted,
+    /// and no toast says so.
+    fn unshare(self, note: NoteId) {
+        spawn(async move {
+            let Some(store) = self.store() else { return };
+            match store.core().delete_note(&note).await {
+                Ok(()) => self.app.note_changed(),
+                Err(error) => self.not_done("The note could not be deleted", &error),
+            }
+        });
     }
 }
 

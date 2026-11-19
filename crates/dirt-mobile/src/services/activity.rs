@@ -11,7 +11,7 @@
 //!   back with. That address carries the authorization code, so it is never
 //!   written to a file.
 //! - **Capture.** [`take_capture`] gives what another app shared, text or
-//!   pictures, or the widget's request for a blank note.
+//!   pictures.
 //! - **Saving a file.** [`save_copy`] asks the person where to put a copy
 //!   of a file the app has, one of a note's files or an export of the
 //!   notes, and writes it there; [`take_save_outcome`] says how that went.
@@ -34,7 +34,7 @@
 use jni::objects::{JClass, JObject, JString, JValue};
 use jni::{JNIEnv, JavaVM};
 
-use crate::incoming::{parse_capture, parse_picked, Capture, Picked};
+use crate::incoming::{parse_capture, parse_picked, Picked, Shared};
 
 /// The activity, as the manifest names it.
 const ACTIVITY_CLASS: &str = "dev.dioxus.main.MainActivity";
@@ -166,9 +166,9 @@ pub fn open_sign_in_page(address: &str) -> bool {
     ask("openSignInPage", &[address])
 }
 
-/// What another app shared, or the widget's request, if one is waiting.
-/// Taking it removes it.
-pub fn take_capture() -> Option<Capture> {
+/// What another app shared, if something is waiting. Taking it removes
+/// it.
+pub fn take_capture() -> Option<Shared> {
     loop {
         // One that cannot be read is passed over for the next.
         if let Some(capture) = parse_capture(&take_text("takeCapture")?) {

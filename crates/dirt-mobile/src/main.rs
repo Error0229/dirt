@@ -9,6 +9,8 @@ mod app_shell;
 #[cfg(any(target_os = "android", test))]
 mod bootstrap_config;
 #[cfg(any(target_os = "android", test))]
+mod capture;
+#[cfg(any(target_os = "android", test))]
 mod card_files;
 #[cfg(any(target_os = "android", test))]
 mod config;
@@ -32,6 +34,20 @@ mod services;
 mod settings;
 #[cfg(target_os = "android")]
 mod state;
+
+// The folder `android/native` is a Gradle library module: the capture
+// sheet, its job, the tile, the widget, and their resources. This
+// declaration is what makes `dx` copy it into the Gradle project it
+// generates, as `:plugins:dirtnative`, and make the app depend on it. The
+// type is never used from Rust: the module's classes are Android's to start.
+#[cfg(target_os = "android")]
+#[allow(dead_code, unsafe_code, clippy::all, clippy::pedantic, clippy::nursery)]
+mod native_module {
+    #[manganis::ffi("/android/native")]
+    extern "Kotlin" {
+        pub type DirtNative;
+    }
+}
 
 #[cfg(target_os = "android")]
 fn main() {

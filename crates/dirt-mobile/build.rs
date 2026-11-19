@@ -6,16 +6,6 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-const QUICK_CAPTURE_WIDGET_XML: &str = r#"<?xml version="1.0" encoding="utf-8"?>
-<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:minWidth="120dp"
-    android:minHeight="48dp"
-    android:updatePeriodMillis="0"
-    android:initialLayout="@android:layout/simple_list_item_1"
-    android:resizeMode="horizontal|vertical"
-    android:widgetCategory="home_screen" />
-"#;
-
 /// The one folder the app's file provider may lend a file from: where a
 /// note's file is copied to be opened by another app. `files-path` is the
 /// app's own files folder, and `dirt/opened/` is the folder of copies
@@ -51,12 +41,12 @@ fn main() {
         println!("cargo:warning=failed to generate mobile bootstrap config: {error}");
     }
 
-    if let Err(error) = write_android_widget_resources() {
-        println!("cargo:warning=failed to generate Android widget metadata: {error}");
+    if let Err(error) = write_android_resources() {
+        println!("cargo:warning=failed to generate Android resources: {error}");
     }
 }
 
-fn write_android_widget_resources() -> io::Result<()> {
+fn write_android_resources() -> io::Result<()> {
     let Some(kotlin_out_dir) = env::var_os("WRY_ANDROID_KOTLIN_FILES_OUT_DIR") else {
         return Ok(());
     };
@@ -67,10 +57,6 @@ fn write_android_widget_resources() -> io::Result<()> {
 
     let xml_dir = main_dir.join("res").join("xml");
     fs::create_dir_all(&xml_dir)?;
-    fs::write(
-        xml_dir.join("dirt_quick_capture_widget_info.xml"),
-        QUICK_CAPTURE_WIDGET_XML,
-    )?;
     fs::write(xml_dir.join("dirt_file_paths.xml"), FILE_PATHS_XML)?;
 
     Ok(())
