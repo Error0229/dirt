@@ -249,7 +249,9 @@ impl Capture {
     fn open(mut self, at: Instant) {
         let desktop = window();
         if self.view.peek().shown == Shown::Open {
-            desktop.set_focus();
+            if crate::app::takes_keyboard() {
+                desktop.set_focus();
+            }
             dom::focus(&[TEXT], Caret::End);
             return;
         }
@@ -260,7 +262,9 @@ impl Capture {
         let size = window_size(FIRST_BOX_HEIGHT);
         flight::place(&desktop, size.width, size.height);
         desktop.set_visible(true);
-        desktop.set_focus();
+        if crate::app::takes_keyboard() {
+            desktop.set_focus();
+        }
         let _ = desktop.webview.focus();
         let serial = self.view.peek().serial + 1;
         self.view.set(View {
@@ -324,12 +328,12 @@ impl Capture {
         // grain flies reaches the app it is meant for. Where it cannot be
         // given back, the window goes at once and the system gives it.
         let handed_back = match why {
-            Why::Key => self.before.peek().give_focus_back(),
+            Why::Key => !crate::app::takes_keyboard() || self.before.peek().give_focus_back(),
             Why::ClickedAway => true,
             Why::Closed => false,
         };
         if !handed_back {
-            self.gone();
+            self.hide();
             return;
         }
         let how = if settles.is_some() {
@@ -371,10 +375,16 @@ impl Capture {
     }
 
     /// The page has finished leaving: the window hides until next time.
-    fn gone(mut self) {
-        if self.view.peek().shown == Shown::Hidden {
-            return;
+    /// A box that has been replaced by a new one, opened while it left,
+    /// may still say so: that is not this box's news.
+    fn gone(self) {
+        if matches!(self.view.peek().shown, Shown::Leaving(_)) {
+            self.hide();
         }
+    }
+
+    /// The window hides until next time.
+    fn hide(mut self) {
         window().set_visible(false);
         self.flight.set(None);
         let serial = self.view.peek().serial;
@@ -468,6 +478,20 @@ fn QuickCapture() -> Element {
         }
     });
 
+    use_context_provider(|| capture);
+
+    rsx! {
+        UiRoot { appearance: appearance(),
+            style { {include_str!("capture.css")} }
+            div { class: "dk-capture", CaptureBox {} }
+        }
+    }
+}
+
+/// The box, inside the root, where the script's news is heard.
+#[component]
+fn CaptureBox() -> Element {
+    let capture = use_context::<Capture>();
     let outcome = use_outcome(move |outcome| match outcome {
         Outcome::Away => capture.away(),
         Outcome::Gone => capture.gone(),
@@ -477,47 +501,40 @@ fn QuickCapture() -> Element {
     let view = capture.view.read().clone();
     let serial = view.serial;
     let how = match view.shown {
-        Shown::Hidden => None,
-        Shown::Open => Some("open"),
-        Shown::Leaving(how) => Some(how.name()),
+        Shown::Hidden => return rsx! {},
+        Shown::Open => "open",
+        Shown::Leaving(how) => how.name(),
     };
 
     rsx! {
-        UiRoot { appearance: appearance(),
-            style { {include_str!("capture.css")} }
-            div { class: "dk-capture",
-                if let Some(how) = how {
-                    div {
-                        key: "{serial}",
-                        class: "dk-capture-box",
-                        "data-dui-capture": how,
-                        "data-dui-grain": view.grain.clone(),
-                        "data-dui-id": outcome,
-                        onresize: move |event: ResizeEvent| {
-                            if let Ok(size) = event.get_border_box_size() {
-                                capture.fit(size.height);
-                            }
-                        },
-                        Logo { size: 22, class: "dk-capture-logo" }
-                        textarea {
-                            id: TEXT_ID,
-                            class: "dk-capture-text",
-                            "aria-label": "Quick capture",
-                            placeholder: "What\u{2019}s on your mind?",
-                            spellcheck: "false",
-                            readonly: view.shown != Shown::Open,
-                            oninput: move |event: FormEvent| capture.typed(serial, event.value()),
-                            onkeydown: move |event: KeyboardEvent| {
-                                if puts_away(&event) {
-                                    event.prevent_default();
-                                    capture.put_away(Why::Key);
-                                }
-                            },
-                            onfocus: move |_| capture.focused(),
-                            onmounted: move |_| dom::focus(&[TEXT], Caret::End),
-                        }
-                    }
+        div {
+            key: "{serial}",
+            class: "dk-capture-box",
+            "data-dui-capture": how,
+            "data-dui-grain": view.grain.clone(),
+            "data-dui-id": outcome,
+            onresize: move |event: ResizeEvent| {
+                if let Ok(size) = event.get_border_box_size() {
+                    capture.fit(size.height);
                 }
+            },
+            Logo { size: 22, class: "dk-capture-logo" }
+            textarea {
+                id: TEXT_ID,
+                class: "dk-capture-text",
+                "aria-label": "Quick capture",
+                placeholder: "What\u{2019}s on your mind?",
+                spellcheck: "false",
+                readonly: view.shown != Shown::Open,
+                oninput: move |event: FormEvent| capture.typed(serial, event.value()),
+                onkeydown: move |event: KeyboardEvent| {
+                    if puts_away(&event) {
+                        event.prevent_default();
+                        capture.put_away(Why::Key);
+                    }
+                },
+                onfocus: move |_| capture.focused(),
+                onmounted: move |_| dom::focus(&[TEXT], Caret::End),
             }
         }
     }

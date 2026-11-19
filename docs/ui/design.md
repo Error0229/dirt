@@ -1595,7 +1595,8 @@ What 7.2 and 5.5 left open for quick capture, settled when it was built
 | macOS and Linux | Not tried yet (manual checklist D68): there the keyboard is not handed back at once, so the window hides as soon as it is put away, with no flight, and the system gives the keyboard to what is in front |
 | A write that fails | Told on the main screen, as every failed write is (7.9), with **Copy text**. The main window comes back for it if it was closed to the tray or minimised, and asks to be looked at (the taskbar flashes) if it is behind another window |
 | Closing it otherwise | <kbd>Alt F4</kbd> puts it away, saved, and it hides at once. Quitting from the tray hands what it holds to the queue, which the app waits for (7.9) |
-| How quickly | From the key reaching the app to the text field having the keyboard, measured on the development build on Windows 11 (implementation plan, step 8a). The hotkey is heard at once; the tray's menu and showing the main window are still looked for every 16 ms |
+| Counting (section 2) | Writing a thought from another app is the three actions section 2 gives: <kbd>Ctrl Alt N</kbd>, the typing, <kbd>Esc</kbd>. From the tray's menu it is four: the icon, **New Note**, the typing, <kbd>Esc</kbd> |
+| How quickly | From the hotkey reaching the app to the text field having the keyboard: 21 to 46 ms, median 25 ms over 24 opens, and 24 to 40 ms for the first open after the app starts (a development build on Windows 11, implementation plan step 8a). The hotkey is heard at once; the tray's menu is still looked for every 16 ms, which can add that much |
 
 ---
 

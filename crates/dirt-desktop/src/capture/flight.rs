@@ -151,16 +151,18 @@ impl Flight {
 }
 
 /// The middle of the tray icon, on the screen, if it can be known and is
-/// on a screen of the window's own scale. In a development build,
-/// `DIRT_TRAY_AT=x,y` puts it there instead, in screen points: off every
-/// screen, the flight can be tried without crossing the person's screen.
+/// on a screen of the window's own scale.
+///
+/// In a development build, `DIRT_TRAY_AT=x,y` puts it there instead, in
+/// screen points: off every screen, the flight can be tried without
+/// crossing the person's screen. `DIRT_TRAY_AT=none` tries the fall.
 fn tray_middle(desktop: &DesktopContext) -> Option<PhysicalPosition<f64>> {
     let scale = desktop.scale_factor();
-    if let Some((x, y)) = crate::settings::test_hook("DIRT_TRAY_AT").and_then(|at| {
-        let at = at.to_string_lossy().into_owned();
-        let (x, y) = at.split_once(',')?;
-        Some((x.trim().parse::<f64>().ok()?, y.trim().parse::<f64>().ok()?))
-    }) {
+    if let Some(asked) = crate::settings::test_hook("DIRT_TRAY_AT") {
+        tracing::info!("The tray icon is at {:?}", crate::tray::place());
+        let asked = asked.to_string_lossy().into_owned();
+        let (x, y) = asked.split_once(',')?;
+        let (x, y) = (x.trim().parse::<f64>().ok()?, y.trim().parse::<f64>().ok()?);
         return Some(PhysicalPosition::new(x * scale, y * scale));
     }
     let (at, size) = crate::tray::place()?;

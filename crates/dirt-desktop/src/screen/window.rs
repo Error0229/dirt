@@ -48,7 +48,10 @@ pub fn builder() -> WindowBuilder {
         // up); narrower, the page comes over the list.
         .with_inner_size(LogicalSize::new(1100.0, 720.0))
         .with_min_inner_size(LogicalSize::new(360.0, 320.0))
-        .with_decorations(!frameless());
+        .with_decorations(!frameless())
+        // A development build kept off every screen does not take the
+        // keyboard as it opens (`app::takes_keyboard`).
+        .with_focused(crate::app::takes_keyboard());
     #[cfg(windows)]
     let builder = {
         use dioxus::desktop::tao::platform::windows::WindowBuilderExtWindows;

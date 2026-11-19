@@ -348,11 +348,14 @@ impl Screen {
         // window was closed to the tray: the error is here, so the window
         // comes back for it, or asks to be looked at.
         let main = dioxus::desktop::window();
+        let may = crate::app::takes_keyboard();
         if !main.is_visible() || main.is_minimized() {
             main.set_visible(true);
             main.set_minimized(false);
-            main.set_focus();
-        } else if !main.is_focused() {
+            if may {
+                main.set_focus();
+            }
+        } else if may && !main.is_focused() {
             main.request_user_attention(Some(
                 dioxus::desktop::tao::window::UserAttentionType::Informational,
             ));

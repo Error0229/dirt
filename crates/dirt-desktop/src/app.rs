@@ -80,6 +80,15 @@ pub fn asked_position() -> Option<(f64, f64)> {
     Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
 }
 
+/// Whether the app's windows may take the keyboard from the app in front:
+/// quick capture as it opens, the main window coming back for an error. Not
+/// in a development build kept off every screen (`DIRT_WINDOW_AT`): a
+/// window nobody can see must not take the keys of the person at the
+/// computer, nor ask for their attention.
+pub fn takes_keyboard() -> bool {
+    asked_position().is_none()
+}
+
 /// Root application component
 #[component]
 #[allow(clippy::too_many_lines)]

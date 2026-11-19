@@ -1846,6 +1846,27 @@ Runs). The pile widget stays with step 10.
 cannot be known, the grain falls and fades where the window was instead of
 flying to the tray.
 
+**Split in two.** 8a is the desktop, 8b Android.
+
+**8a built.** Quick capture is a window of its own (`dirt-desktop`'s
+`capture`), made hidden as the app starts and shown by the hotkey or the
+tray's New Note: ready to type 21 to 46 ms after the key reaches the app,
+median 25 ms (design 7.10). What is typed goes through the main screen's
+queue (`screen::writing`), so it is kept from the first character and a
+failed write is told on the main screen with **Copy text**, the window
+coming back from the tray for it. Put away, the box shrinks to its note's
+grain and the window itself is carried to the tray icon along the two
+curves; the fallback, a fall where the window was, is for Linux, which does
+not say where the tray is, and for a tray on a screen of another scale. The
+keyboard goes back to the window that had it as soon as quick capture is
+put away; macOS and Linux, where that has not been tried, hide it at once
+with no flight. `dirt-ui` gained the logo, a cubic Bézier for the window's
+movement, and the script's part (`data-dui-capture`, which says `away` and
+`gone`). The old quick capture, its button, the old style sheets and the old
+theme are gone. What it settled is in design section 7.10. Run on Windows
+against the local server with the CLI as the second device; the real hotkey,
+the real tray and the screen are the manual checklist's (D2, D68 to D72).
+
 ### Step 9: voice
 
 The engine and model that trial 1's second measurement chooses, listening
