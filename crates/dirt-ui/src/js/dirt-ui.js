@@ -14,7 +14,10 @@
 //   one highlight of a list, and more rows as a list nears its end;
 // - on the desktop: controls shown by the pointer's nearness, the page
 //   emptied as a thought is done, the window moved by its top row, and
-//   focus while writing.
+//   focus while writing;
+// - the file preview's keys, gestures and movement, a sound's card, a
+//   PDF's pages drawn by the bundled PDF.js, files dragged over the window
+//   and a picture pasted into the page.
 //
 // Rust renders elements with `data-dui-*` attributes; the script finds
 // them as they appear. Nothing here keeps the app's state.
@@ -1784,14 +1787,16 @@
   }
   function previewKey(event, modal) {
     const at = event.target;
-    const media = at && at.closest && at.closest('video, audio, .dui-pv-play, .dui-pv-wave');
+    const media = at && at.closest && at.closest('video, audio, .dui-pv-wave');
     if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && !media) {
       event.preventDefault();
       previewStep = event.key === 'ArrowRight' ? 1 : -1;
       tell(modal, previewStep > 0 ? 'next' : 'previous');
       return true;
     }
-    if (event.key === ' ' && !media && !(at && at.closest && at.closest('[data-dui-scroll] pre, .dui-pv-pdf'))) {
+    // Space presses a button that has the keyboard, plays a sound and
+    // scrolls text or a PDF; anywhere else it closes.
+    if (event.key === ' ' && !media && !(at && at.closest && at.closest('button, [data-dui-scroll] pre, .dui-pv-pdf'))) {
       event.preventDefault();
       tell(modal, 'dismiss');
       return true;

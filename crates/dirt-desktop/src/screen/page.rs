@@ -122,6 +122,7 @@ pub fn Page() -> Element {
                         FileTiles {
                             key: "{note}",
                             files: screen.files,
+                            note,
                             can_send,
                             class: "dk-files",
                             on_open: move |file| screen.open_file(file),

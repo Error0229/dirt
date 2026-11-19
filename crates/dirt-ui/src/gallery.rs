@@ -739,7 +739,7 @@ fn FileTilesShown() -> Element {
     let toasts = use_toasts();
     let said = move |words: &'static str| {
         move |file: AttachedFile| {
-            toasts.show(Toast::new(format!("{words} {}", file.attachment.name)))
+            toasts.show(Toast::new(format!("{words} {}", file.attachment.name)));
         }
     };
     let tiles = [

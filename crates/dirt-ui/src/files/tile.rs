@@ -18,6 +18,7 @@
 
 use dioxus::prelude::*;
 use dirt_core::files::runs_as_a_program;
+use dirt_core::models::NoteId;
 use dirt_core::store::AttachedFile;
 use dirt_core::sync::overview::{size_words, Whereabouts};
 use uuid::Uuid;
@@ -33,14 +34,16 @@ pub fn tile_element_id(file: Uuid) -> String {
     format!("dui-file-{file}")
 }
 
-/// The tiles of the open note's files. `can_send` is whether this device
-/// can send files now (signed in, let in, online), for the words of a file
-/// not yet sent. `on_open` and `on_save` are the app's: another app, and a
-/// save dialog. Nothing is drawn until the files have been read, so that a
-/// note opening draws its tiles at once and not one by one.
+/// The tiles of the files of `note`, the open note. `can_send` is whether
+/// this device can send files now (signed in, let in, online), for the
+/// words of a file not yet sent. `on_open` and `on_save` are the app's:
+/// another app, and a save dialog. Nothing is drawn until the note's files
+/// have been read, so that a note opening draws its tiles at once and not
+/// one by one, and never the last note's.
 #[component]
 pub fn FileTiles(
     files: NoteFiles,
+    note: NoteId,
     can_send: bool,
     on_open: EventHandler<AttachedFile>,
     on_save: EventHandler<AttachedFile>,
@@ -48,7 +51,10 @@ pub fn FileTiles(
     #[props(default)]
     class: String,
 ) -> Element {
-    let Some((_, found)) = files.listed() else {
+    let Some(found) = files
+        .listed()
+        .and_then(|(held, found)| (held == note).then_some(found))
+    else {
         return rsx! {};
     };
     rsx! {
