@@ -463,3 +463,97 @@
 .dui-phrase-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .dui-sas-digits{font:500 11.5px var(--mono);color:var(--text-3);letter-spacing:.06em;margin-top:-2px}
 .dui-pair-note{font-size:12.5px;color:var(--warning);font-weight:550;max-width:360px}
+/* ---- The file tile (6.5) ------------------------------------------------ */
+.dui-files{display:flex;flex-wrap:wrap;gap:8px;position:relative}
+.dui-file{position:relative;display:flex;align-items:center;width:260px;max-width:100%;border:1px solid var(--border);border-radius:var(--r-m);background:var(--surface);overflow:hidden}
+.android .dui-file{width:100%}
+.dui-file-main{flex:1;min-width:0;display:flex;align-items:center;gap:10px;padding:6px 10px 6px 6px;cursor:pointer;border-radius:var(--r-m)}
+.dui-file-main:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.dui-file-thumb{position:relative;width:40px;height:40px;border-radius:7px;background:var(--surface-2);display:grid;place-items:center;overflow:hidden;flex:none;color:var(--text-2)}
+.dui-file-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.dui-file-words{flex:1;min-width:0}
+.dui-file-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dui-file-meta{font-size:11.5px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Under the pointer the tile shows what can be done with it, over its
+   words; so does a button that has the keyboard's focus. On Android, and
+   on any touch screen, they are always there, beside the words. */
+.dui-file-acts{position:absolute;right:0;top:0;bottom:0;display:flex;align-items:center;gap:1px;padding:0 4px 0 22px;background:linear-gradient(to right,transparent,var(--surface) 20px);opacity:0;pointer-events:none;transition:opacity var(--d-1)}
+.dui-file:hover .dui-file-acts,.dui-file-acts:focus-within{opacity:1;pointer-events:auto}
+.android .dui-file-acts{position:static;opacity:1;pointer-events:auto;background:none;padding:0 2px 0 0}
+@media (hover:none){.dui-file-acts{position:static;opacity:1;pointer-events:auto;background:none;padding:0 2px 0 0}}
+/* Being sent: a clay line runs along its foot. */
+.dui-file-line{position:absolute;left:0;bottom:0;height:2px;width:36%;background:var(--accent);border-radius:1px;animation:dui-file-run 1.4s var(--e-std) infinite}
+@keyframes dui-file-run{from{transform:translateX(-100%)}to{transform:translateX(280%)}}
+/* Being fetched: a clay ring turns on its thumbnail. */
+.dui-file-ring{position:absolute;inset:0;width:100%;height:100%;animation:dui-turn 1s linear infinite}
+.dui-file-ring circle,.dui-pv-ring circle{fill:none;stroke:var(--accent);stroke-width:3;stroke-linecap:round;stroke-dasharray:40 120}
+.dui-file.fetching .dui-file-thumb>img,.dui-file.fetching .dui-file-thumb>.dui-i{opacity:.45}
+:root[data-motion="reduced"] .dui-file-line{animation:none;width:100%;opacity:.6}
+@media (prefers-reduced-motion:reduce){.dui-file-line{animation:none;width:100%;opacity:.6}}
+
+/* ---- The file preview (6.16) --------------------------------------------- */
+.dui-preview{position:fixed;inset:0;z-index:700;display:none;color:#EDE8E1;outline:none}
+.dui-preview.on,.dui-preview.leaving{display:block}
+.dui-pv-scrim{position:absolute;inset:0;background:rgba(12,10,8,.9);opacity:0;transition:opacity var(--d-3) var(--e-std)}
+.dui-preview.on .dui-pv-scrim{opacity:1}
+.dui-pv-stage{position:absolute;inset:58px 72px 52px;display:grid;place-items:center}
+.android .dui-pv-stage{inset:92px 0 76px}
+.dui-pv-item{width:100%;height:100%;min-height:0;display:grid;place-items:center;position:relative}
+.dui-pv-picture,.dui-pv-video{max-width:100%;max-height:100%;object-fit:contain;display:block;border-radius:6px;box-shadow:0 24px 60px rgba(0,0,0,.5);transition:transform var(--d-3) var(--e-out);cursor:zoom-in}
+.dui-pv-picture.zoom{transform:scale(2);cursor:zoom-out}
+.dui-pv-video{cursor:default}
+/* A thumbnail stands in while the picture is read. */
+.dui-pv-standin{width:min(480px,100%);filter:blur(6px);opacity:.7}
+.dui-pv-ring{position:absolute;width:44px;height:44px;animation:dui-turn 1s linear infinite}
+.dui-pv-ring circle{stroke:#EDE8E1}
+.dui-pv-failed{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;max-width:420px;padding:0 20px}
+.dui-pv-failed p{margin:0;font-size:14px;font-weight:550}
+.dui-pv-failed .why{font-size:12.5px;font-weight:400;opacity:.75}
+.dui-pv-text-wrap,.dui-pv-pdf-wrap{width:min(720px,100%);max-height:100%;border-radius:8px;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+.dui-pv-text-scroll{max-height:calc(100vh - 110px);background:var(--surface);border-radius:8px}
+.android .dui-pv-text-scroll{max-height:calc(100vh - 168px)}
+.dui-pv-text{margin:0;padding:24px 28px;color:var(--text);font:13px/1.65 var(--mono);white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text;outline:none}
+.android .dui-pv-text{padding:18px}
+.dui-pv-pdf-wrap{width:min(900px,100%);height:100%;box-shadow:none}
+.dui-pv-pdf-scroll{height:100%}
+.dui-pv-pdf{display:flex;flex-direction:column;align-items:center;gap:12px;padding:0 0 12px;outline:none}
+.dui-pv-page{background:#fff;border-radius:4px;box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden;max-width:100%}
+.dui-pv-page canvas{display:block;width:100%;height:auto}
+.dui-pv-pdf-failed{margin:auto;padding:24px;font-size:13px;color:#EDE8E1;opacity:.8;text-align:center}
+.dui-pv-audio{width:min(400px,100%);background:var(--surface);color:var(--text);border-radius:22px;padding:18px 20px;display:flex;align-items:center;gap:16px;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+.dui-pv-play{width:52px;height:52px;border-radius:50%;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;flex:none;transition:transform var(--d-1) var(--e-std)}
+.dui-pv-play:active{transform:scale(.92)}
+.dui-pv-play span{display:grid}
+.dui-pv-play .pause,.dui-pv-audio.playing .dui-pv-play .play{display:none}
+.dui-pv-audio.playing .dui-pv-play .pause{display:grid}
+.dui-pv-wave{flex:1;height:44px;display:flex;align-items:center;gap:2px;cursor:pointer}
+.dui-pv-wave i{display:block;flex:1;min-width:1px;border-radius:2px;background:var(--border-strong);transition:background var(--d-2)}
+.dui-pv-wave i.done{background:var(--accent)}
+.dui-pv-time{font:500 12px var(--mono);color:var(--text-3);min-width:76px;text-align:right}
+.dui-pv-bar{position:absolute;top:10px;right:12px;display:flex;gap:2px;opacity:0;transition:opacity var(--d-3) var(--e-std)}
+.android .dui-pv-bar{top:44px;right:10px}
+.dui-preview.on .dui-pv-bar{opacity:1}
+.dui-preview .dui-icon-btn{color:rgba(237,232,225,.85)}
+.dui-preview .dui-icon-btn:hover{background:rgba(255,255,255,.1);color:#fff}
+.dui-preview .dui-icon-btn.danger:hover{background:rgba(232,106,90,.18);color:#E86A5A}
+.dui-preview :focus-visible{outline-color:#EDE8E1}
+.dui-pv-name{position:absolute;top:18px;left:20px;font-size:12.5px;font-weight:500;opacity:0;transition:opacity var(--d-2);max-width:50%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dui-preview:hover .dui-pv-name{opacity:.75}
+.android .dui-pv-name{top:54px;left:18px;opacity:.75}
+.dui-preview.bare .dui-pv-bar,.dui-preview.bare .dui-pv-dots,.dui-preview.bare .dui-pv-name{opacity:0;pointer-events:none}
+.dui-pv-nav{position:absolute;top:50%;translate:0 -50%;width:44px;height:44px;border-radius:50%;display:grid;place-items:center;color:#EDE8E1;background:rgba(255,255,255,.06);opacity:0;transition:opacity var(--d-2),background var(--d-1)}
+.dui-pv-nav.prev{left:16px}
+.dui-pv-nav.next{right:16px}
+.dui-preview:hover .dui-pv-nav,.dui-pv-nav:focus-visible{opacity:.85}
+.dui-pv-nav:hover{background:rgba(255,255,255,.14)}
+.android .dui-pv-nav{display:none}
+.dui-pv-dots{position:absolute;bottom:20px;left:0;right:0;display:flex;justify-content:center;gap:6px;pointer-events:none;transition:opacity var(--d-2)}
+.android .dui-pv-dots{bottom:30px}
+.dui-pv-dots i{width:6px;height:6px;border-radius:3px;background:rgba(237,232,225,.35);transition:width var(--d-snap) var(--sp-snap),background var(--d-2)}
+.dui-pv-dots i.on{width:18px;background:#EDE8E1}
+.dui-preview .dui-sb-thumb{background:rgba(237,232,225,.35)}
+
+/* ---- Files dragged over the window (7.3) --------------------------------- */
+.dui-drop-hint{position:absolute;inset:8px;z-index:650;border:2px dashed var(--accent);border-radius:var(--r-l);background:color-mix(in srgb,var(--accent-soft) 70%,transparent);display:grid;place-items:center;pointer-events:none;opacity:0;transition:opacity var(--d-2) var(--e-std)}
+.dui-drop-hint span{background:var(--surface);color:var(--text);font-size:13.5px;font-weight:550;padding:8px 14px;border-radius:999px;box-shadow:var(--shadow-2);display:flex;gap:8px;align-items:center}
+.dropping>.dui-drop-hint{opacity:1}

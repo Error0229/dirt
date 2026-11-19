@@ -22,7 +22,6 @@
 //!   is not tried again.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -35,7 +34,7 @@ use dirt_core::Store;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-use crate::services::attach_all;
+use crate::services::{attach_all, Incoming};
 
 /// The page: the note it shows, and the thought being written.
 #[derive(Debug, Clone, Default)]
@@ -202,8 +201,8 @@ pub enum Work {
     LetGoIfEmpty { note: NoteId },
     /// Archive the note, or delete it.
     PutAway { note: NoteId, delete: bool },
-    /// Attach files to the note.
-    Attach { note: NoteId, paths: Vec<PathBuf> },
+    /// Attach files to the note: dropped, chosen or pasted.
+    Attach { note: NoteId, files: Vec<Incoming> },
 }
 
 /// How a piece of work went.
@@ -312,8 +311,8 @@ pub async fn run(store: &Arc<Store>, work: Work) -> Done {
                 }
             }
         }
-        Work::Attach { note, paths } => {
-            let failed = attach_all(Arc::clone(store), note, paths).await;
+        Work::Attach { note, files } => {
+            let failed = attach_all(Arc::clone(store), note, files).await;
             Done::Attached { note, failed }
         }
     }
@@ -332,17 +331,11 @@ fn never_made(work: Work) -> Done {
             why: WHY.to_owned(),
             making: true,
         },
-        Work::Attach { note, paths } => Done::Attached {
+        Work::Attach { note, files } => Done::Attached {
             note,
-            failed: paths
+            failed: files
                 .iter()
-                .map(|path| {
-                    let name = path
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    format!("{name}: {WHY}")
-                })
+                .map(|file| format!("{}: {WHY}", file.name()))
                 .collect(),
         },
         Work::LetGoIfEmpty { note } => Done::LetGo { note, gone: true },
@@ -681,7 +674,7 @@ mod tests {
         assert_eq!(Some(note), page.note());
         work.push(Work::Attach {
             note,
-            paths: vec![file],
+            files: vec![Incoming::Path(file)],
         });
         work.extend(page.typed("shopping".into()));
         work.extend(page.leave().work);
@@ -714,7 +707,7 @@ mod tests {
         );
         work.push(Work::Attach {
             note,
-            paths: vec![file],
+            files: vec![Incoming::Path(file)],
         });
         // Emptied, and left: it holds a file, so it is kept.
         page.typed(String::new());
@@ -961,7 +954,7 @@ mod tests {
             [
                 Work::Attach {
                     note: other.id,
-                    paths: vec![big],
+                    files: vec![Incoming::Path(big)],
                 },
                 Work::Save {
                     note: note.id,

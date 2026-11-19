@@ -50,6 +50,11 @@ pub enum Outcome {
     /// `data-dui-back` that comes last in the page. A panel or sheet that
     /// is open takes it first, as [`Outcome::Dismiss`].
     Back,
+    /// The file preview asks for the next file: →, or a swipe to the left.
+    Next,
+    /// The file preview asks for the file before: ←, or a swipe to the
+    /// right.
+    Previous,
 }
 
 /// One message from the script: which element, and how it ended.

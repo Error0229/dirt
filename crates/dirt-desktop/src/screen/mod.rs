@@ -7,6 +7,7 @@
 //! the last archive or delete, for Undo. Its methods are what the person
 //! can do here; the parts call them from their buttons and keys.
 
+mod files;
 mod focus;
 mod keys;
 mod list;
@@ -15,24 +16,24 @@ pub mod window;
 pub mod writing;
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dioxus::prelude::*;
 use dirt_core::models::{extract_tags, FocusStyle, Note, NoteId};
 use dirt_core::session::SessionState;
-use dirt_core::store::{NoteCounts, TagCount, TagRule};
+use dirt_core::store::{AttachedFile, NoteCounts, TagCount, TagRule};
 use dirt_core::sync::overview::SyncIndicator;
 use dirt_core::sync::worker::Trigger;
 use dirt_core::Store;
 use dirt_ui::components::{use_toasts, ContextMenu, ListExit, MenuItem, Toast, Toasts};
 use dirt_ui::dom::{self, Caret};
+use dirt_ui::files::{use_note_files, use_pasted_files, FilePreview, FileSource, NoteFiles};
 use dirt_ui::find;
 use dirt_ui::time::Clock;
 use dirt_ui::{Appearance, Icon};
 
-use crate::components::FilesNews;
+use crate::services::Incoming;
 use crate::state::AppState;
 use dirt_ui::settings::Section;
 use focus::Edge;
@@ -205,8 +206,8 @@ pub struct Screen {
     /// or opened. Its work goes there even if another store has been taken
     /// into use since (signing in or out).
     page_store: CopyValue<Option<Arc<Store>>>,
-    /// How attaching files to the note on the page is going.
-    pub files_news: Signal<FilesNews>,
+    /// The files of the note on the page, and the preview of them.
+    pub files: NoteFiles,
     /// The notes the store could not save, with the newest text of each,
     /// while the error says so.
     unsaved: Signal<Vec<(NoteId, String)>>,
@@ -383,7 +384,18 @@ impl Screen {
                 self.toasts.show(toast.undo(undo));
             }
             Done::Attached { note, ref failed } => {
-                self.files_news.write().attached(note, failed);
+                if self.open_note() == Some(note) {
+                    self.files.reread();
+                }
+                if !failed.is_empty() {
+                    let words = if failed.len() == 1 {
+                        "A file could not be attached".to_owned()
+                    } else {
+                        format!("{} files could not be attached", failed.len())
+                    };
+                    self.toasts
+                        .show_error(Toast::new(words).icon(Icon::Alert).detail(failed.join(" ")));
+                }
             }
             Done::Unsaved {
                 note,
@@ -913,8 +925,8 @@ impl Screen {
 
     /// Attaches files: to the open note, or to a new one made for them, as
     /// a file with no words under it is a note (6.1).
-    pub fn attach(mut self, paths: Vec<PathBuf>) {
-        if paths.is_empty() {
+    pub fn attach(mut self, files: Vec<Incoming>) {
+        if files.is_empty() {
             return;
         }
         let tags: Vec<String> = self
@@ -948,8 +960,17 @@ impl Screen {
             });
             self.page_over.set(true);
         }
-        self.files_news.write().asked(note);
-        self.ask(made.into_iter().chain([Work::Attach { note, paths }]));
+        self.ask(made.into_iter().chain([Work::Attach { note, files }]));
+    }
+
+    /// Opens one of the note's files in another app.
+    pub fn open_file(self, file: AttachedFile) {
+        files::open_in_another_app(&self.app, &self.files, self.toasts, file);
+    }
+
+    /// Saves a copy of one of the note's files where the person says.
+    pub fn save_file(self, file: AttachedFile) {
+        files::save_a_copy(&self.files, self.toasts, file);
     }
 
     /// Opens the file dialog, and attaches what is chosen: 📎 and Ctrl
@@ -964,7 +985,7 @@ impl Screen {
                 self.attach(
                     chosen
                         .iter()
-                        .map(|file| file.path().to_path_buf())
+                        .map(|file| Incoming::Path(file.path().to_path_buf()))
                         .collect(),
                 );
             }
@@ -1239,6 +1260,16 @@ pub fn MainScreen() -> Element {
     let app = use_context::<AppState>();
     let toasts = use_toasts();
     let clock = use_clock(&app);
+    let note_files = use_note_files(
+        app.current_note_id.into(),
+        app.sync_status.into(),
+        move || FileSource {
+            store: app.db_service.peek().as_deref().cloned(),
+            session: app.session.peek().clone(),
+        },
+        move || app.note_changed(),
+    );
+    files::use_served_files();
     let screen = use_context_provider(|| Screen {
         app,
         toasts,
@@ -1259,7 +1290,7 @@ pub fn MainScreen() -> Element {
         }),
         draft: Signal::new(Draft::default()),
         page_store: CopyValue::new(None),
-        files_news: Signal::new(FilesNews::default()),
+        files: note_files,
         unsaved: Signal::new(Vec::new()),
         writing: Signal::new(Writing::No),
         last_key: CopyValue::new(None),
@@ -1306,6 +1337,10 @@ pub fn MainScreen() -> Element {
     });
     use_listing(&screen, &app);
     use_tag_offers(&screen, &app);
+    // A picture pasted into the page is attached to its note (7.3).
+    use_pasted_files(PAGE, move |pasted| {
+        screen.attach(pasted.into_iter().map(Incoming::Pasted).collect());
+    });
 
     // A note closed under the page (another store taken into use on
     // signing in or out) leaves a blank page. What it held belongs to the
@@ -1353,6 +1388,17 @@ pub fn MainScreen() -> Element {
             tabindex: "-1",
             "data-dui-home": "",
             onkeydown: move |event| keys::on_key(&screen, &app, &event),
+            // Files dropped anywhere on the window are attached to the open
+            // note, or become a note of their own (7.3). Saying that a drop
+            // is welcome is what lets one happen.
+            "data-dui-drop": "",
+            ondragover: move |event: Event<DragData>| event.prevent_default(),
+            ondrop: move |event: Event<DragData>| {
+                // Left to itself the window would leave the app and show
+                // the file.
+                event.prevent_default();
+                screen.attach(files::dropped(&event).into_iter().map(Incoming::Path).collect());
+            },
             // A press anywhere but Find and the list of tags closes it.
             onclick: move |_| {
                 let mut open = screen.tags_open;
@@ -1369,6 +1415,20 @@ pub fn MainScreen() -> Element {
                 Page {}
             }
             WindowControls {}
+            div { class: "dui-drop-hint", "aria-hidden": "true",
+                span {
+                    if has_note {
+                        "Drop to attach to this note"
+                    } else {
+                        "Drop to make a note of it"
+                    }
+                }
+            }
+            FilePreview {
+                files: screen.files,
+                on_open: move |file| screen.open_file(file),
+                on_save: move |file| screen.save_file(file),
+            }
             ContextMenu { on_paste: move |()| Screen::paste(),
                 if has_note {
                     MenuItem {

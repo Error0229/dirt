@@ -26,11 +26,12 @@ use crate::state::AppState;
 
 /// In a development build, `DIRT_SIGN_IN_TO_FILE` names a file the
 /// sign-in address is written to instead of opening the browser, and
-/// `DIRT_EXPORT_TO` a folder an export, or the recovery phrase's file,
-/// goes into without asking: for
-/// trying the flows on a computer whose browser and dialogs belong to
-/// someone else. A release build ignores both.
-fn test_hook(name: &str) -> Option<std::path::PathBuf> {
+/// `DIRT_EXPORT_TO` a folder an export, the recovery phrase's file or a
+/// copy of a note's file goes into without asking: for trying the flows
+/// on a computer whose browser and dialogs belong to someone else. The
+/// others are with what they stand in for (`DIRT_OPENED_TO_FILE`,
+/// `DIRT_DROP`). A release build ignores them all.
+pub fn test_hook(name: &str) -> Option<std::path::PathBuf> {
     if cfg!(debug_assertions) {
         std::env::var_os(name).map(std::path::PathBuf::from)
     } else {

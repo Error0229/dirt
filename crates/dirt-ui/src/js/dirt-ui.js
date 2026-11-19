@@ -396,8 +396,19 @@
     rows.forEach(row => {
       const now = next.get(row.dataset.key), was = seen.get(row.dataset.key);
       if (!was) {
-        if (!seen.size || row.dataset.duiEnter === 'none' || !within(now, view)) return;
+        const first = !seen.size && list.dataset.duiEnterFirst === undefined;
+        if (first || row.dataset.duiEnter === 'none' || !within(now, view)) return;
         if (quiet) { row.animate([{ opacity: 0 }, { opacity: 1 }], { duration: tokens.reducedMs }); return; }
+        if (row.dataset.duiEnter === 'grow') {
+          // A file's tile grows out of the point last pressed (the
+          // paperclip) or where it was dropped, and bounces into place
+          // (pop); several follow one another, 70 ms apart.
+          const pop = spring('pop'), box = row.getBoundingClientRect();
+          const dx = lastPress[0] - (box.left + box.width / 2), dy = lastPress[1] - (box.top + box.height / 2);
+          row.animate([{ opacity: 0, transform: `translate(${dx}px, ${dy}px) scale(.3)` }, { opacity: 1, transform: 'none' }],
+            { duration: pop.ms, easing: pop.easing, delay: Math.min(fresh++, 6) * 70, fill: 'backwards' });
+          return;
+        }
         if (row.dataset.duiEnter === 'pop') {
           // Undo: the row drops back into its place with a bounce.
           const pop = spring('pop');
@@ -798,11 +809,15 @@
     const at = document.activeElement;
     state.opener = at && at !== document.body ? at : null;
     state.from = state.opener && shown(state.opener) ? centreOf(state.opener) : lastPress.slice();
+    const preview = modal.dataset.duiModal === 'preview';
     setTimeout(() => {
       if (!modal.classList.contains('on')) return;
-      const first = focusables(modal)[0] || modal;
+      // The preview takes the focus itself, so that Space closes it and
+      // presses none of its buttons.
+      const first = preview ? modal : focusables(modal)[0] || modal;
       first.focus({ preventScroll: true });
     }, 60);
+    if (preview) { previewOpened(modal, state); return; }
     const scroller = modal.querySelector('[data-dui-scroll]');
     if (scroller && railFor(scroller)) setTimeout(() => followRail(scroller), 80);
     const rises = $$('[data-dui-rise]', modal);
@@ -830,7 +845,8 @@
     // A sheet let go past the mark was held where the finger left it.
     modal.classList.remove('drag');
     modal.style.transform = '';
-    if (modal.dataset.duiModal === 'panel' && !reduced()) {
+    if (modal.dataset.duiModal === 'preview') previewClosed(modal, state);
+    else if (modal.dataset.duiModal === 'panel' && !reduced()) {
       // It shrinks back into what opened it (240 ms, exit).
       const from = state.opener && state.opener.isConnected && shown(state.opener) ? centreOf(state.opener) : state.from;
       const [cx, cy] = centreOf(modal);
@@ -858,6 +874,12 @@
       if (open) opened(modal, state); else closed(modal, state);
     });
     state.observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+    if (modal.dataset.duiModal === 'preview') {
+      const stage = stageOf(modal);
+      state.items = new MutationObserver(() => previewItemChanged(modal, state));
+      if (stage) state.items.observe(stage, { childList: true });
+      state.item = modal.querySelector('.dui-pv-item');
+    }
     modals.set(modal, state);
     if (state.open) opened(modal, state);
   }
@@ -865,6 +887,7 @@
     const state = modals.get(modal);
     if (!state) return;
     state.observer.disconnect();
+    if (state.items) state.items.disconnect();
     modals.delete(modal);
     if (state.open && state.opener && state.opener.isConnected) state.opener.focus({ preventScroll: true });
   }
@@ -873,6 +896,7 @@
     if (event.isComposing) return;
     const top = openModals().pop();
     if (!top) return;
+    if (top.dataset.duiModal === 'preview' && previewKey(event, top)) return;
     if (event.key === 'Escape') {
       // A confirmation inside it takes Esc first.
       if (document.activeElement && document.activeElement.closest('.dui-confirm')) return;
@@ -1603,8 +1627,438 @@
     writers.delete(scope);
   }
 
+  // ---- A file's tile, and files arriving (sections 5.5, 6.5, 7.3) --------
+  // An element `[data-dui-press]` that is not a button is pressed by Space
+  // and Enter as one is: a file's tile.
+  document.addEventListener('keydown', event => {
+    if (event.isComposing || event.repeat || (event.key !== ' ' && event.key !== 'Enter')) return;
+    const target = event.target;
+    if (!target || !target.matches || !target.matches('[data-dui-press]')) return;
+    event.preventDefault();
+    target.click();
+  });
+  // Where files were last dropped: a new tile grows out of it. Windows'
+  // web view gives a drop no place, so the element it was dropped on
+  // stands for it.
+  document.addEventListener('drop', event => {
+    if (event.clientX || event.clientY) { lastPress = [event.clientX, event.clientY]; return; }
+    const on = window.dxDragLastElement || event.target;
+    if (on && on.getBoundingClientRect) lastPress = centreOf(on);
+  }, true);
+  // While files are dragged over the window, an element `[data-dui-drop]`
+  // has the class `dropping`, which shows what a drop would do. Windows'
+  // web view says only when the pointer moves onto another element, so a
+  // leave waits a moment for the arrival that follows it.
+  let dropLeft = 0;
+  const dropTarget = () => document.querySelector('[data-dui-drop]');
+  const dragsFiles = event => !event.dataTransfer || !event.dataTransfer.types
+    || [...event.dataTransfer.types].includes('Files') || event.dataTransfer.types.length === 0;
+  ['dragenter', 'dragover'].forEach(name => document.addEventListener(name, event => {
+    const target = dropTarget();
+    if (!target || !dragsFiles(event) || document.querySelector('[data-dui-modal].on')) return;
+    clearTimeout(dropLeft);
+    if (!target.classList.contains('dropping')) target.classList.add('dropping');
+  }, true));
+  document.addEventListener('dragleave', () => {
+    clearTimeout(dropLeft);
+    dropLeft = setTimeout(() => { const target = dropTarget(); if (target) target.classList.remove('dropping'); }, 90);
+  }, true);
+  document.addEventListener('drop', () => {
+    clearTimeout(dropLeft);
+    const target = dropTarget();
+    if (target) target.classList.remove('dropping');
+  }, true);
+
+  // A picture pasted into the page: `onPastedFiles` hears the files of a
+  // paste into the field `selector` names that has no text, and the paste
+  // puts nothing in the field. A file past 16 MiB is named and not sent:
+  // the app says it is too large.
+  const PASTE_MOST = 16 * 1024 * 1024;
+  let pastedTo = null;
+  function onPastedFiles(selector, send) { pastedTo = { selector, send }; }
+  const asBase64 = file => new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''));
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+  document.addEventListener('paste', event => {
+    if (!pastedTo || !event.clipboardData || !event.target || !event.target.closest) return;
+    if (!event.target.closest(pastedTo.selector)) return;
+    const data = event.clipboardData;
+    if (data.getData('text/plain')) return;
+    const files = [...(data.files || [])];
+    if (!files.length) return;
+    event.preventDefault();
+    const { send } = pastedTo;
+    Promise.all(files.map(async file => ({
+      name: file.name || 'image.png',
+      type: file.type || '',
+      size: file.size,
+      data: file.size > PASTE_MOST ? null : await asBase64(file),
+    }))).then(send);
+  }, true);
+
+  // ---- The file preview (section 6.16) ------------------------------------
+  // `[data-dui-modal="preview"]` is a dialog like a panel, opened by its
+  // class `on`. It grows out of the tile its `data-dui-from` names and
+  // shrinks back into it; ← and → say `previous` and `next`; Space closes
+  // it, as Esc does; a press on its backdrop closes it on the desktop and
+  // hides or shows its controls on Android, where a swipe down closes it
+  // and one sideways goes to the next file. A picture zooms to twice its
+  // size on a double click or a pinch.
+  let previewStep = 1;
+  const stageOf = modal => modal.querySelector('[data-dui-pv-stage]');
+  const tileOf = modal => {
+    const tile = document.getElementById(modal.dataset.duiFrom || '');
+    return tile && onScreen(tile) ? (tile.querySelector('.dui-file-thumb') || tile) : null;
+  };
+  // The box of what the stage shows, or a part of the stage's middle.
+  function shownBox(stage) {
+    const item = stage.querySelector('.dui-pv-item');
+    const inner = item && item.firstElementChild;
+    const box = inner && inner.getBoundingClientRect();
+    if (box && box.width > 8 && box.height > 8) return box;
+    const whole = stage.getBoundingClientRect();
+    const w = whole.width * 0.6, h = whole.height * 0.6;
+    return { left: whole.left + (whole.width - w) / 2, top: whole.top + (whole.height - h) / 2, width: w, height: h };
+  }
+  function towardsTile(stage, tile) {
+    const a = tile.getBoundingClientRect(), b = shownBox(stage), whole = stage.getBoundingClientRect();
+    const k = Math.max(0.04, Math.min(a.width / b.width, a.height / b.height));
+    // The stage scales about its own middle; the box shown moves with it.
+    const bx = b.left + b.width / 2 - (whole.left + whole.width / 2);
+    const by = b.top + b.height / 2 - (whole.top + whole.height / 2);
+    const dx = a.left + a.width / 2 - (whole.left + whole.width / 2) - bx * k;
+    const dy = a.top + a.height / 2 - (whole.top + whole.height / 2) - by * k;
+    return `translate(${dx}px, ${dy}px) scale(${k})`;
+  }
+  function previewOpened(modal, state) {
+    modal.classList.remove('leaving', 'bare');
+    previewStep = 1;
+    state.item = null;
+    const stage = stageOf(modal), tile = tileOf(modal);
+    if (state.run) state.run.cancel();
+    if (!stage) return;
+    if (reduced() || !tile) {
+      state.run = stage.animate([{ opacity: 0 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 200, easing: tokens.standard });
+      return;
+    }
+    // It grows out of its tile (420 ms, enter).
+    state.run = stage.animate([{ transform: towardsTile(stage, tile), opacity: 0.5 }, { transform: 'none', opacity: 1 }],
+      { duration: 420, easing: tokens.enter });
+  }
+  function previewClosed(modal, state) {
+    const stage = stageOf(modal), tile = tileOf(modal);
+    if (state.run) state.run.cancel();
+    modal.classList.add('leaving');
+    if (!stage) { modal.classList.remove('leaving'); return; }
+    const finish = () => { if (!modal.classList.contains('on')) modal.classList.remove('leaving'); };
+    let run, ms;
+    if (reduced() || !tile) {
+      ms = reduced() ? tokens.reducedMs : 160;
+      run = stage.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.exit, fill: 'forwards' });
+    } else {
+      // It shrinks back into the tile (320 ms, standard).
+      ms = 320;
+      run = stage.animate([{ transform: 'none', opacity: 1 }, { transform: towardsTile(stage, tile), opacity: 0.4 }],
+        { duration: ms, easing: tokens.standard, fill: 'forwards' });
+    }
+    state.run = run;
+    after(run, ms, () => { finish(); if (state.run === run) run.cancel(); });
+  }
+  // A new file on the stage comes in from the side it was stepped to
+  // (280 ms, enter); the same file, read, fades in where it was.
+  function previewItemChanged(modal, state) {
+    const item = modal.querySelector('.dui-pv-item');
+    if (!item || item === state.item) return;
+    const was = state.item;
+    state.item = item;
+    if (!was || !modal.classList.contains('on')) return;
+    if (reduced() || was.dataset.file === item.dataset.file) {
+      item.animate([{ opacity: 0.6 }, { opacity: 1 }], { duration: tokens.reducedMs + 30, easing: tokens.standard });
+      return;
+    }
+    item.animate([{ opacity: 0, transform: `translateX(${previewStep * 48}px)` }, { opacity: 1, transform: 'none' }],
+      { duration: 280, easing: tokens.enter });
+  }
+  function previewKey(event, modal) {
+    const at = event.target;
+    const media = at && at.closest && at.closest('video, audio, .dui-pv-play, .dui-pv-wave');
+    if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && !media) {
+      event.preventDefault();
+      previewStep = event.key === 'ArrowRight' ? 1 : -1;
+      tell(modal, previewStep > 0 ? 'next' : 'previous');
+      return true;
+    }
+    if (event.key === ' ' && !media && !(at && at.closest && at.closest('[data-dui-scroll] pre, .dui-pv-pdf'))) {
+      event.preventDefault();
+      tell(modal, 'dismiss');
+      return true;
+    }
+    return false;
+  }
+  document.addEventListener('click', event => {
+    const nav = event.target.closest && event.target.closest('.dui-pv-nav');
+    if (nav) { previewStep = nav.classList.contains('prev') ? -1 : 1; return; }
+    const modal = event.target.closest && event.target.closest('[data-dui-modal="preview"].on');
+    if (!modal) return;
+    const backdrop = event.target.matches('[data-dui-pv-stage], .dui-pv-item, .dui-pv-scrim, .dui-pv-failed');
+    if (!backdrop) return;
+    if (previewGestured) { previewGestured = false; return; }
+    if (touchUi()) modal.classList.toggle('bare');
+    else tell(modal, 'dismiss');
+  });
+  // A double click on a picture zooms it to twice its size about the
+  // point clicked, and back.
+  function zoom(picture, x, y, on) {
+    const box = picture.getBoundingClientRect();
+    if (on) picture.style.transformOrigin = `${((x - box.left) / box.width) * 100}% ${((y - box.top) / box.height) * 100}%`;
+    picture.classList.toggle('zoom', on);
+  }
+  document.addEventListener('dblclick', event => {
+    const picture = event.target.closest && event.target.closest('img[data-dui-zoom]');
+    if (picture) zoom(picture, event.clientX, event.clientY, !picture.classList.contains('zoom'));
+  });
+  // Android: a swipe down closes, a swipe sideways goes to the next file,
+  // and two fingers spreading or closing zoom a picture. Touch events, as
+  // the web view takes a drag of pointer events for its own scrolling. A
+  // touch on text or a PDF scrolls it instead.
+  let previewSwipe = null, previewGestured = false;
+  document.addEventListener('touchstart', event => {
+    const stage = event.target.closest && event.target.closest('[data-dui-pv-stage]');
+    const modal = stage && stage.closest('[data-dui-modal="preview"].on');
+    if (!modal) return;
+    if (event.touches.length === 2) {
+      const [a, b] = event.touches;
+      previewSwipe = { pinch: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), modal,
+        picture: modal.querySelector('img[data-dui-zoom]'), at: [(a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2] };
+      return;
+    }
+    if (event.touches.length !== 1 || event.target.closest('button, video, .dui-pv-audio, [data-dui-scroll]')) { previewSwipe = null; return; }
+    const touch = event.touches[0];
+    previewSwipe = { x: touch.clientX, y: touch.clientY, mode: null, d: 0, modal, item: modal.querySelector('.dui-pv-item') };
+  }, { passive: true });
+  document.addEventListener('touchmove', event => {
+    const swipe = previewSwipe;
+    if (!swipe || swipe.pinch !== undefined || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - swipe.x, dy = touch.clientY - swipe.y;
+    if (!swipe.mode && Math.hypot(dx, dy) > 8) swipe.mode = Math.abs(dy) > Math.abs(dx) ? 'y' : 'x';
+    if (!swipe.mode || !swipe.item) return;
+    stats.moves += 1;
+    if (swipe.mode === 'y') {
+      const d = Math.max(0, dy);
+      swipe.item.style.transform = `translateY(${d}px) scale(${1 - Math.min(d, 300) / 1200})`;
+      const scrim = swipe.modal.querySelector('.dui-pv-scrim');
+      if (scrim) scrim.style.opacity = String(1 - Math.min(d, 300) / 400);
+      swipe.d = dy;
+    } else {
+      swipe.item.style.transform = `translateX(${dx}px)`;
+      swipe.d = dx;
+    }
+  }, { passive: true });
+  function endPreviewSwipe(event) {
+    const swipe = previewSwipe;
+    if (!swipe) return;
+    if (swipe.pinch !== undefined) {
+      if (event.touches && event.touches.length) return;
+      previewSwipe = null;
+      const [a, b] = event.changedTouches.length > 1 ? event.changedTouches : [null, null];
+      if (swipe.picture && a && b) {
+        const now = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        if (now > swipe.pinch * 1.2) zoom(swipe.picture, swipe.at[0], swipe.at[1], true);
+        else if (now < swipe.pinch * 0.85) zoom(swipe.picture, swipe.at[0], swipe.at[1], false);
+      }
+      previewGestured = true;
+      return;
+    }
+    previewSwipe = null;
+    const { mode, d, item, modal } = swipe;
+    previewGestured = !!mode;
+    const scrim = modal.querySelector('.dui-pv-scrim');
+    if (scrim) scrim.style.opacity = '';
+    if (!mode || !item) return;
+    const cancelled = event.type === 'touchcancel';
+    if (!cancelled && mode === 'y' && d > 110) { tell(modal, 'dismiss'); setTimeout(() => { item.style.transform = ''; }, 400); return; }
+    const several = modal.querySelectorAll('.dui-pv-dots i').length > 1;
+    if (!cancelled && mode === 'x' && Math.abs(d) > 70 && several) {
+      item.style.transform = '';
+      previewStep = d < 0 ? 1 : -1;
+      tell(modal, previewStep > 0 ? 'next' : 'previous');
+      return;
+    }
+    const pop = spring('pop');
+    item.animate([{ transform: item.style.transform || 'none' }, { transform: 'none' }], { duration: pop.ms, easing: pop.easing });
+    item.style.transform = '';
+  }
+  document.addEventListener('touchend', endPreviewSwipe, { passive: true });
+  document.addEventListener('touchcancel', endPreviewSwipe, { passive: true });
+
+  // ---- A sound in the preview (section 6.16) -------------------------------
+  // `[data-dui-audio]` holds the sound's address: the clay button plays and
+  // pauses it, the bars are the sound's shape and fill with clay as it
+  // plays, a press on them seeks, and the time is under them. The shape is
+  // read from the sound itself; one the web view cannot read is drawn
+  // flat, and still plays.
+  const BARS = 46;
+  const clock = seconds => {
+    const whole = Math.max(0, Math.floor(seconds || 0));
+    return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+  };
+  function soundShape(address) {
+    const Context = window.AudioContext || window.webkitAudioContext;
+    if (!Context) return Promise.resolve(null);
+    return fetch(address).then(answer => answer.arrayBuffer()).then(bytes => {
+      const context = new Context();
+      return context.decodeAudioData(bytes).then(sound => {
+        context.close();
+        const data = sound.getChannelData(0), step = Math.max(1, Math.floor(data.length / BARS));
+        const peaks = [];
+        for (let bar = 0; bar < BARS; bar++) {
+          let peak = 0;
+          for (let at = bar * step; at < Math.min(data.length, (bar + 1) * step); at += 16) peak = Math.max(peak, Math.abs(data[at]));
+          peaks.push(peak);
+        }
+        const most = Math.max(...peaks, 0.001);
+        return peaks.map(peak => 14 + 86 * (peak / most));
+      });
+    }).catch(() => null);
+  }
+  function watchSound(card) {
+    if (card._duiSound) return;
+    const sound = new Audio(card.dataset.duiAudio);
+    sound.preload = 'auto';
+    card._duiSound = sound;
+    const wave = card.querySelector('.dui-pv-wave'), time = card.querySelector('.dui-pv-time');
+    const button = card.querySelector('.dui-pv-play');
+    const draw = heights => {
+      wave.replaceChildren(...heights.map(height => { const bar = document.createElement('i'); bar.style.height = height + '%'; return bar; }));
+    };
+    draw(new Array(BARS).fill(30));
+    soundShape(card.dataset.duiAudio).then(heights => { if (heights && card.isConnected) draw(heights); });
+    const show = () => {
+      const done = sound.duration ? sound.currentTime / sound.duration : 0;
+      const filled = Math.round(done * BARS);
+      [...wave.children].forEach((bar, index) => bar.classList.toggle('done', index < filled));
+      time.textContent = sound.duration && isFinite(sound.duration) ? `${clock(sound.currentTime)} / ${clock(sound.duration)}` : clock(sound.currentTime);
+    };
+    const playing = on => {
+      card.classList.toggle('playing', on);
+      button.setAttribute('aria-label', on ? 'Pause' : 'Play');
+      button.dataset.tip = on ? 'Pause' : 'Play';
+    };
+    sound.addEventListener('timeupdate', show);
+    sound.addEventListener('loadedmetadata', show);
+    sound.addEventListener('play', () => playing(true));
+    sound.addEventListener('pause', () => playing(false));
+    sound.addEventListener('ended', () => { playing(false); sound.currentTime = 0; show(); });
+    button.addEventListener('click', () => { if (sound.paused) sound.play().catch(() => {}); else sound.pause(); });
+    wave.addEventListener('click', event => {
+      if (!sound.duration || !isFinite(sound.duration)) return;
+      const box = wave.getBoundingClientRect();
+      sound.currentTime = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width)) * sound.duration;
+      show();
+    });
+  }
+  function forgetSound(card) {
+    const sound = card._duiSound;
+    if (!sound) return;
+    sound.pause();
+    sound.removeAttribute('src');
+    sound.load();
+    card._duiSound = null;
+  }
+
+  // ---- A PDF's pages, by the bundled renderer (sections 6.16, 11) ---------
+  // `[data-dui-pdf]` holds a PDF's address. PDF.js is loaded from the
+  // folder the app bundles it in the first time a PDF is shown. Each page
+  // is a canvas as wide as the column allows, drawn when it comes near
+  // sight; the PDF's own scripts never run.
+  let pdfjs = null;
+  function loadPdfJs() {
+    if (!pdfjs) {
+      const folder = new URL((tokens.pdfjs || '/assets/pdfjs').replace(/\/?$/, '/'), location.href);
+      pdfjs = import(new URL('pdf.min.mjs', folder).href).then(library => {
+        library.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.mjs', folder).href;
+        return { library, folder };
+      });
+      pdfjs.catch(() => { pdfjs = null; });
+    }
+    return pdfjs;
+  }
+  function pdfFailed(holder, why) {
+    holder.replaceChildren();
+    const said = document.createElement('p');
+    said.className = 'dui-pv-pdf-failed';
+    said.textContent = 'The pages could not be drawn. Open it in another app to see them.';
+    said.title = String(why || '');
+    holder.append(said);
+  }
+  function watchPdf(holder) {
+    if (holder._duiPdf) return;
+    const state = { task: null, observer: null, gone: false };
+    holder._duiPdf = state;
+    loadPdfJs().then(({ library, folder }) => {
+      if (state.gone) return null;
+      state.task = library.getDocument({
+        url: holder.dataset.duiPdf,
+        cMapUrl: new URL('cmaps/', folder).href,
+        cMapPacked: true,
+        standardFontDataUrl: new URL('standard_fonts/', folder).href,
+        wasmUrl: new URL('wasm/', folder).href,
+        isEvalSupported: false,
+        enableXfa: false,
+      });
+      return state.task.promise;
+    }).then(pdf => {
+      if (!pdf || state.gone) return;
+      const width = Math.min(holder.clientWidth || 760, 900);
+      const ratio = Math.min(window.devicePixelRatio || 1, 3);
+      state.observer = new IntersectionObserver(entries => entries.forEach(entry => {
+        if (!entry.isIntersecting || entry.target._duiDrawn) return;
+        entry.target._duiDrawn = true;
+        const number = Number(entry.target.dataset.page);
+        pdf.getPage(number).then(page => {
+          if (state.gone) return;
+          const unscaled = page.getViewport({ scale: 1 });
+          const viewport = page.getViewport({ scale: (width / unscaled.width) * ratio });
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.floor(viewport.width);
+          canvas.height = Math.floor(viewport.height);
+          entry.target.append(canvas);
+          return page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        }).catch(() => { entry.target._duiDrawn = false; });
+      }), { root: holder.closest('[data-dui-scroll]'), rootMargin: '600px 0px' });
+      // Every page has its place at once, as large as its first page
+      // says, so the scrollbar is right from the start.
+      return pdf.getPage(1).then(first => {
+        const box = first.getViewport({ scale: 1 });
+        const height = (width / box.width) * box.height;
+        for (let number = 1; number <= pdf.numPages; number++) {
+          const page = document.createElement('div');
+          page.className = 'dui-pv-page';
+          page.dataset.page = String(number);
+          page.style.width = width + 'px';
+          page.style.minHeight = height + 'px';
+          page.setAttribute('aria-label', `Page ${number} of ${pdf.numPages}`);
+          holder.append(page);
+          state.observer.observe(page);
+        }
+      });
+    }).catch(error => { if (!state.gone) pdfFailed(holder, error); });
+  }
+  function forgetPdf(holder) {
+    const state = holder._duiPdf;
+    if (!state) return;
+    state.gone = true;
+    if (state.observer) state.observer.disconnect();
+    if (state.task) state.task.destroy();
+    holder._duiPdf = null;
+  }
+
   // ---- Finding what Rust renders -----------------------------------------
-  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],[data-dui-grow],[data-dui-bars],.dui-confirm';
+  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],[data-dui-grow],[data-dui-bars],[data-dui-audio],[data-dui-pdf],.dui-confirm';
   function arrived(element) {
     if (element.matches('[data-dui-list]')) watchList(element);
     if (element.matches('[data-dui-modal]')) watchModal(element);
@@ -1615,6 +2069,8 @@
     if (element.matches('[data-dui-focus]')) watchWriting(element);
     if (element.matches('[data-dui-grow]')) watchGrow(element);
     if (element.matches('[data-dui-bars]')) tellBars();
+    if (element.matches('[data-dui-audio]')) watchSound(element);
+    if (element.matches('[data-dui-pdf]')) watchPdf(element);
   }
   function left(element, parent) {
     if (element.matches('[data-dui-list]')) forgetList(element);
@@ -1624,6 +2080,8 @@
     if (element.matches('[data-dui-focus]')) forgetWriting(element);
     if (element.matches('[data-dui-grow]')) forgetGrow(element);
     if (element.matches('[data-dui-bars]')) setTimeout(tellBars, 0);
+    if (element.matches('[data-dui-audio]')) forgetSound(element);
+    if (element.matches('[data-dui-pdf]')) forgetPdf(element);
     if (element.matches('[data-dui-toast]') && !element.classList.contains('dui-toast-ghost')) {
       // The copy closes where the toast was: the toast's place, or the
       // error's above it.
@@ -1651,10 +2109,10 @@
   function install(options) {
     if (installed) return;
     installed = true;
-    tokens = options.tokens;
+    tokens = Object.assign({}, options.tokens, { pdfjs: options.pdfjs });
     platform = options.platform;
     if (document.body) watchPage(); else document.addEventListener('DOMContentLoaded', watchPage);
   }
 
-  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, appendText, paste, back, jump };
+  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, appendText, paste, back, jump, onPastedFiles };
 })();

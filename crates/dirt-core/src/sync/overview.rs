@@ -472,6 +472,54 @@ impl AttachedFile {
     }
 }
 
+/// Where a file is, as its tile in an app says it (interface design,
+/// section 6.5). A file that is on this device and on the server has
+/// nothing to say, and so has no whereabouts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Whereabouts {
+    /// On this device and being sent: its tile shows a clay line running
+    /// along its foot.
+    Uploading,
+    /// On this device and not sent, because the device cannot send just
+    /// now: it is signed out, waiting to be let in, or offline.
+    ThisDeviceOnly,
+    /// Not on this device. It is fetched when it is opened, previewed or
+    /// saved.
+    NotHere,
+    /// The server refused it, for this reason.
+    Refused(String),
+}
+
+impl Whereabouts {
+    /// The words for it, in lower case, to follow the file's size and kind.
+    #[must_use]
+    pub fn words(&self) -> String {
+        match self {
+            Self::Uploading => "uploading".to_owned(),
+            Self::ThisDeviceOnly => "on this device only".to_owned(),
+            Self::NotHere => "not on this device; fetched when it is wanted".to_owned(),
+            Self::Refused(reason) => format!("could not be sent: {reason}"),
+        }
+    }
+}
+
+impl AttachedFile {
+    /// Where the file is, for its tile, or nothing to say. `can_send` is
+    /// whether this device can send now: signed in, let in, and not
+    /// offline. The CLI says the same with [`Self::standing_words`], which
+    /// does not know whether the device is online.
+    #[must_use]
+    pub fn whereabouts(&self, can_send: bool) -> Option<Whereabouts> {
+        match (&self.standing, self.on_device) {
+            (FileStanding::Refused(reason), _) => Some(Whereabouts::Refused(reason.clone())),
+            (_, false) => Some(Whereabouts::NotHere),
+            (FileStanding::NotTaken, true) if can_send => Some(Whereabouts::Uploading),
+            (FileStanding::NotTaken, true) => Some(Whereabouts::ThisDeviceOnly),
+            (FileStanding::Taken, true) => None,
+        }
+    }
+}
+
 impl FileError {
     /// Why a file could not be had, as sentences for the person, with
     /// what can be done. `can_fetch` says whether this device is signed in
@@ -1187,6 +1235,52 @@ mod tests {
             .standing_words()
             .unwrap(),
             "could not be sent: the account's storage for files is full"
+        );
+    }
+
+    #[test]
+    fn a_tile_says_where_its_file_is() {
+        let file = |standing, on_device| AttachedFile {
+            attachment: crate::files::Attachment {
+                file_id: uuid::Uuid::from_u128(1),
+                name: "photo.jpg".to_owned(),
+                media_type: "image/jpeg".to_owned(),
+                size: 10,
+                key: crate::files::FileKey::generate(),
+                added_at_ms: 0,
+                thumbnail: None,
+            },
+            on_device,
+            thumbnail_on_device: false,
+            standing,
+        };
+        let said = |file: AttachedFile, can_send| file.whereabouts(can_send).map(|at| at.words());
+        for can_send in [true, false] {
+            assert_eq!(said(file(FileStanding::Taken, true), can_send), None);
+            assert_eq!(
+                said(file(FileStanding::Taken, false), can_send).unwrap(),
+                "not on this device; fetched when it is wanted"
+            );
+            assert_eq!(
+                said(
+                    file(FileStanding::Refused("too large".to_owned()), true),
+                    can_send
+                )
+                .unwrap(),
+                "could not be sent: too large"
+            );
+        }
+        assert_eq!(
+            file(FileStanding::NotTaken, true).whereabouts(true),
+            Some(Whereabouts::Uploading)
+        );
+        assert_eq!(
+            said(file(FileStanding::NotTaken, true), true).unwrap(),
+            "uploading"
+        );
+        assert_eq!(
+            said(file(FileStanding::NotTaken, true), false).unwrap(),
+            "on this device only"
         );
     }
 

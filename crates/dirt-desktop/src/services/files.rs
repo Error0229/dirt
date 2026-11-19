@@ -23,6 +23,7 @@ use std::sync::Arc;
 use dirt_core::files::{clear_copies, media_type_for, safe_file_name, save_copy};
 use dirt_core::util::as_sentence;
 use dirt_core::{NoteId, Store};
+use dirt_ui::files::Pasted;
 use uuid::Uuid;
 
 /// The name of the folder, inside a store's folder, that the copies are
@@ -62,25 +63,90 @@ pub fn copy_for_opening(
     dirt_core::files::copy_for_opening(&opened_folder(store), held, file_id, name)
 }
 
-/// Attaches the files at `paths` to a note, one after another, and returns
-/// a line for each that could not be attached.
+/// A file to attach: one on the computer, dropped or chosen, or a picture
+/// pasted into the page, which is in memory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Incoming {
+    Path(PathBuf),
+    Pasted(Pasted),
+}
+
+impl Incoming {
+    /// The name the file goes into the note under: never a path.
+    pub fn name(&self) -> String {
+        match self {
+            Self::Path(path) => safe_file_name(
+                &path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            ),
+            Self::Pasted(pasted) => pasted_name(pasted),
+        }
+    }
+}
+
+/// The name a pasted file goes into the note under. Most programs give a
+/// pasted picture the name "image.png", which says nothing; the note gets
+/// "Pasted picture" with the same ending instead.
+fn pasted_name(pasted: &Pasted) -> String {
+    let given = safe_file_name(&pasted.name);
+    let ending = given
+        .rsplit_once('.')
+        .map(|(_, ending)| ending.to_ascii_lowercase())
+        .filter(|ending| !ending.is_empty() && ending.len() <= 5)
+        .or_else(|| {
+            pasted.media_type.strip_prefix("image/").map(|kind| {
+                if kind == "jpeg" {
+                    "jpg".to_owned()
+                } else {
+                    kind.to_owned()
+                }
+            })
+        });
+    let generic = given.eq_ignore_ascii_case("image.png")
+        || given.eq_ignore_ascii_case("image.jpg")
+        || given == "file";
+    match (generic, ending) {
+        (true, Some(ending)) => format!("Pasted picture.{ending}"),
+        (true, None) => "Pasted picture".to_owned(),
+        (false, _) => given,
+    }
+}
+
+/// Attaches files to a note, one after another, and returns a line for
+/// each that could not be attached.
 ///
 /// This is run as a task of its own. Attaching a file is two steps, the
 /// copy onto the shelf and the note that names it; a task that belonged to
 /// a part of the window would be dropped between them if the person turned
 /// to another note, and the files after it would not be attached at all.
-pub async fn attach_all(store: Arc<Store>, note: NoteId, paths: Vec<PathBuf>) -> Vec<String> {
+pub async fn attach_all(store: Arc<Store>, note: NoteId, files: Vec<Incoming>) -> Vec<String> {
     let mut failed = Vec::new();
-    for path in paths {
-        let given = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        // The name goes into the note as a name, never as a path.
-        let name = safe_file_name(&given);
-        let attached = store
-            .attach_file(&note, &path, &name, media_type_for(&name))
-            .await;
+    for file in files {
+        let name = file.name();
+        let attached = match file {
+            Incoming::Path(path) => {
+                store
+                    .attach_file(&note, &path, &name, media_type_for(&name))
+                    .await
+            }
+            Incoming::Pasted(Pasted {
+                bytes: Some(bytes),
+                media_type,
+                ..
+            }) => {
+                let media_type = if media_type.trim().is_empty() {
+                    media_type_for(&name).to_owned()
+                } else {
+                    media_type
+                };
+                store.attach_bytes(&note, bytes, &name, &media_type).await
+            }
+            Incoming::Pasted(Pasted { size, .. }) => Err(dirt_core::Error::InvalidInput(format!(
+                "the file is too large to attach: {size} bytes"
+            ))),
+        };
         if let Err(error) = attached {
             failed.push(format!("{name}: {}", as_sentence(&error)));
         }
@@ -111,7 +177,14 @@ pub fn save_where_asked(held: &Path, target: &Path, was_there: bool) -> Result<(
 
 /// Hands a file to the system, to open with whatever shows files of its
 /// kind.
+///
+/// In a development build, `DIRT_OPENED_TO_FILE` names a file that the
+/// path is written to instead, for trying the app on a computer whose
+/// screen belongs to someone else. A release build ignores it.
 pub fn open_with_system(path: &Path) -> io::Result<()> {
+    if let Some(log) = crate::settings::test_hook("DIRT_OPENED_TO_FILE") {
+        return std::fs::write(log, path.to_string_lossy().as_bytes());
+    }
     open::that_detached(path)
 }
 
@@ -178,7 +251,11 @@ mod tests {
         let failed = tokio::spawn(attach_all(
             Arc::clone(&store),
             note,
-            vec![first, missing, last],
+            vec![
+                Incoming::Path(first),
+                Incoming::Path(missing),
+                Incoming::Path(last),
+            ],
         ))
         .await
         .unwrap();
@@ -193,6 +270,49 @@ mod tests {
             .map(|attachment| attachment.name)
             .collect();
         assert_eq!(names, ["first.txt", "last.txt"]);
+    }
+
+    /// A pasted picture is named for what it is, not "image.png"; a pasted
+    /// file with a name of its own keeps it; one too large is refused.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pasted_picture_is_attached_under_a_name_that_says_what_it_is() {
+        let pasted = |name: &str, media_type: &str, bytes: Option<&[u8]>| {
+            Incoming::Pasted(Pasted {
+                name: name.to_owned(),
+                media_type: media_type.to_owned(),
+                size: 3,
+                bytes: bytes.map(<[u8]>::to_vec),
+            })
+        };
+        assert_eq!(
+            pasted("image.png", "image/png", None).name(),
+            "Pasted picture.png"
+        );
+        assert_eq!(pasted("", "image/jpeg", None).name(), "Pasted picture.jpg");
+        assert_eq!(pasted("plan.png", "image/png", None).name(), "plan.png");
+        assert_eq!(
+            pasted("../x/plan.png", "image/png", None).name(),
+            "plan.png"
+        );
+
+        let folder = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(folder.path().join("store").join("notes.db")).unwrap());
+        let note = store.create_note("").await.unwrap().id;
+        let failed = attach_all(
+            Arc::clone(&store),
+            note,
+            vec![
+                pasted("image.png", "image/png", Some(b"png")),
+                pasted("huge.png", "image/png", None),
+            ],
+        )
+        .await;
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(failed[0].starts_with("huge.png: "), "{failed:?}");
+        let attached = store.note_attachments(&note).await.unwrap();
+        assert_eq!(attached.len(), 1);
+        assert_eq!(attached[0].name, "Pasted picture.png");
+        assert_eq!(attached[0].media_type, "image/png");
     }
 
     /// A save dialog asks before replacing a file that is there. For a
