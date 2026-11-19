@@ -41,6 +41,9 @@ jni = "0.21"
 ndk-context = "0.1"
 # Opens the system browser on the sign-in page.
 webbrowser = "1"
+# Declares the Gradle module of native code (`android/native`) to `dx`,
+# with `#[manganis::ffi]` in main.rs. The version Dioxus brings.
+manganis = "0.7"
 
 [build-dependencies]
 dotenvy = "0.15"
@@ -48,6 +51,9 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+# The native parts' colours are made from its tokens
+# (`tests/android_colours.rs`).
+dirt-ui = { path = "../dirt-ui" }
 # The host tests are async and open the note store on a file inside a
 # temporary folder.
 tokio.workspace = true

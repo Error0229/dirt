@@ -11,7 +11,7 @@
 //!   back with. That address carries the authorization code, so it is never
 //!   written to a file.
 //! - **Capture.** [`take_capture`] gives what another app shared, text or
-//!   pictures, or the widget's request for a blank note.
+//!   pictures.
 //! - **Saving a file.** [`save_copy`] asks the person where to put a copy
 //!   of a file the app has, one of a note's files or an export of the
 //!   notes, and writes it there; [`take_save_outcome`] says how that went.
@@ -34,7 +34,7 @@
 use jni::objects::{JClass, JObject, JString, JValue};
 use jni::{JNIEnv, JavaVM};
 
-use crate::incoming::{parse_capture, parse_picked, Capture, Picked};
+use crate::incoming::{parse_capture, parse_picked, Picked, Shared};
 
 /// The activity, as the manifest names it.
 const ACTIVITY_CLASS: &str = "dev.dioxus.main.MainActivity";
@@ -82,6 +82,35 @@ fn with_activity<T>(
         let _ = env.exception_clear();
     }
     result.map_err(|error| error.to_string())
+}
+
+/// The app's own files folder, as Android gives it to the activity
+/// (`Context.getFilesDir`): where the capture sheet and its job keep and
+/// look for things too (`config::default_mobile_data_directory`).
+pub fn files_dir() -> Option<std::path::PathBuf> {
+    let ctx = ndk_context::android_context();
+    // SAFETY: as in `with_activity`: the process-global VM pointer the
+    // runtime publishes, valid for the life of the process.
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }.ok()?;
+    let mut env = vm.attach_current_thread().ok()?;
+    let found = env.with_local_frame(8, |env| {
+        // SAFETY: the host Activity the runtime gave `ndk_context`, used as
+        // a `JObject` for this call only.
+        let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+        let folder = env
+            .call_method(&activity, "getFilesDir", "()Ljava/io/File;", &[])?
+            .l()?;
+        let path = env
+            .call_method(&folder, "getAbsolutePath", "()Ljava/lang/String;", &[])?
+            .l()?;
+        let path: String = env.get_string(&JString::from(path))?.into();
+        Ok::<_, jni::errors::Error>(path)
+    });
+    if found.is_err() && env.exception_check().unwrap_or(false) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+    }
+    found.ok().map(std::path::PathBuf::from)
 }
 
 /// Calls a static method of the activity that takes nothing and returns a
@@ -166,9 +195,9 @@ pub fn open_sign_in_page(address: &str) -> bool {
     ask("openSignInPage", &[address])
 }
 
-/// What another app shared, or the widget's request, if one is waiting.
-/// Taking it removes it.
-pub fn take_capture() -> Option<Capture> {
+/// What another app shared, if something is waiting. Taking it removes
+/// it.
+pub fn take_capture() -> Option<Shared> {
     loop {
         // One that cannot be read is passed over for the next.
         if let Some(capture) = parse_capture(&take_text("takeCapture")?) {

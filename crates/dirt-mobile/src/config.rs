@@ -7,7 +7,36 @@
 
 use std::path::PathBuf;
 
+/// The app's data folder: `dirt` in the app's own files folder.
+///
+/// On Android it is asked of Android (`Context.getFilesDir`), once, so that
+/// it is the folder the capture sheet and its job use too, which Kotlin
+/// gives them the same way: for a second user of the phone, or a work
+/// profile, the files folder is not under `/data/user/0`. Worked out from
+/// the process only if Android could not be asked.
+#[cfg(target_os = "android")]
 pub fn default_mobile_data_directory() -> PathBuf {
+    static FOLDER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    FOLDER
+        .get_or_init(|| {
+            crate::services::activity::files_dir().map_or_else(
+                || {
+                    tracing::warn!("Android did not say where the app's files are");
+                    worked_out_data_directory()
+                },
+                |files| files.join("dirt"),
+            )
+        })
+        .clone()
+}
+
+/// The app's data folder, away from Android: for the tests.
+#[cfg(not(target_os = "android"))]
+pub fn default_mobile_data_directory() -> PathBuf {
+    worked_out_data_directory()
+}
+
+fn worked_out_data_directory() -> PathBuf {
     dirs::data_local_dir().or_else(dirs::data_dir).map_or_else(
         || {
             let fallback = fallback_mobile_data_directory();

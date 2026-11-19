@@ -116,6 +116,19 @@ impl EncryptedPrefs {
         let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }
             .map_err(|err| backend(format!("invalid JavaVM handle: {err}")))?;
 
+        // SAFETY: `ctx.context()` returns the host Activity / Application
+        // jobject that ndk_context received from the runtime; reifying it
+        // as a `JObject` for a single JNIEnv invocation is sound.
+        let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+        Self::open_with(vm, &activity, slot)
+    }
+
+    /// Opens the slot with a `Context` the caller was handed by Kotlin,
+    /// without `ndk_context`. That global is set only while the app's
+    /// activity exists (its `create` sets it and `destroy` clears it), so
+    /// the capture sheet's job, which runs where the activity may never
+    /// have started, cannot use it and must not set it (`capture`).
+    pub fn open_with(vm: JavaVM, context: &JObject<'_>, slot: &str) -> Result<Self, SecretError> {
         // The attach guard borrows `vm`, so it has to be gone before `vm`
         // moves into `Self` below.
         let prefs_ref = {
@@ -123,13 +136,7 @@ impl EncryptedPrefs {
                 .attach_current_thread()
                 .map_err(|err| backend(format!("attach JVM thread: {err}")))?;
 
-            // SAFETY: `ctx.context()` returns the host Activity /
-            // Application jobject that ndk_context received from the
-            // runtime; reifying it as a `JObject` for a single JNIEnv
-            // invocation is sound.
-            let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
-
-            let opened = open_prefs(&mut env, &activity);
+            let opened = open_prefs(&mut env, context);
             let prefs = settle(&env, opened)?;
             env.new_global_ref(prefs)
                 .map_err(|err| backend(format!("global ref for SharedPreferences: {err}")))?

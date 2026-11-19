@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Made from dirt_ui::tokens by `dirt_ui::tokens::android_colours`;
+     not to be changed by hand. dirt-mobile's test `colours_are_the_tokens`
+     writes it again with DIRT_WRITE_ANDROID_COLOURS=1. -->
+<resources>
+    <color name="dirt_bg">#FF161412</color>
+    <color name="dirt_surface">#FF1E1B18</color>
+    <color name="dirt_surface_2">#FF27231F</color>
+    <color name="dirt_surface_3">#FF302B26</color>
+    <color name="dirt_border">#FF332E29</color>
+    <color name="dirt_border_strong">#FF463F38</color>
+    <color name="dirt_border_control">#FF776B5F</color>
+    <color name="dirt_text">#FFEDE8E1</color>
+    <color name="dirt_text_2">#FFA9A096</color>
+    <color name="dirt_text_3">#FF938B81</color>
+    <color name="dirt_success">#FF5DBB84</color>
+    <color name="dirt_warning">#FFE0A045</color>
+    <color name="dirt_danger">#FFE86A5A</color>
+    <color name="dirt_danger_soft">#FF3A1E1A</color>
+    <color name="dirt_on_danger">#FF1A0F0A</color>
+    <color name="dirt_mark">#FF5A3F1C</color>
+    <color name="dirt_inverse">#FFEDE8E1</color>
+    <color name="dirt_on_inverse">#FF1E1B18</color>
+    <color name="dirt_accent_clay">#FFE2774F</color>
+    <color name="dirt_accent_soft_clay">#FF3A2419</color>
+    <color name="dirt_on_accent_clay">#FF1A0F0A</color>
+    <color name="dirt_accent_moss">#FF6FBF85</color>
+    <color name="dirt_accent_soft_moss">#FF1E3324</color>
+    <color name="dirt_on_accent_moss">#FF0E1A12</color>
+    <color name="dirt_accent_lake">#FF6FA8E8</color>
+    <color name="dirt_accent_soft_lake">#FF1A2A3D</color>
+    <color name="dirt_on_accent_lake">#FF0B1626</color>
+    <color name="dirt_accent_plum">#FFC792D8</color>
+    <color name="dirt_accent_soft_plum">#FF33233A</color>
+    <color name="dirt_on_accent_plum">#FF1C1020</color>
+    <color name="dirt_accent_honey">#FFE0B14F</color>
+    <color name="dirt_accent_soft_honey">#FF3A2E14</color>
+    <color name="dirt_on_accent_honey">#FF1C1505</color>
+    <color name="dirt_accent_graphite">#FFD9D2C8</color>
+    <color name="dirt_accent_soft_graphite">#FF2E2A26</color>
+    <color name="dirt_on_accent_graphite">#FF1A1714</color>
+</resources>

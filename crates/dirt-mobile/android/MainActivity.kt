@@ -1,8 +1,5 @@
 package dev.dioxus.main
 
-import android.app.PendingIntent
-import android.appwidget.AppWidgetManager
-import android.appwidget.AppWidgetProvider
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
@@ -16,7 +13,6 @@ import android.provider.OpenableColumns
 import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
-import android.widget.RemoteViews
 import androidx.activity.OnBackPressedCallback
 import androidx.annotation.Keep
 import androidx.browser.customtabs.CustomTabsIntent
@@ -28,9 +24,6 @@ import java.io.OutputStream
 import java.lang.ref.WeakReference
 import org.json.JSONArray
 import org.json.JSONObject
-
-private const val ACTION_QUICK_CAPTURE = "dev.dioxus.main.action.QUICK_CAPTURE"
-private const val EXTRA_QUICK_CAPTURE_CONTENT = "dev.dioxus.main.extra.QUICK_CAPTURE_CONTENT"
 
 // Marks the answer to the request for a place to save a file.
 private const val REQUEST_SAVE_FILE = 4401
@@ -84,11 +77,10 @@ class MainActivity : WryActivity() {
         // authorization code, so it is given up once.
         private var signInRedirect: String? = null
 
-        // What to start notes with, until the Rust side takes them, oldest
-        // first: what another app shared, or nothing at all from the
-        // home-screen widget, which asks for a blank note. Two may arrive
-        // before either is taken. Each is a JSON object with a "text" and
-        // a list of "files", as `fileEntry` writes them.
+        // What other apps shared, until the Rust side takes it, oldest
+        // first. Two may arrive before either is taken. Each is a JSON
+        // object with a "text" and a list of "files", as `fileEntry` writes
+        // them.
         private val captures = ArrayDeque<String>()
 
         // How each save went, under the name the Rust side gave the request
@@ -141,9 +133,8 @@ class MainActivity : WryActivity() {
             captures.addLast(JSONObject().put("text", text).put("files", files).toString())
         }
 
-        // The next thing to start a note with, as JSON: a text, which is
-        // empty for a blank note, and the files that came with it. Null
-        // when nothing is waiting.
+        // The next thing shared, as JSON: a text, and the files that came
+        // with it. Null when nothing is waiting.
         @Keep
         @JvmStatic
         @Synchronized
@@ -415,6 +406,22 @@ class MainActivity : WryActivity() {
         tellThePage()
     }
 
+    // Back in front. The capture sheet is drawn over the app without
+    // hiding it, so when the sheet closes the page was never hidden and
+    // hears nothing by itself; this tells it to take in what the sheet
+    // kept, and to read the list again (found by the plan's second trial).
+    override fun onResume() {
+        super.onResume()
+        tellThePage()
+    }
+
+    // Leaving the app: the accent may have been changed in Settings, and the
+    // widget on the home screen is drawn again in it.
+    override fun onPause() {
+        super.onPause()
+        runCatching { dev.dirt.capture.CaptureWidget.refresh(this) }
+    }
+
     // The web view the interface runs in, once the runtime has made it.
     private var page: WebView? = null
 
@@ -438,8 +445,7 @@ class MainActivity : WryActivity() {
         keepSignInRedirect(address.toString())
     }
 
-    // Keeps what another app shared, or the widget's request for a blank
-    // note, for the Rust side.
+    // Keeps what another app shared, for the Rust side.
     private fun saveCapture(intent: Intent?) {
         when (intent?.action) {
             Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE -> {
@@ -465,11 +471,6 @@ class MainActivity : WryActivity() {
                     runOnUiThread { tellThePage() }
                 }.start()
             }
-            ACTION_QUICK_CAPTURE ->
-                keepCapture(
-                    intent.getStringExtra(EXTRA_QUICK_CAPTURE_CONTENT)?.trim().orEmpty(),
-                    JSONArray(),
-                )
         }
     }
 
@@ -627,37 +628,5 @@ class MainActivity : WryActivity() {
             setSaveOutcome(request, outcome)
             runOnUiThread { tellThePage() }
         }.start()
-    }
-}
-
-class QuickCaptureWidgetProvider : AppWidgetProvider() {
-    override fun onUpdate(
-        context: Context,
-        appWidgetManager: AppWidgetManager,
-        appWidgetIds: IntArray,
-    ) {
-        appWidgetIds.forEach { appWidgetId ->
-            appWidgetManager.updateAppWidget(appWidgetId, buildViews(context, appWidgetId))
-        }
-    }
-
-    private fun buildViews(context: Context, appWidgetId: Int): RemoteViews {
-        val launchIntent = Intent(context, MainActivity::class.java).apply {
-            action = ACTION_QUICK_CAPTURE
-            putExtra(EXTRA_QUICK_CAPTURE_CONTENT, "")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
-
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            appWidgetId,
-            launchIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-
-        return RemoteViews(context.packageName, android.R.layout.simple_list_item_1).apply {
-            setTextViewText(android.R.id.text1, "Quick capture")
-            setOnClickPendingIntent(android.R.id.text1, pendingIntent)
-        }
     }
 }

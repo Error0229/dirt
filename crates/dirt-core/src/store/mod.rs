@@ -246,6 +246,29 @@ impl Store {
             .await
     }
 
+    /// Makes a note of a thought that waited outside the store, under the
+    /// ID it was given when it was written: Android's capture sheet keeps a
+    /// thought in a file named by its ID, and the app and a background job
+    /// both take such files in (interface design 8.5).
+    ///
+    /// The note is dated at the time its ID carries, never later than now,
+    /// so a thought that waited, for a network or for the app, is where it
+    /// belongs in the list. It is made only if no note has this ID, deleted
+    /// or not: taking the same thought in twice, at once or after a crash,
+    /// makes one note, and `None` says one was there already. An ID that is
+    /// not a UUID v7 is [`Error::InvalidInput`].
+    pub async fn take_in_note(&self, id: NoteId, content: &str) -> Result<Option<Note>> {
+        let Some(written_at) = id.created_at_ms() else {
+            return Err(Error::InvalidInput(format!(
+                "note {id} has no time in its ID: a note's ID is a UUID v7"
+            )));
+        };
+        let at = written_at.min(now_ms());
+        let content = content.to_owned();
+        self.write(move |c| notes::create_if_new(c, id, &content, at))
+            .await
+    }
+
     /// Where this store keeps the files attached to its notes.
     #[must_use]
     pub fn shelf(&self) -> Shelf {

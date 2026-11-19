@@ -38,6 +38,10 @@ device that already has it or from the person's recovery phrase.
   already holds.
 - **A removed device and the server acting together, against a key
   change.** See the end of "Changing the account's key".
+- **Someone with the locked Android phone, for adding.** The capture sheet
+  opens over the lock screen where the phone allows it, and a thought
+  written there is added to the account. It shows nothing of any note. See
+  "Capture from outside the app, and the lock screen".
 - **A server in the middle of an approval, if nobody compares the codes.**
   The comparison is the protection. Pressing "they match" without looking
   gives it away.
@@ -265,6 +269,63 @@ Two things follow from having backups at all:
   removed again, and a deleted account exists again until the operator
   deletes it again. `docs/DEPLOY.md`, "After a restore", is what the
   operator has to do and tell people.
+
+## Capture from outside the app, and the lock screen
+
+On Android a thought can be written without opening the app: in the capture
+sheet, a small screen of its own that the widget, the app shortcut, the
+Quick Settings tile and the phone's note-taking role open (interface design
+8.5, 8.6). What protects it:
+
+- **They show no notes.** The widget is a bar to write in, and anyone who
+  sees the home screen sees it, so it shows nothing of the notes, not even
+  how many. The sheet's only words are its placeholder. None of them can
+  open a note or the list.
+- **A thought waits on the phone as plain text, briefly.** At ✓ the sheet
+  writes the thought to a file of its own, `dirt/waiting/<note ID>.txt` in
+  the app's private storage, and the job (or the app) makes it a note and
+  removes the file, usually within seconds; offline, it waits for a
+  network or for the app. A thought written and not kept stays as a draft,
+  `dirt/capture-draft.txt`, for the next time. Both are as protected as the
+  local database: not encrypted by Dirt, other apps cannot read them, and
+  Android's own file encryption covers them. A small file, `dirt/look`,
+  holds the theme and the accent chosen, for the sheet and the widget; it
+  says nothing about any note.
+- **Nothing of it goes into a backup.** Android's cloud backup and its
+  transfer to a new phone take nothing of Dirt (`allowBackup="false"`,
+  and data extraction rules that leave out every folder): the database,
+  the waiting thoughts and the draft are not encrypted by Dirt, and the
+  device's keys would not open on another phone. A new phone gets the
+  account's notes by signing in and being let in. Notes on a phone that
+  was never signed in are not carried to a new one: export them first.
+- **The job runs the app's own code, and nothing else.** It loads the app's
+  library and opens the device's secrets in Android's encrypted
+  preferences, as the app does, makes the note and syncs once. It is asked
+  for by ✓ alone, and shows nothing.
+
+**Over the lock screen Dirt can add and can show nothing.** The sheet opens
+there, where the phone lets it (the tile, the note-taking role, a
+lock-screen shortcut), with the line "Adds a note. Your notes stay
+locked."
+
+- A draft written before the lock is not shown; one written over the lock
+  screen is added after it, and both appear the next time the sheet opens
+  on an unlocked phone.
+- The sheet has no way to the app. The app's own screen is not allowed over
+  the lock screen, so opening it from there asks for the phone to be
+  unlocked.
+- The field asks the keyboard not to learn from what is typed into it there
+  (`IME_FLAG_NO_PERSONALIZED_LEARNING`). The keyboard itself is the phone's,
+  and may show its own buttons over the lock screen, its clipboard's among
+  them: that is the keyboard's choice, not Dirt's.
+- The thought becomes a note and syncs at once, phone locked or not: after
+  its first unlock, Android keeps an app's storage open while the phone is
+  locked. Before that first unlock nothing of Dirt can run, and the tile
+  says it is unavailable.
+
+So **whoever holds the locked phone can add notes to the person's account**,
+which reach every device of it, and can read none. That is the price of
+writing without unlocking, and the reason the sheet shows nothing.
 
 ## The keys
 

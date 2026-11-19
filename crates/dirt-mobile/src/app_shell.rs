@@ -17,10 +17,15 @@
 //! is also asked for at start-up; the session saved the attempt before the
 //! browser opened.
 //!
-//! The activity is asked in the same way for what came from outside the
-//! app: text or pictures another app shared, which become a note at once,
-//! and a press of the home-screen widget, which opens a new page. The main
-//! screen does the asking (`screen::Screen`); this says when to.
+//! The activity is asked in the same way for what another app shared,
+//! text or pictures, which become a note at once. The main screen does the
+//! asking (`screen::Screen`); this says when to.
+//!
+//! The capture sheet (`capture`) keeps its thoughts in files of their own,
+//! and a job of its own makes them notes. This takes in whatever still
+//! waits as the app starts and each time the person returns to it, and
+//! reads the list again, since a note the job made is in the store already
+//! and nothing else tells the list of it.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,6 +42,7 @@ use dirt_core::Store;
 use dirt_ui::{Appearance, UiRoot};
 
 use crate::bootstrap_config::load_bootstrap_config;
+use crate::capture::{take_in, write_look};
 use crate::config::default_mobile_data_directory;
 use crate::data::MobileNoteStore;
 use crate::screen::MainScreen;
@@ -55,12 +61,24 @@ const DEVICE_NAME: &str = "Android device";
 fn open_session(server_url: &str) -> Result<Session, String> {
     let secrets =
         EncryptedPrefs::open(&slot_name(server_url)).map_err(|error| error.to_string())?;
+    session_with(server_url, secrets, default_mobile_data_directory(), true)
+}
+
+/// The device's session with the server at `server_url`, its secrets in
+/// `secrets` and its stores under `data_folder`: the app's, which syncs in
+/// the background, or the capture job's, which syncs once (`capture`).
+pub fn session_with(
+    server_url: &str,
+    secrets: EncryptedPrefs,
+    data_folder: std::path::PathBuf,
+    background_sync: bool,
+) -> Result<Session, String> {
     let transport = HttpTransport::new(server_url).map_err(|error| error.to_string())?;
     Session::open(
         SessionConfig {
-            data_folder: default_mobile_data_directory(),
+            data_folder,
             device_name: DEVICE_NAME.to_owned(),
-            background_sync: true,
+            background_sync,
             // Android may stop the app while the browser is in front.
             persist_attempts: true,
             timing: Timing::default(),
@@ -179,6 +197,15 @@ pub fn AppShell() -> Element {
                     return;
                 }
             };
+            // Thoughts the capture sheet left waiting become notes now, if
+            // its job has not made them already, and are sent: the sync the
+            // session began as it opened may have run before they were made.
+            let taken = take_in(note_store.core(), &default_mobile_data_directory()).await;
+            if taken.made > 0 {
+                if let Some(opened) = &opened_session {
+                    opened.notify(Trigger::Changed);
+                }
+            }
             store.set(Some(note_store));
 
             if let Some(opened) = &opened_session {
@@ -300,6 +327,19 @@ pub fn AppShell() -> Element {
             "#,
         );
         while became_visible.recv::<bool>().await.is_ok() {
+            // The capture sheet, or its job, may have written while the app
+            // was away. What still waits is taken in, and the list is read
+            // again either way.
+            let open = store.peek().clone();
+            if let Some(open) = open {
+                let taken = take_in(open.core(), &default_mobile_data_directory()).await;
+                if taken.made > 0 {
+                    if let Some(current) = session.peek().clone() {
+                        current.notify(Trigger::Changed);
+                    }
+                }
+                state.reread();
+            }
             if let Some(current) = session.peek().clone() {
                 current.notify(Trigger::Returned);
             }
@@ -309,6 +349,19 @@ pub fn AppShell() -> Element {
             }
             // A share or the widget may be what brought the app forward.
             *capture_ready.write() += 1;
+        }
+    });
+
+    // The capture sheet and the widget are drawn outside the web view, in
+    // the theme and the accent chosen here: they read them from a file.
+    use_effect(move || {
+        let chosen = settings.read();
+        if let Err(error) = write_look(
+            &default_mobile_data_directory(),
+            chosen.theme,
+            chosen.accent,
+        ) {
+            tracing::warn!("Could not write the look for the capture sheet: {error}");
         }
     });
 

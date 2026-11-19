@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The logo's sprout (dirt_ui::components::Logo) alone: the tile's icon,
+     and over the square in the widget. Tinted where it is used. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp" android:height="32dp"
+    android:viewportWidth="32" android:viewportHeight="32">
+    <path android:pathData="M16,25v-8" android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.2" android:strokeLineCap="round" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M16,17c0,-4.2 2.8,-7 7,-7 0,4.2 -2.8,7 -7,7z" />
+    <path android:fillColor="#FFFFFFFF" android:fillAlpha="0.75"
+        android:pathData="M16,18.5c0,-3.3 -2.2,-5.5 -5.5,-5.5 0,3.3 2.2,5.5 5.5,5.5z" />
+    <path android:pathData="M8.5,25h15" android:strokeColor="#FFFFFFFF"
+        android:strokeAlpha="0.55" android:strokeWidth="2.2" android:strokeLineCap="round" />
+</vector>

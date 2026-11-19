@@ -376,6 +376,59 @@ pub fn css() -> String {
     css
 }
 
+/// The colours as Android resources.
+///
+/// They are for the native parts of the Android app that are not drawn in
+/// the web view: the capture sheet, the widget and the tile (section 8.5).
+/// One file for each scheme, `values` and
+/// `values-night`, so that Android picks the one in use. Every neutral is
+/// there as `dirt_<name>`, and every accent's colours as
+/// `dirt_accent_<accent>`, `dirt_accent_soft_<accent>` and
+/// `dirt_on_accent_<accent>`.
+///
+/// The files themselves are in `dirt-mobile`, and a test there holds them
+/// to this, so that the colours are still written only here.
+#[must_use]
+pub fn android_colours(scheme: Scheme) -> String {
+    let name = |text: &str| text.replace('-', "_");
+    let hex = |color: Color| format!("#FF{:06X}", color.0 & 0x00FF_FFFF);
+    let mut xml = String::from(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n\
+         <!-- Made from dirt_ui::tokens by `dirt_ui::tokens::android_colours`;\n     \
+         not to be changed by hand. dirt-mobile's test `colours_are_the_tokens`\n     \
+         writes it again with DIRT_WRITE_ANDROID_COLOURS=1. -->\n<resources>\n",
+    );
+    for neutral in NEUTRALS {
+        let _ = writeln!(
+            xml,
+            "    <color name=\"dirt_{}\">{}</color>",
+            name(neutral.name),
+            hex(neutral.in_scheme(scheme))
+        );
+    }
+    for accent in Accent::ALL {
+        let colors = accent_colors(accent, scheme);
+        let accent = accent.name();
+        let _ = writeln!(
+            xml,
+            "    <color name=\"dirt_accent_{accent}\">{}</color>",
+            hex(colors.accent)
+        );
+        let _ = writeln!(
+            xml,
+            "    <color name=\"dirt_accent_soft_{accent}\">{}</color>",
+            hex(colors.soft)
+        );
+        let _ = writeln!(
+            xml,
+            "    <color name=\"dirt_on_accent_{accent}\">{}</color>",
+            hex(colors.on_accent)
+        );
+    }
+    xml.push_str("</resources>\n");
+    xml
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

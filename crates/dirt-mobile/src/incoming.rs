@@ -34,13 +34,11 @@ pub struct Incoming {
     pub copy: Result<PathBuf, String>,
 }
 
-/// What was asked of the app from outside it.
+/// What another app shared: text, files, or both. It becomes a note.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Capture {
-    /// Another app shared this: text, files, or both. It becomes a note.
-    Shared { text: String, files: Vec<Incoming> },
-    /// The home-screen widget was pressed: a blank note to write in.
-    Blank,
+pub struct Shared {
+    pub text: String,
+    pub files: Vec<Incoming>,
 }
 
 /// The files the person chose to attach.
@@ -81,8 +79,8 @@ fn files_in(list: &serde_json::Value) -> Vec<Incoming> {
 }
 
 /// Reads what `MainActivity.takeCapture` gave. `None` for something that
-/// cannot be read, which is passed over.
-pub fn parse_capture(given: &str) -> Option<Capture> {
+/// cannot be read, or that brought nothing, which is passed over.
+pub fn parse_capture(given: &str) -> Option<Shared> {
     let value: serde_json::Value = serde_json::from_str(given).ok()?;
     let text = value
         .get("text")
@@ -91,11 +89,7 @@ pub fn parse_capture(given: &str) -> Option<Capture> {
         .trim()
         .to_owned();
     let files = value.get("files").map(files_in).unwrap_or_default();
-    Some(if text.is_empty() && files.is_empty() {
-        Capture::Blank
-    } else {
-        Capture::Shared { text, files }
-    })
+    (!text.is_empty() || !files.is_empty()).then_some(Shared { text, files })
 }
 
 /// Reads what `MainActivity.takePicked` gave.
@@ -235,13 +229,10 @@ mod tests {
 
     #[test]
     fn what_the_activity_hands_over_is_read() {
-        assert_eq!(
-            parse_capture(r#"{"text":"","files":[]}"#),
-            Some(Capture::Blank)
-        );
+        assert_eq!(parse_capture(r#"{"text":"","files":[]}"#), None);
         assert_eq!(
             parse_capture(r#"{"text":"  a thought \n","files":[]}"#),
-            Some(Capture::Shared {
+            Some(Shared {
                 text: "a thought".to_owned(),
                 files: Vec::new()
             })
@@ -253,7 +244,7 @@ mod tests {
         );
         assert_eq!(
             shared,
-            Some(Capture::Shared {
+            Some(Shared {
                 text: String::new(),
                 files: vec![
                     Incoming {
