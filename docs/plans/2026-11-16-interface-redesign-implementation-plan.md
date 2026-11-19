@@ -1867,6 +1867,28 @@ theme are gone. What it settled is in design section 7.10. Run on Windows
 against the local server with the CLI as the second device; the real hotkey,
 the real tray and the screen are the manual checklist's (D2, D68 to D72).
 
+**8b built.** The capture sheet is a native screen in a Gradle module of
+its own (`crates/dirt-mobile/android/native`, declared with
+`#[manganis::ffi]` as the trial found), with its job, the Quick Settings
+tile, the widget, the app shortcut and the note-taking role's
+`CREATE_NOTE`. ✓ writes the thought to `dirt/waiting/<note ID>.txt` and asks
+for one JobScheduler job, which loads the app's library, makes the note
+(`Store::take_in_note`, new in `dirt-core`: dated at the ID's time, made
+once) and syncs once; the app takes in what still waits when it starts and
+when the person returns, including from under the sheet. The secrets are
+opened with the `Context` Kotlin hands over (`EncryptedPrefs::open_with`).
+The sheet's colours are made from `dirt_ui::tokens` (`android_colours`) and
+held to them by a test; the theme and the accent come from a file the app
+writes. A share now says "Saved to Dirt" with **Undo**. The old widget,
+which opened the app on a new page, is gone. What it settled is in design
+section 8.8, and `docs/SECURITY.md` has capture over the lock screen. Run on
+the emulator against the local server, with the CLI as the other device:
+every way in made a note that reached the CLI without the app's screen
+starting; over the lock screen with a PIN; the app and the job taking in 61
+thoughts at once made each once. The sheet was on screen in a median of
+1.19 s cold and 0.70 s warm (`am start`'s own figure). Found: from Android
+15 a force-stopped app's widget does nothing until the app is opened again.
+
 ### Step 9: voice
 
 The engine and model that trial 1's second measurement chooses, listening

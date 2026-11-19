@@ -71,10 +71,10 @@ answer with 20,000 notes in it.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Quick capture | Global hotkey, Ctrl+Alt+N, and "New Note" in the tray menu: a small window of its own over any app, kept ready, which saves as it is typed and is put away by Esc, Ctrl Enter or a click outside | Home-screen widget, which opens the app on a new page | The command itself |
-| Take text from another app | No | "Share" to Dirt saves the text as a note at once | A pipe: `some-command \| dirt add` |
+| Quick capture | Global hotkey, Ctrl+Alt+N, and "New Note" in the tray menu: a small window of its own over any app, kept ready, which saves as it is typed and is put away by Esc, Ctrl Enter or a click outside | The capture sheet, a small screen of its own over any app, from the home-screen widget, a long press on the icon (New note), the Quick Settings tile, or the phone's note-taking role; also over the lock screen, where it adds and shows nothing. ✓ keeps the thought, which becomes a note and syncs without the app being opened | The command itself |
+| Take text from another app | No | "Share" to Dirt saves the text as a note at once, with a toast and Undo | A pipe: `some-command \| dirt add` |
 | Take a picture from another app | No | "Share" a picture, or several, to Dirt: a note at once, with the pictures attached, called after them if no text came along | No |
-| Run in the background | Tray icon, with Open and Quit | No | No |
+| Run in the background | Tray icon, with Open and Quit | One job after the capture sheet's ✓, which makes the thought a note and syncs once; never on a timer | No |
 
 The hotkey is shown in Settings and cannot be changed there.
 

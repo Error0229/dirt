@@ -1618,8 +1618,9 @@ up; holding the mic skips the keyboard altogether. Every way in that means
   listening (6.18, 8.6).
 - **Long press on the app icon → New note** (an app shortcut).
 - **Share → Dirt** from any app: text or pictures are saved as a note at
-  once, with a toast and **Undo**, and the share closes. No screen to
-  confirm.
+  once, with a toast and **Undo**. No screen to confirm. The app comes
+  forward with the note at the top, and Back returns to the app that
+  shared (8.8).
 - The **lock screen**, where the phone allows it (8.6).
 
 The widget, the shortcut and the lock screen all open the **capture
@@ -1790,7 +1791,7 @@ with the tags chosen in Find as its words.
 | A card | Its tags have 40 dp targets around their small type. A long press anywhere else on it gives its edit time in full. Its thumbnail is shown only when the device already has the picture's thumbnail; the list fetches none, and opening the note fetches them as its files do |
 | The mic | The dock is the bar alone, and a page's bar has no 🎙, until voice (step 9): no icon is shown that does nothing |
 | Appearance | Settings → Appearance (9.7): the theme, the accents and the text size |
-| A share | Saved at once as before, with no toast yet: the toast after a share, with **Undo**, comes with capture from outside the app (step 8). One that cannot be saved gives the error below, with the shared text to copy |
+| A share | Saved at once, with the toast "Saved to Dirt" and **Undo** since step 8 (8.8). One that cannot be saved gives the error below, with the shared text to copy |
 | A write that fails | As on the desktop (7.9): not tried again; the error "A note could not be saved" ("2 notes could not be saved"), the store's reason in its tooltip (a long press), and **Copy text**, which puts the newest text of each page that could not be saved on Android's clipboard. A page whose note could not be made goes back to a thought not yet made, and its next key makes it with all of it; leaving it makes nothing. An archive, a delete or an undo that fails says so the same way ("The note could not be archived", "… deleted", "… brought back"), with nothing to copy |
 | One note for a page | Whatever makes the page's note (its first character, files chosen on it) asks its draft first, so a page makes one note: files chosen while the first character's note is being made wait for it and go to it, and a key typed while the files' note is being made is saved into it |
 | Touch and hover | A finger leaves `:hover` on what it tapped, so where nothing hovers (`hover: none`) an icon button is grey only while it is pressed |
@@ -1806,6 +1807,34 @@ the clip had run. And a tap that reaches the page within a few
 milliseconds of Back, faster than a hand can, lands before Back has closed
 the page, so what is typed then goes nowhere; at a hand's pace it goes to
 the new page.
+
+### 8.8 Settled when capture from outside the app was built
+
+What 8.1, 8.5 and 8.6 left open, settled when the capture sheet and its ways
+in were built (implementation plan, step 8b, after its second trial).
+Voice in the sheet, and the widget's mic, come with step 9; the pile widget
+with step 10.
+
+| | Settled |
+|---|---|
+| The sheet | A native screen in Kotlin (`crates/dirt-mobile/android/native`), not the web view: it loads none of the app's Rust, so nothing of the app is waited for. It runs in the app's process, in a task of its own that is never among the recent apps, so that opening it never brings the app's screen forward under it |
+| Its look | The surface with 24 dp top corners on a dimmed screen; the field in 17 sp with a 24 sp line, up to six lines; ✓ a 40 dp round of the accent, which springs in when there is text and goes when there is none. Android's own sans-serif, not Inter: the bundled fonts are the web view's |
+| Its colours | Made from `dirt_ui::tokens` (`android_colours`) into `values` and `values-night`, and held to the tokens by a test, so the colours are still written once. The theme and the accent are the ones chosen in the app, which writes them to a file the sheet reads (`dirt/look`); with Auto the sheet follows the system |
+| Its motion | Opening, the screen behind dims (280 ms, standard) as the sheet rises from the bottom (400 ms, enter). ✓ lifts the sheet 24 dp as it fades (240 ms, exit). Closed without ✓ it sinks back (300 ms). ✓ springs in on an overshoot (280 ms). With "Remove animations" Android runs them at once |
+| A thought kept | At ✓ the text, trimmed, is written whole to `dirt/waiting/<note ID>.txt`, the ID a UUID v7 made then; the job is asked for, and the sheet goes. If the file cannot be written, the sheet stays with the words, and says so |
+| The note | Made by `Store::take_in_note`: under the sheet's ID, dated at the time that ID carries (never later than now), so a thought that waited is where it belongs in the list; made only if no note has that ID, deleted or not, so the app and the job taking it in at once make it once. A file gone between the listing and the reading was taken in by the other |
+| The job | One JobScheduler job, expedited where Android allows it and needing a network, asked for by ✓ and nothing else. It opens the device's secrets with the `Context` Kotlin hands it, makes the notes and syncs once. Past Android's quota of expedited jobs it is asked for as an ordinary one |
+| The app taking in | When it starts, and each time the person returns to it, including when the sheet closes over it (`MainActivity.onResume`): what still waits is made a note, and the list is read again |
+| The widget | One bar, 56 dp tall, a pill of 28 dp: the logo, which opens the app, and "Write a thought", which opens the sheet. It follows the system's light and dark; its logo takes the accent chosen in the app on Android 12 and later, redrawn as the person leaves the app, and is Clay before 12 |
+| The shortcut | A long press on the app's icon: **New note**, which opens the sheet |
+| The tile | "New note", with the logo's sprout. It opens the sheet without asking for the phone to be unlocked |
+| The note-taking role | The sheet answers Android's `CREATE_NOTE`, so on a phone that offers the role Dirt can be its notes app |
+| The lock screen | As 8.6: the line "Adds a note. Your notes stay locked." above the field, no draft from before, a draft written there added after the old one, and the keyboard asked not to learn (`IME_FLAG_NO_PERSONALIZED_LEARNING`). `docs/SECURITY.md` says what this lets in |
+| A share | Saved at once as before, and then the toast "Saved to Dirt" with **Undo**, which deletes the note it made, saying nothing more. The app stays in front, with the note at the top of the list; Back goes back to the app that shared |
+| The old widget | Gone: it opened the app on a new page, which the sheet replaces |
+| A widget after a force-stop | From Android 15, stopping an app by force cancels what its widget's taps start, so the bar and the logo do nothing until the app is next opened; leaving the app draws the widget again. A phone does not stop an app this way by itself; the person does, in Settings (manual checklist L11) |
+| How quickly | On the emulator (Android 16, a debug build): the sheet on screen, by Android's own figure, in a median of 1.19 s with the app's process stopped (1.06 to 1.63 s) and 0.70 s with it running (0.48 to 0.82 s); drawn 0.82 s after its process started. A thought kept with ✓ reached the other device a few seconds later. Real phones are the checklist's (L9) |
+| Counting (section 2) | As section 2 gives: the widget, typing, ✓ is three; over the lock screen, pulling Quick Settings down, the tile, typing, ✓ is four; a share is two. The shortcut is three as the widget is, with a long press for the first |
 
 ---
 
