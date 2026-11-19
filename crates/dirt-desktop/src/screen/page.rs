@@ -4,18 +4,18 @@
 //! itself as it is typed.
 //!
 //! The note's icons sit in a gutter beside its first line, just outside
-//! its column, so that they travel with it. The files attached to the note
-//! are listed under its text.
-
-use std::path::PathBuf;
+//! its column, so that they travel with it. The note's files are tiles
+//! under its text (6.5); files dropped anywhere on the window come to it
+//! (the screen takes the drop).
 
 use dioxus::prelude::*;
+use dirt_core::sync::overview::SyncIndicator;
 use dirt_ui::components::{IconButton, ScrollArea};
 use dirt_ui::dom::{self, Caret};
+use dirt_ui::files::FileTiles;
 use dirt_ui::Icon;
 
 use super::{Arrival, Screen, Where, PAGE, PAGE_ID};
-use crate::components::AttachmentPanel;
 use crate::state::AppState;
 
 /// The page.
@@ -35,27 +35,16 @@ pub fn Page() -> Element {
     });
     let take_focus = view.take_focus;
     let text = view.text.clone();
-
-    // A file dropped anywhere on the page is attached to the note, or
-    // becomes a note of its own on a blank page (7.3).
-    let on_drop = move |event: Event<DragData>| {
-        // Left to itself the window would leave the app and show the file.
-        event.prevent_default();
-        let paths: Vec<PathBuf> = event
-            .data_transfer()
-            .files()
-            .iter()
-            .map(dioxus::html::FileData::path)
-            .collect();
-        screen.attach(paths);
-    };
+    // A file not yet sent says "uploading" while it can be sent, and "on
+    // this device only" while it cannot (6.5).
+    let can_send = matches!(
+        screen.sync_indicator(),
+        SyncIndicator::Synced { .. } | SyncIndicator::Syncing | SyncIndicator::JustSynced
+    );
 
     rsx! {
         main {
             class: "dk-main",
-            // Saying that a drop is welcome is what lets one happen.
-            ondragover: move |event: Event<DragData>| event.prevent_default(),
-            ondrop: on_drop,
             ScrollArea { class: "dk-page-wrap", inner_class: "dk-page",
                 div {
                     key: "{view.serial}",
@@ -130,7 +119,15 @@ pub fn Page() -> Element {
                         },
                     }
                     if let Some(note) = open {
-                        AttachmentPanel { key: "{note}", note_id: note, news: screen.files_news }
+                        FileTiles {
+                            key: "{note}",
+                            files: screen.files,
+                            note,
+                            can_send,
+                            class: "dk-files",
+                            on_open: move |file| screen.open_file(file),
+                            on_save: move |file| screen.save_file(file),
+                        }
                     }
                 }
             }

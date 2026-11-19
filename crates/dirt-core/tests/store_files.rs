@@ -1269,3 +1269,36 @@ async fn a_list_learns_which_of_its_notes_have_files_and_when_they_changed() {
         .unwrap()
         .is_empty());
 }
+
+/// A picture pasted into the page is in memory, not in a file. It is
+/// attached as one from a file is: kept on the shelf as it was, with a
+/// thumbnail, and too large a one is refused with nothing left behind.
+#[tokio::test]
+async fn a_picture_in_memory_is_attached_as_one_from_a_file() {
+    let desk = desk();
+    let store = &desk.store;
+    let note = store.create_note("").await.unwrap().id;
+    let bytes = std::fs::read(a_picture(&desk, "made.png", 640, 480)).unwrap();
+
+    let attached = store
+        .attach_bytes(&note, bytes.clone(), "Pasted picture.png", "image/png")
+        .await
+        .unwrap();
+
+    assert_eq!(attached.name, "Pasted picture.png");
+    assert_eq!(attached.size, bytes.len() as u64);
+    assert_eq!(on_the_shelf(store, attached.file_id), Some(bytes));
+    let thumbnail = attached.thumbnail.clone().expect("a picture has one");
+    assert!(store.shelf().holds(thumbnail.file_id));
+    assert_eq!(
+        store.note_attachments(&note).await.unwrap(),
+        std::slice::from_ref(&attached)
+    );
+
+    let too_large = vec![0_u8; usize::try_from(limits::MAX_FILE_BYTES).unwrap()];
+    assert!(store
+        .attach_bytes(&note, too_large, "huge.png", "image/png")
+        .await
+        .is_err());
+    assert_eq!(files_on_the_shelf(store), 2);
+}

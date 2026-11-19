@@ -11,6 +11,8 @@
 //! - [`motion`]: the springs and curves of section 5, and the one script
 //!   that animates lists, follows fingers and honours reduced motion.
 //! - [`components`]: the small components of section 6.
+//! - [`files`]: the file tile and the file preview (6.5, 6.16), with the
+//!   bundled PDF renderer.
 //! - [`UiRoot`]: the component an app puts around its screens. It brings
 //!   the style sheet and the script, and applies the theme, the accent and
 //!   the text size the person chose.
@@ -39,6 +41,12 @@
 //! | `data-dui-drag` | a window's root | A press on an empty part of its top rows (the height in pixels) says [`events::Outcome::Drag`], a double-click [`events::Outcome::Maximize`] |
 //! | `data-dui-resize` | an edge of the window | A press on it says [`events::Outcome::Resize`] |
 //! | `data-dui-focus`, `data-dui-writing` | the desktop's screen | Focus while writing: the style, and `hush` or `on`. The rows of its list fold away and come back, and the grains of `data-dui-rail` pop in |
+//! | `data-dui-press` | an element that is not a button | <kbd>Space</kbd> and <kbd>Enter</kbd> press it: a file's tile |
+//! | `data-dui-enter="grow"`, `data-dui-enter-first` | a row; its list | The row grows out of the point last pressed or dropped on; with the list's mark, also when the list was empty |
+//! | `data-dui-drop` | a screen | Has the class `dropping` while files are dragged over the window |
+//! | `data-dui-modal="preview"` | the file preview | A dialog that grows out of the tile `data-dui-from` names: ← → say [`events::Outcome::Previous`] and [`events::Outcome::Next`], Space and Esc close it, and on Android swipes do the same; see [`files::FilePreview`] |
+//! | `data-dui-zoom` | a picture | A double click or a pinch zooms it to twice its size |
+//! | `data-dui-audio`, `data-dui-pdf` | a sound's card; a PDF's pages | Played, and drawn by the bundled PDF.js; see [`files::pdf`] |
 //!
 //! What the app asks of a field it does not hold (focus, its text) is in
 //! [`dom`].
@@ -56,6 +64,7 @@ pub mod components;
 pub mod contrast;
 pub mod dom;
 pub mod events;
+pub mod files;
 pub mod find;
 pub mod fonts;
 #[cfg(feature = "gallery")]

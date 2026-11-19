@@ -64,6 +64,7 @@ pub fn UiRoot(
         let options = serde_json::json!({
             "tokens": motion::script_tokens(),
             "platform": platform.name(),
+            "pdfjs": crate::files::pdf::FOLDER.to_string(),
         });
         let first = looks(appearance, platform, reduced_motion);
         document::eval(&format!(

@@ -22,6 +22,8 @@ Thumbs.db
 /web/
 /.dioxus/
 *.wasm
+# PDF.js's image decoders are shipped, not built (crates/dirt-ui/assets/README.md).
+!/crates/dirt-ui/assets/pdfjs/wasm/*.wasm
 dx.lock
 
 # Environment (all .env files except examples are gitignored)

@@ -175,6 +175,10 @@ const KEYS: &[(&str, &str)] = &[
     ("Ctrl Shift Del", "In a note: delete for good"),
     ("Ctrl Z", "Undo the archive or the delete"),
     ("Ctrl Shift A", "Attach a file"),
+    (
+        "Space",
+        "On a file: preview it. \u{2190} \u{2192} for the others, Esc or Space to close",
+    ),
     ("Ctrl Shift C", "Copy the note's text"),
     ("Ctrl R", "Sync now"),
     ("Ctrl ,", "Settings"),

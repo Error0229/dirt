@@ -45,6 +45,14 @@ const READERS: usize = 2;
 
 type Job = Box<dyn FnOnce(&mut Connection) + Send + 'static>;
 
+/// Where a file being attached comes from.
+enum Source {
+    /// A file elsewhere on the device, copied onto the shelf.
+    Path(PathBuf),
+    /// Bytes in memory, written onto the shelf.
+    Bytes(Vec<u8>),
+}
+
 /// A handle to one local database. Cloning it is cheap and every clone
 /// shares the same threads; the threads stop when the last clone is dropped.
 #[derive(Clone)]
@@ -262,7 +270,33 @@ impl Store {
         name: &str,
         media_type: &str,
     ) -> Result<Attachment> {
-        let (note, source) = (*note, source.to_path_buf());
+        self.attach(note, Source::Path(source.to_path_buf()), name, media_type)
+            .await
+    }
+
+    /// Attaches a file that is in memory, not on disk, to a note, under
+    /// `name`: a picture pasted into the page. It is written onto the
+    /// shelf and named in the note exactly as [`Self::attach_file`] does
+    /// with a file it copies, thumbnail and all.
+    pub async fn attach_bytes(
+        &self,
+        note: &NoteId,
+        bytes: Vec<u8>,
+        name: &str,
+        media_type: &str,
+    ) -> Result<Attachment> {
+        self.attach(note, Source::Bytes(bytes), name, media_type)
+            .await
+    }
+
+    async fn attach(
+        &self,
+        note: &NoteId,
+        source: Source,
+        name: &str,
+        media_type: &str,
+    ) -> Result<Attachment> {
+        let note = *note;
         let (name, media_type) = (name.to_owned(), media_type.to_owned());
         let shelf = self.shelf();
         // The files first, away from the thread that writes: reading a
@@ -271,7 +305,10 @@ impl Store {
         let made = shelf.clone();
         let prepared = self
             .read(move |_| {
-                let size = std::fs::metadata(&source)?.len();
+                let size = match &source {
+                    Source::Path(path) => std::fs::metadata(path)?.len(),
+                    Source::Bytes(bytes) => bytes.len() as u64,
+                };
                 let most = u64::try_from(limits::MAX_FILE_BYTES).unwrap_or(u64::MAX);
                 if seal::sealed_size(size) > most {
                     return Err(Error::InvalidInput(format!(
@@ -287,12 +324,17 @@ impl Store {
                     added_at_ms: now_ms(),
                     thumbnail: None,
                 };
-                let copied = made.add(attachment.file_id, &source)?;
-                if copied != size {
-                    let _ = made.remove(attachment.file_id);
-                    return Err(Error::InvalidInput(
-                        "the file changed while it was being attached".to_owned(),
-                    ));
+                match &source {
+                    Source::Path(path) => {
+                        let copied = made.add(attachment.file_id, path)?;
+                        if copied != size {
+                            let _ = made.remove(attachment.file_id);
+                            return Err(Error::InvalidInput(
+                                "the file changed while it was being attached".to_owned(),
+                            ));
+                        }
+                    }
+                    Source::Bytes(bytes) => made.put(attachment.file_id, bytes)?,
                 }
                 // Made from the copy, which no longer changes. A thumbnail
                 // that cannot be kept is done without.
