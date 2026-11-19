@@ -2144,6 +2144,7 @@ dependencies = [
  "chrono",
  "dioxus",
  "dirt-core",
+ "http",
  "serde",
  "serde_json",
  "tokio",

@@ -1120,8 +1120,22 @@ gives them what only it can do (another app, a save dialog).
 | A video | The web view's controls without Download, picture-in-picture or casting. Nothing in the preview has the web view's menu, or can be dragged out of the window |
 | Dropping (desktop) | Anywhere on the window, as 7.3 says; while files are dragged over it, a dashed clay edge and "Drop to attach to this note" or "Drop to make a note of it" show. Not while the preview, Settings or the panel of keys is open: the note they would go to cannot be seen, so the hint does not show and the drop does nothing |
 | Pasting (desktop) | A paste into the page with text in it pastes the text, as always; one with no text and a file (a picture copied from another program) attaches the file instead, and on a blank page makes a note of it, as a drop does. A picture the web view calls "image.png" is named "Pasted picture.png". A file past 10 MiB is not sent over from the page and is refused as too large |
-| How many at once | One drop or paste takes as many files as a note may have, 20; an error names the rest |
+| How many at once | One drop or paste takes as many files as a note may have, 20; an error names the rest. On Android one choosing or one share is copied into the app up to 20 files, and the rest are named and not copied |
+| Android: the tile | Its icons always show, beside its words (they are 40 dp targets). A tap anywhere else on it previews it; on a kind the preview does not show, it gives the keyboard to the first icon, as on the desktop |
+| Android: opening in another app | A copy in the app's own files, lent by the `FileProvider`'s `content:` address with a grant to read that one file, through Android's chooser. When no app on the phone opens the kind, the chooser says so itself ("No apps can perform this action") and Dirt adds nothing. There is no Mark of the Web on Android; `docs/SECURITY.md` says what protects the copy instead |
+| Android: saving a copy | Android's screen for choosing a place, as an export is saved, with the file's name proposed; the toast "Saved a copy", and backing out says nothing |
+| Android: the preview's gestures | A swipe sideways steps, a swipe down closes, a tap on the backdrop hides and shows the controls, two fingers pinch, anywhere on the preview but its buttons. On text or a PDF a finger moving up or down scrolls them and only one moving sideways steps (the preview has `touch-action: none`, its scrolling cards `pan-y`). Back closes it. While it is open, Android's bars take its near-black |
 | A file that cannot be attached | An error that stays ("A file could not be attached", "3 files could not be attached"), the reasons in its tooltip, where the first version said so in a line under the tiles |
+
+**What did not work as the design assumes**, found with real touch on the
+Android emulator (step 6b). With a PDF or text on the stage there was at
+first nowhere to swipe to the next file: the card took every touch for its
+scrolling. A pinch was judged when the last finger lifted, by which time
+only one finger was left, so it never zoomed. A tap straight after a swipe
+was taken for the swipe's own end and swallowed. And a swipe begun on a
+picture's stand-in, which the picture replaces a moment later, stopped
+being heard, as touches on an element taken out of the page no longer
+reach the document. Each is mended in the script, as the table says.
 
 ### 6.17 Grains, layers and the pile
 

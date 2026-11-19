@@ -119,7 +119,8 @@ cannot reach the notes or the files themselves. A file that comes into the
 app, chosen by the person or shared by another app, is copied into the
 app's cache up to the size a file may be and no further, under a name of
 the app's own; what the other app calls it travels beside it and is only
-ever used as a name.
+ever used as a name. At most as many files as a note may have, 20, are
+copied in from one choosing or one share; the rest are named and left.
 
 A file that a device holds is kept beside the notes' database, as it was
 attached: not encrypted, as the notes there are not. What protects both is
@@ -180,6 +181,27 @@ apart because only one of them writes.
   SmartScreen asks before running what is in it. A drive that keeps no
   such streams (FAT, most memory sticks) cannot carry the mark, and a copy
   saved there has none.
+- *On Android there is no such mark*, and no program reads one. What
+  protects a copy opened in another app instead is how it is lent:
+  - The copy is in the app's own files (`dirt/opened/<file ID>/`), which no
+    other app can read. It is never written to shared storage, and no file
+    is made readable to all.
+  - It is lent by a `content:` address from the app's `FileProvider`,
+    which is not exported and can lend from that one folder alone. The
+    address is sent with the intent that opens the file, with a grant to
+    **read** that one file and nothing else: not the notes, not the other
+    files, not the folder. The app the person chooses holds the grant
+    until the task it opened the file in is finished, or the phone
+    restarts; no other app is given it.
+  - Dirt removes the copies when it next starts, and with the account at
+    sign-out. After that the address opens nothing, whoever still holds it.
+  - What Android would run is never lent: an APK and its kin (`.apk`,
+    `.apks`, `.xapk`, `.aab`) are on the never-opened list with the rest,
+    so a file from a note cannot reach the installer with one press.
+    Office for Android runs no macros.
+  - **Save a copy** writes one copy through Android's own screen, to the
+    place the person chose and nowhere else; the app is given that one
+    place, and needs no permission to storage.
 - *A pasted picture* goes from the web view to the app in memory and is
   written once, onto the shelf, as a file attached any other way is.
 

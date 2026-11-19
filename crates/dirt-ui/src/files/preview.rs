@@ -90,6 +90,11 @@ pub fn FilePreview(
             "inert": if open { None } else { Some("") },
             tabindex: "-1",
             div { class: "dui-pv-scrim", "aria-hidden": "true" }
+            // While it is open, Android's bars above and below the page
+            // take its near-black, as they take an old screen's colours.
+            if open {
+                div { class: "dui-pv-bars", "data-dui-bars": "", "aria-hidden": "true" }
+            }
             div { class: "dui-pv-name", "aria-hidden": "true", "{name}" }
             div { class: "dui-pv-stage", "data-dui-pv-stage": "",
                 div { key: "{item_key}", class: "dui-pv-item", "data-file": "{file_id}",

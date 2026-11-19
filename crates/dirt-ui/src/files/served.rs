@@ -7,7 +7,7 @@
 //! into the page as text. So the bytes are kept here, under an address
 //! that names them, and the app answers the web view's request for that
 //! address from here: each app registers one handler for [`ADDRESS`] and
-//! calls [`answer`]. Nothing is written to disk, and every answer tells
+//! responds with [`response`]. Nothing is written to disk, and every answer tells
 //! the web view not to keep what it was given (`Cache-Control: no-store`).
 //!
 //! The preview holds one file at a time and lets it go as it moves to
@@ -177,6 +177,38 @@ pub fn answer(path: &str, range: Option<&str>) -> Reply {
     }
 }
 
+/// The answer to the web view's request for `path`, as an HTTP response.
+///
+/// `range` is the `Range` header it sent, if any. The app's asset handler
+/// hands the answer on. Every request is answered: a response that cannot be built
+/// is a plain 500, so that nothing waits on one that never comes.
+pub fn response(path: &str, range: Option<&str>) -> http::Response<Vec<u8>> {
+    let reply = answer(path, range);
+    let mut built = http::Response::builder()
+        .status(reply.status)
+        .header(http::header::CONTENT_TYPE, reply.media_type);
+    for (name, value) in Reply::HEADERS {
+        built = built.header(name, value);
+    }
+    if let Some(range) = reply.range {
+        built = built.header(http::header::CONTENT_RANGE, range);
+    }
+    built.body(reply.body).unwrap_or_else(|error| {
+        tracing::error!("Could not answer for a file: {error}");
+        let mut failed = http::Response::new(Vec::new());
+        *failed.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
+        failed
+    })
+}
+
+/// The `Range` header of a request, if it has one that is text.
+pub fn range_of<T>(request: &http::Request<T>) -> Option<&str> {
+    request
+        .headers()
+        .get(http::header::RANGE)
+        .and_then(|range| range.to_str().ok())
+}
+
 /// Held by each test that holds files, since the files held are the
 /// app's one set.
 #[cfg(test)]
@@ -221,9 +253,19 @@ mod tests {
         assert_ne!(again, address);
         assert_eq!(held_count(), 2);
 
+        // As the asset handler hands it on: the app's type, nosniff, a part.
+        let sent = response(&again, Some("bytes=0-1"));
+        assert_eq!(sent.status(), 206);
+        assert_eq!(sent.headers()["content-type"], "application/pdf");
+        assert_eq!(sent.headers()["x-content-type-options"], "nosniff");
+        assert_eq!(sent.headers()["cache-control"], "no-store");
+        assert_eq!(sent.headers()["content-range"], "bytes 0-1/5");
+        assert_eq!(sent.body(), b"ot");
+
         release_all();
         assert_eq!(held_count(), 0);
         assert_eq!(answer(&address, None).status, 404);
+        assert_eq!(response(&again, None).status(), 404);
         assert_eq!(answer("/dirt-file/", None).status, 404);
         assert_eq!(answer("/elsewhere/1/x", None).status, 404);
     }

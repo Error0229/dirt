@@ -1837,52 +1837,92 @@
     if (picture) zoom(picture, event.clientX, event.clientY, !picture.classList.contains('zoom'));
   });
   // Android: a swipe down closes, a swipe sideways goes to the next file,
-  // and two fingers spreading or closing zoom a picture. Touch events, as
-  // the web view takes a drag of pointer events for its own scrolling. A
-  // touch on text or a PDF scrolls it instead.
+  // and two fingers spreading or closing zoom a picture, anywhere on the
+  // preview but its buttons. Touch events, as the web view takes a drag of
+  // pointer events for its own scrolling. On text or a PDF, which scroll,
+  // a finger moving up or down scrolls them, and only one moving sideways
+  // is a swipe: otherwise a PDF that fills the screen could not be left.
+  //
+  // A touch keeps going to the element it began on, even once that element
+  // is taken out of the page, and then no longer reaches the document: a
+  // picture's stand-in replaced by the picture as a finger moves. So the
+  // gesture listens on that element as well, and each touch event is taken
+  // once, wherever it is heard first; and what moves is whatever item is
+  // on the stage now.
   let previewSwipe = null, previewGestured = false;
+  const onceOnly = event => { if (event.__duiPreview) return false; event.__duiPreview = true; return true; };
+  const stageItem = swipe => swipe.modal.querySelector('.dui-pv-item');
+  function followTouch(target) {
+    const stop = () => {
+      target.removeEventListener('touchmove', movePreviewSwipe);
+      target.removeEventListener('touchend', ended);
+      target.removeEventListener('touchcancel', ended);
+    };
+    const ended = event => { endPreviewSwipe(event); if (!event.touches || !event.touches.length) stop(); };
+    target.addEventListener('touchmove', movePreviewSwipe, { passive: true });
+    target.addEventListener('touchend', ended, { passive: true });
+    target.addEventListener('touchcancel', ended, { passive: true });
+  }
   document.addEventListener('touchstart', event => {
-    const stage = event.target.closest && event.target.closest('[data-dui-pv-stage]');
-    const modal = stage && stage.closest('[data-dui-modal="preview"].on');
+    const modal = event.target.closest && event.target.closest('[data-dui-modal="preview"].on');
     if (!modal) return;
+    // A tap after a swipe is a tap again.
+    previewGestured = false;
+    followTouch(event.target);
     if (event.touches.length === 2) {
       const [a, b] = event.touches;
       previewSwipe = { pinch: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), modal,
         picture: modal.querySelector('img[data-dui-zoom]'), at: [(a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2] };
       return;
     }
-    if (event.touches.length !== 1 || event.target.closest('button, video, .dui-pv-audio, [data-dui-scroll]')) { previewSwipe = null; return; }
+    if (event.touches.length !== 1 || event.target.closest('button, video, .dui-pv-audio')) { previewSwipe = null; return; }
     const touch = event.touches[0];
-    previewSwipe = { x: touch.clientX, y: touch.clientY, mode: null, d: 0, modal, item: modal.querySelector('.dui-pv-item') };
+    previewSwipe = { x: touch.clientX, y: touch.clientY, mode: null, d: 0, modal,
+      scrolls: !!event.target.closest('[data-dui-scroll]') };
   }, { passive: true });
-  document.addEventListener('touchmove', event => {
+  function movePreviewSwipe(event) {
+    if (!onceOnly(event)) return;
     const swipe = previewSwipe;
-    if (!swipe || swipe.pinch !== undefined || event.touches.length !== 1) return;
+    if (!swipe) return;
+    // Two fingers: how far apart they are now. The fingers are lifted one
+    // at a time, so the pinch is judged by where they last were together.
+    if (swipe.pinch !== undefined) {
+      if (event.touches.length === 2) {
+        const [a, b] = event.touches;
+        swipe.now = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      }
+      return;
+    }
+    if (event.touches.length !== 1) return;
     const touch = event.touches[0];
     const dx = touch.clientX - swipe.x, dy = touch.clientY - swipe.y;
     if (!swipe.mode && Math.hypot(dx, dy) > 8) swipe.mode = Math.abs(dy) > Math.abs(dx) ? 'y' : 'x';
-    if (!swipe.mode || !swipe.item) return;
+    // Up or down on what scrolls is its own scrolling.
+    if (swipe.mode === 'y' && swipe.scrolls) { previewSwipe = null; return; }
+    const item = stageItem(swipe);
+    if (!swipe.mode || !item) return;
     stats.moves += 1;
     if (swipe.mode === 'y') {
       const d = Math.max(0, dy);
-      swipe.item.style.transform = `translateY(${d}px) scale(${1 - Math.min(d, 300) / 1200})`;
+      item.style.transform = `translateY(${d}px) scale(${1 - Math.min(d, 300) / 1200})`;
       const scrim = swipe.modal.querySelector('.dui-pv-scrim');
       if (scrim) scrim.style.opacity = String(1 - Math.min(d, 300) / 400);
       swipe.d = dy;
     } else {
-      swipe.item.style.transform = `translateX(${dx}px)`;
+      item.style.transform = `translateX(${dx}px)`;
       swipe.d = dx;
     }
-  }, { passive: true });
+  }
+  document.addEventListener('touchmove', movePreviewSwipe, { passive: true });
   function endPreviewSwipe(event) {
+    if (!onceOnly(event)) return;
     const swipe = previewSwipe;
     if (!swipe) return;
     if (swipe.pinch !== undefined) {
       if (event.touches && event.touches.length) return;
       previewSwipe = null;
-      const [a, b] = event.changedTouches.length > 1 ? event.changedTouches : [null, null];
-      if (swipe.picture && a && b) {
-        const now = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      const now = swipe.now === undefined ? swipe.pinch : swipe.now;
+      if (swipe.picture) {
         if (now > swipe.pinch * 1.2) zoom(swipe.picture, swipe.at[0], swipe.at[1], true);
         else if (now < swipe.pinch * 0.85) zoom(swipe.picture, swipe.at[0], swipe.at[1], false);
       }
@@ -1890,7 +1930,8 @@
       return;
     }
     previewSwipe = null;
-    const { mode, d, item, modal } = swipe;
+    const { mode, d, modal } = swipe;
+    const item = stageItem(swipe);
     previewGestured = !!mode;
     const scrim = modal.querySelector('.dui-pv-scrim');
     if (scrim) scrim.style.opacity = '';

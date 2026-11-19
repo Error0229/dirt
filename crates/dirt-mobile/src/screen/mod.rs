@@ -36,6 +36,7 @@ use dirt_core::sync::overview::SyncIndicator;
 use dirt_core::sync::worker::Trigger;
 use dirt_ui::components::{card_element_id, use_toasts, GrowFrom, ListExit, Toast, Toasts};
 use dirt_ui::dom::{self, Caret};
+use dirt_ui::files::{use_note_files, FilePreview, FileSource, NoteFiles};
 use dirt_ui::find;
 use dirt_ui::settings::Section;
 use dirt_ui::time::Clock;
@@ -44,12 +45,12 @@ use dirt_ui::Icon;
 use crate::card_files::{CardFiles, CardFilesCache};
 use crate::data::MobileNoteStore;
 use crate::draft::{Draft, Typed};
+use crate::files::{attach, choose_files as pick_files};
 use crate::incoming::{
     attach_incoming, discard_all, not_copied_in, note_text, worth_a_note, Capture,
 };
 use crate::services::activity::{copy_text, take_capture};
 use crate::state::AppState;
-use crate::views::attachments::{attach, choose_files as pick_files};
 use list::Main;
 use page::Page;
 
@@ -163,7 +164,8 @@ pub struct Screen {
     /// Typing on the page: its top bar fades until the page is touched.
     pub typing: Signal<bool>,
     /// Raised when the open note's files change here, to read them again.
-    pub files_changed: Signal<u64>,
+    /// The files of the note on the page, and the preview of them.
+    pub files: NoteFiles,
     last_undo: Signal<Option<Undo>>,
     serial: Signal<u64>,
     /// The newest text of each page (by its number) whose write failed,
@@ -798,7 +800,7 @@ impl Screen {
     /// note of the files, with the tags chosen in Find as its words (6.1: a
     /// file with no words under it is a note). The files go to the note
     /// they were chosen for, even if the page has been left by then.
-    pub fn choose_files(mut self) {
+    pub fn choose_files(self) {
         let view = self.page.peek().clone();
         if !view.open {
             return;
@@ -845,10 +847,16 @@ impl Screen {
                 id
             };
             let failed = attach(&self.app, id, files).await;
-            *self.files_changed.write() += 1;
+            self.files.reread();
             self.app.note_changed();
             if !failed.is_empty() {
-                self.app.startup_issue.set(Some(failed.join(" ")));
+                let words = if failed.len() == 1 {
+                    "A file could not be attached".to_owned()
+                } else {
+                    format!("{} files could not be attached", failed.len())
+                };
+                self.toasts
+                    .show_error(Toast::new(words).icon(Icon::Alert).detail(failed.join(" ")));
             }
         });
     }
@@ -1209,6 +1217,16 @@ pub fn MainScreen() -> Element {
     let app = use_context::<AppState>();
     let toasts = use_toasts();
     let clock = use_clock(&app);
+    let note_files = use_note_files(
+        app.current_note_id.into(),
+        app.sync_status.into(),
+        move || FileSource {
+            store: app.store.peek().as_ref().map(|store| store.core().clone()),
+            session: app.session.peek().clone(),
+        },
+        move || app.note_changed(),
+    );
+    crate::files::use_served_files();
     let screen = use_context_provider(|| Screen {
         app,
         toasts,
@@ -1227,7 +1245,7 @@ pub fn MainScreen() -> Element {
         page: Signal::new(PageView::default()),
         leaving: Signal::new(Vec::new()),
         typing: Signal::new(false),
-        files_changed: Signal::new(0),
+        files: note_files,
         last_undo: Signal::new(None),
         serial: Signal::new(0),
         unsaved: Signal::new(Vec::new()),
@@ -1308,6 +1326,13 @@ pub fn MainScreen() -> Element {
             "aria-hidden": covered.then_some("true"),
             Main {}
             Page {}
+        }
+        // Beside the screen, not inside it: the screen steps back behind a
+        // sheet, and what is drawn over it must not step back with it.
+        FilePreview {
+            files: screen.files,
+            on_open: move |file| crate::files::open_in_another_app(&screen.files, screen.toasts, file),
+            on_save: move |file| crate::files::save_a_copy(&screen.files, screen.toasts, file),
         }
     }
 }

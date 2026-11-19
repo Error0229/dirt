@@ -9,7 +9,6 @@
 
 use std::path::PathBuf;
 
-use dioxus::desktop::wry::http::Response;
 use dioxus::prelude::*;
 use dirt_core::files::safe_file_name;
 use dirt_core::store::AttachedFile;
@@ -159,29 +158,9 @@ pub fn dropped(event: &Event<DragData>) -> Vec<PathBuf> {
 /// memory ([`served`]).
 pub fn use_served_files() {
     dioxus::desktop::use_asset_handler(served::ADDRESS, |request, responder| {
-        let range = request
-            .headers()
-            .get("Range")
-            .and_then(|range| range.to_str().ok())
-            .map(str::to_owned);
-        let reply = served::answer(request.uri().path(), range.as_deref());
-        let mut response = Response::builder()
-            .status(reply.status)
-            .header("Content-Type", reply.media_type);
-        for (name, value) in served::Reply::HEADERS {
-            response = response.header(name, value);
-        }
-        if let Some(range) = reply.range {
-            response = response.header("Content-Range", range);
-        }
-        // Every request is answered, so that nothing waits on one that
-        // never is: a response that cannot be made is a plain 500.
-        let response = response.body(reply.body).unwrap_or_else(|error| {
-            tracing::error!("Could not answer for a file: {error}");
-            let mut failed = Response::new(Vec::new());
-            *failed.status_mut() = dioxus::desktop::wry::http::StatusCode::INTERNAL_SERVER_ERROR;
-            failed
-        });
-        responder.respond(response);
+        responder.respond(served::response(
+            request.uri().path(),
+            served::range_of(&request),
+        ));
     });
 }

@@ -18,6 +18,8 @@ mod data;
 mod draft;
 #[cfg(any(target_os = "android", test))]
 mod export;
+#[cfg(target_os = "android")]
+mod files;
 #[cfg(all(target_os = "android", feature = "gallery"))]
 mod gallery;
 #[cfg(any(target_os = "android", test))]
@@ -30,8 +32,6 @@ mod services;
 mod settings;
 #[cfg(target_os = "android")]
 mod state;
-#[cfg(target_os = "android")]
-mod views;
 
 #[cfg(target_os = "android")]
 fn main() {
