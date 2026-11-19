@@ -522,13 +522,13 @@ impl Screen {
             self.blank(true);
         }
         if let Some(note) = settles {
-            self.settle(note);
+            self.settle_grain(note);
         }
     }
 
     /// A new thought settles onto the pile: its row is marked for a moment,
     /// and the script tosses its grain onto it (5.5).
-    fn settle(mut self, note: NoteId) {
+    fn settle_grain(mut self, note: NoteId) {
         self.settling.set(Some(note));
         spawn(async move {
             tokio::time::sleep(Duration::from_millis(2500)).await;
@@ -776,7 +776,7 @@ impl Screen {
         self.exit.set(if delete {
             ListExit::Tear
         } else {
-            ListExit::Fold
+            ListExit::Sink
         });
         self.ask(work);
         if was_open {

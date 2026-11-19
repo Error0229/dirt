@@ -77,7 +77,9 @@ pub fn NoteCard(
             role: "listitem",
             "data-key": "{id}",
             "data-dui-enter": back.then_some("pop"),
-            "data-dui-settle": settle.then(|| shade(&Grain::of(&id))),
+            // Its grain's shade, for the script that throws grains.
+            "data-dui-grain": shade(&Grain::of(&id)),
+            "data-dui-settle": settle.then_some(""),
             Swipeable {
                 icon: if archived { Icon::Trash } else { Icon::Archive },
                 danger: archived,

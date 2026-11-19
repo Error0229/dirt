@@ -234,7 +234,9 @@ pub fn NoteRow(
             "aria-selected": if selected { "true" } else { "false" },
             "data-key": "{id}",
             "data-dui-enter": back.then_some("pop"),
-            "data-dui-settle": settle.then(|| shade(&Grain::of(&id))),
+            // Its grain's shade, for the script that throws grains.
+            "data-dui-grain": shade(&Grain::of(&id)),
+            "data-dui-settle": settle.then_some(""),
             onclick: move |_| on_open.call(()),
             div { class: "dui-row-t",
                 if title.is_empty() {

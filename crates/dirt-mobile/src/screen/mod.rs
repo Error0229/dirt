@@ -560,7 +560,7 @@ impl Screen {
         let settles = matches!(into, GrowFrom::Grain(_)).then_some(note).flatten();
         self.close_page(into);
         if let Some(id) = settles {
-            self.settle(id);
+            self.settle_grain(id);
         }
         spawn(async move {
             self.leave(view.draft, view.serial).await;
@@ -569,7 +569,7 @@ impl Screen {
 
     /// A new thought settles onto the pile: its card is marked for a
     /// moment, and the script tosses its grain onto it (5.5).
-    fn settle(mut self, note: NoteId) {
+    fn settle_grain(mut self, note: NoteId) {
         self.settling.set(Some(note));
         spawn(async move {
             tokio::time::sleep(Duration::from_millis(2500)).await;
@@ -599,7 +599,7 @@ impl Screen {
             let exit = if delete {
                 ListExit::Tear
             } else {
-                ListExit::Fold
+                ListExit::Sink
             };
             self.put_away(id, delete, exit);
         });

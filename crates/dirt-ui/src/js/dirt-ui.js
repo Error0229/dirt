@@ -354,9 +354,10 @@
       ms = 170;
       going = ghost.animate([{ transform: 'none', opacity: 1 }, { transform: 'translateX(-28px) scale(.96)', opacity: 0 }],
         { duration: ms, easing: tokens.exit, fill: 'forwards' });
-    } else if (how === 'fold' && moving) {
+    } else if ((how === 'fold' || how === 'sink') && moving) {
       // An archived row folds shut where it was, while the rows below
-      // rise into its place (snap).
+      // rise into its place (snap); its grain sinks into the pile.
+      if (how === 'sink') sink(list, was);
       const snap = spring('snap');
       ms = Math.min(snap.ms, 320);
       ghost.style.transformOrigin = '50% 0';
@@ -1672,7 +1673,7 @@
       row.animate([{ opacity: 0 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 200, easing: tokens.standard });
       return;
     }
-    const colour = row.dataset.duiSettle || 'hsl(32 46% 60%)';
+    const colour = row.dataset.duiGrain || 'hsl(32 46% 60%)';
     const hold = row.animate([{ opacity: 0 }, { opacity: 0 }], { duration: 3000, fill: 'forwards' });
     // The row it lands on is brought into sight first.
     const scroller = scrollerOf(list);
@@ -1727,6 +1728,24 @@
         land(row, list, tx, ty, colour, hold);
       });
     }, wait + 150);
+  }
+  // An archived note sinks into the pile: its grain appears at the row's
+  // left edge and falls on gravity's curve, fading (720 ms).
+  function sink(list, was) {
+    const colour = was.row.dataset.duiGrain;
+    if (!colour) return;
+    const box = list.getBoundingClientRect();
+    const grain = document.createElement('i');
+    grain.className = 'dui-grain';
+    Object.assign(grain.style, {
+      left: box.left + was.x + 22 + 'px',
+      top: box.top + was.y + was.h / 2 + 'px',
+      background: colour,
+    });
+    document.body.append(grain);
+    after(grain.animate([{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(1.2)', opacity: 1, offset: 0.25 },
+      { transform: 'translateY(0) scale(1)', opacity: 1, offset: 0.4 }, { transform: 'translateY(140px) scale(.7)', opacity: 0 }],
+    { duration: 720, easing: GRAVITY, fill: 'forwards' }), 720, () => grain.remove());
   }
   // Rows of a list marked to settle that have not yet.
   function settleRows(list) {

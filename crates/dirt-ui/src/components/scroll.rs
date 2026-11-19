@@ -17,8 +17,11 @@ pub enum ListExit {
     #[default]
     Tear,
     /// It folds shut where it was, and the rows below rise into its
-    /// place: an archive.
+    /// place: a card swiped away has left its gap.
     Fold,
+    /// It folds shut, and its grain sinks into the pile from its left
+    /// edge, falling and fading (section 5.5): an archive.
+    Sink,
     /// It fades where it is.
     Fade,
     /// It is simply gone: a list being narrowed by Find.
@@ -32,6 +35,7 @@ impl ListExit {
         match self {
             Self::Tear => "tear",
             Self::Fold => "fold",
+            Self::Sink => "sink",
             Self::Fade => "fade",
             Self::None => "none",
         }
