@@ -14,6 +14,9 @@
 //! `unsafe_code` allow is scoped to this module.
 
 #![allow(unsafe_code)]
+// Away from Windows these are stand-ins that ask nothing, which clippy
+// would have made `const` and without `self`; on Windows they cannot be.
+#![cfg_attr(not(windows), allow(clippy::missing_const_for_fn, clippy::unused_self))]
 
 use dioxus::desktop::tao::window::Window;
 
