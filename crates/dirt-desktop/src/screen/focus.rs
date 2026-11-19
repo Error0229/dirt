@@ -84,15 +84,9 @@ fn stops(notes: &[(NoteId, String, i64)]) -> Vec<Stop> {
             }
         }
         month = here;
+        // Its note's shade of sand, and one of a few slightly irregular
+        // rounds: the same everywhere for the same note (6.17).
         let grain = Grain::of(id);
-        // A slightly irregular round, one of a few, the same everywhere
-        // for the same note.
-        let shape = [
-            "50%",
-            "46% 54% 52% 48%",
-            "54% 46% 48% 52%",
-            "48% 52% 55% 45%",
-        ][(grain.seed >> 16) as usize % 4];
         stops.push(Stop::Note {
             id: *id,
             title: if title.is_empty() {
@@ -100,11 +94,8 @@ fn stops(notes: &[(NoteId, String, i64)]) -> Vec<Stop> {
             } else {
                 title.clone()
             },
-            shade: format!(
-                "hsl({} {}% {}%)",
-                grain.hue, grain.saturation, grain.lightness
-            ),
-            shape: shape.to_owned(),
+            shade: dirt_ui::pile::shade(&grain),
+            shape: dirt_ui::pile::shape(&grain).to_owned(),
         });
     }
     stops

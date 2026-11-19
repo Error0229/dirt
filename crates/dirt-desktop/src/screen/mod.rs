@@ -30,6 +30,7 @@ use dirt_ui::components::{use_toasts, ContextMenu, ListExit, MenuItem, Toast, To
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::files::{use_note_files, use_pasted_files, FilePreview, FileSource, NoteFiles};
 use dirt_ui::find;
+use dirt_ui::pile::PileView;
 use dirt_ui::time::Clock;
 use dirt_ui::{Appearance, Icon};
 
@@ -154,6 +155,9 @@ pub struct Listing {
     pub more: bool,
     /// What Find's words ask for, to mark in the rows.
     pub words: Vec<String>,
+    /// The pile under the last note (6.17): read while the list is not
+    /// finding, and kept as it was while it is.
+    pub pile: PileView,
 }
 
 /// What the page shows once the note on it is archived or deleted.
@@ -198,6 +202,8 @@ pub struct Screen {
     pub returned: Signal<Option<NoteId>>,
     /// Notes just arrived from another device: their rows flash once.
     pub flashing: Signal<HashSet<NoteId>>,
+    /// A new thought just let go: its grain settles onto its row (5.5).
+    pub settling: Signal<Option<NoteId>>,
     pub listing: Signal<Option<Listing>>,
     pub page: Signal<PageView>,
     draft: Signal<Draft>,
@@ -496,6 +502,7 @@ impl Screen {
     /// typed straight after is kept.
     pub fn done(self, emptied: bool) {
         self.calm();
+        let settles = self.draft.peek().settles();
         if self.draft.peek().is_blank() {
             // In a narrow window the blank page comes over the list, and
             // goes again.
@@ -514,6 +521,21 @@ impl Screen {
         } else {
             self.blank(true);
         }
+        if let Some(note) = settles {
+            self.settle(note);
+        }
+    }
+
+    /// A new thought settles onto the pile: its row is marked for a moment,
+    /// and the script tosses its grain onto it (5.5).
+    fn settle(mut self, note: NoteId) {
+        self.settling.set(Some(note));
+        spawn(async move {
+            tokio::time::sleep(Duration::from_millis(2500)).await;
+            if *self.settling.peek() == Some(note) {
+                self.settling.set(None);
+            }
+        });
     }
 
     /// The blank page with the cursor in it. In a window narrower than
@@ -1197,6 +1219,24 @@ fn use_listing(screen: &Screen, app: &AppState) {
             }
             let counts = store.note_counts().await.unwrap_or_default();
             let more = notes.len() >= limit;
+            let before = listing_signal
+                .peek()
+                .as_ref()
+                .map(|listing| listing.pile.clone());
+            let pile = if finding || archived_view {
+                before.unwrap_or_default()
+            } else {
+                match store.pile().await {
+                    Ok(pile) => {
+                        let offset = Clock::now().utc_offset_secs;
+                        PileView::of(pile, before.as_ref(), offset).await
+                    }
+                    Err(error) => {
+                        tracing::error!("Could not read the pile: {error}");
+                        before.unwrap_or_default()
+                    }
+                }
+            };
 
             // What a sync has just brought: new to the list, or edited
             // since it was last read, and not the note being written.
@@ -1240,6 +1280,7 @@ fn use_listing(screen: &Screen, app: &AppState) {
                 archived_view,
                 more,
                 words: dirt_ui::text::find_words(&words),
+                pile,
             };
             listing_signal.set(Some(listing));
             Some(())
@@ -1305,6 +1346,7 @@ pub fn MainScreen() -> Element {
         exit: Signal::new(ListExit::None),
         returned: Signal::new(None),
         flashing: Signal::new(HashSet::new()),
+        settling: Signal::new(None),
         listing: Signal::new(None),
         page: Signal::new(PageView {
             take_focus: true,

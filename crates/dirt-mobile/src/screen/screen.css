@@ -24,8 +24,6 @@
 .dm-list .dui-layer{margin:10px 6px 0 6px}
 .dm-arch-head{display:flex;align-items:center;gap:6px;padding:0 8px 2px 0;font-size:14px;font-weight:600}
 .dm-arch-n{color:var(--text-3);font-weight:500;font-variant-numeric:tabular-nums}
-.dm-archived{align-self:center;min-height:40px;padding:0 16px;border-radius:var(--r-full);font-size:12.5px;color:var(--text-3)}
-.dm-archived:active{background:var(--surface-2)}
 
 /* The dock, where the thumb is: the bar a new page grows out of. */
 .dm-dock{flex:none;padding:6px 12px calc(24px + env(safe-area-inset-bottom,0px))}

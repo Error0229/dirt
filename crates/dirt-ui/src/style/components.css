@@ -284,6 +284,22 @@
 .dui-list-empty{padding:48px 24px;display:grid;place-items:center;color:var(--text-3);opacity:.5}
 .dui-list-empty .dui-i{width:28px;height:28px;stroke-width:1.4}
 .dui-more{height:1px}
+/* The pile under the list (6.17): the heap, its line, and "3 archived". */
+.dui-pile{display:flex;flex-direction:column;align-items:center;padding:28px 8px 22px;text-align:center;color:var(--text-3);font-size:11.5px}
+.dui-pile-heap{line-height:0;margin-bottom:10px}
+.dui-pile-heap svg{display:block;overflow:visible}
+.dui-pile-top{transform-box:fill-box;transform-origin:center}
+.dui-pile-arch{margin-top:6px;font-size:11.5px;color:var(--text-3);padding:2px 8px;border-radius:6px;text-decoration:underline dotted;text-underline-offset:3px;transition:color var(--d-1),background var(--d-1)}
+.dui-pile-arch:hover{color:var(--accent);background:var(--accent-soft)}
+.android .dui-pile-arch{min-height:40px;padding:0 16px;border-radius:var(--r-full)}
+.android .dui-pile-arch:hover{color:var(--text-3);background:none}
+.android .dui-pile-arch:active{background:var(--surface-2)}
+/* A new thought settling (5.5): its words shrinking where they began, its
+   grain in flight, and the dust where it lands. Drawn over everything, and
+   never in the way of a press. */
+.dui-settle-ghost{position:fixed;z-index:1300;pointer-events:none;overflow:hidden;white-space:pre-wrap;word-break:break-word;color:var(--text)}
+.dui-grain{position:fixed;z-index:1301;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:46% 54% 52% 48%;pointer-events:none;box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.dui-dust{position:fixed;z-index:1299;width:3px;height:3px;margin:-1.5px 0 0 -1.5px;border-radius:50%;pointer-events:none}
 
 /* ---- Sync status (6.6) ----------------------------------------------- */
 .dui-sync{display:flex;align-items:center;gap:7px;height:30px;padding:0 10px 0 8px;border-radius:8px;font-size:12.5px;color:var(--text-3);transition:background var(--d-1),color var(--d-2);min-width:0}

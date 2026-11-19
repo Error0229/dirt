@@ -48,6 +48,10 @@ pub struct Draft {
     /// Raised by every change, so that a save waited for can tell that it
     /// is out of date.
     version: u64,
+    /// The note was made on this page, from a blank one: a new thought,
+    /// which settles onto the pile when it is let go (5.5). A note opened
+    /// from the list is not.
+    fresh: bool,
 }
 
 /// What the page held when it was left: the work that keeps what was
@@ -86,6 +90,15 @@ impl Draft {
         self.note.is_none() && self.text.is_empty()
     }
 
+    /// The note that settles onto the pile if the page is let go now: a
+    /// new thought with words on it. A note emptied again is let go
+    /// instead, and an old note simply goes back to its place.
+    #[must_use]
+    pub fn settles(&self) -> Option<NoteId> {
+        self.note
+            .filter(|_| self.fresh && !self.text.trim().is_empty())
+    }
+
     /// The page's text changed. The first character that is not a space
     /// makes the note, and that is returned to be done at once; anything
     /// later waits for [`Self::flush`].
@@ -94,6 +107,7 @@ impl Draft {
         if self.note.is_none() && !text.trim().is_empty() {
             let note = NoteId::new();
             self.note = Some(note);
+            self.fresh = true;
             self.saved.clone_from(&text);
             self.text = text.clone();
             return Some(Work::Create { note, text });
@@ -126,6 +140,7 @@ impl Draft {
         let note = NoteId::new();
         self.version += 1;
         self.note = Some(note);
+        self.fresh = true;
         self.text.clone_from(&text);
         self.saved.clone_from(&text);
         (note, Some(Work::Create { note, text }))
@@ -161,6 +176,7 @@ impl Draft {
             text: note.content.clone(),
             saved: note.content.clone(),
             version: self.version + 1,
+            fresh: false,
         };
     }
 
@@ -173,6 +189,7 @@ impl Draft {
             return false;
         }
         self.note = None;
+        self.fresh = false;
         self.saved.clear();
         self.version += 1;
         true
@@ -776,6 +793,34 @@ mod tests {
         let _ = page.leave();
         assert_ne!(page.version(), waiting);
         assert!(page.flush().is_none());
+    }
+
+    /// Only a new thought with words settles onto the pile: not a note
+    /// opened from the list, nor a page emptied again (5.5).
+    #[test]
+    fn a_new_thought_settles_and_an_old_note_does_not() {
+        let mut page = Draft::default();
+        assert_eq!(page.settles(), None);
+        page.typed("  ".into());
+        assert_eq!(page.settles(), None, "nothing written");
+        page.typed("milk".into());
+        let made = page.note();
+        assert!(made.is_some());
+        assert_eq!(page.settles(), made);
+        page.typed(" ".into());
+        assert_eq!(page.settles(), None, "emptied again");
+        page.typed("milk, eggs".into());
+        assert_eq!(page.settles(), made);
+        page.leave();
+        assert_eq!(page.settles(), None);
+
+        page.show(&Note::new("an old note"));
+        page.typed("an old note, edited".into());
+        assert_eq!(page.settles(), None);
+
+        let mut page = Draft::default();
+        let (note, _) = page.note_for_files(|_| "#work".to_owned());
+        assert_eq!(page.settles(), Some(note), "a page made by its files");
     }
 
     /// The store's text reaches a note shown from the list only while

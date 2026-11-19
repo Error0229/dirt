@@ -8,11 +8,12 @@
 //! from the same parts, [`Marked`] and [`TagLinks`].
 
 use dioxus::prelude::*;
-use dirt_core::models::{Note, NoteId};
+use dirt_core::models::{Grain, Note, NoteId};
 use dirt_core::sync::overview::NOT_ON_SERVER_YET;
 
 use crate::components::icon_button::{IconButton, IconButtonSize};
 use crate::icons::{Icon, IconSvg};
+use crate::pile::shade;
 use crate::text::{pieces, Piece, PieceKind};
 use crate::time::{edited_full, edited_short, Clock};
 
@@ -196,6 +197,9 @@ pub fn NoteRow(
     /// It has just come back by Undo: it drops in with a bounce.
     #[props(default)]
     back: bool,
+    /// It is a new thought just let go: its grain settles onto it (5.5).
+    #[props(default)]
+    settle: bool,
     on_open: EventHandler<()>,
     on_tag: EventHandler<String>,
     /// The box was pressed.
@@ -230,6 +234,7 @@ pub fn NoteRow(
             "aria-selected": if selected { "true" } else { "false" },
             "data-key": "{id}",
             "data-dui-enter": back.then_some("pop"),
+            "data-dui-settle": settle.then(|| shade(&Grain::of(&id))),
             onclick: move |_| on_open.call(()),
             div { class: "dui-row-t",
                 if title.is_empty() {

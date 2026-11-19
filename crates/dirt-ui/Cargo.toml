@@ -28,8 +28,9 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 # Settings waits a moment between looks for a new device, and while the
-# drawn tick shows. Its session's own work runs on the same runtime.
-tokio = { workspace = true, features = ["time"] }
+# drawn tick shows. Its session's own work runs on the same runtime, and
+# the pile's heap is worked out on its threads for blocking work.
+tokio = { workspace = true, features = ["time", "rt"] }
 # The IDs of devices, in Settings.
 uuid.workspace = true
 

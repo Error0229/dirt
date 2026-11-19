@@ -71,6 +71,7 @@ pub mod fonts;
 pub mod gallery;
 pub mod icons;
 pub mod motion;
+pub mod pile;
 mod root;
 pub mod settings;
 pub mod text;
