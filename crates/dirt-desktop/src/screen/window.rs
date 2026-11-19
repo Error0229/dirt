@@ -48,7 +48,10 @@ pub fn builder() -> WindowBuilder {
         // up); narrower, the page comes over the list.
         .with_inner_size(LogicalSize::new(1100.0, 720.0))
         .with_min_inner_size(LogicalSize::new(360.0, 320.0))
-        .with_decorations(!frameless());
+        .with_decorations(!frameless())
+        // Shown without the keyboard, each time: the app takes it when it
+        // starts, and when the person asks for the window (`keyboard`).
+        .with_focused(false);
     #[cfg(windows)]
     let builder = {
         use dioxus::desktop::tao::platform::windows::WindowBuilderExtWindows;

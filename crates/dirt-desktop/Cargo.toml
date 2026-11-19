@@ -42,6 +42,11 @@ single-instance = "0.3"
 # Opens the system browser on the sign-in page.
 webbrowser = "1"
 
+# Quick capture gives the keyboard back to the window that had it, as it is
+# put away (the version already in the build).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
 [build-dependencies]
 serde.workspace = true
 serde_json.workspace = true

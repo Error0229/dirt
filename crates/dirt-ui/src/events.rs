@@ -55,6 +55,11 @@ pub enum Outcome {
     /// The file preview asks for the file before: ←, or a swipe to the
     /// right.
     Previous,
+    /// The desktop's quick capture has begun to shrink to its grain: the
+    /// window carries it from here to where it goes (sections 5.5, 7.2).
+    Away,
+    /// Quick capture has finished leaving, or fading: its window can hide.
+    Gone,
 }
 
 /// One message from the script: which element, and how it ended.

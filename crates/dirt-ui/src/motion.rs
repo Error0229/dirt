@@ -147,6 +147,60 @@ pub const EXIT: Curve = Curve {
 /// The three curves.
 pub const CURVES: [Curve; 3] = [STANDARD, ENTER, EXIT];
 
+/// A cubic Bézier easing, as CSS's `cubic-bezier()` draws it.
+///
+/// It is for the one movement Rust plays itself: the quick-capture window
+/// carried to the tray (section 5.5), which is a window moving over the
+/// screen and not something in the page. Everything in the page uses the
+/// CSS value.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Bezier {
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+}
+
+impl Bezier {
+    /// The curve `cubic-bezier(x1, y1, x2, y2)`. `x1` and `x2` are between
+    /// 0 and 1, as CSS requires.
+    #[must_use]
+    pub const fn new(x1: f64, y1: f64, x2: f64, y2: f64) -> Self {
+        Self { x1, y1, x2, y2 }
+    }
+
+    /// How far along the movement is when `progress` of its time has
+    /// passed: both 0 at the start and 1 at the end.
+    #[must_use]
+    pub fn at(&self, progress: f64) -> f64 {
+        let x = progress.clamp(0.0, 1.0);
+        // The curve's time is found from x by halving: x rises with it,
+        // since x1 and x2 are between 0 and 1.
+        let (mut low, mut high) = (0.0_f64, 1.0_f64);
+        let mut t = x;
+        for _ in 0..40 {
+            let now = Self::along(t, self.x1, self.x2);
+            if (now - x).abs() < 1e-7 {
+                break;
+            }
+            if now < x {
+                low = t;
+            } else {
+                high = t;
+            }
+            t = f64::midpoint(low, high);
+        }
+        Self::along(t, self.y1, self.y2)
+    }
+
+    /// One coordinate of the curve at time `t`, its ends at 0 and 1 and its
+    /// two handles at `a` and `b`.
+    fn along(t: f64, a: f64, b: f64) -> f64 {
+        let u = 1.0 - t;
+        t * (3.0 * u * u).mul_add(a, t * (3.0 * u).mul_add(b, t))
+    }
+}
+
 /// The four lengths of time a curve runs for, in milliseconds: `--d-1` for
 /// hover and press, `--d-4` for the longest fade.
 pub const DURATIONS_MS: [u32; 4] = [120, 200, 280, 400];
@@ -306,5 +360,27 @@ mod tests {
     fn a_spring_is_written_as_the_mockup_writes_it() {
         assert!(SNAP.linear().starts_with("linear(0, 0.0126, 0.0462,"));
         assert!(SNAP.linear().ends_with("1.0031, 1.0024, 1)"));
+    }
+
+    #[test]
+    fn a_bezier_runs_from_start_to_end_as_css_draws_it() {
+        let linear = Bezier::new(0.0, 0.0, 1.0, 1.0);
+        for step in 0..=10 {
+            let progress = f64::from(step) / 10.0;
+            assert!((linear.at(progress) - progress).abs() < 1e-6);
+        }
+        // CSS's `ease-in-out`, at half its time, is half way.
+        let ease = Bezier::new(0.42, 0.0, 0.58, 1.0);
+        assert!((ease.at(0.5) - 0.5).abs() < 1e-6);
+        // Gravity is slow at the top and fastest as it lands.
+        let gravity = Bezier::new(0.55, 0.0, 0.9, 0.45);
+        assert!(gravity.at(0.0).abs() < 1e-9 && (gravity.at(1.0) - 1.0).abs() < 1e-9);
+        assert!(gravity.at(0.5) < 0.25);
+        let mut before = 0.0;
+        for step in 1..=20 {
+            let now = gravity.at(f64::from(step) / 20.0);
+            assert!(now >= before);
+            before = now;
+        }
     }
 }

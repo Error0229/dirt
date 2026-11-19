@@ -1,0 +1,12 @@
+/* Quick capture (interface design, sections 4.2 and 7.2): a box in a
+   window of its own, which is as large as the box and the room its shadow
+   needs (`capture::AROUND_*`), and otherwise not drawn. Its classes begin
+   with dk-capture. */
+
+html,body{background:transparent;margin:0;overflow:hidden}
+.dk-capture{position:fixed;inset:0;padding:24px 48px 72px;box-sizing:border-box}
+.dk-capture-box{width:560px;box-sizing:border-box;display:flex;gap:12px;align-items:flex-start;padding:14px 14px 10px 16px;background:var(--surface);border-radius:16px;box-shadow:var(--shadow-3),0 0 0 1px var(--border);transform-origin:50% 50%}
+.dk-capture-logo{margin-top:1px}
+/* Grows with the thought to about twelve lines, then scrolls. */
+.dk-capture-text{flex:1;min-width:0;min-height:72px;max-height:288px;field-sizing:content;overflow-y:auto;scrollbar-width:thin;margin:0;padding:0;border:0;outline:0;resize:none;background:none;color:var(--text);font:400 17px/24px var(--font);caret-color:var(--accent)}
+.dk-capture-text::placeholder{color:var(--text-3)}

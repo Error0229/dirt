@@ -1,97 +1,106 @@
-//! System tray integration
-//!
-//! Provides system tray icon with menu for quick access to Dirt features.
+//! The tray icon and its menu (interface design, section 7.5): **New
+//! Note**, **Open Dirt** and **Quit**. Closing the window keeps Dirt in the
+//! tray, so that the hotkey still works.
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    OnceLock,
-};
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use tray_icon::{
+    dpi::{PhysicalPosition, PhysicalSize},
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
     Icon, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
 
-/// Atomic flags for tray events - shared with UI
+/// Raised for the main window to show itself, and to quit.
 pub static SHOW_MAIN_WINDOW: AtomicBool = AtomicBool::new(false);
 pub static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-/// Static menu item IDs (set during initialization)
+/// The menu's items, set when the icon is made.
 static NEW_NOTE_ID: OnceLock<MenuId> = OnceLock::new();
 static OPEN_DIRT_ID: OnceLock<MenuId> = OnceLock::new();
 static QUIT_ID: OnceLock<MenuId> = OnceLock::new();
 
-/// System tray manager
-pub struct TrayManager {
-    #[allow(dead_code)]
-    tray_icon: TrayIcon,
+thread_local! {
+    /// The icon, on the main thread, which made it and asks where it is.
+    static ICON: RefCell<Option<TrayIcon>> = const { RefCell::new(None) };
 }
 
-impl TrayManager {
-    /// Create and initialize the system tray
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        // Create menu items
-        let new_note_item = MenuItem::new("New Note\tCtrl+Alt+N", true, None);
-        let open_item = MenuItem::new("Open Dirt", true, None);
-        let quit_item = MenuItem::new("Quit", true, None);
+/// What can be chosen in the menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Choice {
+    NewNote,
+    OpenDirt,
+    Quit,
+}
 
-        // Store IDs in statics for event handling
-        let _ = NEW_NOTE_ID.set(new_note_item.id().clone());
-        let _ = OPEN_DIRT_ID.set(open_item.id().clone());
-        let _ = QUIT_ID.set(quit_item.id().clone());
+/// Makes the tray icon and its menu. Call on the main thread, before the
+/// app's window is made.
+pub fn start() -> Result<(), Box<dyn std::error::Error>> {
+    let new_note_item = MenuItem::new("New Note\tCtrl+Alt+N", true, None);
+    let open_item = MenuItem::new("Open Dirt", true, None);
+    let quit_item = MenuItem::new("Quit", true, None);
+    let _ = NEW_NOTE_ID.set(new_note_item.id().clone());
+    let _ = OPEN_DIRT_ID.set(open_item.id().clone());
+    let _ = QUIT_ID.set(quit_item.id().clone());
 
-        // Build menu
-        let menu = Menu::new();
-        menu.append_items(&[
-            &new_note_item,
-            &open_item,
-            &PredefinedMenuItem::separator(),
-            &quit_item,
-        ])?;
+    let menu = Menu::new();
+    menu.append_items(&[
+        &new_note_item,
+        &open_item,
+        &PredefinedMenuItem::separator(),
+        &quit_item,
+    ])?;
+    let icon = TrayIconBuilder::new()
+        .with_menu(Box::new(menu))
+        .with_tooltip("Dirt - Quick Capture")
+        .with_icon(create_default_icon()?)
+        .with_menu_on_left_click(false)
+        .build()?;
+    ICON.with(|kept| *kept.borrow_mut() = Some(icon));
+    Ok(())
+}
 
-        // Create a simple icon (32x32 purple square)
-        let icon = create_default_icon()?;
+/// Where the tray icon is on the screen, in pixels, if the system says:
+/// quick capture's grain flies to it. Linux does not say. On the main
+/// thread only.
+pub fn place() -> Option<(PhysicalPosition<f64>, PhysicalSize<u32>)> {
+    ICON.with(|kept| {
+        let rect = kept.borrow().as_ref()?.rect()?;
+        Some((rect.position, rect.size))
+    })
+}
 
-        // Build tray icon
-        let tray_icon = TrayIconBuilder::new()
-            .with_menu(Box::new(menu))
-            .with_tooltip("Dirt - Quick Capture")
-            .with_icon(icon)
-            .with_menu_on_left_click(false)
-            .build()?;
-
-        tracing::info!("System tray initialized");
-
-        Ok(Self { tray_icon })
+/// Does what was chosen in the menu. From any thread.
+pub fn chosen(choice: Choice) {
+    tracing::info!("Tray: {choice:?} chosen");
+    match choice {
+        Choice::NewNote => crate::capture::link().open(Instant::now()),
+        Choice::OpenDirt => SHOW_MAIN_WINDOW.store(true, Ordering::SeqCst),
+        Choice::Quit => QUIT_REQUESTED.store(true, Ordering::SeqCst),
     }
 }
 
-/// Process pending tray events (menu clicks and icon interactions)
-#[allow(clippy::cognitive_complexity)]
+/// Handles what was chosen in the menu, and a double click on the icon,
+/// which opens the main window.
 pub fn process_tray_events() {
-    // Process menu events
-    let menu_receiver = MenuEvent::receiver();
-    while let Ok(event) = menu_receiver.try_recv() {
+    while let Ok(event) = MenuEvent::receiver().try_recv() {
         let id = &event.id;
-
-        if NEW_NOTE_ID.get().is_some_and(|nid| nid == id) {
-            tracing::info!("Tray: New Note clicked");
-            crate::HOTKEY_TRIGGERED.store(true, Ordering::SeqCst);
-        } else if OPEN_DIRT_ID.get().is_some_and(|oid| oid == id) {
-            tracing::info!("Tray: Open Dirt clicked");
-            SHOW_MAIN_WINDOW.store(true, Ordering::SeqCst);
-        } else if QUIT_ID.get().is_some_and(|qid| qid == id) {
-            tracing::info!("Tray: Quit clicked");
-            QUIT_REQUESTED.store(true, Ordering::SeqCst);
-        }
+        let choice = if NEW_NOTE_ID.get() == Some(id) {
+            Choice::NewNote
+        } else if OPEN_DIRT_ID.get() == Some(id) {
+            Choice::OpenDirt
+        } else if QUIT_ID.get() == Some(id) {
+            Choice::Quit
+        } else {
+            continue;
+        };
+        chosen(choice);
     }
-
-    // Process tray icon events (double-click to open)
-    let icon_receiver = TrayIconEvent::receiver();
-    while let Ok(event) = icon_receiver.try_recv() {
+    while let Ok(event) = TrayIconEvent::receiver().try_recv() {
         if let TrayIconEvent::DoubleClick { .. } = event {
-            tracing::info!("Tray: Double-click - opening main window");
-            SHOW_MAIN_WINDOW.store(true, Ordering::SeqCst);
+            chosen(Choice::OpenDirt);
         }
     }
 }
