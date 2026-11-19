@@ -9,7 +9,7 @@
 
 mod app;
 mod bootstrap_config;
-mod components;
+mod capture;
 #[cfg(feature = "gallery")]
 mod gallery;
 mod hotkey;
@@ -17,21 +17,16 @@ mod screen;
 mod services;
 mod settings;
 mod state;
-mod theme;
 mod tray;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dioxus::desktop::{Config, WindowCloseBehaviour};
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 use hotkey::HotkeyManager;
 use single_instance::SingleInstance;
-use tray::TrayManager;
-
-/// Atomic flag for hotkey events - shared between event handler and UI
-pub static HOTKEY_TRIGGERED: AtomicBool = AtomicBool::new(false);
 
 /// Atomic flag indicating tray is enabled
 pub static TRAY_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -69,17 +64,15 @@ fn main() {
     };
 
     // Initialize system tray BEFORE Dioxus (must be on main thread)
-    let _tray_manager = match TrayManager::new() {
-        Ok(manager) => {
+    match tray::start() {
+        Ok(()) => {
             tracing::info!("System tray initialized");
             TRAY_ENABLED.store(true, Ordering::SeqCst);
-            Some(manager)
         }
         Err(e) => {
             tracing::error!("Failed to initialize system tray: {}", e);
-            None
         }
-    };
+    }
 
     // Initialize global hotkey BEFORE launching Dioxus.
     // The manager must be kept alive and stay on the main thread.
@@ -92,6 +85,8 @@ fn main() {
             None
         }
     };
+
+    take_actions_from_stdin();
 
     // Copies of files handed to other programs in earlier runs.
     services::clear_opened_copies(&services::data_folder());
@@ -110,10 +105,11 @@ fn main() {
         .launch(app::App);
 }
 
-/// Turns off what the web view would do with a browser's keys (interface
-/// design, sections 7.4 and 10): reload, find, print, zoom, developer
-/// tools, and a browser's menu on a right click. Release builds only; a
-/// development build keeps reload and the developer tools.
+/// Turns off what the web view would do with a browser's keys.
+///
+/// That is reload, find, print, zoom, developer tools, and a browser's menu
+/// on a right click (interface design, sections 7.4 and 10). Release builds
+/// only; a development build keeps reload and the developer tools.
 ///
 /// Most of it is the web view's settings, which Dioxus and wry set:
 ///
@@ -127,13 +123,43 @@ fn main() {
 /// The script in the page's head stops the same keys for a web view whose
 /// settings do not, which is the case on Linux and on a Mac for some of
 /// them, and lets each key go on to the app.
-fn without_the_web_views_own_keys(config: Config) -> Config {
+pub fn without_the_web_views_own_keys(config: Config) -> Config {
     if !dirt_ui::webview::own_keys_off() {
         return config;
     }
     config
         .with_disable_context_menu(true)
         .with_custom_head(dirt_ui::webview::guard_head())
+}
+
+/// Ctrl Alt N was pressed: quick capture opens.
+fn hotkey_pressed() {
+    tracing::info!("Hotkey pressed (Ctrl+Alt+N)");
+    capture::link().open(Instant::now());
+}
+
+/// In a development build with `DIRT_ACTIONS_FROM_STDIN` set, each line
+/// read from the standard input does what a hand would do outside the
+/// window: `hotkey` presses Ctrl Alt N, and `new note`, `open dirt` and
+/// `quit` choose that in the tray's menu. They go the same way as the real
+/// key and menu from there. That is for trying the app on a computer whose
+/// keyboard and tray belong to someone else. A release build ignores it.
+fn take_actions_from_stdin() {
+    if settings::test_hook("DIRT_ACTIONS_FROM_STDIN").is_none() {
+        return;
+    }
+    thread::spawn(|| {
+        for line in std::io::stdin().lines() {
+            let Ok(line) = line else { break };
+            match line.trim() {
+                "hotkey" => hotkey_pressed(),
+                "new note" => tray::chosen(tray::Choice::NewNote),
+                "open dirt" => tray::chosen(tray::Choice::OpenDirt),
+                "quit" => tray::chosen(tray::Choice::Quit),
+                other => tracing::warn!("Not an action: {other:?}"),
+            }
+        }
+    });
 }
 
 fn initialize_hotkey_manager() -> Result<HotkeyManager, String> {
@@ -146,8 +172,7 @@ fn initialize_hotkey_manager() -> Result<HotkeyManager, String> {
                 GlobalHotKeyEvent::set_event_handler(Some(|event: GlobalHotKeyEvent| {
                     tracing::debug!("GlobalHotKeyEvent received: state={:?}", event.state);
                     if event.state == HotKeyState::Pressed {
-                        tracing::info!("Hotkey pressed (Ctrl+Alt+N) - setting flag");
-                        HOTKEY_TRIGGERED.store(true, Ordering::SeqCst);
+                        hotkey_pressed();
                     }
                 }));
                 return Ok(manager);

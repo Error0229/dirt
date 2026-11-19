@@ -9,7 +9,7 @@
 
 mod files;
 mod focus;
-mod keys;
+pub mod keys;
 mod list;
 mod page;
 pub mod window;
@@ -296,9 +296,9 @@ impl Screen {
     /// after whatever was asked before. The page is blank at once; nothing
     /// is waited for. The page then holds no store.
     ///
-    /// The screen going (quick capture takes the window, the app quits,
-    /// another store is taken into use) leaves it too, so nothing here
-    /// assumes the screen's values are still there.
+    /// The screen going (the app quits, another store is taken into use)
+    /// leaves it too, so nothing here assumes the screen's values are still
+    /// there.
     pub fn leave(mut self) {
         let left = match self.draft.try_write() {
             Ok(mut draft) => draft.leave(),
@@ -344,6 +344,19 @@ impl Screen {
             format!("{count} notes could not be saved")
         };
         let copy = Callback::new(move |()| self.copy_unsaved());
+        // The write may have been quick capture's, or the page's after the
+        // window was closed to the tray: the error is here, so the window
+        // comes back for it, or asks to be looked at.
+        let main = dioxus::desktop::window();
+        if !main.is_visible() || main.is_minimized() {
+            main.set_visible(true);
+            main.set_minimized(false);
+            main.set_focus();
+        } else if !main.is_focused() {
+            main.request_user_attention(Some(
+                dioxus::desktop::tao::window::UserAttentionType::Informational,
+            ));
+        }
         self.toasts.show_error(
             Toast::new(words)
                 .icon(Icon::Alert)
@@ -1369,9 +1382,8 @@ pub fn MainScreen() -> Element {
             }
         }
     });
-    // The screen going (quick capture takes the window) hands over what
-    // the page holds, and so does the app quitting from the tray, which
-    // then waits for the queue. Before another store is taken into use the
+    // The screen going hands over what the page holds, and so does the app
+    // quitting from the tray, which then waits for the queue. Before another store is taken into use the
     // app asks for the page through `page_leaver`, and waits for the queue.
     use_hook(move || {
         let mut leaver = app.page_leaver;

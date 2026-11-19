@@ -638,8 +638,8 @@ this document are approximate; the tokens here are the real ones.
 
 | Moment | Motion |
 |---|---|
-| Quick capture opens | The box comes into focus: from 97% and blurred 10 px to sharp (snap, the blur on enter) |
-| Quick capture is put away (<kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd>, a click outside) | The page shrinks to a grain and flies to the tray on an arc: across quickly, down slowly then fast, so the path curves (600 ms). The tray icon pulses once as it lands |
+| Quick capture opens | The box comes into focus: from 97% and 10 px up, blurred 10 px, to sharp (snap; the blur over 260 ms on enter), fading in over 280 ms (standard) |
+| Quick capture is put away (<kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd>, a click outside) | The page shrinks to its grain and flies to the tray on an arc: across quickly (`cubic-bezier(.25,.65,.45,1)`), down slowly then fast (`cubic-bezier(.6,0,.9,.45)`), so the path curves (600 ms). The tray icon pulses once as it lands: a ring in the accent grows from 40% to 260% and fades (560 ms, enter). With nothing written it only fades (280 ms, standard) |
 | A file is attached | Its tile grows out of the paperclip, or out of the point it was dropped on, and bounces into place (pop). Several files follow one another, 70 ms apart |
 | A preview opens and closes | The file grows out of its tile (420 ms, enter) and shrinks back into it (320 ms, standard), the backdrop fading with it (280 ms, standard). With reduced motion it fades in where it is (6.16) |
 | The next file in the preview | It comes in 48 px from the side it was asked for from (280 ms, enter). A file read after its thumbnail was shown fades in where the thumbnail was |
@@ -1555,7 +1555,7 @@ What 7.6, 7.7 and 6.4's second half left open, settled in step 3b.
 | | Settled |
 |---|---|
 | Leaving a note never waits | Done, opening another note and archiving or deleting the open one change the page at once. What the page held is taken as it was, and kept or let go afterwards, in order, by one queue of the store's work for the whole app (`screen::writing`). The first character makes the note under an ID the app makes, a UUID v7 (`Store::create_note_with_id`), so files attached in that moment go to it |
-| The screen going | What the page holds is handed to the queue when the main screen goes (quick capture takes the window) and when Quit is chosen in the tray, which then waits up to five seconds for the queue before the app ends. On signing in or out the page is handed over for the store it was written in, the new store is taken into use, and the queue's work for the old one is done (waiting up to five seconds) before the old one is removed; the queue holds no store once its work is done |
+| The screen going | What the page holds is handed to the queue when the main screen goes and when Quit is chosen in the tray, which then waits up to five seconds for the queue before the app ends. On signing in or out the page is handed over for the store it was written in, the new store is taken into use, and the queue's work for the old one is done (waiting up to five seconds) before the old one is removed; the queue holds no store once its work is done |
 | A write that fails | It is not tried again. The store already waits out a busy file inside every write (up to half a minute); what still fails is the disk or the file, which a moment's wait does not mend. The person is told plainly and given their words: an error, "A note could not be saved", with the store's reason in its tooltip and **Copy text**, which puts the words the write carried on the clipboard. It stays until it is dismissed, above the toast; ordinary toasts (archive, delete, undo) neither replace it nor clear it, nor it them. Several failures make one error ("2 notes could not be saved"), and **Copy text** gives the newest text of each note, a blank line between. If the note that could not be made is the one on the page, the page goes back to a thought not yet made, and the next key makes it, with all that is on the page then. A note is never made later from a failure: later work for a note that could not be made is not done |
 | Esc and the next thought | Esc with no modifier, and the command key (Ctrl; Cmd on a Mac) with Enter or N and nothing else, pressed in the page empty it in the script as the key goes down, before the app hears it (`data-dui-page`, which names the command key). What is typed straight after is the next thought's. The app's rule is the same, key for key, in one place (`keys::empties_page`): were they to differ, the next character would be saved over the note, or the old text would become a second note. Done by any other way (✓, Ctrl N from elsewhere, Esc with a modifier) gives a fresh page |
 | Opening a note | The list's copy of it is shown at once, so ↓ pressed twice moves two rows; the store's copy follows, and is taken if it differs and nothing has been typed yet. Text of the note still waiting in the queue is newer than either, and is what the note shows |
@@ -1573,6 +1573,29 @@ What 7.6, 7.7 and 6.4's second half left open, settled in step 3b.
 | Snap Layouts | Built without the flyout, the default of the owner's decision (section 11). Snapping by dragging to an edge, and <kbd>Win Z</kbd>, are the system's and still work |
 | The style | Settings → Appearance → Focus while writing, kept on the device as `focus_style` |
 | Find beside the window's controls | Narrower than 720 px the list reaches the top right corner, where the window's controls are, so Find stops short of them there |
+
+### 7.10 Settled when quick capture was built
+
+What 7.2 and 5.5 left open for quick capture, settled when it was built
+(implementation plan, step 8a). Holding the keys to talk comes with voice
+(step 9).
+
+| | Settled |
+|---|---|
+| The window | A window of its own, made hidden when the app starts and kept, so that opening it is only showing it. It has no title bar, no taskbar button, and stays over other windows. It is as large as the box and the room the box's shadow needs, and is drawn nowhere else: the box is 560 px wide, and the window grows downward with it, line by line, to twelve lines, after which the text scrolls |
+| Where it opens | In the middle of the screen the pointer is on: the box with three lines has its middle there, and grows downward |
+| What is in it | The logo, then the text with its placeholder, "What's on your mind?". No other words, buttons or hints |
+| Saving | As the page saves (7.8, 7.9), through the same queue: the first character that is not a space makes the note, what follows is saved 400 ms after typing pauses, and putting it away hands over what it holds. So the note is in the main list while it is written, and nothing typed is lost if the app ends. With nothing written, or spaces alone, putting it away makes nothing, and the box only fades |
+| The keys | <kbd>Esc</kbd> with no modifier, and the command key with <kbd>Enter</kbd>, put it away; <kbd>Enter</kbd> alone is a new line. A key pressed while an input method composes is the input method's (7.4). <kbd>Ctrl N</kbd> does nothing here |
+| Where the keyboard goes | Back to the window that had it before quick capture opened, as soon as it is put away by a key, not when the grain lands: what is typed meanwhile is for that app. Put away by a click outside, the keyboard is where the click put it |
+| Opened again | While it is open, the keys or **New Note** give it the keyboard again. While its grain is in flight, the flight stops and a new box opens |
+| The grain | The note's own grain, in its shade (6.17): the box's words fade, and the box closes into a round of that shade as it shrinks. The mockup's box shrank to a white oval at 35%; a grain of the note's colour says better what it became |
+| The flight | It is the window that moves: Rust carries it along the two curves of 5.5 so that the grain, in its middle, lands on the middle of the tray icon, where the ring pulses. The page says when the box begins to shrink, and Rust moves the window from then; with reduced motion the page only fades and says nothing, so the window does not move. The tray icon's place is asked of the system each time |
+| Where the tray's place is not known | The plan's fallback: the grain falls 140 px on gravity's curve (5.4), as an archived note's grain sinks, and fades, where the window was. That is Linux, where the tray does not say where it is, and a tray on a screen of another scale than quick capture's, where the window would be drawn again in mid-air |
+| macOS and Linux | Not tried yet (manual checklist D68): there the keyboard is not handed back at once, so the window hides as soon as it is put away, with no flight, and the system gives the keyboard to what is in front |
+| A write that fails | Told on the main screen, as every failed write is (7.9), with **Copy text**. The main window comes back for it if it was closed to the tray or minimised, and asks to be looked at (the taskbar flashes) if it is behind another window |
+| Closing it otherwise | <kbd>Alt F4</kbd> puts it away, saved, and it hides at once. Quitting from the tray hands what it holds to the queue, which the app waits for (7.9) |
+| How quickly | From the key reaching the app to the text field having the keyboard, measured on the development build on Windows 11 (implementation plan, step 8a). The hotkey is heard at once; the tray's menu and showing the main window are still looked for every 16 ms |
 
 ---
 

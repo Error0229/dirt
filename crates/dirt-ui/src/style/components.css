@@ -579,3 +579,6 @@
 .dui-drop-hint{position:absolute;inset:8px;z-index:650;border:2px dashed var(--accent);border-radius:var(--r-l);background:color-mix(in srgb,var(--accent-soft) 70%,transparent);display:grid;place-items:center;pointer-events:none;opacity:0;transition:opacity var(--d-2) var(--e-std)}
 .dui-drop-hint span{background:var(--surface);color:var(--text);font-size:13.5px;font-weight:550;padding:8px 14px;border-radius:999px;box-shadow:var(--shadow-2);display:flex;gap:8px;align-items:center}
 .dropping>.dui-drop-hint{opacity:1}
+.dui-logo{flex:none;display:block}
+/* Where quick capture's grain lands on the tray icon, a ring pulses once (5.5). */
+.dui-capture-pulse{position:fixed;z-index:1301;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;border:2px solid var(--accent);box-sizing:border-box;pointer-events:none}

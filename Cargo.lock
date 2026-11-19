@@ -2077,6 +2077,7 @@ dependencies = [
  "tray-icon 0.19.3",
  "uuid",
  "webbrowser",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

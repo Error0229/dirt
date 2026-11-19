@@ -6,16 +6,16 @@
 //!
 //! Everything is drawn inside `dirt_ui::UiRoot`, which brings the new
 //! interface's style sheet and script and applies the theme, the accent
-//! and the text size from this device's settings. The main screen and
-//! Settings are the new ones; quick capture is the old one until its step
-//! replaces it, and keeps the old style sheets for that time.
+//! and the text size from this device's settings. Quick capture is a
+//! window of its own (`capture`), made hidden beside this one as the app
+//! starts.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use dioxus::desktop::tao::event::{Event, WindowEvent};
-use dioxus::desktop::{use_wry_event_handler, window, LogicalPosition, LogicalSize};
+use dioxus::desktop::{use_wry_event_handler, window, LogicalPosition};
 use dioxus::prelude::*;
 use dirt_core::config::ServerAddress;
 use dirt_core::session::{Session, SessionState};
@@ -24,15 +24,13 @@ use dirt_core::Store;
 use dirt_ui::{Appearance, UiRoot};
 
 use crate::bootstrap_config::load_bootstrap_config;
-use crate::components::QuickCapture;
 use crate::screen::writing::Scribe;
 use crate::screen::MainScreen;
 use crate::services::{data_folder, open_local_store};
 use crate::settings::SettingsPanel;
 use crate::state::AppState;
-use crate::theme::{resolve_theme, ResolvedTheme};
 use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
-use crate::{HOTKEY_TRIGGERED, TRAY_ENABLED};
+use crate::TRAY_ENABLED;
 
 /// How long quitting, and taking another store into use, wait for the
 /// store's queue to finish.
@@ -71,8 +69,9 @@ fn open_stores(server_url: Option<&str>) -> Result<Opened, String> {
 /// Where `DIRT_WINDOW_AT=x,y` asks for the window's top left corner, in
 /// screen points, in a development build. That is for looking at the app
 /// without its window covering what the person at the computer is doing:
-/// a place off every screen works. A release build ignores it.
-fn asked_position() -> Option<(f64, f64)> {
+/// a place off every screen works; quick capture then opens there too. A
+/// release build ignores it.
+pub fn asked_position() -> Option<(f64, f64)> {
     if !cfg!(debug_assertions) {
         return None;
     }
@@ -97,12 +96,9 @@ pub fn App() -> Element {
     let notes_read = use_signal(|| 0_u64);
     let mut pulled = use_signal(|| 0_u64);
     let mut settings = use_signal(dirt_core::models::Settings::default);
-    let mut theme = use_signal(|| resolve_theme(dirt_core::models::ThemeMode::System));
     let nav = dirt_ui::settings::use_settings_nav();
-    let mut quick_capture_open = use_signal(|| false);
     let mut quitting = use_signal(|| false);
     let page_leaver = use_hook(|| CopyValue::new(None::<Callback<()>>));
-    let mut saved_window_geometry: Signal<Option<(f64, f64, f64, f64)>> = use_signal(|| None);
     let mut db_service: Signal<Option<Arc<Store>>> = use_signal(|| None);
     let mut device_store: Signal<Option<Arc<Store>>> = use_signal(|| None);
     let mut startup_error: Signal<Option<String>> = use_signal(|| None);
@@ -123,7 +119,6 @@ pub fn App() -> Element {
         notes_read,
         pulled,
         settings,
-        theme,
         db_service,
         device_store,
         startup_error,
@@ -131,7 +126,6 @@ pub fn App() -> Element {
         session_state,
         sync_status,
         nav,
-        quick_capture_open,
         quitting,
         page_leaver,
     });
@@ -167,7 +161,6 @@ pub fn App() -> Element {
                     return;
                 }
             };
-            theme.set(resolve_theme(loaded_settings.theme));
             settings.set(loaded_settings);
 
             device_store.set(Some(Arc::new(opened.device)));
@@ -262,47 +255,49 @@ pub fn App() -> Element {
         }
     });
 
-    // Poll for the hotkey, the tray and the window coming back into focus.
+    // Quick capture's window, made now and kept hidden until it is asked
+    // for, so that it shows at once. It writes into the store in use, in
+    // the looks chosen here.
+    use_hook(crate::capture::make_window);
+    use_effect(move || {
+        crate::capture::link().set_context(db_service(), session());
+    });
+    use_effect(move || {
+        crate::capture::link().set_appearance(Appearance::from_settings(&settings.read()));
+    });
+
+    // Poll for the tray, a request to show the window and the window
+    // coming back into focus. The hotkey goes to quick capture directly.
     use_future(move || async move {
         let tray_enabled = TRAY_ENABLED.load(Ordering::SeqCst);
         loop {
-            // Process tray menu events
             if tray_enabled {
                 process_tray_events();
+            }
 
-                // Check for show window request
-                if SHOW_MAIN_WINDOW.swap(false, Ordering::SeqCst) {
-                    tracing::info!("Showing main window from tray");
-                    let win = window();
-                    let tao_win = &win.window;
+            if SHOW_MAIN_WINDOW.swap(false, Ordering::SeqCst) {
+                tracing::info!("Showing main window from tray");
+                let win = window();
+                win.set_visible(true);
+                win.set_minimized(false);
+                win.set_focus();
+            }
 
-                    // Restore pre-capture geometry before showing.
-                    if let Some((w, h, x, y)) = saved_window_geometry() {
-                        tao_win.set_outer_position(LogicalPosition::new(x, y));
-                        tao_win.set_inner_size(LogicalSize::new(w, h));
-                        saved_window_geometry.set(None);
+            if QUIT_REQUESTED.swap(false, Ordering::SeqCst) {
+                tracing::info!("Quit requested from tray");
+                // The main screen and quick capture hand over what their
+                // pages hold as they hear of this; then the store's queue
+                // is given a few seconds to finish, so that nothing typed
+                // is lost.
+                quitting.set(true);
+                crate::capture::link().leave();
+                spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    if !Scribe::global().settle(QUEUE_WAITS_AT_MOST).await {
+                        tracing::warn!("Quitting with the store's work unfinished");
                     }
-
-                    quick_capture_open.set(false);
-                    win.set_visible(true);
-                    win.set_focus();
-                }
-
-                // Check for quit request
-                if QUIT_REQUESTED.swap(false, Ordering::SeqCst) {
-                    tracing::info!("Quit requested from tray");
-                    // The main screen hands over what its page holds as it
-                    // hears of this; then the store's queue is given a few
-                    // seconds to finish, so that nothing typed is lost.
-                    quitting.set(true);
-                    spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                        if !Scribe::global().settle(QUEUE_WAITS_AT_MOST).await {
-                            tracing::warn!("Quitting with the store's work unfinished");
-                        }
-                        std::process::exit(0);
-                    });
-                }
+                    std::process::exit(0);
+                });
             }
 
             // The person came back to the app. The CLI may have signed in or
@@ -318,76 +313,16 @@ pub fn App() -> Element {
                 state.reread();
             }
 
-            // Check if hotkey was triggered
-            if HOTKEY_TRIGGERED.swap(false, Ordering::SeqCst) {
-                tracing::info!("Opening quick capture");
-                let win = window();
-                let tao_win = &win.window;
-
-                // Save main-window geometry once; keep it across repeated captures
-                // until the main window is explicitly reopened.
-                if saved_window_geometry().is_none() {
-                    let scale = tao_win.current_monitor().map_or(1.0, |m| m.scale_factor());
-                    let phys_size = tao_win.inner_size();
-                    let phys_pos = tao_win.outer_position().unwrap_or_default();
-                    saved_window_geometry.set(Some((
-                        f64::from(phys_size.width) / scale,
-                        f64::from(phys_size.height) / scale,
-                        f64::from(phys_pos.x) / scale,
-                        f64::from(phys_pos.y) / scale,
-                    )));
-                }
-
-                // Resize to compact quick capture size
-                let capture_w = 420.0;
-                let capture_h = 200.0;
-                tao_win.set_inner_size(LogicalSize::new(capture_w, capture_h));
-
-                // Center on current monitor
-                if let Some(monitor) = tao_win.current_monitor() {
-                    let mon_size = monitor.size();
-                    let mon_pos = monitor.position();
-                    let mon_scale = monitor.scale_factor();
-                    let cx = f64::from(mon_pos.x) / mon_scale
-                        + (f64::from(mon_size.width) / mon_scale - capture_w) / 2.0;
-                    let cy = f64::from(mon_pos.y) / mon_scale
-                        + (f64::from(mon_size.height) / mon_scale - capture_h) / 2.0;
-                    tao_win.set_outer_position(LogicalPosition::new(cx, cy));
-                }
-
-                win.set_visible(true);
-                win.set_focus();
-                quick_capture_open.set(true);
-            }
-
             tokio::time::sleep(Duration::from_millis(16)).await;
         }
     });
 
     let appearance = Appearance::from_settings(&settings.read());
-    // The old quick capture takes its colours from the old style sheets,
-    // by this attribute.
-    let legacy_theme = match theme() {
-        ResolvedTheme::Light => "light",
-        ResolvedTheme::Dark => "dark",
-    };
 
     rsx! {
-        // The old style sheets, for quick capture until its step replaces
-        // it.
-        document::Link {
-            rel: "stylesheet",
-            href: asset!("/assets/dx-components-theme.css"),
-        }
-        document::Link { rel: "stylesheet", href: asset!("/assets/theme-overrides.css") }
-
         UiRoot { appearance,
-            if quick_capture_open() {
-                div { class: "dk-legacy", "data-theme": legacy_theme, QuickCapture {} }
-            } else {
-                MainScreen {}
-                SettingsPanel {}
-            }
+            MainScreen {}
+            SettingsPanel {}
         }
     }
 }

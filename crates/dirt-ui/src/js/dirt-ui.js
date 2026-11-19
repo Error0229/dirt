@@ -2317,8 +2317,85 @@
     holder._duiPdf = null;
   }
 
+  // ---- Quick capture (sections 5.5 and 7.2) --------------------------------
+  // The desktop's quick capture is a small window of its own, kept ready
+  // and shown by the hotkey. Its box (`data-dui-capture`) is made afresh
+  // each time it opens, and comes into focus: from 97% and 10 px up,
+  // blurred 10 px, to sharp (snap; the blur on enter, 260 ms; the mockup's
+  // fade in, 280 ms). Put away, Rust sets the attribute to how it goes:
+  //
+  // - `tray`: the box shrinks to its grain (`data-dui-grain`) over 600 ms
+  //   while Rust carries the window to the tray icon, across quickly and
+  //   down slowly then fast, so that the path curves; where it lands a
+  //   ring pulses once.
+  // - `fall`: the same grain, which falls and fades where the window was,
+  //   where the tray's place cannot be known.
+  // - `fade`: nothing was written; it fades (280 ms, standard).
+  //
+  // The script says `away` as the box begins to shrink, which is when Rust
+  // starts moving the window, and `gone` when it has finished, when Rust
+  // hides the window. With reduced motion the box only fades, and says no
+  // `away`, so the window does not move.
+  const CAPTURE_MS = 600, CAPTURE_DOWN = 'cubic-bezier(.6,0,.9,.45)';
+  function captureOpened(box) {
+    if (reduced()) {
+      box.animate([{ opacity: 0 }, { opacity: 1 }], { duration: tokens.reducedMs });
+      return;
+    }
+    const snap = spring('snap');
+    box.animate([{ transform: 'translateY(-10px) scale(.97)' }, { transform: 'none' }], { duration: snap.ms, easing: snap.easing });
+    box.animate([{ filter: 'blur(10px)' }, { filter: 'blur(0)' }], { duration: 260, easing: tokens.enter });
+    box.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: tokens.standard });
+  }
+  function captureLeft(box, how) {
+    if (box._duiLeaving) return;
+    box._duiLeaving = true;
+    box.getAnimations().forEach(run => run.cancel());
+    const gone = () => tell(box, 'gone');
+    if (how === 'fade' || reduced()) {
+      const ms = reduced() ? tokens.reducedMs : 280;
+      after(box.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' }), ms, gone);
+      return;
+    }
+    tell(box, 'away');
+    const grain = box.dataset.duiGrain || 'hsl(32 46% 60%)';
+    const width = box.offsetWidth || 1, height = box.offsetHeight || 1;
+    // Its words go first; the box closes into a round of the grain's shade.
+    [...box.children].forEach(child => child.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 240, easing: tokens.exit, fill: 'forwards' }));
+    const end = how === 'fall' ? [{ opacity: 1, offset: 0.45 }, { opacity: 0 }] : [{ opacity: 1 }];
+    const last = end[end.length - 1];
+    Object.assign(last, { transform: `scale(${12 / width}, ${12 / height})`, borderRadius: '50%', backgroundColor: grain, boxShadow: 'none' });
+    const shrink = box.animate([{ transform: 'none', opacity: 1, borderRadius: '16px', backgroundColor: getComputedStyle(box).backgroundColor }].concat(end),
+      { duration: CAPTURE_MS, easing: CAPTURE_DOWN, fill: 'forwards' });
+    after(shrink, CAPTURE_MS, () => {
+      if (how !== 'tray') return gone();
+      // The tray icon pulses once as the grain lands on it.
+      const place = box.getBoundingClientRect();
+      const ring = document.createElement('i');
+      ring.className = 'dui-capture-pulse';
+      Object.assign(ring.style, { left: place.left + place.width / 2 + 'px', top: place.top + place.height / 2 + 'px' });
+      document.body.append(ring);
+      after(ring.animate([{ transform: 'scale(.4)', opacity: 1 }, { transform: 'scale(2.6)', opacity: 0 }],
+        { duration: 560, easing: tokens.enter, fill: 'forwards' }), 560, () => { ring.remove(); gone(); });
+    });
+  }
+  function watchCapture(box) {
+    if (box._duiCapture) return;
+    box._duiCapture = new MutationObserver(() => {
+      const how = box.dataset.duiCapture;
+      if (how && how !== 'open') captureLeft(box, how);
+    });
+    box._duiCapture.observe(box, { attributes: true, attributeFilter: ['data-dui-capture'] });
+    if (box.dataset.duiCapture === 'open') captureOpened(box);
+    else captureLeft(box, box.dataset.duiCapture);
+  }
+  function forgetCapture(box) {
+    if (box._duiCapture) box._duiCapture.disconnect();
+    box._duiCapture = null;
+  }
+
   // ---- Finding what Rust renders -----------------------------------------
-  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],[data-dui-grow],[data-dui-bars],[data-dui-audio],[data-dui-pdf],.dui-confirm';
+  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],[data-dui-grow],[data-dui-bars],[data-dui-audio],[data-dui-pdf],[data-dui-capture],.dui-confirm';
   function arrived(element) {
     if (element.matches('[data-dui-list]')) watchList(element);
     if (element.matches('[data-dui-modal]')) watchModal(element);
@@ -2331,6 +2408,7 @@
     if (element.matches('[data-dui-bars]')) tellBars();
     if (element.matches('[data-dui-audio]')) watchSound(element);
     if (element.matches('[data-dui-pdf]')) watchPdf(element);
+    if (element.matches('[data-dui-capture]')) watchCapture(element);
   }
   function left(element, parent) {
     if (element.matches('[data-dui-list]')) forgetList(element);
@@ -2342,6 +2420,7 @@
     if (element.matches('[data-dui-bars]')) setTimeout(tellBars, 0);
     if (element.matches('[data-dui-audio]')) forgetSound(element);
     if (element.matches('[data-dui-pdf]')) forgetPdf(element);
+    if (element.matches('[data-dui-capture]')) forgetCapture(element);
     if (element.matches('[data-dui-toast]') && !element.classList.contains('dui-toast-ghost')) {
       // The copy closes where the toast was: the toast's place, or the
       // error's above it.

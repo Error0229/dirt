@@ -408,9 +408,10 @@ impl Shared {
 
 /// Does the store's work for the page, in the order it was asked for.
 ///
-/// There is one for the app, on a task of its own. The screen may go
-/// (quick capture takes the window) with work still waiting: the work is
-/// done all the same, and only its news goes unheard. Quitting and taking
+/// There is one for the app, on a task of its own, and both the main
+/// screen's page and quick capture hand it their work. The screen may go
+/// (the app quitting) with work still waiting: the work is done all the
+/// same, and only its news goes unheard. Quitting and taking
 /// another store into use wait for it ([`Self::settle`]).
 ///
 /// A write that fails is not tried again. The store already waits out a

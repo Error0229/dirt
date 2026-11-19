@@ -12,8 +12,6 @@ use dirt_core::sync::worker::{SyncStatus, Trigger};
 use dirt_core::Store;
 use dirt_ui::settings::SettingsNav;
 
-use crate::theme::ResolvedTheme;
-
 /// Global application state
 #[derive(Clone, Copy)]
 pub struct AppState {
@@ -32,9 +30,6 @@ pub struct AppState {
     pub pulled: Signal<u64>,
     /// Application settings
     pub settings: Signal<Settings>,
-    /// Resolved theme (light/dark based on settings and system preference),
-    /// for the old quick capture until it is replaced.
-    pub theme: Signal<ResolvedTheme>,
     /// The note store in use: the signed-in account's, or the local one.
     /// It is replaced when the person signs in or out.
     pub db_service: Signal<Option<Arc<Store>>>,
@@ -52,8 +47,6 @@ pub struct AppState {
     pub sync_status: Signal<SyncStatus>,
     /// Whether Settings is open, and where.
     pub nav: SettingsNav,
-    /// Whether quick capture overlay is active
-    pub quick_capture_open: Signal<bool>,
     /// Quit was chosen: the main screen hands over what its page holds,
     /// and the app waits a moment for the store's queue before it ends.
     pub quitting: Signal<bool>,

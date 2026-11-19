@@ -49,6 +49,7 @@
 //! | `data-dui-drop` | a screen | Has the class `dropping` while files are dragged over the window |
 //! | `data-dui-modal="preview"` | the file preview | A dialog that grows out of the tile `data-dui-from` names: ← → say [`events::Outcome::Previous`] and [`events::Outcome::Next`], Space and Esc close it, and on Android swipes do the same; see [`files::FilePreview`] |
 //! | `data-dui-zoom` | a picture | A double click or a pinch zooms it to twice its size |
+//! | `data-dui-capture` | the desktop's quick-capture box | Comes into focus as it appears; set to `tray`, `fall` or `fade`, it shrinks to its grain (`data-dui-grain`) or fades, saying [`events::Outcome::Away`] as the window should start moving and [`events::Outcome::Gone`] when it can hide |
 //! | `data-dui-audio`, `data-dui-pdf` | a sound's card; a PDF's pages | Played, and drawn by the bundled PDF.js; see [`files::pdf`] |
 //!
 //! What the app asks of a field it does not hold (focus, its text) is in
