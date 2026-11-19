@@ -5,18 +5,20 @@
 //! The top bar has ⌄ on a new page and ‹ on a note, the paperclip, and the
 //! archive box (on an archived note, "back to the list" and the bin). It
 //! fades while the person types, and comes back when the page is touched.
-//! The note's files are under its text.
+//! The note's files are tiles under its text (6.5), `dirt-ui`'s, with the
+//! preview over the screen.
 //!
 //! The page is always in the screen, and so is its text field: a page let
 //! go keeps its words while it shrinks away, and the next page is given
 //! its own.
 
 use dioxus::prelude::*;
+use dirt_core::sync::overview::SyncIndicator;
 use dirt_ui::components::{GrowPage, IconButton, ScrollArea};
+use dirt_ui::files::FileTiles;
 use dirt_ui::Icon;
 
 use super::Screen;
-use crate::views::attachments::AttachmentPanel;
 
 /// The page.
 #[component]
@@ -26,6 +28,12 @@ pub fn Page() -> Element {
     let typing = *screen.typing.read();
     let note = view.note;
     let archived = view.archived;
+    // A file not yet sent says "uploading" while it can be sent, and "on
+    // this device only" while it cannot (6.5).
+    let can_send = matches!(
+        screen.sync_indicator(),
+        SyncIndicator::Synced { .. } | SyncIndicator::Syncing | SyncIndicator::JustSynced
+    );
 
     rsx! {
         GrowPage {
@@ -96,10 +104,14 @@ pub fn Page() -> Element {
                             oninput: move |event: FormEvent| screen.typed(&event.value()),
                         }
                         if let Some(note) = note {
-                            AttachmentPanel {
+                            FileTiles {
                                 key: "{note}",
-                                note_id: note,
-                                changed: screen.files_changed,
+                                files: screen.files,
+                                note,
+                                can_send,
+                                class: "dm-files",
+                                on_open: move |file| crate::files::open_in_another_app(&screen.files, screen.toasts, file),
+                                on_save: move |file| crate::files::save_a_copy(&screen.files, screen.toasts, file),
                             }
                         }
                     }

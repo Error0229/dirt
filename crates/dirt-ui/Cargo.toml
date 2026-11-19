@@ -15,6 +15,9 @@ gallery = []
 [dependencies]
 # A picture pasted into the page comes from the script as text in Base64.
 base64 = "0.22"
+# The answer to the web view's request for a file the preview shows, as
+# both apps' asset handlers hand it on (the version wry's is).
+http = "1"
 # For the settings the interface applies (theme, accent). Without
 # `keyring-store`, which the Android app must not build.
 dirt-core = { path = "../dirt-core", default-features = false }

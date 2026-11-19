@@ -19,6 +19,8 @@ use dirt_core::Store;
 
 /// What the activity says of a file too large to be worth copying in.
 const TOO_LARGE: &str = "too_large";
+/// What the activity says of a file past how many it copies in at once.
+const TOO_MANY: &str = "too_many";
 
 /// One file that came in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +135,11 @@ pub fn not_copied_in(files: &[Incoming]) -> Vec<String> {
                     "{name} is too large to attach. A file may be {} at most.",
                     size_words(most)
                 )
+            } else if problem == TOO_MANY {
+                format!(
+                    "{name} was not attached: a note may have at most {} files.",
+                    limits::MAX_FILES_PER_NOTE
+                )
             } else {
                 format!("{name} could not be read: {}", as_sentence(problem))
             })
@@ -154,8 +161,36 @@ pub fn worth_a_note(text: &str, files: &[Incoming]) -> bool {
 ///
 /// Run as a task of its own: turning away from the note must not drop
 /// files the person has already chosen.
+///
+/// One choosing or one share attaches at most as many files as a note may
+/// have; the activity copies in no more than that (`MOST_FILES`), and any
+/// past it here are named and not attached.
 pub async fn attach_incoming(store: Store, note: NoteId, files: Vec<Incoming>) -> Vec<String> {
+    let most = usize::try_from(limits::MAX_FILES_PER_NOTE).unwrap_or(usize::MAX);
+    let (mut kept, mut past) = (Vec::new(), Vec::new());
+    let mut copied = 0;
+    for file in files {
+        if file.copy.is_ok() {
+            copied += 1;
+            if copied > most {
+                past.push(file);
+                continue;
+            }
+        }
+        kept.push(file);
+    }
+    let files = kept;
+    discard_all(&past);
     let mut failed = not_copied_in(&files);
+    failed.extend(not_copied_in(
+        &past
+            .into_iter()
+            .map(|file| Incoming {
+                copy: Err(TOO_MANY.to_owned()),
+                ..file
+            })
+            .collect::<Vec<_>>(),
+    ));
     for file in files {
         let Ok(copy) = file.copy else {
             continue;
@@ -373,17 +408,64 @@ mod tests {
 
     /// The activity copies a file into the app before this code can say
     /// whether it is too large, so it has to know the limit itself. Its
-    /// number is held to the one the server enforces.
+    /// number is held to the one the server enforces; so is how many files
+    /// it copies in at once.
     #[test]
     fn the_activity_knows_how_large_a_file_may_be() {
         let activity = include_str!("../android/MainActivity.kt");
-        let line = format!(
-            "private const val MOST_FILE_BYTES = {}L",
-            limits::MAX_FILE_BYTES
-        );
+        for line in [
+            format!(
+                "private const val MOST_FILE_BYTES = {}L",
+                limits::MAX_FILE_BYTES
+            ),
+            format!(
+                "private const val MOST_FILES = {}",
+                limits::MAX_FILES_PER_NOTE
+            ),
+        ] {
+            assert!(
+                activity.contains(&line),
+                "MainActivity.kt should hold: {line}"
+            );
+        }
+    }
+
+    /// More files than a note may have: the first are attached, the rest
+    /// named and their copies removed.
+    #[tokio::test]
+    async fn no_more_files_are_attached_than_a_note_may_have() {
+        let folder = tempfile::tempdir().unwrap();
+        let store = Store::open(folder.path().join("notes.db")).unwrap();
+        let note = store.create_note("many").await.unwrap().id;
+        let most = usize::try_from(limits::MAX_FILES_PER_NOTE).unwrap();
+        let files: Vec<Incoming> = (0..most + 2)
+            .map(|index| {
+                let copy = folder.path().join(format!("in-{index}"));
+                std::fs::write(&copy, b"x").unwrap();
+                Incoming {
+                    name: format!("f{index}.txt"),
+                    media_type: String::new(),
+                    copy: Ok(copy),
+                }
+            })
+            .collect();
+
+        let failed = attach_incoming(store.clone(), note, files).await;
+
+        assert_eq!(store.note_attachments(&note).await.unwrap().len(), most);
+        assert_eq!(failed.len(), 2, "{failed:?}");
         assert!(
-            activity.contains(&line),
-            "MainActivity.kt should hold: {line}"
+            failed[0].starts_with(&format!("f{most}.txt was not attached")),
+            "{failed:?}"
         );
+        assert!(!folder.path().join(format!("in-{most}")).exists());
+        // A problem the activity reported reads the same.
+        let told = not_copied_in(&[Incoming {
+            name: "late.png".to_owned(),
+            media_type: String::new(),
+            copy: Err("too_many".to_owned()),
+        }]);
+        assert_eq!(told.len(), 1);
+        assert!(told[0].contains("at most"), "{told:?}");
     }
 }

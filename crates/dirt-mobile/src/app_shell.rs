@@ -134,7 +134,7 @@ pub fn AppShell() -> Element {
         async move {
             // Copies of files lent to other apps in earlier runs, and
             // exports that were never saved.
-            dirt_core::files::clear_copies(&crate::views::attachments::opened_folder());
+            dirt_core::files::clear_copies(&crate::files::opened_folder());
             crate::export::clear_exports(&crate::export::export_folder());
             let server_url = match server_url {
                 Ok(url) => url,
@@ -224,7 +224,7 @@ pub fn AppShell() -> Element {
                     // Copies of the account's files that were lent to other
                     // apps go with the account, and so does an export of
                     // its notes that is still waiting to be saved.
-                    dirt_core::files::clear_copies(&crate::views::attachments::opened_folder());
+                    dirt_core::files::clear_copies(&crate::files::opened_folder());
                     crate::export::clear_exports(&crate::export::export_folder());
                 }
             }

@@ -45,6 +45,11 @@ private const val REQUEST_PICK_FILES = 4402
 // to be refused afterwards.
 private const val MOST_FILE_BYTES = 10485760L
 
+// How many files are copied in from one choosing or one share: as many as a
+// note may have (dirt_proto's MAX_FILES_PER_NOTE). The rest are named as
+// "too_many" and not copied.
+private const val MOST_FILES = 20
+
 // Where files are copied to on their way into the app, inside its cache.
 private const val INCOMING_FOLDER = "incoming"
 
@@ -486,7 +491,7 @@ class MainActivity : WryActivity() {
     // app, and would leave the Rust side waiting for an answer.
     private fun copyAllIn(files: List<Uri>): JSONArray {
         val entries = JSONArray()
-        files.forEach { file ->
+        files.take(MOST_FILES).forEach { file ->
             entries.put(
                 runCatching { copyIn(file) }.getOrElse { failure ->
                     JSONObject()
@@ -494,6 +499,14 @@ class MainActivity : WryActivity() {
                         .put("mime", "")
                         .put("problem", failure.message ?: failure.javaClass.simpleName)
                 },
+            )
+        }
+        files.drop(MOST_FILES).forEach { file ->
+            entries.put(
+                JSONObject()
+                    .put("name", runCatching { displayName(file) }.getOrDefault(""))
+                    .put("mime", "")
+                    .put("problem", "too_many"),
             )
         }
         return entries
