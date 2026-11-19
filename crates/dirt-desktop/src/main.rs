@@ -13,6 +13,7 @@ mod capture;
 #[cfg(feature = "gallery")]
 mod gallery;
 mod hotkey;
+mod keyboard;
 mod screen;
 mod services;
 mod settings;

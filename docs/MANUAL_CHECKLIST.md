@@ -27,7 +27,7 @@ Afterwards, delete the test account, the keychain entry and the app's data.
 
 ## Desktop app
 
-D2, D3, D4 and D68 to D72 need a person at the keyboard: a global hotkey, the tray, and
+D2, D3, D4 and D68 to D74 need a person at the keyboard: a global hotkey, the tray, and
 the system browser cannot be driven from a script without acting on whatever
 else is on the screen. So do D10, D18, D20, D21, D24, D25, D33 and D36, and
 D38's drop, D42 and D43, which move the window on the person's screen. A file dialog opens in the
@@ -123,6 +123,8 @@ still for a person in a release build.
 | D70 | Windows, two screens of different scales (100% and 150%), the taskbar on one: quick capture with the pointer on each | It opens in the middle of the screen the pointer is on, sharp. On the taskbar's screen the grain flies to the tray; on the other it falls and fades where the box was |
 | D71 | Open quick capture, type, and click another window; open it again with nothing typed and click another window; then Alt F4 in it | The click puts it away, saved, and the click itself reaches the window clicked. With nothing typed it fades and nothing is made. Alt F4 saves and hides it |
 | D72 | Open quick capture and press Ctrl Alt N again; press Esc and, before the grain lands, Ctrl Alt N | The first keeps the box and its text. The second stops the flight and opens a blank box in the middle |
+| D73 | Release build, Windows: close the window to the tray, make writing fail (D47), write a thought in quick capture and press Esc, then type in another app for a minute | Nothing typed reaches Dirt. When the write fails, the main window comes back behind the app being typed in, with "A note could not be saved", and its taskbar button flashes |
+| D74 | With quick capture open and a thought in it, sign out in Settings (or have another device remove this one) | Quick capture puts itself away, its thought handed to the account's store first. Once signed out, the account's folder under `stores` goes: nothing holds it open |
 | D44 | Linux and macOS: start the app | It keeps the system's title bar, until the window without one has been tried there (design 7.6). Everything else is as on Windows |
 
 ## Android app

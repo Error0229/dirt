@@ -13,18 +13,19 @@
 //! note, the rest is saved a moment after typing pauses, and putting it
 //! away hands what it holds to the app's one queue of the store's work. So
 //! nothing typed is lost, and a write that fails is told where every
-//! failed write is told, on the main screen, with **Copy text**.
+//! failed write is told, on the main screen, with **Copy text**: also one
+//! asked for while no store is open.
 //!
 //! Put away, the box shrinks to its grain and the window carries the grain
 //! to the tray icon, or lets it fall and fade where the tray's place cannot
 //! be known ([`flight`]).
 //!
 //! The rest of the app reaches the window through [`link`]: the hotkey and
-//! the tray ask it to open, quitting asks it to hand over what it holds,
-//! and the main window gives it the store in use and the appearance.
+//! the tray ask it to open; quitting, and taking another store into use,
+//! ask it to hand over what it holds and wait until it has; and the main
+//! window gives it the store in use and the appearance.
 
 mod flight;
-mod foreground;
 
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
@@ -35,7 +36,7 @@ use dioxus::desktop::{
     WindowCloseBehaviour,
 };
 use dioxus::prelude::*;
-use dirt_core::models::Grain;
+use dirt_core::models::{Grain, NoteId};
 use dirt_core::session::Session;
 use dirt_core::Store;
 use dirt_ui::components::Logo;
@@ -44,10 +45,10 @@ use dirt_ui::events::{use_outcome, Outcome};
 use dirt_ui::{Appearance, UiRoot};
 use tokio::sync::watch;
 
+use crate::keyboard::{self, Foreground};
 use crate::screen::keys;
-use crate::screen::writing::{Draft, Scribe, Work};
+use crate::screen::writing::{Done, Draft, Scribe, Work};
 use flight::Flight;
-use foreground::Foreground;
 
 /// The text field's ID.
 const TEXT_ID: &str = "dk-capture-text";
@@ -65,6 +66,11 @@ const FIRST_BOX_HEIGHT: f64 = 96.0;
 /// How long typing pauses before what was typed is saved: the main
 /// screen's page waits the same.
 const SAVE_AFTER: Duration = Duration::from_millis(400);
+
+/// How long after it is shown the window must have the keyboard. One
+/// that did not get it (the system refused) is put away rather than left
+/// over every window with nobody able to type into it.
+const KEYBOARD_BY: Duration = Duration::from_millis(300);
 
 /// How long the window waits for the page to say that it has finished
 /// leaving, before it hides all the same: a page that is not drawn runs
@@ -88,8 +94,9 @@ enum Asked {
     Nothing,
     /// Open, for a key or a menu chosen at that moment.
     Open(Instant),
-    /// The app is quitting: hand over what is written, now.
-    Leave,
+    /// Hand over what is written, now: the app is quitting, or taking
+    /// another store into use.
+    HandOver,
 }
 
 /// Where a thought goes: the store in use and the session that syncs it.
@@ -103,6 +110,8 @@ pub struct Context {
 /// virtual DOM of its own.
 pub struct Link {
     asks: watch::Sender<(u64, Asked)>,
+    /// The last ask quick capture has done.
+    done: watch::Sender<u64>,
     appearance: watch::Sender<Appearance>,
     context: Mutex<Context>,
 }
@@ -112,17 +121,21 @@ pub fn link() -> &'static Link {
     static LINK: OnceLock<Link> = OnceLock::new();
     LINK.get_or_init(|| Link {
         asks: watch::Sender::new((0, Asked::Nothing)),
+        done: watch::Sender::new(0),
         appearance: watch::Sender::new(Appearance::default()),
         context: Mutex::new(Context::default()),
     })
 }
 
 impl Link {
-    fn ask(&self, asked: Asked) {
+    fn ask(&self, asked: Asked) -> u64 {
+        let mut asked_as = 0;
         self.asks.send_modify(|(serial, what)| {
             *serial += 1;
             *what = asked;
+            asked_as = *serial;
         });
+        asked_as
     }
 
     /// Opens quick capture: the hotkey was pressed, or New Note chosen, at
@@ -131,10 +144,18 @@ impl Link {
         self.ask(Asked::Open(at));
     }
 
-    /// Hands what quick capture holds to the store's queue, as the app
-    /// quits.
-    pub fn leave(&self) {
-        self.ask(Asked::Leave);
+    /// Has quick capture hand what it holds to the store's queue, for the
+    /// store it was written in, and put itself away; and waits until it
+    /// has, for at most `at_most`. Says whether it did. Called as the app
+    /// quits, and before another store is taken into use, which waits for
+    /// the queue next.
+    pub async fn hand_over(&self, at_most: Duration) -> bool {
+        let serial = self.ask(Asked::HandOver);
+        let mut done = self.done.subscribe();
+        let handed = tokio::time::timeout(at_most, done.wait_for(|done| *done >= serial))
+            .await
+            .is_ok_and(|seen| seen.is_ok());
+        handed
     }
 
     /// The store in use and the session, as the main window has them.
@@ -249,7 +270,7 @@ impl Capture {
     fn open(mut self, at: Instant) {
         let desktop = window();
         if self.view.peek().shown == Shown::Open {
-            if crate::app::takes_keyboard() {
+            if keyboard::may_take() {
                 desktop.set_focus();
             }
             dom::focus(&[TEXT], Caret::End);
@@ -261,17 +282,32 @@ impl Capture {
         self.flight.set(None);
         let size = window_size(FIRST_BOX_HEIGHT);
         flight::place(&desktop, size.width, size.height);
-        desktop.set_visible(true);
-        if crate::app::takes_keyboard() {
+        // Shown without the keyboard, which it then takes: the person asked
+        // for it (`keyboard`).
+        keyboard::show_without_keyboard(&desktop);
+        if keyboard::may_take() {
             desktop.set_focus();
+            let _ = desktop.webview.focus();
         }
-        let _ = desktop.webview.focus();
         let serial = self.view.peek().serial + 1;
         self.view.set(View {
             serial,
             shown: Shown::Open,
             grain: None,
         });
+        if keyboard::may_take() {
+            spawn(async move {
+                tokio::time::sleep(KEYBOARD_BY).await;
+                let view = self.view.peek().clone();
+                if view.serial == serial
+                    && view.shown == Shown::Open
+                    && !keyboard::is_in_front(&window())
+                {
+                    tracing::warn!("Quick capture did not get the keyboard, and is put away");
+                    self.put_away(Why::Closed);
+                }
+            });
+        }
     }
 
     /// The text field changed.
@@ -296,21 +332,32 @@ impl Capture {
         });
     }
 
-    /// Has the store do `work`, in the store the note is in.
+    /// Has the store do `work`: the store the note is in, or else the one
+    /// in use now. With no store open, the work is refused in its turn and
+    /// its text comes back as the error with Copy text: it is never
+    /// dropped.
     fn ask(self, work: impl IntoIterator<Item = Work>) {
         let work: Vec<Work> = work.into_iter().collect();
         if work.is_empty() {
             return;
         }
-        let Some(Context {
-            store: Some(store),
-            session,
-        }) = self.target.peek().clone()
-        else {
+        let target = self.target.peek().clone().unwrap_or_default();
+        let in_use = link().context();
+        let session = target.session.or(in_use.session);
+        if let Some(store) = target.store.or(in_use.store) {
+            Scribe::global().ask(&store, session.as_ref(), work);
+        } else {
             tracing::error!("No store is open to keep the thought in");
-            return;
-        };
-        Scribe::global().ask(&store, session.as_ref(), work);
+            Scribe::global().refuse(work);
+        }
+    }
+
+    /// The store could not make the note being written: the next key makes
+    /// it again, with all that is in the field then (7.9).
+    fn unmade(mut self, note: NoteId) {
+        if self.draft.write().unmade(note) {
+            self.target.set(None);
+        }
     }
 
     /// Puts it away: what it holds goes to the store's queue, and the box
@@ -328,7 +375,7 @@ impl Capture {
         // grain flies reaches the app it is meant for. Where it cannot be
         // given back, the window goes at once and the system gives it.
         let handed_back = match why {
-            Why::Key => !crate::app::takes_keyboard() || self.before.peek().give_focus_back(),
+            Why::Key => !keyboard::may_take() || self.before.peek().give_focus_back(),
             Why::ClickedAway => true,
             Why::Closed => false,
         };
@@ -352,18 +399,19 @@ impl Capture {
         });
         spawn(async move {
             tokio::time::sleep(GONE_AT_LATEST).await;
-            if self.view.peek().serial == serial {
-                self.gone();
-            }
+            self.gone(serial);
         });
     }
 
-    /// The page has begun to shrink to its grain: the window carries it.
-    fn away(self) {
+    /// The box `serial` has begun to shrink to its grain: the window
+    /// carries it. A box already replaced by a new one is not carried.
+    fn away(self, serial: u64) {
+        if self.view.peek().serial != serial {
+            return;
+        }
         let Some(flight) = *self.flight.peek() else {
             return;
         };
-        let serial = self.view.peek().serial;
         let view = self.view;
         spawn(async move {
             flight
@@ -374,11 +422,12 @@ impl Capture {
         });
     }
 
-    /// The page has finished leaving: the window hides until next time.
-    /// A box that has been replaced by a new one, opened while it left,
-    /// may still say so: that is not this box's news.
-    fn gone(self) {
-        if matches!(self.view.peek().shown, Shown::Leaving(_)) {
+    /// The box `serial` has finished leaving: the window hides until next
+    /// time. A box replaced by a new one, opened while it left, is not
+    /// the window's any more, and its news is not heeded.
+    fn gone(self, serial: u64) {
+        let view = self.view.peek().clone();
+        if view.serial == serial && matches!(view.shown, Shown::Leaving(_)) {
             self.hide();
         }
     }
@@ -427,7 +476,10 @@ fn QuickCapture() -> Element {
         flight: use_hook(|| CopyValue::new(None)),
         before: use_hook(|| CopyValue::new(Foreground::default())),
     };
-    let mut appearance = use_signal(|| *link().appearance.borrow());
+    // The theme is followed from the moment the window is made, so that a
+    // change before the first render is not missed.
+    let looks = use_hook(|| link().appearance.subscribe());
+    let mut appearance = use_signal(|| *looks.borrow());
 
     // The web view shows a new window once its page has loaded, whatever
     // it was made with. It is kept off every screen until then, and hidden
@@ -449,20 +501,36 @@ fn QuickCapture() -> Element {
             if serial > 0 {
                 match asked {
                     Asked::Open(at) => capture.open(at),
-                    Asked::Leave => capture.put_away(Why::Closed),
+                    Asked::HandOver => capture.put_away(Why::Closed),
                     Asked::Nothing => {}
                 }
+                link().done.send_replace(serial);
             }
             if asks.changed().await.is_err() {
                 break;
             }
         }
     });
+    use_future(move || {
+        let mut looks = looks.clone();
+        async move {
+            while looks.changed().await.is_ok() {
+                let now = *looks.borrow_and_update();
+                appearance.set(now);
+            }
+        }
+    });
+    // A note the store could not make: the next key makes it again.
     use_future(move || async move {
-        let mut looks = link().appearance.subscribe();
-        while looks.changed().await.is_ok() {
-            let now = *looks.borrow_and_update();
-            appearance.set(now);
+        let mut news = Scribe::global().listen();
+        loop {
+            match news.recv().await {
+                Ok(Done::Unsaved {
+                    note, making: true, ..
+                }) => capture.unmade(note),
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
         }
     });
 
@@ -480,35 +548,40 @@ fn QuickCapture() -> Element {
 
     use_context_provider(|| capture);
 
+    let view = capture.view.read().clone();
     rsx! {
         UiRoot { appearance: appearance(),
             style { {include_str!("capture.css")} }
-            div { class: "dk-capture", CaptureBox {} }
+            div { class: "dk-capture",
+                if view.shown != Shown::Hidden {
+                    CaptureBox { key: "{view.serial}", serial: view.serial }
+                }
+            }
         }
     }
 }
 
-/// The box, inside the root, where the script's news is heard.
+/// One box, from its opening until it has left, inside the root where the
+/// script's news is heard. Each box is its own, with its own ID for that
+/// news: a box replaced while it left says nothing to the one after it.
 #[component]
-fn CaptureBox() -> Element {
+fn CaptureBox(serial: u64) -> Element {
     let capture = use_context::<Capture>();
     let outcome = use_outcome(move |outcome| match outcome {
-        Outcome::Away => capture.away(),
-        Outcome::Gone => capture.gone(),
+        Outcome::Away => capture.away(serial),
+        Outcome::Gone => capture.gone(serial),
         _ => {}
     });
 
     let view = capture.view.read().clone();
-    let serial = view.serial;
     let how = match view.shown {
-        Shown::Hidden => return rsx! {},
         Shown::Open => "open",
         Shown::Leaving(how) => how.name(),
+        Shown::Hidden => return rsx! {},
     };
 
     rsx! {
         div {
-            key: "{serial}",
             class: "dk-capture-box",
             "data-dui-capture": how,
             "data-dui-grain": view.grain.clone(),

@@ -335,24 +335,36 @@ pub async fn run(store: &Arc<Store>, work: Work) -> Done {
     }
 }
 
-/// What is done, in place of `work`, for a note the store could not make:
-/// nothing is made later from a failure. What was typed is handed back to
-/// the person, files are not attached, and there is nothing to let go or
-/// to put away.
-fn never_made(work: Work) -> Done {
-    const WHY: &str = "The note could not be made.";
+/// Why work for a note the store could not make is not done.
+const NEVER_MADE: &str = "The note could not be made.";
+
+/// Why work asked for while no store was open is not done.
+const NO_STORE: &str = "Your notes are not open, so it could not be kept.";
+
+/// What is done in place of `work` that is not done, for the reason `why`.
+/// Nothing is made later from it: what was typed is handed back to the
+/// person, files are not attached, and there is nothing to let go or to
+/// put away. `made` says the note itself was made (only its text could not
+/// be kept); otherwise later work for it is not done either.
+fn not_done(work: Work, why: &str, made: bool) -> Done {
     match work {
-        Work::Create { note, text } | Work::Save { note, text } => Done::Unsaved {
+        Work::Create { note, text } => Done::Unsaved {
             note,
             text,
-            why: WHY.to_owned(),
+            why: why.to_owned(),
             making: true,
+        },
+        Work::Save { note, text } => Done::Unsaved {
+            note,
+            text,
+            why: why.to_owned(),
+            making: !made,
         },
         Work::Attach { note, files } => Done::Attached {
             note,
             failed: files
                 .iter()
-                .map(|file| format!("{}: {WHY}", file.name()))
+                .map(|file| format!("{}: {why}", file.name()))
                 .collect(),
         },
         Work::LetGoIfEmpty { note } => Done::LetGo { note, gone: true },
@@ -382,7 +394,8 @@ impl Work {
 /// note when it was asked for, whatever is in use when it is done.
 struct Job {
     serial: u64,
-    store: Arc<Store>,
+    /// None when no store was open: the work is refused in its turn.
+    store: Option<Arc<Store>>,
     session: Option<Session>,
     work: Work,
 }
@@ -462,6 +475,24 @@ impl Scribe {
         session: Option<&Session>,
         work: impl IntoIterator<Item = Work>,
     ) {
+        self.hand_on(Some(store), session, work);
+    }
+
+    /// Work asked for while no store is open, because it could not be
+    /// opened or is not open yet. It is not dropped: in its turn it is
+    /// said to have failed ([`Done::Unsaved`], with the text it carried),
+    /// so the person is given their words, and nothing is made from it
+    /// later.
+    pub fn refuse(&self, work: impl IntoIterator<Item = Work>) {
+        self.hand_on(None, None, work);
+    }
+
+    fn hand_on(
+        &self,
+        store: Option<&Arc<Store>>,
+        session: Option<&Session>,
+        work: impl IntoIterator<Item = Work>,
+    ) {
         for work in work {
             let serial = self.shared.serial.fetch_add(1, Ordering::SeqCst) + 1;
             if let Work::Create { note, text } | Work::Save { note, text } = &work {
@@ -470,7 +501,7 @@ impl Scribe {
             self.shared.waiting.fetch_add(1, Ordering::SeqCst);
             let job = Job {
                 serial,
-                store: Arc::clone(store),
+                store: store.map(Arc::clone),
                 session: session.cloned(),
                 work,
             };
@@ -519,9 +550,11 @@ async fn work_through(
         } = job;
         let note = work.note();
         let done = if unmade.contains(&note) {
-            never_made(work)
+            not_done(work, NEVER_MADE, false)
+        } else if let Some(store) = &store {
+            run(store, work).await
         } else {
-            run(&store, work).await
+            not_done(work, NO_STORE, true)
         };
         if matches!(done, Done::Unsaved { making: true, .. }) {
             unmade.insert(note);
@@ -870,6 +903,38 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// A thought written while no store is open (quick capture at login,
+    /// before the stores have opened, or after they could not be): it is
+    /// not dropped. Its text comes back as a failure, in its turn, and
+    /// nothing is made from it once a store is open.
+    #[tokio::test]
+    async fn work_with_no_store_open_comes_back_and_is_never_made_later() {
+        let (_folder, store) = temp_store();
+        let scribe = Scribe::start();
+        let mut news = scribe.listen();
+        let mut page = Draft::default();
+        let first = page.typed("m".into()).unwrap();
+        let note = page.note().unwrap();
+        page.typed("milk".into());
+        scribe.refuse([first]);
+        scribe.refuse(page.flush());
+        // The store has opened by the time the page is left.
+        page.typed("milk and eggs".into());
+        scribe.ask(&store, None, page.leave().work);
+
+        let heard = heard_once_settled(&scribe, &mut news).await;
+        assert_eq!(
+            unsaved(&heard),
+            [
+                (note, "m".to_owned(), true),
+                (note, "milk".to_owned(), true),
+                (note, "milk and eggs".to_owned(), true),
+            ]
+        );
+        assert_eq!(store.note_count().await.unwrap(), 0);
+        assert_eq!(scribe.waiting_text(&note), None);
     }
 
     /// The queue against a real store: what is asked is done in order.

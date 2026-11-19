@@ -2335,7 +2335,9 @@
   // The script says `away` as the box begins to shrink, which is when Rust
   // starts moving the window, and `gone` when it has finished, when Rust
   // hides the window. With reduced motion the box only fades, and says no
-  // `away`, so the window does not move.
+  // `away`, so the window does not move. Each box has an ID of its own
+  // for these, and one removed from the page (a new box opened while it
+  // left) says nothing more.
   const CAPTURE_MS = 600, CAPTURE_DOWN = 'cubic-bezier(.6,0,.9,.45)';
   function captureOpened(box) {
     if (reduced()) {
@@ -2351,7 +2353,9 @@
     if (box._duiLeaving) return;
     box._duiLeaving = true;
     box.getAnimations().forEach(run => run.cancel());
-    const gone = () => tell(box, 'gone');
+    // A box replaced by a new one while it left is gone from the page:
+    // it says nothing more, and draws no ring.
+    const gone = () => { if (box.isConnected) tell(box, 'gone'); };
     if (how === 'fade' || reduced()) {
       const ms = reduced() ? tokens.reducedMs : 280;
       after(box.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' }), ms, gone);
@@ -2368,7 +2372,7 @@
     const shrink = box.animate([{ transform: 'none', opacity: 1, borderRadius: '16px', backgroundColor: getComputedStyle(box).backgroundColor }].concat(end),
       { duration: CAPTURE_MS, easing: CAPTURE_DOWN, fill: 'forwards' });
     after(shrink, CAPTURE_MS, () => {
-      if (how !== 'tray') return gone();
+      if (how !== 'tray' || !box.isConnected) return gone();
       // The tray icon pulses once as the grain lands on it.
       const place = box.getBoundingClientRect();
       const ring = document.createElement('i');

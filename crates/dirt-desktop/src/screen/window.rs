@@ -49,9 +49,9 @@ pub fn builder() -> WindowBuilder {
         .with_inner_size(LogicalSize::new(1100.0, 720.0))
         .with_min_inner_size(LogicalSize::new(360.0, 320.0))
         .with_decorations(!frameless())
-        // A development build kept off every screen does not take the
-        // keyboard as it opens (`app::takes_keyboard`).
-        .with_focused(crate::app::takes_keyboard());
+        // Shown without the keyboard, each time: the app takes it when it
+        // starts, and when the person asks for the window (`keyboard`).
+        .with_focused(false);
     #[cfg(windows)]
     let builder = {
         use dioxus::desktop::tao::platform::windows::WindowBuilderExtWindows;

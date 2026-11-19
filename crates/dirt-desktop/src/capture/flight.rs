@@ -115,7 +115,7 @@ impl Flight {
             return Self {
                 how: How::Tray,
                 from,
-                to: PhysicalPosition::new(tray.x - size.width / 2.0, tray.y - size.height / 2.0),
+                to: landing(tray, size, desktop.scale_factor()),
             };
         }
         Self {
@@ -150,6 +150,22 @@ impl Flight {
     }
 }
 
+/// Where the window's top left corner goes so that the middle of the box,
+/// where the grain is, lands on `tray`. The box is not in the middle of
+/// the window: it has more room for its shadow below than above.
+fn landing(
+    tray: PhysicalPosition<f64>,
+    window: PhysicalSize<f64>,
+    scale: f64,
+) -> PhysicalPosition<f64> {
+    let above = super::AROUND_TOP * scale;
+    let box_height = (super::AROUND_TOP + super::AROUND_BOTTOM).mul_add(-scale, window.height);
+    PhysicalPosition::new(
+        tray.x - window.width / 2.0,
+        tray.y - box_height.mul_add(0.5, above),
+    )
+}
+
 /// The middle of the tray icon, on the screen, if it can be known and is
 /// on a screen of the window's own scale.
 ///
@@ -177,4 +193,33 @@ fn tray_middle(desktop: &DesktopContext) -> Option<PhysicalPosition<f64>> {
     #[allow(clippy::float_cmp)]
     let same_scale = screen.scale_factor() == scale;
     same_scale.then_some(middle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The middle of the box lands on the tray icon, at any scale: the
+    /// window's own middle is 24 points lower, by the box's room for its
+    /// shadow.
+    #[test]
+    fn the_box_lands_on_the_tray_not_the_window() {
+        let tray = PhysicalPosition::new(1678.0, 1056.0);
+        for scale in [1.0, 1.5, 2.0] {
+            let box_height = 96.0;
+            let size = super::super::window_size(box_height);
+            let window = PhysicalSize::new(size.width * scale, size.height * scale);
+            let top_left = landing(tray, window, scale);
+            let box_middle_x = top_left.x + window.width / 2.0;
+            let box_middle_y =
+                (super::super::AROUND_TOP + box_height / 2.0).mul_add(scale, top_left.y);
+            assert!((box_middle_x - tray.x).abs() < 1e-9, "{scale}");
+            assert!((box_middle_y - tray.y).abs() < 1e-9, "{scale}");
+            let window_middle_y = top_left.y + window.height / 2.0;
+            assert!(
+                (24.0_f64.mul_add(-scale, window_middle_y - tray.y)).abs() < 1e-9,
+                "{scale}"
+            );
+        }
+    }
 }

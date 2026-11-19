@@ -36,6 +36,11 @@ use crate::TRAY_ENABLED;
 /// store's queue to finish.
 const QUEUE_WAITS_AT_MOST: Duration = Duration::from_secs(5);
 
+/// How long taking another store into use, and quitting, wait for quick
+/// capture to hand over what it holds: it is at once, unless its window
+/// has not been made yet, when it holds nothing.
+const HANDING_OVER_AT_MOST: Duration = Duration::from_secs(1);
+
 /// Set when the window gains focus: the person has come back to the app.
 static WINDOW_FOCUSED: AtomicBool = AtomicBool::new(false);
 
@@ -80,15 +85,6 @@ pub fn asked_position() -> Option<(f64, f64)> {
     Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
 }
 
-/// Whether the app's windows may take the keyboard from the app in front:
-/// quick capture as it opens, the main window coming back for an error. Not
-/// in a development build kept off every screen (`DIRT_WINDOW_AT`): a
-/// window nobody can see must not take the keys of the person at the
-/// computer, nor ask for their attention.
-pub fn takes_keyboard() -> bool {
-    asked_position().is_none()
-}
-
 /// Root application component
 #[component]
 #[allow(clippy::too_many_lines)]
@@ -99,6 +95,15 @@ pub fn App() -> Element {
         if let Some((x, y)) = asked_position() {
             window().set_outer_position(LogicalPosition::new(x, y));
         }
+        // The window is made without the keyboard (`keyboard`) and shown
+        // once its page has loaded: the person started the app, so it
+        // takes the keyboard then.
+        spawn(async {
+            tokio::task::yield_now().await;
+            if crate::keyboard::may_take() {
+                window().set_focus();
+            }
+        });
     });
     let mut current_note_id = use_signal(|| None);
     let open_request = use_signal(|| None);
@@ -198,17 +203,24 @@ pub fn App() -> Element {
                     .as_ref()
                     .is_some_and(|open| open.path() == store.path());
                 if !same_store {
-                    // What the page holds goes to the queue, for the store
-                    // it was written in. The new store is in use from now,
-                    // so a thought typed meanwhile goes there; and the
-                    // queue's work for the old one is done before anything
-                    // lets go of it (on signing out it is removed below).
+                    // What the page and quick capture hold goes to the
+                    // queue, for the store it was written in. The new store
+                    // is in use from now, so a thought typed meanwhile goes
+                    // there; and the queue's work for the old one is done
+                    // before anything lets go of it (on signing out it is
+                    // removed below).
                     let leave = *page_leaver.peek();
                     if let Some(leave) = leave {
                         leave.call(());
                     }
+                    let capture = crate::capture::link();
+                    if !capture.hand_over(HANDING_OVER_AT_MOST).await {
+                        tracing::warn!("Quick capture did not hand over what it held in time");
+                    }
+                    let store = Arc::new(store);
+                    capture.set_context(Some(Arc::clone(&store)), Some(current.clone()));
                     current_note_id.set(None);
-                    db_service.set(Some(Arc::new(store)));
+                    db_service.set(Some(store));
                     if !Scribe::global().settle(QUEUE_WAITS_AT_MOST).await {
                         tracing::warn!("Took another store into use with work unfinished");
                     }
@@ -299,8 +311,10 @@ pub fn App() -> Element {
                 // is given a few seconds to finish, so that nothing typed
                 // is lost.
                 quitting.set(true);
-                crate::capture::link().leave();
                 spawn(async move {
+                    if !crate::capture::link().hand_over(HANDING_OVER_AT_MOST).await {
+                        tracing::warn!("Quick capture did not hand over what it held in time");
+                    }
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     if !Scribe::global().settle(QUEUE_WAITS_AT_MOST).await {
                         tracing::warn!("Quitting with the store's work unfinished");

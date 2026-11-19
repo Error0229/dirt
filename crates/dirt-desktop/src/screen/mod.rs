@@ -273,7 +273,11 @@ impl Screen {
             .ok()
             .and_then(|store| store.clone());
         let Some(store) = page_store.or(in_use) else {
+            // No store is open (it could not be, or not yet): the work is
+            // refused in its turn, and what it carried comes back as the
+            // error with Copy text. It is never dropped.
             tracing::error!("No store is open to keep the page in");
+            Scribe::global().refuse(work);
             return;
         };
         let session = self
@@ -346,16 +350,14 @@ impl Screen {
         let copy = Callback::new(move |()| self.copy_unsaved());
         // The write may have been quick capture's, or the page's after the
         // window was closed to the tray: the error is here, so the window
-        // comes back for it, or asks to be looked at.
+        // comes back for it, without the keyboard, and asks to be looked
+        // at. The person may be typing in another app, up to half a minute
+        // after the thought was put away (`keyboard`).
         let main = dioxus::desktop::window();
-        let may = crate::app::takes_keyboard();
-        if !main.is_visible() || main.is_minimized() {
-            main.set_visible(true);
-            main.set_minimized(false);
-            if may {
-                main.set_focus();
-            }
-        } else if may && !main.is_focused() {
+        if !main.is_visible() {
+            crate::keyboard::show_without_keyboard(&main);
+        }
+        if crate::keyboard::may_take() && !main.is_focused() {
             main.request_user_attention(Some(
                 dioxus::desktop::tao::window::UserAttentionType::Informational,
             ));
