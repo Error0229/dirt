@@ -55,15 +55,19 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.setup.outputs.ready == 'true'
 
       # pg_dump must be as new as the server.
-      - name: Install the Postgres 18 client and age
+      - name: Install age and the Postgres repository's script
+        if: steps.setup.outputs.ready == 'true'
+        uses: ./.github/actions/apt-install
+        with:
+          packages: postgresql-common age
+
+      - name: Install the Postgres 18 client
         if: steps.setup.outputs.ready == 'true'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-common age
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y postgresql-client-18
           echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"

@@ -15,10 +15,12 @@ jobs:
     name: Security Guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+        uses: ./.github/actions/apt-install
+        with:
+          packages: ripgrep
 
       - name: Run security guardrails
         run: bash .github/scripts/security-guard.sh
@@ -27,19 +29,19 @@ jobs:
     name: Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev
 
       # rustup reads the version and components from rust-toolchain.toml.
       - name: Install Rust toolchain
         run: rustup toolchain install
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -62,19 +64,19 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev
 
       - name: Install Rust toolchain
         run: rustup toolchain install
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -133,13 +135,13 @@ jobs:
       # Each test creates its own throwaway database on this server.
       DATABASE_URL: postgres://postgres:dirt@127.0.0.1:5432/postgres
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         run: rustup toolchain install
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -158,10 +160,13 @@ jobs:
 
       # The scripts that dump the database and restore it, against the same
       # server. The client programs must be as new as the server.
-      - name: Install the Postgres 18 client and age
+      - name: Install age and the Postgres repository's script
+        uses: ./.github/actions/apt-install
+        with:
+          packages: postgresql-common age
+
+      - name: Install the Postgres 18 client
         run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-common age
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y postgresql-client-18
           echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
@@ -173,18 +178,18 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev
 
       - name: Install Rust toolchain
         run: rustup toolchain install
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -201,7 +206,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         run: rustup toolchain install
@@ -217,19 +222,19 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev
 
       - name: Install Rust toolchain
         run: rustup toolchain install
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -246,13 +251,12 @@ jobs:
     name: Android Mobile Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      # The action's default package list includes "tools", which the SDK
-      # repository no longer offers, so the step failed. Only sdkmanager on
-      # PATH is needed here; the NDK is installed in the next step.
+      # Only sdkmanager on PATH is needed here, not the action's default
+      # packages; the NDK is installed in the next step.
       - name: Setup Android SDK tools
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           packages: ''
 
@@ -265,7 +269,7 @@ jobs:
           rustup target add x86_64-linux-android
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry

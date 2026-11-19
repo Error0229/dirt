@@ -1,0 +1,41 @@
+name: Install Ubuntu packages
+description: >-
+  Runs apt-get update and apt-get install for the packages given, from the
+  Ubuntu mirror the runner should have been given.
+
+# Since about 2026-11-17 some ubuntu-latest runners are given
+# us-east-2.ec2.archive.ubuntu.com as their Ubuntu mirror, in
+# /etc/apt/apt-mirrors.txt, in place of azure.archive.ubuntu.com. From those
+# runners it sends packages at 40 to 60 kB/s, so the 68 MB the desktop crates
+# need took 20 to 27 minutes, against 8 seconds from the Azure mirror. This
+# puts the Azure mirror back. Every job that installs packages from Ubuntu
+# does it through here, so the fix is in one place.
+
+inputs:
+  packages:
+    description: The packages to install, separated by spaces.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install ${{ inputs.packages }}
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        mirrors=/etc/apt/apt-mirrors.txt
+        if [ -f "$mirrors" ]; then
+          echo "::group::Mirror list given to this runner"
+          cat "$mirrors"
+          echo "::endgroup::"
+          if grep -q '\.ec2\.archive\.ubuntu\.com' "$mirrors"; then
+            sudo sed -i -E 's#://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com/#://azure.archive.ubuntu.com/#' "$mirrors"
+            echo "::notice::Replaced the EC2 Ubuntu mirror with azure.archive.ubuntu.com"
+            cat "$mirrors"
+          fi
+        fi
+        sudo apt-get update
+        # Word splitting is wanted: one argument per package.
+        # shellcheck disable=SC2086
+        sudo apt-get install -y $PACKAGES
