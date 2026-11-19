@@ -953,9 +953,9 @@ Dirt on the one already in shows the banner.
 ### 6.9 Panel (desktop Settings) and sheet (Android Settings)
 
 One scrolling page in six sections: Account, Devices, Sync, Appearance,
-Voice (6.18), Export. Voice comes with voice itself (the plan's step 9);
-until then the page has the other five, since a section with nothing in it
-would be a heading over nothing. On the desktop a rail on the left jumps to each section and follows
+Voice (6.18), Export. An app shows Voice once it has voice (the desktop
+from the plan's step 9a, Android from 9b); until then it has the other
+five, since a section with nothing in it would be a heading over nothing. On the desktop a rail on the left jumps to each section and follows
 the scroll. On Android it is a sheet with a grabber. Each section is a card
 of rows: an icon square, a title, one line of grey detail, and at most one
 control on the right.
@@ -1577,8 +1577,8 @@ What 7.6, 7.7 and 6.4's second half left open, settled in step 3b.
 ### 7.10 Settled when quick capture was built
 
 What 7.2 and 5.5 left open for quick capture, settled when it was built
-(implementation plan, step 8a). Holding the keys to talk comes with voice
-(step 9).
+(implementation plan, step 8a). Holding the keys to talk came with voice
+(step 9a): 7.11.
 
 | | Settled |
 |---|---|
@@ -1600,6 +1600,31 @@ What 7.2 and 5.5 left open for quick capture, settled when it was built
 | Closing it otherwise | <kbd>Alt F4</kbd> puts it away, saved, and it hides at once. Quitting from the tray hands what it holds to the queue, which the app waits for (7.9) |
 | Counting (section 2) | Writing a thought from another app is the three actions section 2 gives: <kbd>Ctrl Alt N</kbd>, the typing, <kbd>Esc</kbd>. From the tray's menu it is four: the icon, **New Note**, the typing, <kbd>Esc</kbd> |
 | How quickly | From the hotkey reaching the app to the text field having the keyboard: 21 to 46 ms, median 25 ms over 24 opens, and 24 to 40 ms for the first open after the app starts (a development build on Windows 11, implementation plan step 8a). The hotkey is heard at once; the tray's menu is still looked for every 16 ms, which can add that much |
+
+### 7.11 Settled when voice was built on the desktop
+
+What 6.18 and 5.5 left open for voice, settled when it was built
+(implementation plan, step 9a). What is shared with Android (the row, the
+note, Settings → Voice) holds there too.
+
+| | Settled |
+|---|---|
+| The mic on the page | In the blank page's gutter, above the paperclip; not on an open note (6.18: "Into a note being written: not offered"). Its tooltip: "Hold to talk, or tap". It is shown only where the build has the speech model, since no icon is shown that does nothing |
+| The gesture's numbers | The mockup's: a press let go within 280 ms is a tap; a slide 60 px up while held listens on, hands-free; 90 px to the left throws it away. A click from the keyboard (Enter or Space on the mic) is a tap. A press the system takes away throws it away |
+| From the press | The press starts listening at once: the view shows the grains and the timer, and the microphone opens beside the window's thread. Here it was hearing 128 ms after the press, the engine's libraries loaded the first time. Released before it is open, it ends as soon as it is |
+| While the page listens | Over the page, at its bottom: the grains, the timer from the first second, ✕ and ✓. The page's other icons go; the mic stays in the gutter, grown to 132%, while it is held. ✓ has the keyboard, so <kbd>Enter</kbd> keeps and <kbd>Esc</kbd> throws away. The grains are drawn by the script from the level Rust gives twenty times a second: the sound's loudness, from −55 dBFS (still) to −15 (the loudest) |
+| Holding the hotkey | <kbd>Ctrl Alt N</kbd> opens quick capture at once for typing, as before. Once the keys have been down for 280 ms, the mic's line between a tap and a hold, and nothing has been typed, the box listens in the text's place; letting go keeps it. The microphone opens only then, so a tap never opens it. While it listens <kbd>Enter</kbd> keeps and <kbd>Esc</kbd> throws away, and a click outside keeps what was said. Kept, the box shrinks to the new note's grain and goes to the tray as a typed thought does (7.10); thrown away or with nothing heard, it fades |
+| Nothing heard | Silero's detector found no speech in the recording: the view shakes once (320 ms) and goes, and nothing is made, wherever it listened |
+| The note | Made at once, with no words, under an ID the app makes so that its grain can settle before the store has made it. Its one file is the recording, "Voice recording.opus" (`audio/ogg`), marked in its document as its voice recording. Until it has its words its row is named "Voice · 0:12", in whole seconds as the timer and the player count them, with the mic in place of the paperclip ("Said, not typed"). The mic stays once the words have come, while the recording is on the note |
+| The words | Made by the device that recorded it alone, in the background, when the app starts and after each thought said: one recording at a time, the model loaded for each and let go after. For eight seconds of speech they were on the row 2.2 s after letting go, here. They go at the start of the note; what was typed on it meanwhile follows after a blank line, on the page too, and the caret stays where it was in what was typed |
+| No words found | The note keeps its name, and its row says "No words found" beneath it. The recording stays whatever Settings says, so that nothing said is lost |
+| Text only | Once the words are in, the recording is taken off the note with its mark: a note like any other. Until then it is a file like any other |
+| Settings → Voice | The one line "Turned into text here. Your voice is never sent anywhere."; **The recording**, Keep or Text only, with a grey line saying what the choice does; **Language**, "English", with "Other languages come later": English alone has been tried, and the list holds only what has, so there is nothing to choose yet; **Talk from any app**, the held keys; **Speech model**, the credit its licence asks for: "Parakeet TDT-CTC 110M by NVIDIA, under CC BY 4.0, converted to ONNX by the sherpa-onnx project". Between Appearance and Export, on the rail too |
+| The microphone refused, or none | The press makes nothing, and the mic shows a slash until a press can listen. Its tooltip says where to allow it: "Allow the microphone for desktop apps in Windows Settings, Privacy & security, Microphone" (Windows has no dialog for a desktop app; macOS asks in its own the first time), or "No microphone was found" |
+| A web view that cannot play Ogg Opus | Asked of the web view as the app starts (`canPlayType`). Where it says no, by its documentation macOS's before 15.4, the preview is handed the recording decoded, as a WAV made in memory. WebView2 says "probably", and plays it as it is |
+| A screen reader | Is told "Listening" as it starts, "Kept", "Thrown away" or "Nothing heard" as it ends, and "Words arrived: …" with the first line when a note's words come (section 12) |
+| Reduced motion | The grains stay in a still row and only their strength changes; an ending only fades |
+| The voice folder | The model, Silero's detector and, on Windows, the engine's two libraries are one folder that ships with the app as one of its assets. The libraries are loaded from it the first time voice is used, not as the app starts, so an app without them still starts, with no mic |
 
 ---
 
@@ -2036,7 +2061,7 @@ built.
 | **Grains, layers and the pile** (6.17) | 積沙成塔: the list as a pile, newest on top, and the pile drawn as a heap of sand, one grain per thought. Derived from the notes; nothing new is stored. The core gives every note in one call, each grain's shade, the layer of an edit time and the numbers of the count line since step 1 of the plan | `dirt-core` store and models, both apps |
 | **Archive** (6.19): an `archived` value in each note's CRDT document, derived into its row like the deleted flag. The list leaves archived notes out; search and export keep them | Clearing a done thought without losing it. In the note's document it syncs and merges like any edit, and the server sees nothing new | `dirt-core` notes and store, every client, the CLI (`dirt archive`, `dirt unarchive`, `dirt list --archived`), feature-parity.md. Archiving is not an edit (6.19) |
 | **Tags: counts for the notes left** (6.3): how many notes match the current words and tags plus each other tag, and "any of them" as well as "all of them" | The tag list that stays open, and never offers a tag that would empty the list. The store has it since step 1 of the plan (`Store::tags_to_narrow`, `find_notes_by_tags`) | `dirt-core` store: one grouped query, which starts at the full-text index when there are words and at the tag table when there are none |
-| **Voice: speech to text on the device** (6.18). One engine used by both apps that reads a finished recording once and gives its words, as accurately as a phone allows, and Silero's voice-activity model for the end of a thought. Words as they are heard were given up on 2026-11-17, so the streaming model the plan's first trial chose no longer holds; the trial's second measurement chooses the engine and the model (implementation plan, "Trial 1"). A phone is still to be measured. Its model, Parakeet TDT-CTC 110m (130 MiB), is shipped inside each app (decided 2026-11-18); nothing is fetched | Voice without anyone's voice leaving the device. The engine is native code: prebuilt libraries of 21 MiB on Windows and 25 MiB for each Android ABI, fetched when it builds and shipped beside the app. So it sits in a crate of its own: the CLI, the server's tests and most CI jobs must not build it | `dirt-voice`, a new crate, kept out of the workspace's members and built only when an app's `voice` feature asks for it; both apps, which ship the model |
+| **Voice: speech to text on the device** (6.18). One engine used by both apps that reads a finished recording once and gives its words, as accurately as a phone allows, and Silero's voice-activity model for the end of a thought. Words as they are heard were given up on 2026-11-17, so the streaming model the plan's first trial chose no longer holds; the trial's second measurement chooses the engine and the model (implementation plan, "Trial 1"). A phone is still to be measured. Its model, Parakeet TDT-CTC 110m (130 MiB), is shipped inside each app (decided 2026-11-18); nothing is fetched | Voice without anyone's voice leaving the device. The engine is native code: prebuilt libraries of 21 MiB on Windows and 25 MiB for each Android ABI, fetched when it builds and shipped beside the app. So it sits in a crate of its own, which the CLI and the server never build | `dirt-voice`, a crate of its own and a member of the workspace like the others, so that it is linted and tested with them; the desktop depends on it, Android from step 9b. The model and the libraries are fetched by a pinned SHA-256 into a cache outside `target/` when it builds; CI leaves the model out of every job but one (plan, step 9a) |
 | **Which speech model, downloaded or shipped** | English comes first (decided 2026-11-16), and accuracy before size and speed (decided 2026-11-17). The plan's second voice measurement puts a default, a smaller and a larger model to the owner, each with its size, its mistakes and how long it takes. Downloading on first use keeps the apps small; shipping makes voice work offline from the first second | Decided: Parakeet TDT-CTC 110m (2026-11-17), shipped in the apps (2026-11-18) |
 | **Microphone access**: Android's `RECORD_AUDIO`, asked on first use; the desktop's microphone, with macOS's usage string | Voice | `dirt-desktop`, `dirt-mobile` |
 | **A held hotkey**: <kbd>Ctrl Alt N</kbd> must report its release as well as its press | Hold to talk from any app. The `global-hotkey` crate reports both; Linux under Wayland offers no global hotkeys at all, held or not | `dirt-desktop` |

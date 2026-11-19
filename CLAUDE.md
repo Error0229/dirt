@@ -43,6 +43,8 @@ Rules it sets:
 - The colours are written once, in `dirt_ui::tokens`, and the style sheet is made from them. A colour that changes is checked by `dirt_ui::contrast`'s tests, and the table in design section 4.1 changes with it.
 - Anything that follows a finger or a pointer runs in `dirt-ui`'s script (`crates/dirt-ui/src/js/dirt-ui.js`) from first touch to release, and tells Rust only how it ended (`dirt_ui::events`). The script that animates a list watches the page; it is not called from Rust.
 - `dirt-ui`'s classes begin with `dui-`. A screen being replaced does not reuse a class of the old interface.
+- Speech becomes text on the device that heard it, with the model shipped in the app, and in `dirt-voice` alone. It reads sound and gives words; it has no SQL, HTTP or cryptography, and `dirt-core` does not depend on it (an app hands the core its engine as a `dirt_core::voice::Transcriber`). Only the device that recorded a thought makes its words.
+- The speech model and the engine's libraries are never committed. Their builds fetch them by an address and a SHA-256 written in `crates/dirt-voice/build.rs` and `crates/dirt-voice/sherpa-onnx-sys/build.rs`, into the build cache. Change a pin only after trying what it pins.
 
 ## Tech Stack
 
@@ -61,6 +63,7 @@ What the code on `main` uses today:
 
 - **Files**: a file attached to a note is encrypted in pieces with a key kept in the note's document, and goes straight to S3-compatible storage by a link the server signs (`dirt-core::files`, `dirt-core::sync::engine::files`, `dirt-api::files`). A picture gets a thumbnail, made on the device with the `image` crate
 - **Export**: every note as one text, JSON or Markdown, with each note's files beside it: a folder from the desktop app and the CLI, and from the Android app the same as one zip file, written with the `zip` crate (`dirt-core::export`)
+- **Voice**: `dirt-voice`, sherpa-onnx's prebuilt libraries with NVIDIA's Parakeet TDT-CTC 110M (English, CC BY 4.0) and Silero's detector. A recording, Ogg Opus written with `opus` and `ogg`, is kept as a note with the recording as its file at once (`Store::keep_voice_note`); its words are made afterwards on that device (`dirt_core::voice`). The desktop's microphone is `cpal`. The model and the libraries ship in the app as the voice folder (`crates/dirt-desktop/voice/`, made by the build, not in git)
 
 ## Project Structure
 
@@ -72,6 +75,7 @@ crates/
 ├── dirt-api/      # The server: device registry and encrypted note blobs on Postgres
 ├── dirt-sim/      # Tests only: real client cores syncing through the real server in one process
 ├── dirt-ui/       # What the two apps share of the interface: tokens, fonts, icons, motion, components, and a gallery of them
+├── dirt-voice/    # Speech turned into text on the device: the recording, the pauses, the words; its vendored sherpa-onnx-sys
 ├── dirt-desktop/  # Dioxus desktop application
 ├── dirt-mobile/   # Dioxus Android application
 └── dirt-cli/      # Command-line interface (`dirt`)
@@ -115,6 +119,10 @@ cargo run -p dirt-sim --example serve
 # and DATABASE_URL as compose.yaml shows)
 cargo test --all
 
+# The voice engine's tests that read speech with the model (ignored by
+# default, since most of CI builds without it)
+cargo test -p dirt-voice -- --include-ignored
+
 # Format code
 cargo fmt --all
 
@@ -128,6 +136,8 @@ make help
 make run-mobile-android
 make build-mobile-android
 ```
+
+The first build of `dirt-voice` (the desktop app, the workspace) fetches the speech model (108 MB) and the engine's libraries into a build cache outside `target/`: `DIRT_BUILD_CACHE`, or else `%LOCALAPPDATA%\dirt\build-cache`, `~/Library/Caches/dirt-build` or `~/.cache/dirt-build`. It is kept across `cargo clean` and shared by checkouts. `DIRT_VOICE_MODEL=skip` builds without the model, for checks that do not ship the app: the mic is then not offered. On Linux the microphone needs ALSA's headers (`libasound2-dev`). On Windows a program that links `dirt-voice` must load `sherpa-onnx-c-api.dll` late (`/DELAYLOAD`, as `dirt-desktop`'s build script does); `dirt-voice` loads it from the voice folder.
 
 Android builds run Gradle, which may need a different JDK from the machine's default. Do not change `JAVA_HOME` for that. Set the `DIRT_ANDROID_JAVA_HOME` environment variable to the JDK to use (JDK 21 works with the Gradle project `dx` generates); the two Android `make` targets pass it to `dx` and Gradle as `JAVA_HOME` for that command only. Any new script that runs `dx` for Android should do the same.
 

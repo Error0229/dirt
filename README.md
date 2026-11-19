@@ -118,6 +118,11 @@ cd crates/dirt-desktop && dx serve
 `cargo run -p dirt-desktop` starts it too, but without its style sheets:
 `dx` is what bundles them.
 
+The first build fetches the speech model the app ships for voice (108 MB,
+NVIDIA's Parakeet TDT-CTC 110M) and the engine's libraries, each checked
+against a pinned hash, into a build cache outside `target/`; `CLAUDE.md`
+says where, and how to build without the model.
+
 The server to sync with is given when the app is built: set
 `DIRT_API_BASE_URL` in `.env.client` (see `.env.client.example`). The same
 variable in the environment when the app starts comes before it. Without

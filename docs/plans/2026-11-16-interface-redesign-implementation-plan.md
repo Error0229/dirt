@@ -1899,6 +1899,81 @@ device that recorded it (design 6.18). `docs/SECURITY.md` gains voice. The model
 TDT-CTC 110m, is shipped inside both apps (decided 2026-11-18): nothing is
 fetched and no storage of Dirt's is changed.
 
+**Split in two**, as step 8 was. 9a is `dirt-voice`, the core's part and
+the desktop; 9b is Android: the dock, the capture sheet's 🎙, Talk,
+Settings → Voice and the microphone's permission.
+
+**9a built.** `dirt-voice` is the engine: sherpa-onnx with Parakeet
+TDT-CTC 110M read greedily, Silero's detector, the recording written as Ogg
+Opus as the sound comes (`recording`), the trial's last cutter (`cut`:
+pieces of at most 25 s, cut in the middle of the latest pause or else at the
+quietest tenth of a second, every sample kept), the pieces read one at a
+time with the model loaded for each recording and let go after
+(`reading`), listening with its level and its pauses (`hearing`), the
+desktop's microphone through cpal, and a stand-in that plays a WAV
+(`stand_in`, `DIRT_VOICE_FROM_WAV` in a development build). The core keeps
+a recording as a note at once (`Store::keep_voice_note`: the note, the file,
+the `voice` mark in its document, and this device's row in `voice_waiting`,
+schema version 7), and `dirt_core::voice::make_words` makes the words of
+what waits, given the engine as a `Transcriber`, so that the core does not
+depend on it. The desktop: the mic in the blank page's gutter, quick
+capture held from <kbd>Ctrl Alt N</kbd>, the words made when the app starts
+and after each thought, Settings → Voice with the credit, and the rows and
+the CLI naming a note "Voice · 0:12" until its words come. What it settled
+is in design section 7.11. `docs/SECURITY.md` has voice.
+
+How it is built, where this differs from trial 1's recommendation:
+
+- **`dirt-voice` is a member of the workspace**, not left out of it behind
+  an app's `voice` feature. The model ships in the apps (decided
+  2026-11-18), so the desktop always builds it; as a member it is linted
+  and tested like the rest. The CLI and the server do not depend on it.
+- **Everything it is built with is fetched by a pinned SHA-256** into a
+  cache outside `target/` (`crates/dirt-voice/build/fetch.rs`;
+  `DIRT_BUILD_CACHE`, or the system's cache folder): sherpa-onnx 2.0.1's
+  prebuilt libraries, Silero's detector and the model's archive
+  (`sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8`, from the
+  project's `asr-models` release, the one the trial measured). An archive
+  is unpacked once and removed, so one copy of each is kept. The hashes
+  are those GitHub publishes with each release, and the two the trial
+  wrote down agree. `sherpa-onnx-sys` is vendored with a build script of
+  Dirt's own for this (`crates/dirt-voice/sherpa-onnx-sys/README.md`); its
+  bindings are unchanged.
+- **The voice folder** (the model, the detector and, on Windows, the two
+  libraries) is made of hard links into the cache, and `dirt-desktop`'s
+  build script links it into `crates/dirt-desktop/voice/`, not in git,
+  from which `asset!` ships it in the app: `dx build` copies it into the
+  app's assets (152 MiB on Windows).
+- **On Windows the engine is loaded late**: the program is linked with
+  `/DELAYLOAD:sherpa-onnx-c-api.dll`, and `dirt-voice` loads both libraries
+  from the voice folder by their full paths the first time voice is used.
+  An app without them starts all the same, and offers no mic. Linux and
+  macOS link sherpa-onnx's static libraries, so nothing has to be found
+  beside the program.
+- **CI**: every job builds with `DIRT_VOICE_MODEL=skip`, which leaves the
+  130 MiB model out (the detector and the libraries, a few MiB, are still
+  fetched), and keeps the build cache in its cache, keyed on the pins. One
+  job, `voice`, fetches the model and runs `dirt-voice`'s tests that read
+  speech with it (`--include-ignored`), on the two recordings that come in
+  the model's archive. Linux needs ALSA's headers for the microphone.
+
+Run on Windows: `dx build`, the window off the screen, driven through its
+web view's debugging port, the hotkey from standard input, and the WAV
+stand-in for the microphone, signed out. The page: the mic heard 128 ms
+after the press; held for eight seconds of a recording of speech and let
+go, the note was in the list 0.55 s later as "Voice · 0:08", and its words
+replaced the name 2.2 s after letting go; a tap listened hands-free and Esc
+threw it away; a quiet recording shook and made nothing. Quick capture
+held from the keys listened, and letting go kept it and put the box away;
+a tap of the keys opened it for typing with nothing heard. Words left to
+make when the app quit were made when it started again. Words that came
+for the note open on the page went before what had been typed on it. The
+preview played the recording. `dirt-sim` has the recording reaching a
+second device encrypted, that device never making the words, and the
+words and Text only reaching it. The real microphone, a refused or missing
+one, Narrator, ten minutes, macOS, Linux and a release build are the manual
+checklist's (D75 to D88).
+
 ### Step 10: finishing
 
 The pile widget. Long text in the page: past a few hundred kilobytes it
