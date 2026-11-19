@@ -62,6 +62,9 @@ Step 1 and step 2 do not wait for them.
 | Who settles what the design leaves open or gets wrong | Whoever builds it, writing the answer into the design document |
 | Words on screen while the person speaks (decided 2026-11-17, after trial 1's first result) | Given up. What matters is that the words kept are accurate, and a larger model is welcome for that. Nothing is written while listening; the recording is kept at once as a note and its words are made afterwards. Trial 1's second measurement chooses the engine and the model |
 | Which speech model (decided 2026-11-17, after trial 1's second measurement) | Parakeet TDT-CTC 110m first: 130 MiB, 6.4% of words wrong, about 0.6 GiB while it works, three times as fast as Parakeet TDT 0.6b v2, whose 4.8% is not worth five times the size and twice the memory for now. It is English only, as voice is (system design 16.3); its licence, CC BY 4.0, asks for credit, which step 9 gives in the app, beside the model's name Parakeet v2 stays the step up if the 110m's words prove not good enough |
+| PDF in the preview (decided 2026-11-18) | A renderer is bundled, so every platform draws a PDF's pages in the preview: fewer steps than opening another app. pdf.js, a few MB, is the one the design names; step 6 chooses and records it |
+| The speech model: fetched on first use, or shipped in the app (decided 2026-11-18) | Shipped in both apps. Parakeet TDT-CTC 110m is 130 MiB; voice works offline from the first second, nothing is fetched, and Dirt's storage is not touched |
+| Snap Layouts on Windows 11 (decided 2026-11-18) | Skipped for now: the window keeps working without the flyout. Winning it back stays possible later |
 
 ## Still the owner's
 
@@ -69,9 +72,7 @@ Each has a default that holds if the step is reached without an answer.
 
 | Decision | Needed by | Default |
 |---|---|---|
-| PDF in the preview: bundle a renderer (a few MB) or not | Step 6 | Not bundled: a PDF opens in another app on Linux and Android |
-| The speech model: fetched on first use, or shipped in the app | Step 9. Trial 1's second measurement has the sizes: 631 MiB for Parakeet TDT 0.6b v2, 130 MiB for Parakeet TDT-CTC 110m | Fetched on first use |
-| Snap Layouts on Windows 11: accept losing the flyout, or win it back | Step 3 | Accept losing it |
+| Nothing at present | | |
 
 ## Trials
 
@@ -1762,7 +1763,8 @@ the local server (`docs/MANUAL_CHECKLIST.md`, Runs).
 ### Step 6: files
 
 The file tile, the preview from memory, dropping files to make a note,
-pasting a picture. `docs/SECURITY.md` says what the preview keeps in
+pasting a picture. A PDF renderer is bundled, so PDFs show their pages in
+the preview on every platform (decided 2026-11-18). `docs/SECURITY.md` says what the preview keeps in
 memory and what "Open in another app" writes.
 
 ### Step 7: grains and the pile
@@ -1790,9 +1792,9 @@ The engine and model that trial 1's second measurement chooses, listening
 on the page and in quick capture, the held hotkey, Android's dock and
 capture sheet, the Talk entry, Settings → Voice. A recording is kept as a
 note at once, and its words are made afterwards in the background by the
-device that recorded it (design 6.18). `docs/SECURITY.md` gains voice. The model is put in
-Dirt's own storage, which is a change to production's storage and waits
-for the owner's word.
+device that recorded it (design 6.18). `docs/SECURITY.md` gains voice. The model, Parakeet
+TDT-CTC 110m, is shipped inside both apps (decided 2026-11-18): nothing is
+fetched and no storage of Dirt's is changed.
 
 ### Step 10: finishing
 
