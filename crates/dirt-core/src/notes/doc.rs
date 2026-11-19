@@ -13,9 +13,11 @@
 //!   changes, so an entry is written once and at most removed. Two devices
 //!   that each attach a file write two entries, and both are kept.
 //! - `marks`: single values that say something about the note and are not
-//!   part of what it holds. There is one, `archived`: `true` while the note
-//!   is archived. A document written before archive has no such map and
-//!   reads as not archived.
+//!   part of what it holds. `archived` is `true` while the note is
+//!   archived; a document written before archive has no such map and reads
+//!   as not archived. `voice` says which of the note's files is its voice
+//!   recording, how long it lasts and whether its words have been made
+//!   (`crate::models::VoiceMark`); a typed note has none.
 //!
 //! Attaching a file and removing one are edits, like a change to the text:
 //! each raises the device's count. A device that deleted the note without
@@ -53,6 +55,7 @@ use yrs::{
 
 use super::diff::{diff, Op};
 use crate::files::Attachment;
+use crate::models::VoiceMark;
 
 /// Edit counts per device.
 pub type VersionVector = BTreeMap<u64, u64>;
@@ -267,6 +270,45 @@ impl NoteDoc {
         true
     }
 
+    /// The mark that one of the note's files is its voice recording, if it
+    /// has one and the note still has that file. A mark this version cannot
+    /// read counts as none, and stays in the document for one that can.
+    #[must_use]
+    pub fn voice(&self) -> Option<VoiceMark> {
+        let txn = self.doc.transact();
+        let mark = match self.marks.get(&txn, VOICE) {
+            Some(Out::Any(Any::String(entry))) => VoiceMark::from_entry(&entry)?,
+            _ => return None,
+        };
+        let named = self.files.get(&txn, &mark.file_id.to_string()).is_some();
+        named.then_some(mark)
+    }
+
+    /// Marks one of the note's files as its voice recording, or takes the
+    /// mark off. Like archiving, this is not an edit: it is what is said of
+    /// the note, not what the note holds. Returns `false`, and writes
+    /// nothing, when the mark is already as asked.
+    pub fn set_voice(&self, mark: Option<&VoiceMark>) -> bool {
+        let mut txn = self.doc.transact_mut();
+        let now = match self.marks.get(&txn, VOICE) {
+            Some(Out::Any(Any::String(entry))) => Some(entry.to_string()),
+            _ => None,
+        };
+        let wanted = mark.map(VoiceMark::to_entry);
+        if now == wanted {
+            return false;
+        }
+        match wanted {
+            Some(entry) => {
+                self.marks.insert(&mut txn, VOICE, entry);
+            }
+            None => {
+                self.marks.remove(&mut txn, VOICE);
+            }
+        }
+        true
+    }
+
     /// Whether the note is archived: out of the list, and still a note.
     #[must_use]
     pub fn is_archived(&self) -> bool {
@@ -353,6 +395,9 @@ impl NoteDoc {
 
 /// The key of the archive mark in `marks`.
 const ARCHIVED: &str = "archived";
+
+/// The key of the voice mark in `marks`.
+const VOICE: &str = "voice";
 
 /// A mark that is missing, or is anything but `true`, reads as not archived.
 fn read_archived<T: ReadTxn>(marks: &MapRef, txn: &T) -> bool {

@@ -52,3 +52,8 @@ dx.lock
 
 # Claude Code internal scheduling state
 .claude/
+
+# The voice folder each app ships (the speech model and its engine), put
+# together from the build cache when the app is built: never committed.
+/crates/dirt-desktop/voice/
+/.dirt-build-cache/

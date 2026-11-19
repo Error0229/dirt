@@ -17,11 +17,11 @@ use super::schema::{client_id, write_transaction};
 use super::sync_state::remove_row;
 use super::tags::{Chosen, TagRule};
 use crate::files::Attachment;
-use crate::models::{extract_tags, Note, NoteId, PileNote};
+use crate::models::{extract_tags, Note, NoteId, PileNote, Voice, VoiceMark};
 use crate::notes::NoteDoc;
 use crate::{Error, Result};
 
-const NOTE_COLUMNS: &str = "n.id, n.text, n.edited_at, n.archived";
+const NOTE_COLUMNS: &str = "n.id, n.text, n.edited_at, n.archived, n.voice";
 
 fn note_from_row(row: &Row<'_>) -> rusqlite::Result<Note> {
     let id: String = row.get(0)?;
@@ -37,6 +37,11 @@ fn note_from_row(row: &Row<'_>) -> rusqlite::Result<Note> {
         created_at: id.created_at_ms().unwrap_or(edited_at),
         updated_at: edited_at,
         archived: row.get(3)?,
+        voice: row
+            .get::<_, Option<String>>(4)?
+            .as_deref()
+            .and_then(VoiceMark::from_entry)
+            .map(Voice::from),
     })
 }
 
@@ -95,6 +100,8 @@ pub(super) fn save(
     let text = doc.text();
     let deleted = doc.is_deleted();
     let archived = doc.is_archived();
+    let voice = doc.voice();
+    let voice_entry = voice.as_ref().map(VoiceMark::to_entry);
     // A document always has an edit time once it has been edited. One that
     // has not, which only a merge of an empty document could produce, falls
     // back to the creation time.
@@ -122,7 +129,8 @@ pub(super) fn save(
                     edited_revision = CASE WHEN ?8 THEN revision + 1 ELSE edited_revision END, \
                     deleted_at = CASE WHEN ?4 THEN COALESCE(deleted_at, ?7) END, \
                     archived = ?9, \
-                    offered = offered OR ?10 \
+                    offered = offered OR ?10, \
+                    voice = ?11 \
               WHERE rowid = ?5",
             params![
                 bytes,
@@ -134,7 +142,8 @@ pub(super) fn save(
                 now,
                 edit,
                 archived,
-                !local
+                !local,
+                voice_entry
             ],
         )?;
         row
@@ -146,8 +155,8 @@ pub(super) fn save(
         let deleted_at = deleted.then_some(now);
         tx.execute(
             "INSERT INTO notes (id, doc, text, edited_at, deleted, revision, pushed_revision, \
-                                deleted_at, archived, edited_revision, offered) \
-             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9, ?10)",
+                                deleted_at, archived, edited_revision, offered, voice) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 key,
                 bytes,
@@ -158,7 +167,8 @@ pub(super) fn save(
                 deleted_at,
                 archived,
                 i64::from(local),
-                !local
+                !local,
+                voice_entry
             ],
         )?;
         tx.last_insert_rowid()
@@ -230,6 +240,7 @@ pub(super) fn save(
         created_at: id.created_at_ms().unwrap_or(edited_at),
         updated_at: edited_at,
         archived,
+        voice: voice.map(Voice::from),
     }))
 }
 

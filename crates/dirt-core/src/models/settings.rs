@@ -126,6 +126,37 @@ impl FocusStyle {
     }
 }
 
+/// What is kept of a thought said aloud once its words are made
+/// (Settings → Voice, interface design 6.18).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum VoiceRecording {
+    /// The words, and the recording on the note as a file.
+    #[default]
+    Keep,
+    /// The words alone: the recording is taken off the note once its words
+    /// are made. Until then, or if none are found, it stays.
+    TextOnly,
+}
+
+impl VoiceRecording {
+    /// The name it is stored under.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Keep => "keep",
+            Self::TextOnly => "text_only",
+        }
+    }
+
+    /// The one stored under `name`.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::Keep, Self::TextOnly]
+            .into_iter()
+            .find(|choice| choice.name() == name)
+    }
+}
+
 /// Application settings
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
@@ -141,6 +172,9 @@ pub struct Settings {
     pub capture_hotkey: String,
     /// How the desktop's list gets out of the way while a note is written.
     pub focus_style: FocusStyle,
+    /// What is kept of a thought said aloud.
+    #[serde(default)]
+    pub voice_recording: VoiceRecording,
 }
 
 impl Default for Settings {
@@ -152,6 +186,7 @@ impl Default for Settings {
             accent: Accent::Clay,
             capture_hotkey: "Ctrl+Shift+D".to_string(),
             focus_style: FocusStyle::Slide,
+            voice_recording: VoiceRecording::Keep,
         }
     }
 }

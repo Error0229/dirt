@@ -87,6 +87,23 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
     if event.is_composing() {
         return;
     }
+    // While the page listens, Enter keeps what was said and Esc throws it
+    // away (7.4); nothing is typed.
+    if screen.talking.is_listening() && event.modifiers().is_empty() {
+        match event.key() {
+            Key::Enter => {
+                event.prevent_default();
+                screen.talking.end(true);
+                return;
+            }
+            Key::Escape => {
+                event.prevent_default();
+                screen.talking.end(false);
+                return;
+            }
+            _ => {}
+        }
+    }
     let at = *screen.focus.peek();
     let shift = event.modifiers().shift();
     if at == Where::Page {
@@ -156,7 +173,12 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
 
 /// One row of the panel: the keys, and what they do.
 const KEYS: &[(&str, &str)] = &[
-    ("Ctrl Alt N", "Quick capture, from any app"),
+    (
+        "Ctrl Alt N",
+        "Quick capture, from any app. Held: talk, and let go to keep it",
+    ),
+    ("Enter", "While listening: keep what was said"),
+    ("Esc", "While listening: throw it away"),
     ("Esc", "Done with the note: a blank page"),
     ("Ctrl Enter", "Done, from the note"),
     ("Ctrl N", "Done, from anywhere"),

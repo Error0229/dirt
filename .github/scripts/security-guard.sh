@@ -35,6 +35,7 @@ CLIENT_CRATES=(
   crates/dirt-ui
   crates/dirt-desktop
   crates/dirt-mobile
+  crates/dirt-voice
 )
 if rg --line-number --pcre2 \
   "\\b(?:DATABASE_URL|MIGRATE_DATABASE_URL|CLERK_SECRET_KEY)\\b" \

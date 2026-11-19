@@ -19,8 +19,9 @@ mod services;
 mod settings;
 mod state;
 mod tray;
+mod voice;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -133,16 +134,53 @@ pub fn without_the_web_views_own_keys(config: Config) -> Config {
         .with_custom_head(dirt_ui::webview::guard_head())
 }
 
-/// Ctrl Alt N was pressed: quick capture opens.
+/// How long Ctrl Alt N is held before quick capture listens instead of
+/// waiting for typing (6.18, 7.2): the mic's line between a tap and a hold.
+const HELD_AFTER: Duration = Duration::from_millis(280);
+
+/// The keys are down: from the press until they are let go.
+static HOTKEY_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// Counts presses, so that a hold is told apart from the press before.
+static PRESSES: AtomicU64 = AtomicU64::new(0);
+
+/// This press has been held long enough to talk. Only then does letting
+/// go say anything: quick capture keeps only the latest thing asked of it,
+/// and a quick tap's letting go would otherwise take the place of its
+/// opening.
+static TALKING: AtomicBool = AtomicBool::new(false);
+
+/// Ctrl Alt N was pressed: quick capture opens, for typing. Held past
+/// [`HELD_AFTER`], it listens instead. The system repeats a key held down;
+/// a repeat is not another press.
 fn hotkey_pressed() {
+    if HOTKEY_DOWN.swap(true, Ordering::SeqCst) {
+        return;
+    }
     tracing::info!("Hotkey pressed (Ctrl+Alt+N)");
     capture::link().open(Instant::now());
+    let press = PRESSES.fetch_add(1, Ordering::SeqCst) + 1;
+    thread::spawn(move || {
+        thread::sleep(HELD_AFTER);
+        if HOTKEY_DOWN.load(Ordering::SeqCst) && PRESSES.load(Ordering::SeqCst) == press {
+            TALKING.store(true, Ordering::SeqCst);
+            capture::link().talk();
+        }
+    });
+}
+
+/// Ctrl Alt N was let go: what was said while it was held is kept.
+fn hotkey_released() {
+    if HOTKEY_DOWN.swap(false, Ordering::SeqCst) && TALKING.swap(false, Ordering::SeqCst) {
+        capture::link().let_go();
+    }
 }
 
 /// In a development build with `DIRT_ACTIONS_FROM_STDIN` set, each line
 /// read from the standard input does what a hand would do outside the
-/// window: `hotkey` presses Ctrl Alt N, and `new note`, `open dirt` and
-/// `quit` choose that in the tray's menu. They go the same way as the real
+/// window: `hotkey` presses Ctrl Alt N and lets it go, `hotkey down` and
+/// `hotkey up` press it and let it go apart (a hold talks), and
+/// `new note`, `open dirt` and `quit` choose that in the tray's menu. They go the same way as the real
 /// key and menu from there. That is for trying the app on a computer whose
 /// keyboard and tray belong to someone else. A release build ignores it.
 fn take_actions_from_stdin() {
@@ -153,7 +191,12 @@ fn take_actions_from_stdin() {
         for line in std::io::stdin().lines() {
             let Ok(line) = line else { break };
             match line.trim() {
-                "hotkey" => hotkey_pressed(),
+                "hotkey" => {
+                    hotkey_pressed();
+                    hotkey_released();
+                }
+                "hotkey down" => hotkey_pressed(),
+                "hotkey up" => hotkey_released(),
                 "new note" => tray::chosen(tray::Choice::NewNote),
                 "open dirt" => tray::chosen(tray::Choice::OpenDirt),
                 "quit" => tray::chosen(tray::Choice::Quit),
@@ -172,8 +215,9 @@ fn initialize_hotkey_manager() -> Result<HotkeyManager, String> {
             Ok(manager) => {
                 GlobalHotKeyEvent::set_event_handler(Some(|event: GlobalHotKeyEvent| {
                     tracing::debug!("GlobalHotKeyEvent received: state={:?}", event.state);
-                    if event.state == HotKeyState::Pressed {
-                        hotkey_pressed();
+                    match event.state {
+                        HotKeyState::Pressed => hotkey_pressed(),
+                        HotKeyState::Released => hotkey_released(),
                     }
                 }));
                 return Ok(manager);

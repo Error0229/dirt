@@ -8,7 +8,7 @@
 //! from the same parts, [`Marked`] and [`TagLinks`].
 
 use dioxus::prelude::*;
-use dirt_core::models::{Grain, Note, NoteId};
+use dirt_core::models::{Grain, Note, NoteId, Words};
 use dirt_core::sync::overview::NOT_ON_SERVER_YET;
 
 use crate::components::icon_button::{IconButton, IconButtonSize};
@@ -17,10 +17,19 @@ use crate::pile::shade;
 use crate::text::{pieces, Piece, PieceKind};
 use crate::time::{edited_full, edited_short, Clock};
 
+/// What a note that was said shows when the model found no words in it
+/// (6.18): not a note with nothing in it.
+pub const NO_WORDS_FOUND: &str = "No words found";
+
+/// What the mic on a row says.
+pub const SAID: &str = "Said, not typed";
+
 /// How many of a note's trailing tags a row shows before "+1".
 const TAGS_SHOWN: usize = 2;
 
 /// What a list shows of one note.
+// Four facts a row shows, each on its own: not a state machine.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoteSummary {
     /// Which note.
@@ -40,6 +49,12 @@ pub struct NoteSummary {
     pub time_in_full: String,
     /// The note has files.
     pub has_files: bool,
+    /// One of its files is its voice recording: the mic in place of the
+    /// paperclip (6.2, 6.18).
+    pub said: bool,
+    /// Where its words are, for a note that was said: `waiting`, `made` or
+    /// `none`. The script fades the words in when it turns to `made`.
+    pub words: Option<&'static str>,
     /// The note has not reached the server as it is now.
     pub waiting: bool,
     /// The note is archived: its title is a shade lighter, and what its
@@ -57,15 +72,36 @@ impl NoteSummary {
     #[must_use]
     pub fn of(note: &Note, find_words: &[String], clock: Clock) -> Self {
         let outline = note.outline();
+        // A thought said aloud is named by its length until it has words
+        // (6.18). One in which the model found none says so beneath.
+        let untitled = note.voice.map_or_else(
+            || "Empty note".to_owned(),
+            |voice| format!("Voice \u{b7} {}", voice.length()),
+        );
+        let none_found = note
+            .voice
+            .is_some_and(|voice| voice.words == Words::NoneFound)
+            && outline.title.trim().is_empty();
+        let preview = if none_found {
+            pieces(NO_WORDS_FOUND, &[])
+        } else {
+            pieces(&outline.preview, find_words)
+        };
         Self {
             id: note.id,
             title: pieces(&outline.title, find_words),
-            untitled: "Empty note".to_owned(),
-            preview: pieces(&outline.preview, find_words),
+            untitled,
+            preview,
             labels: outline.labels,
             time: edited_short(note.updated_at, clock),
             time_in_full: edited_full(note.updated_at, clock),
-            has_files: false,
+            has_files: note.voice.is_some(),
+            said: note.voice.is_some(),
+            words: note.voice.map(|voice| match voice.words {
+                Words::Waiting => "waiting",
+                Words::Made => "made",
+                Words::NoneFound => "none",
+            }),
             waiting: false,
             archived: note.archived,
             thumbnail: None,
@@ -73,11 +109,12 @@ impl NoteSummary {
     }
 
     /// Whether the note has files, and the name of the first: a note with
-    /// a file and no words goes by the file's name.
+    /// a file and no words goes by the file's name. A note that was said
+    /// goes by its length instead.
     #[must_use]
     pub fn files(mut self, has_files: bool, first_name: Option<&str>) -> Self {
-        self.has_files = has_files;
-        if let Some(name) = first_name {
+        self.has_files = has_files || self.said;
+        if let Some(name) = first_name.filter(|_| !self.said) {
             name.clone_into(&mut self.untitled);
         }
         self
@@ -222,6 +259,8 @@ pub fn NoteRow(
         time,
         time_in_full,
         has_files,
+        said,
+        words,
         waiting,
         archived,
         thumbnail: _,
@@ -238,7 +277,7 @@ pub fn NoteRow(
             "data-dui-grain": shade(&Grain::of(&id)),
             "data-dui-settle": settle.then_some(""),
             onclick: move |_| on_open.call(()),
-            div { class: "dui-row-t",
+            div { class: "dui-row-t", "data-dui-words": words,
                 if title.is_empty() {
                     "{untitled}"
                 } else {
@@ -257,7 +296,15 @@ pub fn NoteRow(
             }
             div { class: "dui-row-r",
                 span { class: "dui-row-time", "data-tip": "{time_in_full}", "{time}" }
-                if has_files {
+                if said {
+                    span {
+                        class: "dui-row-mark",
+                        role: "img",
+                        "aria-label": SAID,
+                        "data-tip": SAID,
+                        IconSvg { icon: Icon::Mic }
+                    }
+                } else if has_files {
                     span {
                         class: "dui-row-mark",
                         role: "img",
@@ -375,5 +422,37 @@ mod tests {
         let summary = summary.files(true, Some("receipt.pdf")).waiting(true);
         assert_eq!(summary.untitled, "receipt.pdf");
         assert!(summary.has_files && summary.waiting);
+    }
+
+    #[test]
+    fn a_note_that_was_said_goes_by_its_length_until_it_has_words() {
+        use dirt_core::models::Voice;
+        let mut note = Note::new("");
+        note.voice = Some(Voice {
+            duration_ms: 12_000,
+            words: Words::Waiting,
+        });
+        let summary = NoteSummary::of(&note, &[], clock_at(note.updated_at))
+            .files(true, Some("Voice recording.opus"));
+        assert_eq!(summary.untitled, "Voice \u{b7} 0:12");
+        assert!(summary.said && summary.has_files);
+        assert_eq!(summary.words, Some("waiting"));
+        assert!(summary.preview.is_empty());
+
+        note.voice = Some(Voice {
+            duration_ms: 12_000,
+            words: Words::NoneFound,
+        });
+        let summary = NoteSummary::of(&note, &[], clock_at(note.updated_at));
+        assert_eq!(summary.preview[0].text, NO_WORDS_FOUND);
+
+        note.content = "Buy stamps".to_owned();
+        note.voice = Some(Voice {
+            duration_ms: 12_000,
+            words: Words::Made,
+        });
+        let summary = NoteSummary::of(&note, &[], clock_at(note.updated_at));
+        assert_eq!(summary.title[0].text, "Buy stamps");
+        assert_eq!(summary.words, Some("made"));
     }
 }

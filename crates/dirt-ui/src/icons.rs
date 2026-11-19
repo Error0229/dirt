@@ -16,6 +16,12 @@ pub enum Icon {
     Search,
     /// Talk; on a card, "said, not typed".
     Mic,
+    /// The microphone may not be used: the mic with a slash (6.18).
+    MicOff,
+    /// A language: Settings → Voice.
+    Globe,
+    /// Where something comes from: the speech model's credit.
+    Info,
     /// Done: put this thought on the pile.
     Check,
     /// Done with a new page on Android.
@@ -96,9 +102,12 @@ pub enum Icon {
 
 impl Icon {
     /// Every icon, for the gallery.
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 43] = [
         Self::Search,
         Self::Mic,
+        Self::MicOff,
+        Self::Globe,
+        Self::Info,
         Self::Check,
         Self::ChevronDown,
         Self::ChevronUp,
@@ -147,6 +156,13 @@ impl Icon {
             Self::Mic => {
                 r#"<rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M18.5 11a6.5 6.5 0 0 1-13 0M12 17.5V21"/>"#
             }
+            Self::MicOff => {
+                r#"<rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M18.5 11a6.5 6.5 0 0 1-13 0M12 17.5V21M3 3l18 18"/>"#
+            }
+            Self::Globe => {
+                r#"<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>"#
+            }
+            Self::Info => r#"<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>"#,
             Self::Check => r#"<path d="M20 6 9 17l-5-5"/>"#,
             Self::ChevronDown => r#"<path d="m6 9 6 6 6-6"/>"#,
             Self::ChevronUp => r#"<path d="m18 15-6-6-6 6"/>"#,

@@ -195,6 +195,41 @@ impl Draft {
         true
     }
 
+    /// The words of what was said were put at the start of the store's
+    /// copy of `note`, before what the store had of the page (6.18). If the
+    /// note is on the page, the page puts them at its start too, so that
+    /// saving what it holds does not take them out again, and says what to
+    /// put there: the words and a blank line, or the words alone in place
+    /// of a page that holds nothing but spaces (`true`). `None` when the
+    /// note is not on the page, or the store's copy does not end with what
+    /// the page saved, and the words cannot be placed.
+    pub fn words_came(&mut self, note: &Note) -> Option<(String, bool)> {
+        if self.note != Some(note.id) {
+            return None;
+        }
+        let words = if self.saved.trim().is_empty() {
+            note.content.trim().to_owned()
+        } else {
+            note.content
+                .strip_suffix(self.saved.as_str())?
+                .trim_end()
+                .to_owned()
+        };
+        if words.is_empty() {
+            return None;
+        }
+        let blank = self.text.trim().is_empty();
+        let put = if blank { words } else { format!("{words}\n\n") };
+        self.text = if blank {
+            put.clone()
+        } else {
+            format!("{put}{}", self.text)
+        };
+        self.saved.clone_from(&note.content);
+        self.version += 1;
+        Some((put, blank))
+    }
+
     /// The store's text of the note on the page came after the page showed
     /// it. Taken, and true, if nothing has been typed since; otherwise the
     /// page keeps what was typed.
@@ -220,6 +255,13 @@ pub enum Work {
     PutAway { note: NoteId, delete: bool },
     /// Attach files to the note: dropped, chosen or pasted.
     Attach { note: NoteId, files: Vec<Incoming> },
+    /// Keep what was said as a note, under the ID given, with its
+    /// recording (6.18). Its words are made afterwards.
+    KeepVoice {
+        note: NoteId,
+        recording: Vec<u8>,
+        duration_ms: u64,
+    },
 }
 
 /// How a piece of work went.
@@ -240,6 +282,10 @@ pub enum Done {
     },
     /// Files were attached, but for those named in `failed`, with why.
     Attached { note: NoteId, failed: Vec<String> },
+    /// What was said is a note now; its words are on their way.
+    KeptVoice(NoteId),
+    /// What was said could not be kept, for the store's reason `why`.
+    VoiceUnkept { note: NoteId, why: String },
     /// What was typed could not be kept: `text` is what the write carried,
     /// to be given back to the person, and `why` the store's reason.
     /// `making` says the store could not make the note at all; later work
@@ -261,7 +307,10 @@ impl Done {
     pub const fn changed(&self) -> bool {
         !matches!(
             self,
-            Self::Failed | Self::Unsaved { .. } | Self::LetGo { gone: false, .. }
+            Self::Failed
+                | Self::Unsaved { .. }
+                | Self::LetGo { gone: false, .. }
+                | Self::VoiceUnkept { .. }
         )
     }
 }
@@ -332,6 +381,23 @@ pub async fn run(store: &Arc<Store>, work: Work) -> Done {
             let failed = attach_all(Arc::clone(store), note, files).await;
             Done::Attached { note, failed }
         }
+        Work::KeepVoice {
+            note,
+            recording,
+            duration_ms,
+        } => match store.keep_voice_note(note, recording, duration_ms).await {
+            Ok(_) => {
+                crate::voice::make_words_soon();
+                Done::KeptVoice(note)
+            }
+            Err(error) => {
+                tracing::error!("Could not keep what was said: {error}");
+                Done::VoiceUnkept {
+                    note,
+                    why: dirt_core::util::as_sentence(&error),
+                }
+            }
+        },
     }
 }
 
@@ -373,6 +439,10 @@ fn not_done(work: Work, why: &str, made: bool) -> Done {
             delete,
             kept: false,
         },
+        Work::KeepVoice { note, .. } => Done::VoiceUnkept {
+            note,
+            why: why.to_owned(),
+        },
     }
 }
 
@@ -385,7 +455,8 @@ impl Work {
             | Self::Save { note, .. }
             | Self::LetGoIfEmpty { note }
             | Self::PutAway { note, .. }
-            | Self::Attach { note, .. } => *note,
+            | Self::Attach { note, .. }
+            | Self::KeepVoice { note, .. } => *note,
         }
     }
 }
@@ -859,6 +930,45 @@ mod tests {
 
     /// The store's text reaches a note shown from the list only while
     /// nothing has been typed in it.
+    #[test]
+    fn words_that_arrive_for_the_page_go_before_what_was_typed() {
+        let mut draft = Draft::default();
+        let mut note = Note::new("");
+        draft.show(&note);
+        // Typed while the words were made, and saved.
+        let _ = draft.typed("and #milk".to_owned());
+        let _ = draft.flush();
+        // Then typed further, not yet saved.
+        let _ = draft.typed("and #milk, eggs".to_owned());
+        note.content = "Buy oat milk.\n\nand #milk".to_owned();
+        assert_eq!(
+            draft.words_came(&note),
+            Some(("Buy oat milk.\n\n".to_owned(), false))
+        );
+        assert_eq!(draft.text(), "Buy oat milk.\n\nand #milk, eggs");
+        // What was typed since is saved, with the words before it.
+        assert_eq!(
+            draft.flush(),
+            Some(Work::Save {
+                note: note.id,
+                text: "Buy oat milk.\n\nand #milk, eggs".to_owned()
+            })
+        );
+
+        // A page with nothing on it takes the words alone.
+        let mut draft = Draft::default();
+        let mut note = Note::new("");
+        draft.show(&note);
+        note.content = "Call the dentist".to_owned();
+        assert_eq!(
+            draft.words_came(&note),
+            Some(("Call the dentist".to_owned(), true))
+        );
+        assert_eq!(draft.flush(), None);
+        // Another note's words are not this page's.
+        assert_eq!(draft.words_came(&Note::new("Elsewhere")), None);
+    }
+
     #[test]
     fn a_fresher_text_is_taken_only_before_typing() {
         let older = Note::new("one");

@@ -9,6 +9,18 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # The voice engine's libraries, Silero's detector and the speech model
+  # are fetched when `dirt-voice` builds, each checked against a pinned
+  # SHA-256, into this folder (crates/dirt-voice/build/fetch.rs). Each job
+  # that builds it keeps the folder in its cache, keyed on the pins.
+  DIRT_BUILD_CACHE: ${{ github.workspace }}/.dirt-build-cache
+  # The speech model (130 MiB) is left out of every job but `voice`: none
+  # of the others ships the app or reads speech. The detector and the
+  # engine's libraries, a few MiB, are still fetched and linked.
+  DIRT_VOICE_MODEL: skip
+  # Voice must build: a job that cannot fetch the engine fails rather than
+  # building the app without its mic.
+  DIRT_VOICE: required
 
 jobs:
   security-guard:
@@ -34,11 +46,17 @@ jobs:
       - name: Install system dependencies
         uses: ./.github/actions/apt-install
         with:
-          packages: libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev
+          packages: libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev libasound2-dev
 
       # rustup reads the version and components from rust-toolchain.toml.
       - name: Install Rust toolchain
         run: rustup toolchain install
+
+      - name: Cache what dirt-voice fetches
+        uses: actions/cache@v6
+        with:
+          path: .dirt-build-cache
+          key: ${{ runner.os }}-dirt-voice-${{ hashFiles('crates/dirt-voice/build.rs', 'crates/dirt-voice/sherpa-onnx-sys/build.rs') }}
 
       - name: Cache cargo registry
         uses: actions/cache@v6
@@ -70,10 +88,16 @@ jobs:
         if: runner.os == 'Linux'
         uses: ./.github/actions/apt-install
         with:
-          packages: libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev
+          packages: libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev libasound2-dev
 
       - name: Install Rust toolchain
         run: rustup toolchain install
+
+      - name: Cache what dirt-voice fetches
+        uses: actions/cache@v6
+        with:
+          path: .dirt-build-cache
+          key: ${{ runner.os }}-dirt-voice-${{ hashFiles('crates/dirt-voice/build.rs', 'crates/dirt-voice/sherpa-onnx-sys/build.rs') }}
 
       - name: Cache cargo registry
         uses: actions/cache@v6
@@ -183,10 +207,16 @@ jobs:
       - name: Install system dependencies
         uses: ./.github/actions/apt-install
         with:
-          packages: libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev
+          packages: libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev libasound2-dev
 
       - name: Install Rust toolchain
         run: rustup toolchain install
+
+      - name: Cache what dirt-voice fetches
+        uses: actions/cache@v6
+        with:
+          path: .dirt-build-cache
+          key: ${{ runner.os }}-dirt-voice-${{ hashFiles('crates/dirt-voice/build.rs', 'crates/dirt-voice/sherpa-onnx-sys/build.rs') }}
 
       - name: Cache cargo registry
         uses: actions/cache@v6
@@ -228,10 +258,16 @@ jobs:
         if: runner.os == 'Linux'
         uses: ./.github/actions/apt-install
         with:
-          packages: libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev
+          packages: libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libappindicator3-dev libdbus-1-dev libasound2-dev
 
       - name: Install Rust toolchain
         run: rustup toolchain install
+
+      - name: Cache what dirt-voice fetches
+        uses: actions/cache@v6
+        with:
+          path: .dirt-build-cache
+          key: ${{ runner.os }}-dirt-voice-${{ hashFiles('crates/dirt-voice/build.rs', 'crates/dirt-voice/sherpa-onnx-sys/build.rs') }}
 
       - name: Cache cargo registry
         uses: actions/cache@v6
@@ -246,6 +282,40 @@ jobs:
 
       - name: Build
         run: cargo build --all --release
+
+  # The one job that fetches the speech model, and reads speech with it:
+  # the model reading the two recordings in its archive, through the
+  # recording's format and the cutter (crates/dirt-voice/tests).
+  voice:
+    name: Voice (the speech model)
+    runs-on: ubuntu-latest
+    env:
+      DIRT_VOICE_MODEL: fetch
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Cache what dirt-voice fetches, the model included
+        uses: actions/cache@v6
+        with:
+          path: .dirt-build-cache
+          key: ${{ runner.os }}-dirt-voice-model-${{ hashFiles('crates/dirt-voice/build.rs', 'crates/dirt-voice/sherpa-onnx-sys/build.rs') }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-voice-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-voice-
+
+      - name: Read speech with the model
+        run: cargo test -p dirt-voice -- --include-ignored
 
   android-mobile-check:
     name: Android Mobile Check

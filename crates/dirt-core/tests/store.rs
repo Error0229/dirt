@@ -1,6 +1,6 @@
 //! The local store, through its public interface, on a real file.
 
-use dirt_core::models::{Accent, FocusStyle, NoteId, Settings, ThemeMode};
+use dirt_core::models::{Accent, FocusStyle, NoteId, Settings, ThemeMode, VoiceRecording};
 use dirt_core::notes::NoteDoc;
 use dirt_core::store::{store_path, StoreName};
 use dirt_core::{Error, Store};
@@ -311,6 +311,7 @@ async fn settings_default_until_saved_and_then_round_trip() {
         accent: Accent::Moss,
         capture_hotkey: "Ctrl+Alt+N".to_owned(),
         focus_style: FocusStyle::Rail,
+        voice_recording: VoiceRecording::TextOnly,
     };
     store.save_settings(&chosen).await.unwrap();
     assert_eq!(store.load_settings().await.unwrap(), chosen);

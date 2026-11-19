@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use dirt_core::export::ExportFormat;
-use dirt_core::models::FocusStyle;
+use dirt_core::models::{FocusStyle, VoiceRecording};
 use dirt_core::session::Session;
 use dirt_core::Store;
 use dirt_ui::components::Panel;
@@ -154,6 +154,8 @@ pub fn SettingsPanel() -> Element {
     let settings = app.settings.read().clone();
     let appearance = Appearance::from_settings(&settings);
     let focus_style = settings.focus_style;
+    // Voice, where this build has it (6.18).
+    let voice = crate::voice::offered().then_some(settings.voice_recording);
 
     let sign_in: SignIn = use_callback(move |session: Session| {
         Box::pin(async move { session.sign_in_with_browser(open_browser).await })
@@ -177,6 +179,11 @@ pub fn SettingsPanel() -> Element {
     let change_focus = move |style: FocusStyle| {
         let mut settings = app.settings;
         settings.write().focus_style = style;
+        app.save_settings();
+    };
+    let change_voice = move |kept: VoiceRecording| {
+        let mut settings = app.settings;
+        settings.write().voice_recording = kept;
         app.save_settings();
     };
     let copy = move |text: String| {
@@ -205,13 +212,15 @@ pub fn SettingsPanel() -> Element {
                         nav.close();
                     }
                 },
-                SettingsRail {}
+                SettingsRail { voice: voice.is_some() }
                 SettingsPage {
                     linked,
                     appearance,
                     on_appearance: change_appearance,
                     focus_style,
                     on_focus_style: change_focus,
+                    voice,
+                    on_voice: change_voice,
                     sign_in,
                     export,
                     copy,

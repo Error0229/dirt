@@ -20,6 +20,13 @@
 //! to the tray icon, or lets it fall and fade where the tray's place cannot
 //! be known ([`flight`]).
 //!
+//! Held instead of tapped, the keys open it listening (6.18): once they
+//! have been down for the mic's 280 ms the box shows the grains and the
+//! timer in place of the text, and letting them go keeps what was said as
+//! a note, which flies to the tray as a typed thought does. Nothing heard,
+//! the box shakes and fades, and nothing is made. A thought already typed
+//! is not replaced: then the keys only opened it.
+//!
 //! The rest of the app reaches the window through [`link`]: the hotkey and
 //! the tray ask it to open; quitting, and taking another store into use,
 //! ask it to hand over what it holds and wait until it has; and the main
@@ -39,7 +46,7 @@ use dioxus::prelude::*;
 use dirt_core::models::{Grain, NoteId};
 use dirt_core::session::Session;
 use dirt_core::Store;
-use dirt_ui::components::Logo;
+use dirt_ui::components::{Listening, Logo};
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::events::{use_outcome, Outcome};
 use dirt_ui::{Appearance, UiRoot};
@@ -48,6 +55,7 @@ use tokio::sync::watch;
 use crate::keyboard::{self, Foreground};
 use crate::screen::keys;
 use crate::screen::writing::{Done, Draft, Scribe, Work};
+use crate::voice::Talking;
 use flight::Flight;
 
 /// The text field's ID.
@@ -97,6 +105,10 @@ enum Asked {
     /// Hand over what is written, now: the app is quitting, or taking
     /// another store into use.
     HandOver,
+    /// The keys that opened it are still down: listen (6.18).
+    Talk,
+    /// The keys were let go: keep what was said while they were held.
+    LetGo,
 }
 
 /// Where a thought goes: the store in use and the session that syncs it.
@@ -142,6 +154,16 @@ impl Link {
     /// `at`. From any thread.
     pub fn open(&self, at: Instant) {
         self.ask(Asked::Open(at));
+    }
+
+    /// The keys that opened it are held: it listens. From any thread.
+    pub fn talk(&self) {
+        self.ask(Asked::Talk);
+    }
+
+    /// The keys were let go: what was said is kept. From any thread.
+    pub fn let_go(&self) {
+        self.ask(Asked::LetGo);
     }
 
     /// Has quick capture hand what it holds to the store's queue, for the
@@ -263,6 +285,12 @@ struct Capture {
     flight: CopyValue<Option<Flight>>,
     /// The window that was in front before it opened.
     before: CopyValue<Foreground>,
+    /// The box listening, when the keys were held (6.18).
+    talking: Talking,
+    /// The note made of what was said, whose grain the box shrinks to.
+    said: CopyValue<Option<NoteId>>,
+    /// Why it is put away once listening has drawn how it ended.
+    after_talk: CopyValue<Why>,
 }
 
 impl Capture {
@@ -277,6 +305,7 @@ impl Capture {
             return;
         }
         self.before.set(Foreground::now());
+        self.said.set(None);
         self.asked_at.set(Some(at));
         self.ready.set(false);
         self.flight.set(None);
@@ -360,13 +389,64 @@ impl Capture {
         }
     }
 
+    // ---- Talking (6.18) ----
+
+    /// The keys are held: the box listens, unless something has been typed
+    /// in it already.
+    fn talk(self) {
+        if self.view.peek().shown != Shown::Open
+            || !self.draft.peek().is_blank()
+            || !crate::voice::offered()
+        {
+            return;
+        }
+        let keep = Callback::new(move |recording: dirt_voice::Recording| self.keep_said(recording));
+        self.talking.listen(false, keep);
+    }
+
+    /// The keys were let go: what was said is kept.
+    fn let_go(self) {
+        if self.talking.is_listening() {
+            self.talking.end(true);
+        }
+    }
+
+    /// What was said is a note at once, in the store in use.
+    fn keep_said(mut self, recording: dirt_voice::Recording) {
+        let note = NoteId::new();
+        self.said.set(Some(note));
+        self.target.set(Some(link().context()));
+        self.ask([Work::KeepVoice {
+            note,
+            recording: recording.file,
+            duration_ms: recording.duration_ms,
+        }]);
+    }
+
+    /// The box has drawn how listening ended: it is put away, flying to the
+    /// tray if what was said was kept, fading if not.
+    fn talked(mut self, serial: u64) {
+        self.talking.gone(serial);
+        let why = self.after_talk.replace(Why::Key);
+        self.put_away(why);
+    }
+
     /// Puts it away: what it holds goes to the store's queue, and the box
     /// leaves.
     fn put_away(mut self, why: Why) {
         if self.view.peek().shown != Shown::Open {
             return;
         }
-        let settles = self.draft.peek().settles();
+        // Listening, it keeps what was said first, and is put away once
+        // that has been drawn.
+        if self.talking.is_listening() {
+            self.talking.end(true);
+            if why != Why::Closed {
+                self.after_talk.set(why);
+                return;
+            }
+        }
+        let settles = self.said.take().or_else(|| self.draft.peek().settles());
         let left = self.draft.write().leave();
         self.ask(left.work);
         self.target.set(None);
@@ -475,6 +555,9 @@ fn QuickCapture() -> Element {
         ready: use_hook(|| CopyValue::new(false)),
         flight: use_hook(|| CopyValue::new(None)),
         before: use_hook(|| CopyValue::new(Foreground::default())),
+        talking: Talking::use_new(),
+        said: use_hook(|| CopyValue::new(None)),
+        after_talk: use_hook(|| CopyValue::new(Why::Key)),
     };
     // The theme is followed from the moment the window is made, so that a
     // change before the first render is not missed.
@@ -502,6 +585,8 @@ fn QuickCapture() -> Element {
                 match asked {
                     Asked::Open(at) => capture.open(at),
                     Asked::HandOver => capture.put_away(Why::Closed),
+                    Asked::Talk => capture.talk(),
+                    Asked::LetGo => capture.let_go(),
                     Asked::Nothing => {}
                 }
                 link().done.send_replace(serial);
@@ -579,6 +664,8 @@ fn CaptureBox(serial: u64) -> Element {
         Shown::Leaving(how) => how.name(),
         Shown::Hidden => return rsx! {},
     };
+    let talking = capture.talking;
+    let listening = *talking.view.read();
 
     rsx! {
         div {
@@ -592,9 +679,42 @@ fn CaptureBox(serial: u64) -> Element {
                 }
             },
             Logo { size: 22, class: "dk-capture-logo" }
+            if let Some(talk) = listening {
+                div {
+                    key: "listening {talk.serial}",
+                    class: "dk-capture-listening",
+                    // Enter keeps what was said, Esc throws it away (7.4).
+                    onkeydown: move |event: KeyboardEvent| {
+                        if event.is_composing() || !event.modifiers().is_empty() {
+                            return;
+                        }
+                        match event.key() {
+                            Key::Enter => {
+                                event.prevent_default();
+                                talking.end(true);
+                            }
+                            Key::Escape => {
+                                event.prevent_default();
+                                talking.end(false);
+                            }
+                            _ => {}
+                        }
+                    },
+                    onmounted: move |_| dom::focus(&[".dk-capture-listening .dui-voice-keep"], Caret::End),
+                    Listening {
+                        ms: talk.ms,
+                        level: talk.level,
+                        ended: talk.ended,
+                        on_keep: move |()| talking.end(true),
+                        on_throw: move |()| talking.end(false),
+                        on_gone: move |()| capture.talked(talk.serial),
+                    }
+                }
+            }
             textarea {
                 id: TEXT_ID,
                 class: "dk-capture-text",
+                hidden: listening.is_some(),
                 "aria-label": "Quick capture",
                 placeholder: "What\u{2019}s on your mind?",
                 spellcheck: "false",

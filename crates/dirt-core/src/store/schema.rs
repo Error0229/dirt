@@ -61,7 +61,7 @@ fn wait_for_the_file(looks: i32) -> bool {
 }
 
 /// The version of the tables below, kept in SQLite's `user_version`.
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE meta (
@@ -264,6 +264,28 @@ DROP INDEX notes_by_edit;
 CREATE INDEX notes_by_edit ON notes (deleted, archived, edited_at DESC);
 ";
 
+/// Version 7: voice (interface design 6.18).
+///
+/// `voice` is derived from the note's document, as `archived` is: the mark
+/// that one of its files is its voice recording, as `VoiceMark` writes it,
+/// while the note has that file; `NULL` for a typed note. No note had one
+/// before, so nothing is derived for the notes already here.
+///
+/// A row of `voice_waiting` is a recording made on this device whose words
+/// are still to be made. Only the device that recorded it makes them: two
+/// devices doing so would add them twice. So the work is this device's
+/// alone and is kept here, not in the note. `tries` and `problem` say how
+/// often making them has failed, and why. A note's row goes with the note.
+const SCHEMA_V7: &str = "
+ALTER TABLE notes ADD COLUMN voice TEXT;
+CREATE TABLE voice_waiting (
+    note_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+    since   INTEGER NOT NULL,
+    tries   INTEGER NOT NULL DEFAULT 0,
+    problem TEXT
+) WITHOUT ROWID;
+";
+
 /// Sets `archived` on the notes whose documents say so. Run once, when the
 /// column is added.
 ///
@@ -317,6 +339,9 @@ pub(super) fn set_up(connection: &mut Connection) -> Result<String> {
     if version < 6 {
         tx.execute_batch(SCHEMA_V6)?;
         derive_archived(&tx)?;
+    }
+    if version < 7 {
+        tx.execute_batch(SCHEMA_V7)?;
     }
     if version < SCHEMA_VERSION {
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;

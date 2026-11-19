@@ -59,7 +59,17 @@ pub enum Outcome {
     /// window carries it from here to where it goes (sections 5.5, 7.2).
     Away,
     /// Quick capture has finished leaving, or fading: its window can hide.
+    /// Listening has finished drawing how it ended: it can go.
     Gone,
+    /// A press on the mic began: listen now (section 6.18).
+    Listen,
+    /// The mic was tapped, or slid up while held: listen on, hands-free.
+    Lock,
+    /// The mic was let go after a hold: keep what was said.
+    Keep,
+    /// The mic was slid to the left while held, or the press was taken
+    /// away: throw it away.
+    Throw,
 }
 
 /// One message from the script: which element, and how it ended.

@@ -7,10 +7,14 @@
 //! its column, so that they travel with it. The note's files are tiles
 //! under its text (6.5); files dropped anywhere on the window come to it
 //! (the screen takes the drop).
+//!
+//! The blank page has the mic in its gutter (6.18). While it listens the
+//! page itself listens: the grains and the timer, ✕ and ✓ at its bottom,
+//! over a page with nothing written on it.
 
 use dioxus::prelude::*;
 use dirt_core::sync::overview::SyncIndicator;
-use dirt_ui::components::{IconButton, ScrollArea};
+use dirt_ui::components::{IconButton, Listening, MicButton, ScrollArea};
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::files::FileTiles;
 use dirt_ui::Icon;
@@ -35,6 +39,14 @@ pub fn Page() -> Element {
     });
     let take_focus = view.take_focus;
     let text = view.text.clone();
+    let talking = screen.talking;
+    let listening = *talking.view.read();
+    let unheard = talking.unheard.read().clone();
+    let mic_label = unheard
+        .as_ref()
+        .map_or("Hold to talk, or tap", crate::voice::Unheard::tip)
+        .to_owned();
+    let mic = open.is_none() && crate::voice::offered();
     // A file not yet sent says "uploading" while it can be sent, and "on
     // this device only" while it cannot (6.5).
     let can_send = matches!(
@@ -63,6 +75,13 @@ pub fn Page() -> Element {
                                 label: "Done",
                                 shortcut: "Esc",
                                 onclick: move |_| screen.done(false),
+                            }
+                        }
+                        if mic {
+                            MicButton {
+                                label: mic_label,
+                                refused: unheard.is_some(),
+                                on_talk: move |talk| screen.talk(talk),
                             }
                         }
                         IconButton {
@@ -117,6 +136,22 @@ pub fn Page() -> Element {
                                 screen.focus_page(Caret::End);
                             }
                         },
+                    }
+                    if let Some(talk) = listening {
+                        div {
+                            key: "listening {talk.serial}",
+                            class: "dk-listening",
+                            onmounted: move |_| dom::focus(&[".dk-listening .dui-voice-keep"], Caret::End),
+                            Listening {
+                                class: "dk-voice",
+                                ms: talk.ms,
+                                level: talk.level,
+                                ended: talk.ended,
+                                on_keep: move |()| talking.end(true),
+                                on_throw: move |()| talking.end(false),
+                                on_gone: move |()| screen.talked(talk.serial),
+                            }
+                        }
                     }
                     if let Some(note) = open {
                         FileTiles {

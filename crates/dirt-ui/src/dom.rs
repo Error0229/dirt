@@ -67,6 +67,17 @@ pub fn set_value(selector: &str, text: &str) {
     ));
 }
 
+/// Puts `text` at the start of the field that matches `selector`, keeping
+/// the caret where it was in what follows: words that arrive for a note
+/// being written (6.18).
+pub fn prepend_text(selector: &str, text: &str) {
+    document::eval(&format!(
+        "window.DirtUi && DirtUi.prependText({}, {});",
+        quoted(selector),
+        quoted(text)
+    ));
+}
+
 /// Adds `text` at the end of the field that matches `selector`, leaving
 /// the caret where it is: the tags a new page gets.
 ///

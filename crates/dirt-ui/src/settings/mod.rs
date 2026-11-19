@@ -10,8 +10,9 @@
 //! module drives; it has no SQL, HTTP or cryptography of its own, and its
 //! words about sync come from `dirt_core::sync::overview`.
 //!
-//! Voice, the sixth section of 6.9, comes with voice (the plan's step 9).
-//! Until then the page has five: a section with nothing in it would be a
+//! Voice, the fifth section of 6.9, is shown by an app that has voice: it
+//! says so with `voice`. One that has not yet (Android until the plan's
+//! step 9b) shows the other five: a section with nothing in it would be a
 //! heading over nothing.
 
 mod account;
@@ -22,6 +23,7 @@ mod join_banner;
 mod look;
 mod rows;
 mod sync;
+mod voice;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -29,7 +31,7 @@ use std::time::Duration;
 
 use dioxus::prelude::*;
 use dirt_core::export::ExportFormat;
-use dirt_core::models::FocusStyle;
+use dirt_core::models::{FocusStyle, VoiceRecording};
 use dirt_core::session::{Session, SessionError, SessionState};
 use dirt_core::sync::worker::SyncStatus;
 use dirt_core::NoteId;
@@ -41,6 +43,7 @@ use crate::icons::{Icon, IconSize, IconSvg};
 pub use code::CodeComparison;
 pub use devices::RecoveryWords;
 pub use join_banner::JoinBanner;
+pub use voice::{HEARD_HERE, MODEL_CREDIT};
 
 /// Work an app does for Settings that takes a while: signing in in the
 /// browser, writing an export.
@@ -53,18 +56,27 @@ pub enum Section {
     Devices,
     Sync,
     Appearance,
+    Voice,
     Export,
 }
 
 impl Section {
     /// The sections, in the order the page has them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Account,
         Self::Devices,
         Self::Sync,
         Self::Appearance,
+        Self::Voice,
         Self::Export,
     ];
+
+    /// The sections an app shows: Voice only where it has voice.
+    fn shown(voice: bool) -> impl Iterator<Item = Self> {
+        Self::ALL
+            .into_iter()
+            .filter(move |section| voice || *section != Self::Voice)
+    }
 
     /// The name the page and the script know it by.
     #[must_use]
@@ -74,6 +86,7 @@ impl Section {
             Self::Devices => "devices",
             Self::Sync => "sync",
             Self::Appearance => "appearance",
+            Self::Voice => "voice",
             Self::Export => "export",
         }
     }
@@ -86,6 +99,7 @@ impl Section {
             Self::Devices => "Devices",
             Self::Sync => "Sync",
             Self::Appearance => "Appearance",
+            Self::Voice => "Voice",
             Self::Export => "Export",
         }
     }
@@ -98,6 +112,7 @@ impl Section {
             Self::Devices => Icon::Laptop,
             Self::Sync => Icon::Refresh,
             Self::Appearance => Icon::Sun,
+            Self::Voice => Icon::Mic,
             Self::Export => Icon::Download,
         }
     }
@@ -294,6 +309,11 @@ pub fn SettingsPage(
     #[props(default)]
     focus_style: Option<FocusStyle>,
     #[props(default)] on_focus_style: EventHandler<FocusStyle>,
+    /// What is kept of a thought said aloud, in an app that has voice;
+    /// nothing in one that has not, which shows no Voice section.
+    #[props(default)]
+    voice: Option<VoiceRecording>,
+    #[props(default)] on_voice: EventHandler<VoiceRecording>,
     sign_in: SignIn,
     export: ExportTo,
     /// Puts the recovery phrase on the clipboard, kept out of the
@@ -325,7 +345,7 @@ pub fn SettingsPage(
     });
     rsx! {
         ScrollArea { class: "dui-set-wrap", inner_class: "dui-set",
-            for part in Section::ALL {
+            for part in Section::shown(voice.is_some()) {
                 section {
                     key: "{part.name()}",
                     class: "dui-set-sec",
@@ -339,6 +359,9 @@ pub fn SettingsPage(
                         Section::Sync => rsx! { sync::Sync { linked, open_note, platform } },
                         Section::Appearance => rsx! {
                             look::Look { appearance, on_appearance, focus_style, on_focus_style, platform }
+                        },
+                        Section::Voice => rsx! {
+                            voice::Voice { recording: voice.unwrap_or_default(), on_recording: on_voice, platform }
                         },
                         Section::Export => rsx! { export::ExportSection { export, platform } },
                     }
@@ -360,13 +383,17 @@ fn jump(section: Section, instant: bool) {
 /// which brings it into sight, and a highlight that follows the scroll.
 /// The script moves the highlight; Rust only draws the buttons.
 #[component]
-pub fn SettingsRail() -> Element {
+pub fn SettingsRail(
+    /// The app has voice: the rail has its section.
+    #[props(default)]
+    voice: bool,
+) -> Element {
     rsx! {
         nav { class: "dui-rail", "aria-label": "Sections", "data-dui-rail": "",
             div { class: "dui-rail-t", "Settings" }
             div { class: "dui-rail-b",
                 span { class: "dui-rail-ind", "aria-hidden": "true" }
-                for part in Section::ALL {
+                for part in Section::shown(voice) {
                     button {
                         key: "{part.name()}",
                         r#type: "button",

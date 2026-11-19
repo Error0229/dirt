@@ -26,7 +26,7 @@ use dirt_core::store::{AttachedFile, NoteCounts, TagCount, TagRule};
 use dirt_core::sync::overview::SyncIndicator;
 use dirt_core::sync::worker::Trigger;
 use dirt_core::Store;
-use dirt_ui::components::{use_toasts, ContextMenu, ListExit, MenuItem, Toast, Toasts};
+use dirt_ui::components::{use_toasts, ContextMenu, ListExit, MenuItem, Talk, Toast, Toasts};
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::files::{use_note_files, use_pasted_files, FilePreview, FileSource, NoteFiles};
 use dirt_ui::find;
@@ -36,6 +36,7 @@ use dirt_ui::{Appearance, Icon};
 
 use crate::services::Incoming;
 use crate::state::AppState;
+use crate::voice::Talking;
 use dirt_ui::settings::Section;
 use focus::Edge;
 use keys::KeysPanel;
@@ -230,6 +231,10 @@ pub struct Screen {
     pub focus: Signal<Where>,
     /// What time it is, for the times on rows and the sync status.
     pub clock: Signal<Clock>,
+    /// The page listening (6.18).
+    pub talking: Talking,
+    /// What a screen reader was last told of words that arrived.
+    pub words_heard: Signal<String>,
 }
 
 impl Screen {
@@ -427,6 +432,13 @@ impl Screen {
                 ref why,
                 making,
             } => self.unsaved(note, text, why, making),
+            Done::VoiceUnkept { ref why, .. } => {
+                self.toasts.show_error(
+                    Toast::new("What was said could not be kept")
+                        .icon(Icon::Alert)
+                        .detail(why.clone()),
+                );
+            }
             _ => {}
         }
         if done.changed() {
@@ -542,6 +554,79 @@ impl Screen {
         if let Some(note) = settles {
             self.settle_grain(note);
         }
+    }
+
+    // ---- Voice (6.18) -----------------------------------------------------
+
+    /// What the mic's gesture asked for, on the blank page.
+    pub fn talk(self, talk: Talk) {
+        match talk {
+            Talk::Listen => self.listen(false),
+            // A tap from the keyboard is the first the page hears of it.
+            Talk::Lock if !self.talking.is_shown() => self.listen(true),
+            Talk::Lock => self.talking.lock(),
+            Talk::Keep => self.talking.end(true),
+            Talk::Throw => self.talking.end(false),
+        }
+    }
+
+    /// The page listens: nothing is written while it does.
+    fn listen(self, hands_free: bool) {
+        if !self.page_is_blank() || !crate::voice::offered() {
+            return;
+        }
+        self.calm();
+        let keep = Callback::new(move |recording: dirt_voice::Recording| {
+            self.keep_said(recording);
+        });
+        self.talking.listen(hands_free, keep);
+    }
+
+    /// What was said is kept as a note at once, in the store in use, and
+    /// settles onto the pile as a typed thought does. Its words follow.
+    fn keep_said(self, recording: dirt_voice::Recording) {
+        let note = NoteId::new();
+        let work = [Work::KeepVoice {
+            note,
+            recording: recording.file,
+            duration_ms: recording.duration_ms,
+        }];
+        let session = self.app.session.peek().clone();
+        match self.store() {
+            Some(store) => Scribe::global().ask(&store, session.as_ref(), work),
+            None => Scribe::global().refuse(work),
+        }
+        self.settle_grain(note);
+    }
+
+    /// The words of what was said were put in `note`. On the page, they
+    /// go at its start too, and the caret stays where it was in the text
+    /// (6.18); its files are read again, since Text only takes the
+    /// recording off.
+    pub fn words_came(mut self, note: &Note) {
+        let first = note.outline().title;
+        self.words_heard.set(format!("Words arrived: {first}"));
+        if self.open_note() != Some(note.id) {
+            return;
+        }
+        self.files.reread();
+        let came = self.draft.write().words_came(note);
+        if let Some((put, blank)) = came {
+            if blank {
+                dom::set_value(PAGE, &put);
+            } else {
+                dom::prepend_text(PAGE, &put);
+            }
+            let work = self.draft.write().flush();
+            self.ask(work);
+        }
+    }
+
+    /// The listening view has drawn how it ended: the page is the page
+    /// again, with the cursor in it.
+    pub fn talked(self, serial: u64) {
+        self.talking.gone(serial);
+        self.focus_page(Caret::Kept);
     }
 
     /// A new thought settles onto the pile: its row is marked for a moment,
@@ -1341,6 +1426,7 @@ pub fn MainScreen() -> Element {
         move || app.note_changed(),
     );
     files::use_served_files();
+    let talking = Talking::use_new();
     let screen = use_context_provider(|| Screen {
         app,
         toasts,
@@ -1372,6 +1458,8 @@ pub fn MainScreen() -> Element {
         keys_open: Signal::new(false),
         focus: Signal::new(Where::Elsewhere),
         clock,
+        talking,
+        words_heard: Signal::new(String::new()),
     });
     // What the store's work came to: Undo for a note put away, files
     // attached, the list to read again.
@@ -1408,6 +1496,17 @@ pub fn MainScreen() -> Element {
     });
     use_listing(&screen, &app);
     use_tag_offers(&screen, &app);
+    // The words of what was said, for the note on the page.
+    use_future(move || async move {
+        let mut words = crate::voice::words_made().subscribe();
+        loop {
+            match words.recv().await {
+                Ok(note) => screen.words_came(&note),
+                Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => break,
+            }
+        }
+    });
     // A picture pasted into the page is attached to its note (7.3).
     use_pasted_files(PAGE, move |pasted| {
         screen.attach(pasted.into_iter().map(Incoming::Pasted).collect());
@@ -1486,6 +1585,11 @@ pub fn MainScreen() -> Element {
                 Page {}
             }
             WindowControls {}
+            // A screen reader is told when a voice note's words arrive
+            // (section 12); nothing on the screen says so but the words.
+            span { class: "dui-voice-said", role: "status", "aria-live": "polite",
+                "{screen.words_heard}"
+            }
             div { class: "dui-drop-hint", "aria-hidden": "true",
                 span {
                     if has_note {

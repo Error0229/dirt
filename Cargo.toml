@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+# sherpa-onnx's bindings, vendored with a build script of Dirt's own that
+# fetches the engine's libraries by a pinned hash (its README.md). Not
+# Dirt's code: built as `dirt-voice`'s dependency, and not linted.
+exclude = ["crates/dirt-voice/sherpa-onnx-sys"]
 
 # Root-level package whose only job is to be the Vercel deploy surface.
 # Vercel's Rust runtime picks up `api/axum.rs` and builds it as a serverless
@@ -104,3 +108,9 @@ assert_is_empty = "allow"
 dbg_macro = "warn"
 todo = "warn"
 unimplemented = "warn"
+
+# The voice engine's bindings, with the build script that fetches its
+# libraries by a pinned SHA-256 instead of downloading them unchecked
+# (crates/dirt-voice/sherpa-onnx-sys/README.md).
+[patch.crates-io]
+sherpa-onnx-sys = { path = "crates/dirt-voice/sherpa-onnx-sys" }

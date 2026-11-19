@@ -1263,6 +1263,13 @@
     }
     return false;
   }
+  function prependText(selector, text) {
+    const element = document.querySelector(selector);
+    if (!element) return;
+    const keep = document.activeElement === element ? [element.selectionStart, element.selectionEnd] : null;
+    element.value = text + element.value;
+    if (keep) element.setSelectionRange(keep[0] + text.length, keep[1] + text.length);
+  }
   function setValue(selector, text) {
     const element = document.querySelector(selector);
     if (!element || element.value === text) return;
@@ -2398,8 +2405,156 @@
     box._duiCapture = null;
   }
 
+  // ---- Voice (sections 5.5 and 6.18) --------------------------------------
+  // The mic (`data-dui-mic`) is one gesture everywhere, followed here from
+  // the press to the release. The press says `listen` at once, so that the
+  // first word is heard. Then: let go within 280 ms, a tap, says `lock`
+  // (hands-free, until ✓ or ✕), as does sliding 60 px up while held;
+  // sliding 90 px to the left says `throw`; letting go after holding says
+  // `keep`. A press taken away by the system is thrown away. A click from
+  // the keyboard is a tap. The mockup's numbers.
+  const HOLD_MS = 280, LOCK_PX = 60, THROW_PX = 90;
+  let talk = null;
+  const micOf = event => (event.target.closest ? event.target.closest('[data-dui-mic]') : null);
+  function endTalk(kind) {
+    const was = talk;
+    talk = null;
+    if (!was) return;
+    was.mic.classList.remove('held');
+    if (kind) tell(was.mic, kind);
+  }
+  document.addEventListener('pointerdown', event => {
+    const mic = micOf(event);
+    if (!mic || event.button !== 0 || mic.disabled) return;
+    event.preventDefault();
+    hideTip();
+    try { mic.setPointerCapture(event.pointerId); } catch (_) { /* gone already */ }
+    talk = { mic, pointer: event.pointerId, x: event.clientX, y: event.clientY, at: performance.now() };
+    mic.classList.add('held');
+    tell(mic, 'listen');
+  }, true);
+  document.addEventListener('pointermove', event => {
+    if (!talk || event.pointerId !== talk.pointer) return;
+    const dx = event.clientX - talk.x, dy = event.clientY - talk.y;
+    if (dy < -LOCK_PX) endTalk('lock');
+    else if (dx < -THROW_PX) endTalk('throw');
+  }, true);
+  document.addEventListener('pointerup', event => {
+    if (!talk || event.pointerId !== talk.pointer) return;
+    endTalk(performance.now() - talk.at < HOLD_MS ? 'lock' : 'keep');
+  }, true);
+  document.addEventListener('pointercancel', event => {
+    if (talk && event.pointerId === talk.pointer) endTalk('throw');
+  }, true);
+  document.addEventListener('click', event => {
+    const mic = micOf(event);
+    if (!mic) return;
+    event.preventDefault();
+    if (event.detail === 0 && !mic.disabled) tell(mic, 'lock');
+  }, true);
+
+  // While listening (`data-dui-voice="listening"`) a row of grains moves
+  // with the voice, like sand on a drum: still in silence, most in the
+  // middle, higher as it gets louder, from the level Rust gives
+  // (`data-dui-level`), eased so that it does not flicker. A soft ring
+  // around ✓ breathes with it. Reduced motion keeps the grains in a still
+  // row, and only their strength changes. When Rust says how it ended:
+  //
+  // - `kept`: the row gathers into one grain in its middle (260 ms, exit),
+  //   and the new note's row takes the grain from there to settle onto the
+  //   pile, as a typed thought's does;
+  // - `thrown`: the grains blow off to the left, blurring (260 ms, exit);
+  // - `nothing`: nothing was heard, and the row shakes once (320 ms).
+  //
+  // Then it fades and says `gone`.
+  function drawGrains(view, state) {
+    const canvas = view.querySelector('.dui-voice-grains');
+    const target = Math.min(1, Math.max(0, parseFloat(view.dataset.duiLevel) || 0));
+    state.level += (target - state.level) * 0.2;
+    if (canvas && canvas.clientWidth) {
+      const dpr = devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+      if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+      const pen = canvas.getContext('2d');
+      pen.setTransform(dpr, 0, 0, dpr, 0, 0);
+      pen.clearRect(0, 0, w, h);
+      const count = Math.max(8, Math.floor(w / 10)), t = performance.now() / 1000, still = reduced();
+      for (let index = 0; index < count; index++) {
+        const middle = Math.sin(Math.PI * (index + 0.5) / count);
+        const height = still ? 0 : state.level * middle * h * 0.4;
+        const beat = Math.sin(t * 9 + index * 0.9) * 0.6 + Math.sin(t * 13.7 + index * 2.3) * 0.4;
+        pen.globalAlpha = 0.45 + 0.55 * Math.min(1, state.level * middle * 1.6 + 0.15);
+        pen.fillStyle = state.sand[index % state.sand.length];
+        pen.beginPath();
+        pen.arc(5 + index * (w - 10) / (count - 1), h / 2 + beat * height, 2.3 + state.level * middle * 1.4, 0, 7);
+        pen.fill();
+      }
+    }
+    const keep = view.querySelector('.dui-voice-keep');
+    if (keep) keep.style.setProperty('--lvl', state.level.toFixed(3));
+    if (!state.ended && view.isConnected) state.frame = requestAnimationFrame(() => drawGrains(view, state));
+  }
+  function voiceEnded(view, state, how) {
+    if (state.ended) return;
+    state.ended = true;
+    cancelAnimationFrame(state.frame);
+    const keep = view.querySelector('.dui-voice-keep');
+    if (keep) keep.style.setProperty('--lvl', '0');
+    const canvas = view.querySelector('.dui-voice-grains');
+    const gone = () => { if (view.isConnected) tell(view, 'gone'); };
+    const fadeOut = () => {
+      const ms = reduced() ? tokens.reducedMs : 160;
+      after(view.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' }), ms, gone);
+    };
+    if (how === 'kept' && canvas) {
+      const box = canvas.getBoundingClientRect();
+      gathering = { x: box.left + box.width / 2, y: box.top + box.height / 2, at: performance.now() };
+    }
+    if (reduced() || !canvas) return fadeOut();
+    if (how === 'kept') {
+      after(canvas.animate([{ transform: 'none', opacity: 1 }, { transform: 'scaleX(.03)', opacity: 0 }],
+        { duration: 260, easing: tokens.exit, fill: 'forwards' }), 260, fadeOut);
+    } else if (how === 'thrown') {
+      after(canvas.animate([{ transform: 'none', opacity: 1, filter: 'blur(0)' }, { transform: 'translateX(-70px)', opacity: 0, filter: 'blur(5px)' }],
+        { duration: 260, easing: tokens.exit, fill: 'forwards' }), 260, fadeOut);
+    } else {
+      after(view.animate([{ transform: 'none' }, { transform: 'translateX(-7px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(-3px)' }, { transform: 'none' }],
+        { duration: 320, easing: 'ease-out' }), 320, fadeOut);
+    }
+  }
+  function watchVoice(view) {
+    if (view._duiVoice) return;
+    const state = { level: 0, frame: 0, ended: false, sand: (view.dataset.duiSand || 'hsl(32 46% 60%)').split(';') };
+    view._duiVoice = state;
+    state.observer = new MutationObserver(() => {
+      const how = view.dataset.duiVoice;
+      if (how && how !== 'listening') voiceEnded(view, state, how);
+    });
+    state.observer.observe(view, { attributes: true, attributeFilter: ['data-dui-voice'] });
+    if (view.dataset.duiVoice !== 'listening') voiceEnded(view, state, view.dataset.duiVoice);
+    else state.frame = requestAnimationFrame(() => drawGrains(view, state));
+  }
+  function forgetVoice(view) {
+    const state = view._duiVoice;
+    if (!state) return;
+    state.ended = true;
+    cancelAnimationFrame(state.frame);
+    state.observer.disconnect();
+    view._duiVoice = null;
+  }
+  // A voice note's words fade in where its name was (280 ms, standard),
+  // when they arrive: its title says `made` where it said `waiting`.
+  // Nothing else moves.
+  function wordsArrived(records) {
+    records.forEach(record => {
+      const title = record.target;
+      if (record.oldValue === 'waiting' && title.dataset.duiWords === 'made' && !reduced()) {
+        title.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: tokens.standard });
+      }
+    });
+  }
+
   // ---- Finding what Rust renders -----------------------------------------
-  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],[data-dui-grow],[data-dui-bars],[data-dui-audio],[data-dui-pdf],[data-dui-capture],.dui-confirm';
+  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],[data-dui-grow],[data-dui-bars],[data-dui-audio],[data-dui-pdf],[data-dui-capture],[data-dui-voice],.dui-confirm';
   function arrived(element) {
     if (element.matches('[data-dui-list]')) watchList(element);
     if (element.matches('[data-dui-modal]')) watchModal(element);
@@ -2413,6 +2568,7 @@
     if (element.matches('[data-dui-audio]')) watchSound(element);
     if (element.matches('[data-dui-pdf]')) watchPdf(element);
     if (element.matches('[data-dui-capture]')) watchCapture(element);
+    if (element.matches('[data-dui-voice]')) watchVoice(element);
   }
   function left(element, parent) {
     if (element.matches('[data-dui-list]')) forgetList(element);
@@ -2425,6 +2581,7 @@
     if (element.matches('[data-dui-audio]')) forgetSound(element);
     if (element.matches('[data-dui-pdf]')) forgetPdf(element);
     if (element.matches('[data-dui-capture]')) forgetCapture(element);
+    if (element.matches('[data-dui-voice]')) forgetVoice(element);
     if (element.matches('[data-dui-toast]') && !element.classList.contains('dui-toast-ghost')) {
       // The copy closes where the toast was: the toast's place, or the
       // error's above it.
@@ -2445,6 +2602,8 @@
       record.removedNodes.forEach(node => each(node, record.target, left));
       record.addedNodes.forEach(node => each(node, record.target, arrived));
     })).observe(document.body, { childList: true, subtree: true });
+    new MutationObserver(wordsArrived)
+      .observe(document.body, { attributes: true, attributeFilter: ['data-dui-words'], attributeOldValue: true, subtree: true });
     $$(WATCHED).forEach(element => arrived(element));
   }
 
@@ -2457,5 +2616,5 @@
     if (document.body) watchPage(); else document.addEventListener('DOMContentLoaded', watchPage);
   }
 
-  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, appendText, paste, back, jump, onPastedFiles };
+  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, prependText, appendText, paste, back, jump, onPastedFiles };
 })();

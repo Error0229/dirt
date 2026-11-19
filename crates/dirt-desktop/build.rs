@@ -19,6 +19,61 @@ fn main() {
     if let Err(error) = write_desktop_bootstrap_config() {
         println!("cargo:warning=failed to generate desktop bootstrap config: {error}");
     }
+    if let Err(error) = put_voice_folder() {
+        panic!("could not put the voice folder in place: {error}");
+    }
+    // The engine's library is loaded when voice is first used, from the
+    // voice folder, not as the program starts (`dirt_voice`): without
+    // this the app would not start where it is not beside the program.
+    if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        println!("cargo:rustc-link-arg=/DELAYLOAD:sherpa-onnx-c-api.dll");
+    }
+}
+
+/// Puts the voice folder that `dirt-voice`'s build made (the model,
+/// Silero's detector and, on Windows, the engine's libraries) at `voice/`
+/// beside this manifest, where `asset!` takes it from to ship it with the
+/// app. The files are hard links to the build cache, so nothing is kept
+/// twice; the folder is not in git. A file the folder no longer has is
+/// taken away.
+fn put_voice_folder() -> io::Result<()> {
+    println!("cargo:rerun-if-env-changed=DEP_DIRT_VOICE_FOLDER");
+    let Some(from) = env::var_os("DEP_DIRT_VOICE_FOLDER").map(PathBuf::from) else {
+        return Err(io::Error::other("dirt-voice said nothing of its folder"));
+    };
+    let manifest_dir =
+        env::var_os("CARGO_MANIFEST_DIR").map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let to = manifest_dir.join("voice");
+    fs::create_dir_all(&to)?;
+    let mut wanted = Vec::new();
+    for entry in fs::read_dir(&from)? {
+        let source = entry?.path();
+        let Some(name) = source.file_name() else {
+            continue;
+        };
+        let target = to.join(name);
+        let same = fs::metadata(&target)
+            .ok()
+            .zip(fs::metadata(&source).ok())
+            .is_some_and(|(have, want)| have.len() == want.len());
+        if !same {
+            let _ = fs::remove_file(&target);
+            if fs::hard_link(&source, &target).is_err() {
+                fs::copy(&source, &target)?;
+            }
+        }
+        wanted.push(name.to_owned());
+    }
+    for entry in fs::read_dir(&to)? {
+        let path = entry?.path();
+        if path
+            .file_name()
+            .is_some_and(|name| !wanted.iter().any(|w| w == name))
+        {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
 }
 
 fn write_desktop_bootstrap_config() -> io::Result<()> {

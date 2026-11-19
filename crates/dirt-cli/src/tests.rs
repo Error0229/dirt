@@ -57,6 +57,27 @@ fn note_preview_truncates_with_ellipsis() {
     assert_eq!(preview, "This is a very lo...");
 }
 
+#[test]
+fn a_note_that_was_said_is_listed_by_its_length_until_it_has_words() {
+    use dirt_core::models::{Voice, Words};
+    let mut note = dirt_core::Note::new("");
+    note.voice = Some(Voice {
+        duration_ms: 12_300,
+        words: Words::Waiting,
+    });
+    assert_eq!(note_preview(&note, 40), "Voice \u{b7} 0:12");
+    note.voice = Some(Voice {
+        duration_ms: 12_300,
+        words: Words::NoneFound,
+    });
+    assert_eq!(
+        note_preview(&note, 40),
+        "Voice \u{b7} 0:12 (no words found)"
+    );
+    note.content = "Buy stamps".to_owned();
+    assert_eq!(note_preview(&note, 40), "Buy stamps");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn list_notes_respects_limit_and_tag_filter() {
     let (_folder, db_path) = temp_db();

@@ -340,6 +340,12 @@ pub fn App() -> Element {
         }
     });
 
+    // The words of what was said on this device, made in the background.
+    crate::voice::use_words_maker(&state);
+    // A web view that cannot play a recording as it is kept is handed it
+    // decoded (6.18).
+    use_hook(crate::voice::play_recordings_where_the_web_view_cannot);
+
     let appearance = Appearance::from_settings(&settings.read());
 
     rsx! {
