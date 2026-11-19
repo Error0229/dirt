@@ -1797,6 +1797,20 @@ looked at (the pull request says how); drag and drop from a file manager,
 a real paste and a real program opening a file are in the manual
 checklist (D17 to D23, D57 to D62).
 
+**6b built.** Android's old list of files (`views/attachments.rs`) is
+gone; the note's files are `dirt-ui`'s tiles and preview, with what
+Android alone does in `dirt-mobile`'s `files` module: Android's picker,
+the `FileProvider`'s lend with a read grant, and Android's save screen.
+The answer to the web view's requests for the preview's bytes is built
+once, in `dirt-ui`, for both apps. One choosing or share takes at most a
+note's 20 files. Everything the review hardened on the desktop holds here
+too. Run on the emulator against the local server with real touch (taps
+and swipes by `adb shell input`, the pinch by the emulator's multi-touch
+device): four kinds attached, each previewed, swiped between and pinched,
+opened in another app and saved, a picture shared from Files, a file not
+on the device fetched with its ring, both themes. Real touch found four
+faults in the script, mended and written into design 6.16.
+
 ### Step 7: grains and the pile
 
 The settling of a new thought, the grain of each note, the pile under the

@@ -496,7 +496,13 @@
 .dui-preview.on,.dui-preview.leaving{display:block}
 .dui-pv-scrim{position:absolute;inset:0;background:rgba(12,10,8,.9);opacity:0;transition:opacity var(--d-3) var(--e-std)}
 .dui-preview.on .dui-pv-scrim{opacity:1}
-.dui-pv-stage{position:absolute;inset:58px 72px 52px;display:grid;place-items:center}
+.dui-pv-bars{display:none;background:#0c0a08}
+.dui-pv-stage{position:absolute;inset:58px 72px 52px;display:grid;place-items:center;touch-action:none}
+/* The web view keeps a finger moving up or down on text or a PDF for their
+   own scrolling, and hands every other touch in the preview to the script:
+   a swipe sideways, a swipe down, a pinch. */
+.dui-preview{touch-action:none}
+.dui-preview .dui-scroll{touch-action:pan-y}
 .android .dui-pv-stage{inset:92px 0 76px}
 .dui-pv-item{width:100%;height:100%;min-height:0;display:grid;place-items:center;position:relative}
 .dui-pv-picture,.dui-pv-video{max-width:100%;max-height:100%;object-fit:contain;display:block;border-radius:6px;box-shadow:0 24px 60px rgba(0,0,0,.5);transition:transform var(--d-3) var(--e-out);cursor:zoom-in}
