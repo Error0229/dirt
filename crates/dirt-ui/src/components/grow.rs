@@ -24,6 +24,10 @@ pub enum GrowFrom {
     /// The bar a new page is asked for from: the glide curve over 560 ms
     /// out of it, 320 ms back.
     Bar(String),
+    /// A new page let go with words on it (section 5.5): it closes to a
+    /// 7 px circle where its words began, and the grain of the card named
+    /// here (marked `data-dui-settle`) is tossed from there onto it.
+    Grain(String),
     /// Nothing on screen: the page fades.
     #[default]
     Nowhere,
@@ -34,6 +38,7 @@ impl GrowFrom {
         match self {
             Self::Card(id) => (Some(id), Some("card")),
             Self::Bar(id) => (Some(id), Some("bar")),
+            Self::Grain(id) => (Some(id), Some("grain")),
             Self::Nowhere => (None, None),
         }
     }

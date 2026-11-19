@@ -26,7 +26,7 @@ use serde::Deserialize;
 use crate::appearance::{theme_name, Appearance, Platform, TextSize};
 use crate::components::{
     use_toasts, AccentDots, Banner, Button, ButtonKind, ConfirmInPlace, FindField, IconButton,
-    IconButtonSize, LayerLine, ListExit, NoteCard, NoteRow, NoteSummary, Panel, PullToSync,
+    IconButtonSize, LayerLine, ListExit, NoteCard, NoteRow, NoteSummary, Panel, Pile, PullToSync,
     ScrollArea, Segment, Segmented, Sheet, Slider, Swipeable, Switch, SyncStatus, TagList,
     TagOption, TagStrip, TextSizeSlider, Toast,
 };
@@ -171,6 +171,7 @@ fn Page(
                 Surfaces { panel, sheet }
                 AnimatedList {}
                 ListParts {}
+                Piles {}
                 SwipeCard {}
                 FileTilesShown {}
                 AndroidList {}
@@ -649,6 +650,62 @@ fold every 30 minutes #baking #bread #weekend",
         div { class: "gal-card gal-line",
             for (index , state) in states.into_iter().enumerate() {
                 SyncStatus { key: "{index}", indicator: state, now_ms: clock.now_ms, shortcut: "Ctrl R", onclick: move |_| {} }
+            }
+        }
+    }
+}
+
+/// A made-up pile of `count` thoughts, made one by one over the past
+/// `days`, `archived` of them archived.
+fn made_up_pile(count: u64, days: u64, archived: u64) -> Vec<dirt_core::models::PileNote> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let mut notes: Vec<dirt_core::models::PileNote> = (0..count)
+        .map(|index| {
+            let made = now - days * 86_400 + index * days * 86_400 / count.max(1);
+            let time = uuid::Timestamp::from_unix(uuid::NoContext, made, 0);
+            dirt_core::models::PileNote {
+                id: dirt_core::models::NoteId::from_uuid(uuid::Uuid::new_v7(time)),
+                edited_at: i64::try_from(made * 1000).unwrap_or_default(),
+                archived: index < archived,
+            }
+        })
+        .collect();
+    notes.sort_unstable_by_key(|note| note.id);
+    notes
+}
+
+/// The pile under a list (6.17): a pinch of a fortnight's thoughts, which
+/// a button adds to, and a year's.
+#[component]
+fn Piles() -> Element {
+    let mut small = use_signal(|| made_up_pile(12, 14, 2));
+    let year = use_hook(|| made_up_pile(1_250, 365, 3));
+    let offset = crate::time::Clock::now().utc_offset_secs;
+    let show = |notes: &[dirt_core::models::PileNote]| {
+        (
+            std::sync::Arc::new(crate::pile::Heap::of(notes, crate::pile::LIST_WIDTH)),
+            dirt_core::models::PileSummary::of(notes, offset),
+        )
+    };
+    let (small_heap, small_summary) = show(&small.read());
+    let (year_heap, year_summary) = show(&year);
+    rsx! {
+        h2 { "The pile" }
+        div { class: "gal-card gal-line",
+            div { "data-dui-list": "",
+                Pile { heap: small_heap, summary: small_summary, on_archived: move |()| {} }
+            }
+            div { "data-dui-list": "",
+                Pile { heap: year_heap, summary: year_summary, on_archived: move |()| {} }
+            }
+            Button {
+                onclick: move |_| {
+                    let more = made_up_pile(1, 0, 0);
+                    small.write().extend(more);
+                },
+                "Add a thought"
             }
         }
     }

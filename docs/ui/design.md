@@ -614,7 +614,7 @@ this document are approximate; the tokens here are the real ones.
 | A tag token is removed | It shrinks to nothing sideways while fading (200 ms, exit), and the field closes up |
 | The tag list opens | It opens in place under Find (glide), pushing the notes down rather than covering them; its rows arrive top to bottom, 26 ms apart. On Android the pills pop in left to right (pop) |
 | A tag is picked | Its tick pops in (pop) and the row stays where it is; the notes below narrow (snap) |
-| The pile grows | The new grain drops 46 px onto the top of the heap (640 ms, `cubic-bezier(.55,0,1,.45)`). Nothing else moves |
+| The pile grows | As a new thought's grain lands on its row, and if the heap is in sight, the newest grain drops 46 px onto the top of the heap (640 ms, `cubic-bezier(.55,0,1,.45)`). Nothing else moves |
 
 **Panels, sheets, toasts**
 
@@ -1197,8 +1197,15 @@ archived in one call, and `PileSummary` the numbers of the line.
 | Pointing at it | "1,254 thoughts" |
 
 The simulation is worked out once per change, not per frame, and is the
-same every time for the same notes. Above a few thousand grains it is drawn
-on a canvas.
+same every time for the same notes. Each grain's chances (where it is
+dropped, which way it rolls, how far it is nudged off its row) come from its
+own note's grain, not from one stream for the whole heap, so a new thought
+adds a grain on top and moves no grain already there; an edit or an archive
+changes nothing the heap is made of, and the heap is not worked out again
+for it. It is drawn as one SVG at any size: the grains of each shade,
+coarsened a little past what the eye tells apart, are one path of dots (a
+line of no length with round ends is a dot), so even 20,000 grains are a
+few hundred elements. No canvas is needed.
 
 What was tried first, and why not:
 
@@ -1208,6 +1215,25 @@ What was tried first, and why not:
 | Layers: a band for each month | A diagram, not sand |
 | Dune: a drawn shape with ripples and a grain texture | Looked built, not blown |
 | Days: a grain per day for a year | A streak chart under another name, which principle 5 rules out |
+
+**Settled when it was built** (implementation plan, step 7). The heap is
+`dirt_ui::pile::Heap`, worked out from `Store::pile`; the pile under the
+list is `dirt_ui::components::Pile`; the settling is the script's, which
+the row or card a new thought lands on asks for with `data-dui-settle`.
+
+| | Settled |
+|---|---|
+| Which thoughts settle | A new thought with words, made on the page from a blank one, when it is let go by any of the ways 6.1 gives (on Android ⌄ or Back). A note opened from the list goes back to its place with no grain (5.5), and so does a page that was emptied again, or one with files and no words: there are no words to gather |
+| Where the grain starts (desktop) | The page is taken as the key or press that lets it go comes (<kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd>, <kbd>Ctrl N</kbd>, ✓), before the app has heard of it: its words, where they are and in which type. The script empties the page on <kbd>Esc</kbd> at once (7.9), so it is read just before |
+| Where the grain starts (Android) | Where the page closes to its 7 px circle: the start of its text. The page closes on a circle shrinking to that point (the mockup's clip from a rounded rectangle to a circle cannot be played: a browser jumps between two shapes that differ in kind) |
+| The row it lands on | Held out of sight until the grain lands, by an animation, which a redraw of the list leaves alone, so a sync arriving mid-flight does not show it early. Brought into sight first if the list was scrolled away from it. Where the grain started is kept 1.5 s (1.2 s on Android): a row marked later only fades in |
+| The pile's drop | The note was made at its first character, so its grain was in the heap already, unseen behind the page. The newest grain is drawn on its own on top, and drops as the thought lands, if the heap is in sight. A note from another device adds its grain without a drop |
+| An archive | Its grain sinks from the row's left edge while the row folds shut (5.5), from the box, <kbd>Del</kbd>, or the box on the note's page. A card swiped away has flown off already: its gap folds shut with no grain |
+| Where the pile is | Under the last note, while nothing is being found and the list holds every note (once loading more has reached the end), as "3 archived" was before it. A list whose notes are all archived shows the pile, not the empty drawing (6.14): there are still grains |
+| Its words | "1,254 thoughts since Nov 2025": a comma between thousands, and the month's first three letters with the year, whatever the pile's age. "3 archived" under it, a button that lists them. Pointing at the heap says "1,254 thoughts", and a screen reader reads the same |
+| Its size | No wider than 250 px under the list; above about 3,700 grains they get smaller to fit. The pile widget is the plan's step 10 |
+| Reduced motion | The settled row fades in; no words gather, no grain flies, no dust, and the heap does not drop a grain. An Android page fades. An archived row fades with no grain |
+| What it costs | Measured on this laptop, a debug build: 1,000 grains 2.4 ms, 5,000 grains 16 ms, 20,000 grains 92 ms, the picture 34 KB, 101 KB and 271 KB. Worked out on a thread for blocking work, only when the notes it is made of change. The notes themselves are read (`Store::pile`) only when the store's counts say they may have changed, a note made, deleted or brought back, and not at every reading of the list: at 20,000 notes that keeps a reading at 5–6 ms instead of 75–113 ms (`docs/LIMITS.md`) |
 
 ### 6.18 Voice
 
@@ -1501,7 +1527,7 @@ title bar (7.6) came after it, in step 3b, and what that settled is in 7.9.
 | A tag pressed on a row | Added to the tags chosen, as a token; the others stay |
 | <kbd>↓</kbd> in Find | Into the list of tags while it is open, and into the notes otherwise |
 | Layers | Only the list is in layers. While Find holds words or tags the notes are in the order found, and only the line "Archived" divides them (6.19). The list of archived notes, from "3 archived", is newest first with no layers |
-| "3 archived" | Until the pile (step 7), at the end of the list, once scrolling has reached it, and only while nothing is being found |
+| "3 archived" | Under the pile (6.17), once scrolling has reached the end of the list, and only while nothing is being found. Until the pile was built (step 7) it was alone at the end of the list |
 | Load more | 100 notes at first, and 100 more each time the end of the list comes within 600 px of sight |
 | The hollow dot | Only while signed in and let in. Signed out, every note is on this device alone, and the status says so ("This device only") instead of a dot on every row |
 | Files on the blank page | 📎 or a drop makes a note of the files, with the tags chosen in Find as its text (6.1: a file with no words under it is a note). The list names such a note after its first file |
@@ -1509,7 +1535,7 @@ title bar (7.6) came after it, in step 3b, and what that settled is in 7.9.
 | Narrower than 720 px | The list takes the window. A note, or a page begun with <kbd>Ctrl N</kbd> or the + that appears at the foot of the list, comes over it; done goes back to the list. The breakpoint is the window's width |
 | The app's own menu | Copy when something is selected, Paste and Select all in a text field, and "Copy the note" (<kbd>Ctrl Shift C</kbd>) while a note is open. Paste reads the clipboard in the app, since a web view may not read it without asking |
 | Where the keyboard goes | When what had the keyboard is taken away (a row archived, the archived notes closed), the screen takes it, so that its keys still work |
-| An archived row leaving | Until the pile, it folds shut where it was (on the exit curve, at most 320 ms) while the rows below rise into its place (snap); no grain falls |
+| An archived row leaving | It folds shut where it was (on the exit curve, at most 320 ms) while the rows below rise into its place (snap), and its grain sinks into the pile (5.5, 6.17) |
 
 **A delete undone, into its place** (found in 3a, settled in 3b). The
 store's restore brought the note back with a new edit time, so its row came
@@ -1716,8 +1742,7 @@ the tile says it is unavailable.
 What the sections above left open for Android, settled when its main
 screen was built (implementation plan, step 4). Where 7.8 settled the same
 question for the desktop, Android follows it: load more (100, and 100 more
-within 600 px of the end), "3 archived" at the end of the list until the
-pile, the hollow dot only while signed in and let in, layers only in the
+within 600 px of the end), "3 archived" under the pile, the hollow dot only while signed in and let in, layers only in the
 list, the page's text saved 400 ms after typing pauses and at once when it
 is left, a file chosen on a page with no words making a note of the files
 with the tags chosen in Find as its words.
@@ -1726,7 +1751,7 @@ with the tags chosen in Find as its words.
 |---|---|
 | Opening a note | The note grows out of its card with the cursor at the end of its text and the keyboard up, so that "tap it, type" is two actions (section 2). Tapping elsewhere in the text moves the cursor there (8.3). Back first puts the keyboard away, as Android does, and then closes the note |
 | Leaving a page | The page closes the moment ⌄, ‹ or Back is pressed, and what it held is saved afterwards from what it held then. A page opened straight after is a page of its own: nothing typed into it is lost to the one being saved, and a note whose first character is still being made is made and saved all the same |
-| A new page let go | Until the grain (step 7), a new page with words closes into its new card at the top of the list, as an old note closes into its own. With nothing written it goes back into the bar (5.5) |
+| A new page let go | With words, it closes to its grain, which is tossed onto its card at the top of the list (5.5, 6.17). With nothing written it goes back into the bar. Until the grain was built (step 7) it closed into its new card, as an old note closes into its own |
 | Back | Closes, in this order, whatever is open: a confirmation in Settings, Settings, the page, the list of archived notes, the strip's offers, then Find. With nothing open the app goes behind the others and keeps running, as Back does on the home screen |
 | Find | Its cross, or Back, closes it, and the list is whole again: its words and tags go with it. While it has the keyboard the dock goes, as the keyboard would cover it. The search key on the keyboard opens the first note found, as Enter does on the desktop; Backspace in an empty Find takes back the last tag |
 | A tag tapped on a card | Brings Find down with the tag as a filled pill under it, where it is seen and taken back, and narrows the list (one action) |

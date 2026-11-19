@@ -354,9 +354,10 @@
       ms = 170;
       going = ghost.animate([{ transform: 'none', opacity: 1 }, { transform: 'translateX(-28px) scale(.96)', opacity: 0 }],
         { duration: ms, easing: tokens.exit, fill: 'forwards' });
-    } else if (how === 'fold' && moving) {
+    } else if ((how === 'fold' || how === 'sink') && moving) {
       // An archived row folds shut where it was, while the rows below
-      // rise into its place (snap).
+      // rise into its place (snap); its grain sinks into the pile.
+      if (how === 'sink') sink(list, was);
       const snap = spring('snap');
       ms = Math.min(snap.ms, 320);
       ghost.style.transformOrigin = '50% 0';
@@ -399,6 +400,8 @@
     rows.forEach(row => {
       const now = next.get(row.dataset.key), was = seen.get(row.dataset.key);
       if (!was) {
+        // A new thought's row waits for its grain (`settleRows`).
+        if (row.dataset.duiSettle !== undefined) return;
         const first = !seen.size && list.dataset.duiEnterFirst === undefined;
         if (first || row.dataset.duiEnter === 'none' || !within(now, view)) return;
         if (quiet) { row.animate([{ opacity: 0 }, { opacity: 1 }], { duration: tokens.reducedMs }); return; }
@@ -457,16 +460,18 @@
     // it is drawn, which is when the difference can be measured.
     state.observer = new MutationObserver(() => {
       play(list);
+      settleRows(list);
       const rows = new Set(rowsOf(list));
       rows.forEach(row => { if (!state.known.has(row)) sizes.observe(row); });
       state.known.forEach(row => { if (!rows.has(row)) sizes.unobserve(row); });
       state.known = rows;
     });
-    state.observer.observe(list, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'hidden', 'data-key'] });
+    state.observer.observe(list, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'hidden', 'data-key', 'data-dui-settle'] });
     lists.set(list, state);
     sizes.observe(list);
     rowsOf(list).forEach(row => { state.known.add(row); sizes.observe(row); });
     remember(list);
+    settleRows(list);
   }
   function forgetList(list) {
     const state = lists.get(list);
@@ -748,9 +753,23 @@
     const to = document.getElementById(page.dataset.duiFrom || '');
     const body = page.querySelector('[data-dui-grow-body]');
     let going, ms;
-    if (reduced() || !onScreen(to)) {
+    const grain = page.dataset.duiFromKind === 'grain';
+    if (reduced() || (!grain && !onScreen(to))) {
       ms = reduced() ? tokens.reducedMs : 180;
       going = page.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
+    } else if (grain) {
+      // A new page with words closes to a 7 px circle where its words
+      // began (300 ms), and its grain is tossed from there onto its card
+      // (`settle`).
+      const field = page.querySelector('textarea');
+      const box = field ? field.getBoundingClientRect() : null;
+      const size = field ? parseFloat(getComputedStyle(field).fontSize) || 16 : 16;
+      const x = box ? box.left + 4 : innerWidth / 2, y = box ? box.top + 6 + size * 0.8 : innerHeight / 2;
+      const far = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+      ms = 300;
+      going = page.animate([{ clipPath: `circle(${far}px at ${x}px ${y}px)` }, { clipPath: `circle(7px at ${x}px ${y}px)` }],
+        { duration: ms, easing: 'cubic-bezier(.5,0,.75,.2)', fill: 'forwards' });
+      gathering = { at: performance.now(), x, y };
     } else {
       ms = page.dataset.duiFromKind === 'bar' ? 320 : 340;
       going = page.animate([{ clipPath: 'inset(0px 0px 0px 0px round 0px)' }, { clipPath: clipOf(to) }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
@@ -1524,6 +1543,7 @@
       ? event.key === 'Enter' || event.key.toLowerCase() === 'n'
       : event.key === 'Escape';
     if (!done) return;
+    shootPage();
     field.value = '';
     field.setSelectionRange(0, 0);
   }, true);
@@ -1563,6 +1583,189 @@
     lastDragPress = again ? null : { at: now, x: event.screenX, y: event.screenY };
     tell(area, again ? 'maximize' : 'drag');
   }, true);
+
+  // ---- A new thought settles onto the pile (sections 5.5 and 6.17) --------
+  // When a new thought is let go, Rust marks its row in the list
+  // `data-dui-settle`, with the shade of its grain. The row is held out of
+  // sight while the thought's words gather into the grain where they began
+  // and the grain is tossed onto the row: up 46 px on the toss curve, then
+  // down on gravity's, moving across all the while. Where it lands the row
+  // appears, the rows below give 3 px one after another, and dust puffs
+  // out. A sync that redraws the list meanwhile does not show the row
+  // early: what holds it is an animation, which a redraw leaves alone.
+  //
+  // Where the words were is taken as the key or press that lets them go
+  // comes, before Rust has heard of it (the desktop's page,
+  // `data-dui-page`), or from where an Android page closes to its grain
+  // (`data-dui-from-kind="grain"`). Without either, or with reduced
+  // motion, the row only fades in.
+  const TOSS = 'cubic-bezier(.25,.7,.5,1)', GRAVITY = 'cubic-bezier(.55,0,.9,.45)';
+  let pageShot = null, gathering = null;
+  function shootPage() {
+    const field = document.querySelector('[data-dui-page]');
+    if (!field || !field.value.trim() || !shown(field)) return;
+    const box = field.getBoundingClientRect(), style = getComputedStyle(field);
+    const size = parseFloat(style.fontSize) || 15, line = parseFloat(style.lineHeight) || size * 1.65;
+    const top = parseFloat(style.paddingTop) || 0, left = parseFloat(style.paddingLeft) || 0;
+    pageShot = {
+      at: performance.now(), text: field.value.slice(0, 600), size, line, font: style.fontFamily,
+      left: box.left + left, top: box.top + top, width: Math.max(40, box.width - left * 2),
+      height: Math.max(line, Math.min(box.height - top, line * 8)),
+    };
+  }
+  document.addEventListener('keydown', event => {
+    if (event.isComposing) return;
+    const command = event.ctrlKey || event.metaKey;
+    if (event.key === 'Escape' || (command && (event.key === 'Enter' || event.key.toLowerCase() === 'n'))) shootPage();
+  }, true);
+  document.addEventListener('pointerdown', shootPage, true);
+
+  function dust(x, y, colour) {
+    for (let index = 0; index < 7; index++) {
+      const speck = document.createElement('i');
+      speck.className = 'dui-dust';
+      Object.assign(speck.style, { left: x + 'px', top: y + 'px', background: colour });
+      document.body.append(speck);
+      const angle = Math.PI * (1.08 + 0.84 * index / 6), far = 8 + Math.random() * 12;
+      const ms = 420 + Math.random() * 180;
+      after(speck.animate([{ transform: 'none', opacity: 0.9 },
+        { transform: `translate(${Math.cos(angle) * far}px, ${Math.sin(angle) * far * 0.7 + 7}px) scale(.4)`, opacity: 0 }],
+      { duration: ms, easing: 'cubic-bezier(.2,.6,.4,1)', fill: 'forwards' }), ms, () => speck.remove());
+    }
+  }
+  // The newest grain of the pile drops 46 px onto the top of the heap,
+  // when the heap is in sight. Nothing else moves.
+  function pileGrows(list) {
+    const top = list.querySelector('[data-dui-pile] .dui-pile-top');
+    const svg = top && top.ownerSVGElement;
+    if (!svg || !onScreen(svg)) return;
+    const scroller = scrollerOf(list).getBoundingClientRect(), box = svg.getBoundingClientRect();
+    if (box.bottom < scroller.top || box.top > scroller.bottom) return;
+    // In the picture's own measure, which is finer than the page's.
+    const fine = svg.viewBox.baseVal.width / (box.width || 1);
+    top.animate([{ transform: `translateY(${-46 * fine}px)`, opacity: 0 }, { opacity: 1, offset: 0.3 }, { transform: 'none', opacity: 1 }],
+      { duration: 640, easing: 'cubic-bezier(.55,0,1,.45)' });
+  }
+  function land(row, list, x, y, colour, hold) {
+    hold.cancel();
+    if (!row.isConnected) return;
+    const snap = spring('snap');
+    row.animate([{ opacity: 0, transform: 'scale(.96) translateY(-5px)', transformOrigin: '14px 16px' },
+      { opacity: 1, transform: 'none', transformOrigin: '14px 16px' }], { duration: snap.ms, easing: snap.easing });
+    // The rows below give a little under it, one after another.
+    let below = row.nextElementSibling;
+    for (let index = 0; below && index < 7; below = below.nextElementSibling) {
+      if (below.dataset.key === undefined || below.classList.contains('dui-ghost')) continue;
+      below.animate([{ transform: 'none' }, { transform: 'translateY(3px)', offset: 0.3 }, { transform: 'none' }],
+        { duration: 420, delay: 30 + index * 24, easing: 'ease-out' });
+      index += 1;
+    }
+    dust(x, y, colour);
+    pileGrows(list);
+  }
+  // The row is held out of sight at once, and what to play is decided a
+  // frame later: the change that marks the row may also be the one that
+  // closes an Android page to its grain, whose watcher can hear of it
+  // after the list's does.
+  function settle(row, list) {
+    const hold = row.animate([{ opacity: 0 }, { opacity: 0 }], { duration: 3000, fill: 'forwards' });
+    requestAnimationFrame(() => toss(row, list, hold));
+    // A page that is not being drawn runs no frame: the row comes back.
+    setTimeout(() => { if (hold.playState !== 'finished' && !row._duiTossed) hold.cancel(); }, 1000);
+  }
+  function toss(row, list, hold) {
+    const now = performance.now();
+    const from = gathering && now - gathering.at < 1200 ? gathering
+      : pageShot && now - pageShot.at < 1500 ? pageShot : null;
+    gathering = null;
+    pageShot = null;
+    if (!from || reduced() || document.hidden || !shown(row)) {
+      hold.cancel();
+      row.animate([{ opacity: 0 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 200, easing: tokens.standard });
+      return;
+    }
+    row._duiTossed = true;
+    const colour = row.dataset.duiGrain || 'hsl(32 46% 60%)';
+    // The row it lands on is brought into sight first.
+    const scroller = scrollerOf(list);
+    const view = scroller.getBoundingClientRect(), box = row.getBoundingClientRect();
+    if (box.top < view.top) scroller.scrollTop -= view.top - box.top + 8;
+    else if (box.bottom > view.bottom) scroller.scrollTop += box.bottom - view.bottom + 8;
+    let x, y, wait;
+    if (from.text !== undefined) {
+      // The words shrink toward where they began, fading as they go.
+      const ghost = document.createElement('div');
+      ghost.className = 'dui-settle-ghost';
+      ghost.textContent = from.text;
+      Object.assign(ghost.style, {
+        left: from.left + 'px', top: from.top + 'px', width: from.width + 'px', height: from.height + 'px',
+        fontSize: from.size + 'px', lineHeight: from.line + 'px', fontFamily: from.font,
+        transformOrigin: `0px ${from.line / 2}px`,
+      });
+      document.body.append(ghost);
+      after(ghost.animate([{ transform: 'none', opacity: 1 }, { opacity: 0.8, offset: 0.5 }, { transform: 'scale(.04)', opacity: 0 }],
+        { duration: 280, easing: 'cubic-bezier(.5,0,.75,.3)', fill: 'forwards' }), 280, () => ghost.remove());
+      x = from.left + 4;
+      y = from.top + from.line / 2;
+      wait = 170;
+    } else {
+      // An Android page closing to its grain: the grain leaves as the
+      // circle is nearly shut.
+      x = from.x;
+      y = from.y;
+      wait = Math.max(0, 250 - (now - from.at));
+    }
+    const grain = document.createElement('i');
+    grain.className = 'dui-grain';
+    Object.assign(grain.style, { left: x + 'px', top: y + 'px', background: colour });
+    document.body.append(grain);
+    // The grain pops out where the words began (150 ms).
+    grain.animate([{ transform: 'scale(0)' }, { transform: 'scale(1.2)', offset: 0.7 }, { transform: 'scale(1)' }],
+      { duration: 150, delay: wait, easing: 'ease-out', fill: 'backwards' });
+    setTimeout(() => {
+      // Where the row is now: the list may have moved meanwhile.
+      const target = row.isConnected ? row.getBoundingClientRect() : box;
+      const tx = target.left + 14, ty = target.top + 16;
+      const dx = tx - x, dy = ty - y, peak = Math.min(0, dy) - 46;
+      const ms = Math.round(Math.max(480, Math.min(640, 440 + Math.hypot(dx, dy) * 0.25)));
+      grain.animate([{ translate: '0 0' }, { translate: `${dx}px 0` }], { duration: ms, easing: 'cubic-bezier(.3,.4,.6,1)', fill: 'both' });
+      const flight = grain.animate([
+        { transform: 'translateY(0) scale(1)', easing: TOSS },
+        { transform: `translateY(${peak}px) scale(.9)`, offset: 0.42, easing: GRAVITY },
+        { transform: `translateY(${dy}px) scale(.75)` },
+      ], { duration: ms, fill: 'forwards' });
+      after(flight, ms, () => {
+        grain.remove();
+        land(row, list, tx, ty, colour, hold);
+      });
+    }, wait + 150);
+  }
+  // An archived note sinks into the pile: its grain appears at the row's
+  // left edge and falls on gravity's curve, fading (720 ms).
+  function sink(list, was) {
+    const colour = was.row.dataset.duiGrain;
+    if (!colour) return;
+    const box = list.getBoundingClientRect();
+    const grain = document.createElement('i');
+    grain.className = 'dui-grain';
+    Object.assign(grain.style, {
+      left: box.left + was.x + 22 + 'px',
+      top: box.top + was.y + was.h / 2 + 'px',
+      background: colour,
+    });
+    document.body.append(grain);
+    after(grain.animate([{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(1.2)', opacity: 1, offset: 0.25 },
+      { transform: 'translateY(0) scale(1)', opacity: 1, offset: 0.4 }, { transform: 'translateY(140px) scale(.7)', opacity: 0 }],
+    { duration: 720, easing: GRAVITY, fill: 'forwards' }), 720, () => grain.remove());
+  }
+  // Rows of a list marked to settle that have not yet.
+  function settleRows(list) {
+    rowsOf(list).forEach(row => {
+      if (row.dataset.duiSettle === undefined || row._duiSettled) return;
+      row._duiSettled = true;
+      settle(row, list);
+    });
+  }
 
   // ---- Focus while writing (section 7.7) ----------------------------------
   // Rust says on the screen's root whether a note is being written
@@ -1605,7 +1808,8 @@
       }
     } else if (was === 'on' && now !== 'on') {
       const snap = spring('snap');
-      rowsInSight(scope).forEach((row, index) => row.animate(
+      // A new thought's row waits for its grain.
+      rowsInSight(scope).filter(row => row.dataset.duiSettle === undefined).forEach((row, index) => row.animate(
         [{ transform: 'translateX(-14px)', opacity: 0 }, { transform: 'none', opacity: 1 }],
         { duration: snap.ms, easing: snap.easing, delay: 230 + index * 22, fill: 'backwards' }));
     }

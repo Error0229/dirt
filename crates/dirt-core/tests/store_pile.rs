@@ -126,3 +126,44 @@ async fn the_pile_is_oldest_first_however_the_notes_arrived() {
     assert_eq!((since.year, since.month), (2025, 12));
     assert_eq!(since.name(), "December");
 }
+
+/// The counts' mark moves when the notes the pile is made of change, and
+/// only then: an app reads the pile again when it moves, and not for
+/// every edit.
+#[tokio::test]
+async fn the_counts_mark_moves_when_the_piles_notes_change() {
+    let (_folder, store) = temp_store();
+    let mark = || async { store.note_counts().await.unwrap().live_mark };
+    assert_eq!(mark().await, 0);
+
+    let first = store.create_note("the first thought").await.unwrap();
+    let after_first = mark().await;
+    assert_ne!(after_first, 0, "a note made");
+    let second = store.create_note("the second thought").await.unwrap();
+    let both = mark().await;
+    assert_ne!(both, after_first, "another note made");
+
+    store
+        .update_note(&first.id, "the first thought, edited")
+        .await
+        .unwrap();
+    assert_eq!(mark().await, both, "an edit");
+    store.archive_note(&second.id).await.unwrap();
+    assert_eq!(mark().await, both, "an archive");
+    store.unarchive_note(&second.id).await.unwrap();
+    assert_eq!(mark().await, both, "an archive undone");
+
+    store.delete_note(&second.id).await.unwrap();
+    assert_eq!(mark().await, after_first, "a delete");
+    store.restore_note(&second.id).await.unwrap();
+    assert_eq!(mark().await, both, "a delete undone");
+
+    // One note made and another deleted between two readings: the number
+    // of notes is the same, the mark is not.
+    let counted = store.note_counts().await.unwrap();
+    store.create_note("a third thought").await.unwrap();
+    store.delete_note(&first.id).await.unwrap();
+    let now = store.note_counts().await.unwrap();
+    assert_eq!(now.listed + now.archived, counted.listed + counted.archived);
+    assert_ne!(now.live_mark, counted.live_mark);
+}

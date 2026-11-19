@@ -12,7 +12,7 @@ use dirt_core::store::TagRule;
 use dirt_ui::components::note_row::row_element_id;
 use dirt_ui::components::{
     EmptyList, FindField, IconButton, IconButtonSize, LayerLine, LoadMore, NoteRow, NoteSummary,
-    ScrollArea, SyncStatus, TagList, TagOption,
+    Pile, ScrollArea, SyncStatus, TagList, TagOption,
 };
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::find;
@@ -247,10 +247,15 @@ pub fn Side() -> Element {
     let returned = *screen.returned.read();
     let flashing = screen.flashing.read().clone();
     let limit = *screen.limit.read();
-    let empty = listing.notes.is_empty() && !listing.finding && !listing.archived_view;
+    let settling = *screen.settling.read();
+    let pile = listing.pile.clone();
+    // The pile lies under the last note, when nothing is being found and
+    // the list holds every note (6.17).
+    let show_pile =
+        !listing.finding && !listing.archived_view && !listing.more && pile.summary.thoughts > 0;
+    let empty =
+        listing.notes.is_empty() && !listing.finding && !listing.archived_view && !show_pile;
     let archived_count = listing.counts.archived;
-    let show_archived_line =
-        !listing.finding && !listing.archived_view && archived_count > 0 && !listing.more;
     let items = items(&listing, clock);
     let indicator = screen.sync_indicator();
 
@@ -324,6 +329,7 @@ pub fn Side() -> Element {
                                         selected: open == Some(id),
                                         flash: flashing.contains(&id),
                                         back: returned == Some(id),
+                                        settle: settling == Some(id),
                                         on_open: move |()| screen.open(id, true),
                                         on_tag: move |tag: String| screen.narrow_to(&tag),
                                         on_archive: move |()| screen.archive(id),
@@ -342,13 +348,11 @@ pub fn Side() -> Element {
                             },
                         }
                     }
-                    if show_archived_line {
-                        button {
-                            r#type: "button",
-                            class: "dk-archived",
-                            "data-key": "archived line",
-                            onclick: move |_| screen.show_archived(true),
-                            "{archived_count} archived"
+                    if show_pile {
+                        Pile {
+                            heap: pile.heap,
+                            summary: pile.summary,
+                            on_archived: move |()| screen.show_archived(true),
                         }
                     }
                     if empty {

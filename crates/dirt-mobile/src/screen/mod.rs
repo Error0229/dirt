@@ -38,6 +38,7 @@ use dirt_ui::components::{card_element_id, use_toasts, GrowFrom, ListExit, Toast
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::files::{use_note_files, FilePreview, FileSource, NoteFiles};
 use dirt_ui::find;
+use dirt_ui::pile::PileView;
 use dirt_ui::settings::Section;
 use dirt_ui::time::Clock;
 use dirt_ui::Icon;
@@ -121,6 +122,9 @@ pub struct Listing {
     pub more: bool,
     /// What Find's words ask for, to mark in the cards.
     pub words: Vec<String>,
+    /// The pile under the last card (6.17): read while the list is not
+    /// finding, and kept as it was while it is.
+    pub pile: PileView,
 }
 
 /// What was last archived or deleted, for Undo.
@@ -157,6 +161,8 @@ pub struct Screen {
     pub returned: Signal<Option<NoteId>>,
     /// Notes just arrived from another device: their cards flash once.
     pub flashing: Signal<HashSet<NoteId>>,
+    /// A new thought just let go: its grain settles onto its card (5.5).
+    pub settling: Signal<Option<NoteId>>,
     pub listing: Signal<Option<Listing>>,
     pub page: Signal<PageView>,
     /// The drafts of pages being left, until the store has what they held.
@@ -517,7 +523,7 @@ impl Screen {
 
     /// Closes the page into `into`, and puts the keyboard away.
     fn close_page(mut self, into: GrowFrom) {
-        if let GrowFrom::Card(card) = &into {
+        if let GrowFrom::Card(card) | GrowFrom::Grain(card) = &into {
             // Into its card wherever it is now, which is in sight.
             dom::reveal(card);
         }
@@ -545,12 +551,31 @@ impl Screen {
         };
         let into = match note {
             _ if view.new_page && empty => GrowFrom::Bar(BAR_ID.to_owned()),
+            // A new thought closes to its grain, which settles onto its
+            // card (5.5).
+            Some(id) if view.new_page => GrowFrom::Grain(card_element_id(&id)),
             Some(id) => GrowFrom::Card(card_element_id(&id)),
             None => GrowFrom::Nowhere,
         };
+        let settles = matches!(into, GrowFrom::Grain(_)).then_some(note).flatten();
         self.close_page(into);
+        if let Some(id) = settles {
+            self.settle_grain(id);
+        }
         spawn(async move {
             self.leave(view.draft, view.serial).await;
+        });
+    }
+
+    /// A new thought settles onto the pile: its card is marked for a
+    /// moment, and the script tosses its grain onto it (5.5).
+    fn settle_grain(mut self, note: NoteId) {
+        self.settling.set(Some(note));
+        spawn(async move {
+            tokio::time::sleep(Duration::from_millis(2500)).await;
+            if *self.settling.peek() == Some(note) {
+                self.settling.set(None);
+            }
         });
     }
 
@@ -574,7 +599,7 @@ impl Screen {
             let exit = if delete {
                 ListExit::Tear
             } else {
-                ListExit::Fold
+                ListExit::Sink
             };
             self.put_away(id, delete, exit);
         });
@@ -1131,6 +1156,14 @@ fn use_listing(screen: &Screen, app: &AppState) {
             });
             let counts = core.note_counts().await.unwrap_or_default();
             let more = notes.len() >= limit;
+            // The pile's notes are read only when the counts say they may
+            // have changed: not at every pause in typing (6.17).
+            let before = listing_signal
+                .peek()
+                .as_ref()
+                .map(|listing| listing.pile.clone());
+            let offset = Clock::now().utc_offset_secs;
+            let pile = PileView::read(before, counts, offset, || core.pile()).await;
 
             // What a sync has just brought: new to the list, or edited
             // since it was last read, and not the note being written.
@@ -1175,6 +1208,7 @@ fn use_listing(screen: &Screen, app: &AppState) {
                 archived_view,
                 more,
                 words: dirt_ui::text::find_words(&words),
+                pile,
             }));
             Some(())
         }
@@ -1241,6 +1275,7 @@ pub fn MainScreen() -> Element {
         exit: Signal::new(ListExit::None),
         returned: Signal::new(None),
         flashing: Signal::new(HashSet::new()),
+        settling: Signal::new(None),
         listing: Signal::new(None),
         page: Signal::new(PageView::default()),
         leaving: Signal::new(Vec::new()),

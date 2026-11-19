@@ -586,18 +586,31 @@ pub struct NoteCounts {
     pub listed: usize,
     /// Archived notes that are not deleted.
     pub archived: usize,
+    /// A number that changes when a note is made, deleted or brought
+    /// back: the sum of the row numbers of the notes that are not
+    /// deleted. An edit or an archive leaves it as it is. With the counts,
+    /// it tells whether the notes the pile is made of may have changed
+    /// ([`crate::Store::pile`] reads every one of them). Two such changes
+    /// between two readings could cancel out only if a note brought back
+    /// had the very row number of one deleted.
+    pub live_mark: i64,
 }
 
+/// The statement behind [`counts`]: read in the list's index alone, which
+/// holds whether a note is deleted, whether it is archived and its row
+/// number. No note's own row is read.
+const COUNTS_SQL: &str = "SELECT count(*), sum(archived), sum(rowid) FROM notes WHERE deleted = 0";
+
 pub(super) fn counts(connection: &Connection) -> Result<NoteCounts> {
-    let (all, archived): (i64, Option<i64>) = connection.query_row(
-        "SELECT count(*), sum(archived) FROM notes WHERE deleted = 0",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+    let (all, archived, mark): (i64, Option<i64>, Option<i64>) =
+        connection.query_row(COUNTS_SQL, [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
     let archived = archived.unwrap_or_default();
     Ok(NoteCounts {
         listed: usize::try_from(all - archived).unwrap_or_default(),
         archived: usize::try_from(archived).unwrap_or_default(),
+        live_mark: mark.unwrap_or_default(),
     })
 }
 
@@ -988,6 +1001,17 @@ mod tests {
                 "{said}"
             );
         }
+    }
+
+    /// The counts read the list's index and nothing else: they are read
+    /// with every reading of the list.
+    #[test]
+    fn the_counts_are_read_from_the_lists_index_alone() {
+        let (_folder, connection) = empty_database();
+        assert_eq!(
+            read_order(&connection, COUNTS_SQL, 0),
+            ["SEARCH notes USING COVERING INDEX notes_by_edit (deleted=?)"]
+        );
     }
 
     /// The pile is read by the list's index, which has all it needs but

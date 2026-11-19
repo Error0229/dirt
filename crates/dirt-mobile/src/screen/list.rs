@@ -11,7 +11,7 @@ use dioxus::prelude::*;
 use dirt_core::models::Layer;
 use dirt_core::store::TagRule;
 use dirt_ui::components::{
-    EmptyList, FindField, IconButton, LayerLine, LoadMore, NoteCard, NoteSummary, PullToSync,
+    EmptyList, FindField, IconButton, LayerLine, LoadMore, NoteCard, NoteSummary, Pile, PullToSync,
     ScrollArea, SyncStatus, TagOption, TagStrip,
 };
 use dirt_ui::events::{use_outcome, Outcome};
@@ -136,10 +136,18 @@ pub fn Main() -> Element {
     let returned = *screen.returned.read();
     let flashing = screen.flashing.read().clone();
     let limit = *screen.limit.read();
-    let empty = read && listing.notes.is_empty() && !listing.finding && !listing.archived_view;
+    let settling = *screen.settling.read();
+    let pile = listing.pile.clone();
+    // The pile lies under the last card, when nothing is being found and
+    // the list holds every note (6.17).
+    let show_pile =
+        !listing.finding && !listing.archived_view && !listing.more && pile.summary.thoughts > 0;
+    let empty = read
+        && listing.notes.is_empty()
+        && !listing.finding
+        && !listing.archived_view
+        && !show_pile;
     let archived_count = listing.counts.archived;
-    let show_archived_line =
-        !listing.finding && !listing.archived_view && archived_count > 0 && !listing.more;
     let archived_view = listing.archived_view;
     let items = items(&listing, clock);
     let indicator = screen.sync_indicator();
@@ -261,6 +269,7 @@ pub fn Main() -> Element {
                                             summary: *summary,
                                             flash: flashing.contains(&id),
                                             back: returned == Some(id),
+                                            settle: settling == Some(id),
                                             on_open: move |()| screen.open(id),
                                             on_tag: move |tag: String| screen.narrow_to(&tag),
                                             on_swipe: move |()| screen.swiped(id),
@@ -278,13 +287,11 @@ pub fn Main() -> Element {
                                 },
                             }
                         }
-                        if show_archived_line {
-                            button {
-                                r#type: "button",
-                                class: "dm-archived",
-                                "data-key": "archived line",
-                                onclick: move |_| screen.show_archived(true),
-                                "{archived_count} archived"
+                        if show_pile {
+                            Pile {
+                                heap: pile.heap,
+                                summary: pile.summary,
+                                on_archived: move |()| screen.show_archived(true),
                             }
                         }
                         if empty {

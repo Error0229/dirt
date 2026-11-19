@@ -11,6 +11,7 @@
 //! - [`motion`]: the springs and curves of section 5, and the one script
 //!   that animates lists, follows fingers and honours reduced motion.
 //! - [`components`]: the small components of section 6.
+//! - [`pile`]: grains and the pile drawn as a heap of sand (6.17).
 //! - [`files`]: the file tile and the file preview (6.5, 6.16), with the
 //!   bundled PDF renderer.
 //! - [`UiRoot`]: the component an app puts around its screens. It brings
@@ -27,7 +28,9 @@
 //! | Attribute | On | Does |
 //! |---|---|---|
 //! | `data-tip`, `data-kbd` | anything | A tooltip after a hover, a long press on Android, or keyboard focus |
-//! | `data-dui-list` | a list | Its children with `data-key` slide to their new places when the page changes, settle in when new, and are drawn leaving when removed. `data-dui-exit` on the list is `tear` (the default), `fold`, `shrink`, `fade` or `none`; `data-dui-enter` on a row is `pop` or `none`. A child `.dui-sel-ind` is the list's one highlight, moved to the row with the class `sel` |
+//! | `data-dui-list` | a list | Its children with `data-key` slide to their new places when the page changes, settle in when new, and are drawn leaving when removed. `data-dui-exit` on the list is `tear` (the default), `fold`, `sink` (an archive: folds, and its grain sinks), `shrink`, `fade` or `none`; `data-dui-enter` on a row is `pop` or `none`. A child `.dui-sel-ind` is the list's one highlight, moved to the row with the class `sel` |
+//! | `data-dui-grain`, `data-dui-settle` | a row or card | Its grain's shade; marked to settle, it is held out of sight while the new thought's words gather into the grain and the grain is tossed onto it (section 5.5). See [`pile`] |
+//! | `data-dui-pile` | the pile under a list | Its newest grain drops onto the heap as a thought settles, if the heap is in sight ([`components::Pile`]) |
 //! | `data-dui-scroll` | a scrolling element | The drawn scrollbar ([`components::ScrollArea`] renders it) |
 //! | `data-dui-swipe` | a card | It follows a finger; see [`components::Swipeable`] |
 //! | `data-dui-arrows` | a group of buttons | Up and Down move between them; Up from the first goes to the element the attribute names |
@@ -71,6 +74,7 @@ pub mod fonts;
 pub mod gallery;
 pub mod icons;
 pub mod motion;
+pub mod pile;
 mod root;
 pub mod settings;
 pub mod text;

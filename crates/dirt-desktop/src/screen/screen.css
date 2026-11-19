@@ -14,9 +14,6 @@
 .dk-list{padding:2px 8px 10px;min-height:100%}
 .dk-arch-head{display:flex;align-items:center;gap:8px;margin:4px 6px 8px 2px;font-size:13px;font-weight:600}
 .dk-arch-n{color:var(--text-3);font-weight:500;font-variant-numeric:tabular-nums}
-/* "3 archived", where the pile will be (step 7). */
-.dk-archived{display:block;margin:18px auto 8px;padding:4px 10px;border-radius:7px;font-size:12px;color:var(--text-3);transition:background var(--d-1),color var(--d-1)}
-.dk-archived:hover{background:var(--surface-2);color:var(--text-2)}
 .dk-foot{display:flex;align-items:center;gap:2px;padding:8px;border-top:1px solid var(--border);flex:none}
 .dk-grow{flex:1}
 .dk-new{display:none}

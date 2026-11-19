@@ -14,12 +14,13 @@
 //! swipe does (section 12).
 
 use dioxus::prelude::*;
-use dirt_core::models::NoteId;
+use dirt_core::models::{Grain, NoteId};
 use dirt_core::sync::overview::NOT_ON_SERVER_YET;
 
 use crate::components::note_row::{Marked, NoteSummary, TagLinks};
 use crate::components::swipe::Swipeable;
 use crate::icons::{Icon, IconSize, IconSvg};
+use crate::pile::shade;
 
 /// The ID a card's element has in the page: what the note's page grows
 /// out of and shrinks back into.
@@ -38,6 +39,9 @@ pub fn NoteCard(
     /// It has just come back by Undo: it drops in with a bounce.
     #[props(default)]
     back: bool,
+    /// It is a new thought just let go: its grain settles onto it (5.5).
+    #[props(default)]
+    settle: bool,
     on_open: EventHandler<()>,
     on_tag: EventHandler<String>,
     /// It was swiped away: archive it, or delete it if it is archived.
@@ -73,6 +77,9 @@ pub fn NoteCard(
             role: "listitem",
             "data-key": "{id}",
             "data-dui-enter": back.then_some("pop"),
+            // Its grain's shade, for the script that throws grains.
+            "data-dui-grain": shade(&Grain::of(&id)),
+            "data-dui-settle": settle.then_some(""),
             Swipeable {
                 icon: if archived { Icon::Trash } else { Icon::Archive },
                 danger: archived,
