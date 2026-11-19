@@ -130,24 +130,29 @@ pub fn save_a_copy(files: &NoteFiles, toasts: Toasts, file: AttachedFile) {
     });
 }
 
-/// Files dropped on the window, as the web view gives them. In a
-/// development build a drop that came with no files of the computer's (a
-/// drop made by a script, to try the app without a hand on the mouse)
-/// takes them from `DIRT_DROP`, paths separated as `PATH` separates them.
+/// Files dropped on the window, as the web view gives them.
+///
+/// In a development build with `DIRT_DROP` set, a drop takes its files
+/// from the file that names, a path on each line, read at each drop: a
+/// drop made by a script, to try the app without a hand on the mouse,
+/// carries no files of the computer's.
 pub fn dropped(event: &Event<DragData>) -> Vec<PathBuf> {
-    let paths: Vec<PathBuf> = event
+    if let Some(list) = test_hook("DIRT_DROP") {
+        return std::fs::read_to_string(list)
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(PathBuf::from)
+            .collect();
+    }
+    event
         .data_transfer()
         .files()
         .iter()
         .map(dioxus::html::FileData::path)
         .filter(|path| !path.as_os_str().is_empty())
-        .collect();
-    if !paths.is_empty() {
-        return paths;
-    }
-    test_hook("DIRT_DROP")
-        .map(|list| std::env::split_paths(&list).collect())
-        .unwrap_or_default()
+        .collect()
 }
 
 /// Answers the web view's requests for the bytes the preview shows, from

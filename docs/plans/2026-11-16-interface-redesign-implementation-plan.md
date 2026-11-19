@@ -1778,6 +1778,25 @@ pasting a picture. A PDF renderer is bundled, so PDFs show their pages in
 the preview on every platform (decided 2026-11-18). `docs/SECURITY.md` says what the preview keeps in
 memory and what "Open in another app" writes.
 
+**Split in two.** 6a is the shared tile and preview and the desktop; 6b is
+Android.
+
+**6a built.** `dirt_ui::files` is the tile, the preview and what they
+share (`NoteFiles`), the same for both apps; each app gives them another
+app and a save dialog. The bytes the preview shows are held in memory and
+answered to the web view from there (`dirt_ui::files::served`). PDF.js
+6.4.299 is bundled in `dirt-ui`, 3.5 MiB, Apache 2.0, and draws every PDF.
+The core gives a tile its words (`AttachedFile::whereabouts`) and attaches
+a pasted picture from memory (`Store::attach_bytes`). On the desktop, files
+dropped anywhere on the window are attached or make a note, and a picture
+pasted into the page is attached. The desktop's old list of files is gone.
+What it settled is in design section 6.16. Each kind was attached,
+previewed, opened in another app and saved against the local server, a
+file not on the device was fetched with its ring, and both themes were
+looked at (the pull request says how); drag and drop from a file manager,
+a real paste and a real program opening a file are in the manual
+checklist (D17 to D23, D57 to D62).
+
 ### Step 7: grains and the pile
 
 The settling of a new thought, the grain of each note, the pile under the

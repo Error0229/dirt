@@ -20,6 +20,7 @@
 
 use dioxus::prelude::*;
 use dirt_core::models::{Accent, ThemeMode};
+use dirt_core::store::{AttachedFile, FileStanding};
 use serde::Deserialize;
 
 use crate::appearance::{theme_name, Appearance, Platform, TextSize};
@@ -30,6 +31,7 @@ use crate::components::{
     TagOption, TagStrip, TextSizeSlider, Toast,
 };
 use crate::events::Bus;
+use crate::files::FileTile;
 use crate::icons::{Icon, IconSize, IconSvg};
 use crate::tokens::NEUTRALS;
 use crate::UiRoot;
@@ -170,6 +172,7 @@ fn Page(
                 AnimatedList {}
                 ListParts {}
                 SwipeCard {}
+                FileTilesShown {}
                 AndroidList {}
                 Icons {}
                 Type {}
@@ -700,6 +703,102 @@ fn SwipeCard() -> Element {
                     cards.write().push(card);
                 },
                 "Another card"
+            }
+        }
+    }
+}
+
+/// A file attached to no note, for the tiles below.
+fn a_file(
+    id: u128,
+    name: &str,
+    size: u64,
+    on_device: bool,
+    standing: FileStanding,
+) -> AttachedFile {
+    AttachedFile {
+        attachment: dirt_core::files::Attachment {
+            file_id: uuid::Uuid::from_u128(id),
+            name: name.to_owned(),
+            media_type: dirt_core::files::media_type_for(name).to_owned(),
+            size,
+            key: dirt_core::files::FileKey::generate(),
+            added_at_ms: 0,
+            thumbnail: None,
+        },
+        on_device,
+        thumbnail_on_device: false,
+        standing,
+    }
+}
+
+/// The file tile in each of its states. The preview needs a note's files
+/// in a store, and is tried in the apps.
+#[component]
+fn FileTilesShown() -> Element {
+    let toasts = use_toasts();
+    let said = move |words: &'static str| {
+        move |file: AttachedFile| {
+            toasts.show(Toast::new(format!("{words} {}", file.attachment.name)))
+        }
+    };
+    let tiles = [
+        (
+            a_file(1, "receipt-oct.pdf", 219_000, true, FileStanding::Taken),
+            false,
+            true,
+        ),
+        (
+            a_file(
+                2,
+                "kitchen-sketch.png",
+                940_000,
+                true,
+                FileStanding::NotTaken,
+            ),
+            false,
+            true,
+        ),
+        (
+            a_file(3, "standup.m4a", 3_200_000, true, FileStanding::NotTaken),
+            false,
+            false,
+        ),
+        (
+            a_file(4, "tile-sample.jpg", 2_100_000, false, FileStanding::Taken),
+            true,
+            true,
+        ),
+        (
+            a_file(
+                5,
+                "install.sh",
+                1_000,
+                true,
+                FileStanding::Refused("the account's storage for files is full".to_owned()),
+            ),
+            false,
+            true,
+        ),
+    ];
+    rsx! {
+        h2 { "File tiles" }
+        p { class: "gal-s",
+            "Sent; being sent; on this device only; being fetched; a script, which is never opened and could not be sent."
+        }
+        div { class: "dui-files",
+            for (file , fetching , can_send) in tiles {
+                FileTile {
+                    key: "{file.attachment.file_id}",
+                    whereabouts: file.whereabouts(can_send),
+                    file,
+                    thumbnail: None,
+                    fetching,
+                    on_preview: said("Preview"),
+                    on_open: said("Open"),
+                    on_save: said("Save"),
+                    on_remove: said("Remove"),
+                }
             }
         }
     }

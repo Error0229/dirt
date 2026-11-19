@@ -641,7 +641,9 @@ this document are approximate; the tokens here are the real ones.
 | Quick capture opens | The box comes into focus: from 97% and blurred 10 px to sharp (snap, the blur on enter) |
 | Quick capture is put away (<kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd>, a click outside) | The page shrinks to a grain and flies to the tray on an arc: across quickly, down slowly then fast, so the path curves (600 ms). The tray icon pulses once as it lands |
 | A file is attached | Its tile grows out of the paperclip, or out of the point it was dropped on, and bounces into place (pop). Several files follow one another, 70 ms apart |
-| A preview opens and closes | The file grows out of its tile and shrinks back into it (6.16) |
+| A preview opens and closes | The file grows out of its tile (420 ms, enter) and shrinks back into it (320 ms, standard), the backdrop fading with it (280 ms, standard). With reduced motion it fades in where it is (6.16) |
+| The next file in the preview | It comes in 48 px from the side it was asked for from (280 ms, enter). A file read after its thumbnail was shown fades in where the thumbnail was |
+| Files dragged over the window | A clay dashed edge and the words of what a drop would do fade in over the window (200 ms, standard) |
 
 **Focus while writing (7.7)**
 
@@ -862,13 +864,18 @@ the keyboard is up.
 
 ### 6.5 File tile
 
-Thumbnail or kind icon, name, "1.8 MB · JPEG", and where it is if that
-matters: "uploading" (with the clay line filling), "on this device only"
-(offline or signed out), "not on this device; fetched when it is wanted".
+Thumbnail or kind icon, name, "1.8 MiB · JPEG", and where it is if that
+matters: "uploading" (with a clay line running along its foot), "on this
+device only" (offline or signed out), "not on this device; fetched when it
+is wanted".
 Desktop hover shows **Open in another app**, **Save a copy** and
 **Remove** as icons; Android always shows them. A file the system would run
 is shown without **Open**. A click or tap anywhere else on the tile, or
 <kbd>Space</kbd> when it has focus, previews it (6.16).
+
+What this left open is settled under 6.16. The size is in the core's words,
+which count in binary units ("1.8 MiB", "214 KiB"); the first version of
+this section said "MB".
 
 ### 6.6 Sync status
 
@@ -1081,9 +1088,37 @@ quiet:
 | Next, previous | <kbd>→</kbd> <kbd>←</kbd>, or ‹ › | Swipe sideways |
 | Close | <kbd>Esc</kbd>, <kbd>Space</kbd>, a click on the backdrop, or × | Swipe down, Back, or × |
 
-A file that is not on the device yet is fetched first: a clay ring fills on
+A file that is not on the device yet is fetched first: a clay ring turns on
 its tile, and the preview opens when it has come. The picture's thumbnail,
 already on the device, is shown at once while the whole file is decrypted.
+
+The ring was first to fill. A file is fetched in one request, whose
+progress the core does not see, and a file is 10 MiB at most, so the ring
+turns until the file has come, as a spinner does; so does the line of a
+file being sent, which goes in one request at the end of a sync.
+
+**Settled when files were built** (implementation plan, step 6). The tiles
+and the preview are `dirt_ui::files`, the same for both apps; each app
+gives them what only it can do (another app, a save dialog).
+
+| | Settled |
+|---|---|
+| Which files are previewed | Pictures: JPEG, PNG, GIF, WebP. Sounds: MP3, M4A, AAC, WAV, Ogg, Opus, FLAC. Videos: MP4, M4V, WebM; not QuickTime's `.mov`, which Chromium does not promise to play. Text: any `text/` type, and the endings of plain text, data and code (`.txt`, `.md`, `.csv`, `.json`, `.log`, `.rs`, `.py`, `.sh` and the like): a script is shown, never run, which is how to look at one safely. PDF. Not SVG, which this table did not list. Told by the type the note gives and by the name's ending (`dirt_ui::files::kind`), never by reading the file |
+| The kind on a tile | The name's ending in capitals, "JPEG" for `.jpg`, "File" for none. A sound with no thumbnail shows a note's icon of music, anything else a page's |
+| Where the file is | The core's words (`AttachedFile::whereabouts`): "uploading" while the device can send (signed in, let in, not offline), "on this device only" while it cannot, "not on this device; fetched when it is wanted", "could not be sent:" and the server's reason |
+| A file the preview does not show | A click opens it in another app (0 more actions than the table promises). One the system would run is neither previewed nor opened: its tooltip says "Save it to open it yourself" |
+| Opening | A file on the device opens at once, its thumbnail standing in, blurred, while it is read. One that is not has the ring on its tile and opens when it has come; if it cannot be had, an error that stays says so ("receipt.pdf could not be fetched"), the reason in its tooltip. Stepping in the preview to a file not on the device shows the ring, white, where the file will be |
+| The tile's parts | The part that previews and the three icons are side by side, not one inside the other, so that each is a control of its own for the keyboard and a screen reader. <kbd>Space</kbd> and <kbd>Enter</kbd> on it preview |
+| Focus in the preview | The preview itself takes the keyboard as it opens, not its first button, so that <kbd>Space</kbd> closes it and presses nothing. <kbd>Space</kbd> plays a sound when its play button has the keyboard, and scrolls text or a PDF that has it. <kbd>←</kbd> <kbd>→</kbd> step through the files except on a video or a sound, where they seek |
+| Remove | One action, as section 2 promises, with the toast "File removed" and no **Undo**: the device lets go of a file that no note names at its next sync, so there would be nothing to bring back. In the preview the next file takes its place, or the preview closes |
+| A sound | The card's bars are the sound's own shape, read from it in the page; a sound the web view cannot read is drawn flat and still plays. The time is "0:12 / 0:48" |
+| A PDF | Its pages one under another, as wide as the column allows up to 900 px, each drawn as it comes within 600 px of sight. Drawn by PDF.js (section 11); a PDF it cannot draw says so where its pages would be, and **Open in another app** is beside it |
+| Text | In mono on a card, with the drawn scrollbar. Read as UTF-8, a byte-order mark left off and anything that is not UTF-8 shown as the replacement character |
+| Pinch | Two fingers spreading by a fifth zoom a picture to 2×, closing by a seventh bring it back. A double tap does the same |
+| The bytes | Held in memory by the app while the file is shown, and given to the web view at an address only the app answers (`dirt_ui::files::served`), which tells it to keep nothing and lets a video seek. Let go of as the preview moves on or closes (`docs/SECURITY.md`) |
+| Dropping (desktop) | Anywhere on the window, as 7.3 says; while files are dragged over it, a dashed clay edge and "Drop to attach to this note" or "Drop to make a note of it" show |
+| Pasting (desktop) | A paste into the page with text in it pastes the text, as always; one with no text and a file (a picture copied from another program) attaches the file instead, and on a blank page makes a note of it, as a drop does. A picture the web view calls "image.png" is named "Pasted picture.png" |
+| A file that cannot be attached | An error that stays ("A file could not be attached", "3 files could not be attached"), the reasons in its tooltip, where the first version said so in a line under the tiles |
 
 ### 6.17 Grains, layers and the pile
 
@@ -1294,7 +1329,8 @@ let go, and it is kept.
 Drop files anywhere on the window. With a note open, they are attached to
 it ("Drop to attach to this note"). With no note open, they become a new
 note named after them ("Drop to make a note of it"). Pasting a picture into
-the open note attaches it. The paperclip opens the file dialog, which takes
+the open note attaches it; pasted on the blank page, it makes a note, as a
+drop does (6.16). The paperclip opens the file dialog, which takes
 several.
 
 ### 7.4 Keyboard
@@ -1879,11 +1915,11 @@ built.
 | **SECURITY.md: capture over the lock screen** | It adds a way to write into the phone without unlocking it. What it may and may not show (8.6) belongs in the security document | `docs/SECURITY.md` |
 | **Try lock-screen capture on real phones** | Whether the tile opens over the lock screen is each phone's choice, and so is what its keyboard shows there. The plan's second trial answered both only on the emulator | `docs/MANUAL_CHECKLIST.md`, L1 to L9 |
 | **Android: share saves at once** with **Undo**, for text as well as pictures | Already true; keep it, and add the toast | `dirt-mobile` |
-| **Desktop: drop files to make a new note**, and paste a picture | Attach in one action | `dirt-desktop`, `dirt-core::files` |
+| **Desktop: drop files to make a new note**, and paste a picture | Attach in one action | `dirt-desktop`, `dirt-core::files`. Built in step 6: a pasted picture is attached from memory (`Store::attach_bytes`) |
 | **Load more on scroll** instead of "Show older notes" | One less button; the store already pages | Both apps |
 | **A file's decrypted bytes in memory**, from `dirt-core`, not only as a file on disk | The preview shows a file without writing a copy out (6.16). Decryption stays in the core: no cryptography in a client crate. The core has it since step 1 of the plan (`Session::file_bytes`) | `dirt-core::files`, both apps |
-| **PDF in the preview: bundle a renderer or not** | WebView2 draws PDFs; WebKitGTK and Android's WebView do not. Bundling pdf.js (a few MB) makes it the same everywhere; not bundling means PDFs open in another app on Linux and Android | Decided 2026-11-18: bundled. Step 6 |
-| **SECURITY.md: the preview** | A previewed file stays in the app's memory; **Open in another app** writes a decrypted copy and lends it. The document should say which does which | `docs/SECURITY.md` |
+| **PDF in the preview: bundle a renderer or not** | WebView2 draws PDFs; WebKitGTK and Android's WebView do not. Bundling pdf.js (a few MB) makes it the same everywhere; not bundling means PDFs open in another app on Linux and Android | Decided 2026-11-18: bundled. Built in step 6: Mozilla's PDF.js 6.4.299, its build for older browsers, Apache 2.0. 3.5 MiB in 192 files: the renderer 0.50 MiB and its worker 1.26 MiB, the standard fonts 0.19 MiB (Foxit's; the GPL's Liberation Sans left out), Adobe's CJK character maps 1.11 MiB, and the image decoders 0.45 MiB. In `dirt-ui/assets/pdfjs`, loaded when a PDF is first shown, with a PDF's scripts and `eval` off; the CLI and the server carry none of it (`dirt-ui/assets/README.md`). Every PDF is drawn by it, on Windows too, so that it looks the same everywhere and needs nothing written to disk |
+| **SECURITY.md: the preview** | A previewed file stays in the app's memory; **Open in another app** writes a decrypted copy and lends it. The document should say which does which | `docs/SECURITY.md`. Done in step 6 |
 | **Drawn scrollbars** (6.15) | One look on every platform, and none of the space a system scrollbar takes. One small script shared by both apps, as the list's FLIP is | Both apps |
 | **No title bar on the desktop** (7.6) | The app reaches the top edge; one row less of chrome and one word less ("Dirt"). Windows and Linux draw their own controls; macOS keeps the system's | `dirt-desktop` |
 | **The motion system** (5): three springs as `linear()` easings, choreography from cause to destination, the View Transitions circle for theme and accent | Movement that says where things come from and go, with one feel across both apps | Both apps: one CSS file of tokens and one small animation script |

@@ -117,6 +117,41 @@ A file that a device holds is kept beside the notes' database, as it was
 attached: not encrypted, as the notes there are not. What protects both is
 the device, and on a computer with several users, the data folder.
 
+**Looking at a file, and opening it in another app.** The two are told
+apart because only one of them writes.
+
+- *The preview* reads the file into the app's memory from the device's own
+  copy (a file the device did not hold is fetched first, checked, and kept
+  as any fetched file is) and shows it in the web view the app is drawn
+  in. Text goes into the page as text. A picture, a sound, a video or a PDF
+  is handed to the web view at an address that only the app answers, from
+  memory (`dirt_ui::files::served`), and every answer tells the web view
+  to keep nothing (`Cache-Control: no-store`). No copy is written to be
+  shown from: not in the folder copies for opening go in, nor in the
+  system's place for temporary files. The app holds the bytes of the one
+  file shown and lets go of them as the preview moves to another file or
+  closes; what the page drew goes when the element that drew it goes. Like
+  any text on screen, it may stay in memory the web view has given back
+  until that memory is used again, and in a crash report of the web view's
+  if the system keeps one.
+- *A PDF* is drawn by PDF.js, bundled with the apps (interface design,
+  section 11), with its scripting and its use of `eval` turned off, so a
+  PDF's own scripts never run. It runs in the web view like the rest of
+  the page and can reach nothing the page cannot. A PDF made to attack a
+  renderer meets PDF.js and the web view's own sandbox, not a program of
+  the computer's.
+- *Open in another app* writes a copy, as described above: the store's
+  file under the name the note gives it, in a folder of its own for each
+  file. On the desktop that is `stores/<store>/opened/<file ID>/` in the
+  data folder; on Android it is `dirt/opened/<file ID>/` in the app's own
+  files, the one folder its file provider lends from. The copy is then
+  the other program's to read, and Dirt cannot tell what that program
+  keeps of it. The apps remove the copies when they next start, and with
+  the account's folder at sign-out. **Save a copy** writes one copy where
+  the person chooses, and nothing else.
+- *A pasted picture* goes from the web view to the app in memory and is
+  written once, onto the shelf, as a file attached any other way is.
+
 **The data folder is its owner's alone.** On Linux and macOS a new folder
 gets the permissions the system gives any folder, which on many computers
 lets every user read it, and a person's home is often open to the others.
