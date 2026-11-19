@@ -1817,6 +1817,22 @@ The settling of a new thought, the grain of each note, the pile under the
 list, the Rail's dots. The pile is worked out in Rust, once per change,
 from step 1's call.
 
+**Built**, both apps in one pull request. The heap is `dirt_ui::pile::Heap`,
+worked out from `Store::pile` once each time the notes it is made of change
+(an edit or an archive moves no grain), on a thread for blocking work; each
+grain's fall comes from its own note, so a new thought moves no grain
+already there. It is one SVG at any size, the grains of a shade one path of
+dots: no canvas. On a debug build 5,000 grains take 16 ms and 20,000 take
+92 ms (design 6.17). `dirt_ui::components::Pile` is the pile under the list,
+with "N archived" under it. A new thought let go marks its row or card
+`data-dui-settle`, and the script tosses its grain onto it, from the
+desktop's words (read as the key or press comes) or from where an Android
+page closes to its grain. An archive's grain sinks (`ListExit::Sink`); a
+swiped card's does not. The rail's shades and shapes come from `dirt-ui`.
+What it settled is in design 6.17. Run on Windows and the emulator against
+the local server, with 300 notes made by the CLI (`docs/MANUAL_CHECKLIST.md`,
+Runs). The pile widget stays with step 10.
+
 ### Step 8: capture from outside the app
 
 - Desktop: quick capture as its own small window, kept ready so that it
