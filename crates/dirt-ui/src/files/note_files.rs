@@ -69,6 +69,35 @@ pub enum Showing {
     Failed(String),
 }
 
+/// A file read for the preview, not yet held.
+struct Loaded {
+    kind: PreviewKind,
+    name: String,
+    media_type: &'static str,
+    bytes: Vec<u8>,
+}
+
+/// What a file read for the preview shows once it has come back, or
+/// `None` if it is no longer wanted (`current` is false: another file, a
+/// close or another note began meanwhile). Its bytes are held, in place of
+/// whatever was held, only when it is wanted; otherwise they are dropped
+/// here, and nothing that was held for the file on screen is let go.
+fn arrived(current: bool, loaded: Loaded) -> Option<Showing> {
+    if !current {
+        return None;
+    }
+    Some(if loaded.kind == PreviewKind::Text {
+        Showing::Text(as_text(&loaded.bytes))
+    } else {
+        served::release_all();
+        let address = served::hold(&loaded.name, loaded.bytes, loaded.media_type);
+        Showing::Media {
+            kind: loaded.kind,
+            address,
+        }
+    })
+}
+
 /// The open note's files, and the preview of them. Copy it freely; see the
 /// module.
 #[derive(Clone, Copy)]
@@ -348,23 +377,17 @@ impl NoteFiles {
         found.map_err(|error| error.advice(can_fetch))
     }
 
-    /// Reads a file for the preview: its text, or its bytes held in memory
-    /// for the web view to ask for.
-    async fn load(self, note: NoteId, file: &AttachedFile) -> Result<Showing, String> {
+    /// Reads a file for the preview. Nothing is held yet: see [`arrived`].
+    async fn load(self, note: NoteId, file: &AttachedFile) -> Result<Loaded, String> {
         let attachment = &file.attachment;
         let kind = preview_kind(&attachment.name, &attachment.media_type)
             .ok_or_else(|| "This kind of file is not shown here.".to_owned())?;
         let bytes = self.bytes(note, attachment.file_id).await?;
-        Ok(if kind == PreviewKind::Text {
-            Showing::Text(as_text(&bytes))
-        } else {
-            served::release_all();
-            let address = served::hold(
-                &attachment.name,
-                bytes,
-                &served_type(&attachment.name, &attachment.media_type),
-            );
-            Showing::Media { kind, address }
+        Ok(Loaded {
+            kind,
+            name: attachment.name.clone(),
+            media_type: served_type(kind, &attachment.name, &attachment.media_type),
+            bytes,
         })
     }
 
@@ -391,15 +414,17 @@ impl NoteFiles {
         spawn(async move {
             let loaded = self.load(note, &file).await;
             self.fetching.write().remove(&id);
-            if load != self.current_load() || self.note() != Some(note) {
-                return;
-            }
-            match loaded {
-                Ok(showing) => {
+            let current = load == self.current_load() && self.note() == Some(note);
+            match loaded.map(|loaded| arrived(current, loaded)) {
+                // Another file, a close or another note came first: what
+                // was read is dropped, never held.
+                _ if !current => {}
+                Ok(Some(showing)) => {
                     self.shown.set(Some(id));
                     self.open.set(true);
                     self.showing.set(showing);
                 }
+                Ok(None) => {}
                 Err(why) if open_now => self.showing.set(Showing::Failed(why)),
                 Err(why) => self.toasts.show_error(
                     Toast::new(format!("{} could not be fetched", file.attachment.name))
@@ -438,6 +463,9 @@ impl NoteFiles {
     /// Closes the preview. What it showed is let go once it has gone.
     pub fn close(mut self) {
         let load = self.next_load();
+        // Let go of at once: what is drawn stays drawn as it shrinks away,
+        // and a load still running holds nothing when it comes back.
+        served::release_all();
         if !*self.open.peek() {
             return;
         }
@@ -445,7 +473,6 @@ impl NoteFiles {
         spawn(async move {
             tokio::time::sleep(CLOSING).await;
             if load == self.current_load() && !*self.open.peek() {
-                served::release_all();
                 self.showing.set(Showing::Nothing);
             }
         });
@@ -501,5 +528,53 @@ impl NoteFiles {
             self.on_changed.call(());
             self.reread();
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read(name: &str, kind: PreviewKind) -> Loaded {
+        Loaded {
+            kind,
+            name: name.to_owned(),
+            media_type: served_type(kind, name, ""),
+            bytes: name.as_bytes().to_vec(),
+        }
+    }
+
+    /// Step to a file that is slow to come, then to one that is quick: the
+    /// slow one, coming back late, neither lets go of the quick one on
+    /// screen nor is held itself. And after a close, nothing a load still
+    /// running brings back is held.
+    #[test]
+    fn a_load_that_comes_back_late_holds_nothing_and_frees_nothing() {
+        let _one_at_a_time = served::TESTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        served::release_all();
+
+        let quick = arrived(true, read("b.mp4", PreviewKind::Video));
+        let Some(Showing::Media { address, .. }) = quick else {
+            panic!("the file wanted is shown: {quick:?}");
+        };
+        assert_eq!(served::held_count(), 1);
+
+        assert_eq!(arrived(false, read("a.pdf", PreviewKind::Pdf)), None);
+        assert_eq!(served::held_count(), 1);
+        assert_eq!(served::answer(&address, Some("bytes=0-0")).status, 206);
+
+        // Closed: everything is let go, and a late load holds nothing.
+        served::release_all();
+        assert_eq!(arrived(false, read("c.png", PreviewKind::Picture)), None);
+        assert_eq!(served::held_count(), 0);
+
+        // Text is shown as text and holds nothing.
+        assert_eq!(
+            arrived(true, read("notes.txt", PreviewKind::Text)),
+            Some(Showing::Text("notes.txt".to_owned()))
+        );
+        assert_eq!(served::held_count(), 0);
     }
 }

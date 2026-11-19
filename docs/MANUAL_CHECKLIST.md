@@ -105,6 +105,8 @@ still for a person in a release build.
 | D60 | On a file this device does not hold (D19), click its tile; then the same with the network off | A clay ring turns on the tile, and the preview opens when the file has come. Offline, an error says "… could not be fetched", why in its tooltip, and stays until dismissed |
 | D61 | Linux, with the WebKitGTK the distribution ships: preview a PDF and a picture | The PDF's pages are drawn (the bundled PDF.js), the same as on Windows |
 | D62 | Press Remove on a tile, and in the preview | "File removed". In the preview the next file takes its place, or it closes with none left |
+| D63 | Windows: Open in another app on a `.xlsx`, and Save a copy of it; open the saved copy in Excel. Then right-click the video in the preview, and drag the picture out of it to the desktop | Excel opens both in Protected View; the file's Properties say it came from another computer. The video has no Download in its controls and no menu; the picture does not leave the window |
+| D64 | Click the tile of a `.docx`; then of a `.doc` | The `.docx` shows its icons, and opens only from Open. The `.doc` has no Open at all, only Save a copy and Remove |
 | D44 | Linux and macOS: start the app | It keeps the system's title bar, until the window without one has been tried there (design 7.6). Everything else is as on Windows |
 
 ## Android app

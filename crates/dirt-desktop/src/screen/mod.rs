@@ -925,9 +925,26 @@ impl Screen {
 
     /// Attaches files: to the open note, or to a new one made for them, as
     /// a file with no words under it is a note (6.1).
-    pub fn attach(mut self, files: Vec<Incoming>) {
-        if files.is_empty() {
+    ///
+    /// Nothing is attached while the preview, Settings or the panel of keys
+    /// is over the note: the person cannot see where the files would go.
+    /// One drop or paste takes as many files as a note may have; the rest
+    /// are named in an error.
+    pub fn attach(mut self, mut files: Vec<Incoming>) {
+        if files.is_empty() || self.something_over_the_note() {
             return;
+        }
+        let most = usize::try_from(dirt_core::files::MAX_FILES_PER_NOTE).unwrap_or(usize::MAX);
+        if files.len() > most {
+            let left: Vec<String> = files.split_off(most).iter().map(Incoming::name).collect();
+            self.toasts.show_error(
+                Toast::new(format!("{} files were not attached", left.len()))
+                    .icon(Icon::Alert)
+                    .detail(format!(
+                        "A note may have at most {most} files. Not attached: {}.",
+                        left.join(", ")
+                    )),
+            );
         }
         let tags: Vec<String> = self
             .tags
@@ -961,6 +978,11 @@ impl Screen {
             self.page_over.set(true);
         }
         self.ask(made.into_iter().chain([Work::Attach { note, files }]));
+    }
+
+    /// The preview, Settings or the panel of keys is open over the note.
+    fn something_over_the_note(self) -> bool {
+        self.files.previewing().is_some() || self.app.nav.is_open() || *self.keys_open.peek()
     }
 
     /// Opens one of the note's files in another app.

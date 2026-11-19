@@ -174,9 +174,14 @@ pub fn use_served_files() {
         if let Some(range) = reply.range {
             response = response.header("Content-Range", range);
         }
-        match response.body(reply.body) {
-            Ok(response) => responder.respond(response),
-            Err(error) => tracing::error!("Could not answer for a file: {error}"),
-        }
+        // Every request is answered, so that nothing waits on one that
+        // never is: a response that cannot be made is a plain 500.
+        let response = response.body(reply.body).unwrap_or_else(|error| {
+            tracing::error!("Could not answer for a file: {error}");
+            let mut failed = Response::new(Vec::new());
+            *failed.status_mut() = dioxus::desktop::wry::http::StatusCode::INTERNAL_SERVER_ERROR;
+            failed
+        });
+        responder.respond(response);
     });
 }

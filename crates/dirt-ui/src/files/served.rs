@@ -24,7 +24,7 @@ pub const ADDRESS: &str = "dirt-file";
 /// One file's bytes, and the type the web view is told they have.
 struct Held {
     bytes: Arc<Vec<u8>>,
-    media_type: String,
+    media_type: &'static str,
 }
 
 fn held() -> &'static Mutex<HashMap<String, Held>> {
@@ -40,9 +40,12 @@ fn lock() -> std::sync::MutexGuard<'static, HashMap<String, Held>> {
 }
 
 /// Keeps a file's bytes in memory and returns the address the web view
-/// asks for them by. Each call makes a new address, so that an element
-/// given it loads it afresh.
-pub fn hold(name: &str, bytes: Vec<u8>, media_type: &str) -> String {
+/// asks for them by.
+///
+/// Each call makes a new address, so that an element given it loads it
+/// afresh. `media_type` is one of the app's own
+/// ([`super::kind::served_type`]).
+pub fn hold(name: &str, bytes: Vec<u8>, media_type: &'static str) -> String {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     let serial = NEXT.fetch_add(1, Ordering::Relaxed);
     // The file's name ends the address, for the web view's sake (a PDF's
@@ -63,7 +66,7 @@ pub fn hold(name: &str, bytes: Vec<u8>, media_type: &str) -> String {
         key.clone(),
         Held {
             bytes: Arc::new(bytes),
-            media_type: media_type.to_owned(),
+            media_type,
         },
     );
     format!("/{ADDRESS}/{key}")
@@ -88,8 +91,8 @@ pub struct Reply {
     /// 200, 206 for part of a file, 404 for an address that holds
     /// nothing (any more), 416 for a part that is not there.
     pub status: u16,
-    /// What to send as `Content-Type`.
-    pub media_type: String,
+    /// What to send as `Content-Type`: one of the app's own.
+    pub media_type: &'static str,
     /// What to send as `Content-Range`, for a part.
     pub range: Option<String>,
     pub body: Vec<u8>,
@@ -97,14 +100,18 @@ pub struct Reply {
 
 impl Reply {
     /// The headers the answer is sent with, besides its type: the web view
-    /// keeps nothing, and may ask for parts (a video it seeks in).
-    pub const HEADERS: [(&'static str, &'static str); 2] =
-        [("Cache-Control", "no-store"), ("Accept-Ranges", "bytes")];
+    /// keeps nothing, guesses no other type than the one it is told, and
+    /// may ask for parts (a video it seeks in).
+    pub const HEADERS: [(&'static str, &'static str); 3] = [
+        ("Cache-Control", "no-store"),
+        ("X-Content-Type-Options", "nosniff"),
+        ("Accept-Ranges", "bytes"),
+    ];
 
-    fn nothing(status: u16) -> Self {
+    const fn nothing(status: u16) -> Self {
         Self {
             status,
-            media_type: "text/plain".to_owned(),
+            media_type: "text/plain",
             range: None,
             body: Vec::new(),
         }
@@ -144,39 +151,46 @@ pub fn answer(path: &str, range: Option<&str>) -> Reply {
         .trim_start_matches('/');
     let found = lock()
         .get(key)
-        .map(|held| (Arc::clone(&held.bytes), held.media_type.clone()));
+        .map(|held| (Arc::clone(&held.bytes), held.media_type));
     let Some((bytes, media_type)) = found else {
         return Reply::nothing(404);
     };
-    match range {
-        None => Reply {
+    let Some(range) = range else {
+        return Reply {
             status: 200,
             media_type,
             range: None,
             body: bytes.as_ref().clone(),
+        };
+    };
+    match part_asked(range, bytes.len()) {
+        Some((first, last)) => Reply {
+            status: 206,
+            media_type,
+            range: Some(format!("bytes {first}-{last}/{}", bytes.len())),
+            body: bytes[first..=last].to_vec(),
         },
-        Some(range) => match part_asked(range, bytes.len()) {
-            Some((first, last)) => Reply {
-                status: 206,
-                media_type,
-                range: Some(format!("bytes {first}-{last}/{}", bytes.len())),
-                body: bytes[first..=last].to_vec(),
-            },
-            None => Reply {
-                range: Some(format!("bytes */{}", bytes.len())),
-                ..Reply::nothing(416)
-            },
+        None => Reply {
+            range: Some(format!("bytes */{}", bytes.len())),
+            ..Reply::nothing(416)
         },
     }
 }
+
+/// Held by each test that holds files, since the files held are the
+/// app's one set.
+#[cfg(test)]
+pub(super) static TESTS: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// One test, since the files held are the app's one set.
     #[test]
     fn bytes_are_held_answered_and_let_go() {
+        let _one_at_a_time = TESTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         release_all();
         let address = hold(
             "receipt oct.pdf",

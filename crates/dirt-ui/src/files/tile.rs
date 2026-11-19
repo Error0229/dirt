@@ -6,8 +6,10 @@
 //! **Remove** are icons on it: shown under the pointer on the desktop, and
 //! always on Android. A file the system would run has no **Open**. A click
 //! or a tap anywhere else on it, or <kbd>Space</kbd> or <kbd>Enter</kbd>
-//! while it has the keyboard, previews it, or opens it in another app if
-//! it is of a kind the preview does not show.
+//! while it has the keyboard, previews it. On a file of a kind the preview
+//! does not show it gives the keyboard to the tile's first icon instead,
+//! which shows them: opening a file in another app is always a press of
+//! its own, never a click on the file.
 //!
 //! A file being fetched has a clay ring turning on its thumbnail; one being
 //! sent, a clay line running along its foot.
@@ -26,6 +28,7 @@ use uuid::Uuid;
 use super::kind::{kind_word, preview_kind, PreviewKind};
 use super::note_files::NoteFiles;
 use crate::components::{IconButton, IconButtonSize};
+use crate::dom::{self, Caret};
 use crate::icons::{Icon, IconSize, IconSvg};
 
 /// The ID of a file's tile in the page: the preview grows out of it.
@@ -72,13 +75,7 @@ pub fn FileTiles(
                     fetching: files.is_fetching(file.attachment.file_id),
                     whereabouts: file.whereabouts(can_send),
                     file,
-                    on_preview: move |file: AttachedFile| {
-                        if preview_kind(&file.attachment.name, &file.attachment.media_type).is_some() {
-                            files.preview(&file);
-                        } else if !runs_as_a_program(&file.attachment.name) {
-                            on_open.call(file);
-                        }
-                    },
+                    on_preview: move |file: AttachedFile| files.preview(&file),
                     on_open,
                     on_save,
                     on_remove: move |file: AttachedFile| files.remove(&file),
@@ -126,15 +123,17 @@ pub fn FileTile(
     let can_open = !runs_as_a_program(&name);
     let tip = match kind {
         Some(_) => "Preview",
-        None if can_open => "Open in another app",
-        None => "Save it to open it yourself",
+        None if can_open => "Not shown here: open or save it from its icons",
+        None => "Not shown here: save it to open it yourself",
     };
+    let tile_id = tile_element_id(attachment.file_id);
+    let first_icon = format!("#{tile_id} .dui-file-acts button");
     let (for_preview, for_open, for_save, for_remove) =
         (file.clone(), file.clone(), file.clone(), file.clone());
 
     rsx! {
         div {
-            id: tile_element_id(attachment.file_id),
+            id: "{tile_id}",
             class: if fetching { "dui-file fetching" } else { "dui-file" },
             role: "listitem",
             "data-key": "{attachment.file_id}",
@@ -149,7 +148,14 @@ pub fn FileTile(
                 "data-kbd": kind.is_some().then_some("Space"),
                 // Space and Enter press it, in the script.
                 "data-dui-press": "",
-                onclick: move |_| on_preview.call(for_preview.clone()),
+                onclick: move |_| {
+                    if kind.is_some() {
+                        on_preview.call(for_preview.clone());
+                    } else {
+                        // Its icons show while one has the keyboard.
+                        dom::focus(&[first_icon.as_str()], Caret::Kept);
+                    }
+                },
                 div { class: "dui-file-thumb",
                     if let Some(picture) = thumbnail {
                         img { src: "{picture}", alt: "" }

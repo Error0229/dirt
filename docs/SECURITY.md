@@ -98,7 +98,15 @@ reaches a device from another device of the account, and one of those may
 be in the wrong hands. So the apps do not offer to open such a file, or one
 with no ending to say what it is. It can be saved, and run from where it
 was saved by somebody who means to. The list of kinds is
-`dirt_core::files::runs_as_a_program`. A copy made for opening is the
+`dirt_core::files::runs_as_a_program`: programs, installers and scripts;
+shortcuts and the files Windows follows to something else (`.url`,
+`.appref-ms`, `.settingcontent-ms`, `.website`, `.mht`); Office documents
+that may carry macros, which is every one of the older kinds (`.doc`,
+`.xls`, `.ppt` and their templates) and the add-ins and queries Excel runs
+or fetches with (`.xll`, `.xla`, `.iqy`, `.slk`); and disk images
+(`.iso`, `.img`, `.vhd`, `.vhdx`), which Windows opens by mounting, so
+that what is inside escapes the mark a copy carries. A name Windows keeps
+for a device (`CON`, `CONIN$`, `COM1` and the rest) is never written. A copy made for opening is the
 store's file under the name the note gives it. It is kept in the store's
 own folder, closed to other users of the computer, and not in the system's
 shared place for temporary files. It is removed when the app next starts,
@@ -125,19 +133,33 @@ apart because only one of them writes.
   as any fetched file is) and shows it in the web view the app is drawn
   in. Text goes into the page as text. A picture, a sound, a video or a PDF
   is handed to the web view at an address that only the app answers, from
-  memory (`dirt_ui::files::served`), and every answer tells the web view
-  to keep nothing (`Cache-Control: no-store`). No copy is written to be
+  memory (`dirt_ui::files::served`). Every answer tells the web view to
+  keep nothing (`Cache-Control: no-store`) and to guess no type of its own
+  (`nosniff`), and the type it is told is the app's, one of a short list
+  for the kind of file the app decided it is, never the type the note
+  claims: a file that claims to be a page is never shown as one. The
+  web view is not let hand what it shows to anything else either: the
+  video's own controls have no Download, no picture-in-picture and no
+  casting, the page's menu has no Save as, and a picture cannot be
+  dragged out of the window. No copy is written to be
   shown from: not in the folder copies for opening go in, nor in the
   system's place for temporary files. The app holds the bytes of the one
   file shown and lets go of them as the preview moves to another file or
-  closes; what the page drew goes when the element that drew it goes. Like
+  closes. A file still being read when the person moves on, or closes the
+  preview, is dropped when it comes and never held. What the page drew
+  goes when the element that drew it goes. Like
   any text on screen, it may stay in memory the web view has given back
   until that memory is used again, and in a crash report of the web view's
   if the system keeps one.
 - *A PDF* is drawn by PDF.js, bundled with the apps (interface design,
-  section 11), with its scripting and its use of `eval` turned off, so a
-  PDF's own scripts never run. It runs in the web view like the rest of
-  the page and can reach nothing the page cannot. A PDF made to attack a
+  section 11), loaded only from the app's own files and with XFA forms
+  off. A PDF's own scripts never run: PDF.js runs them only through its
+  viewer's scripting sandbox (QuickJS), which is neither bundled nor
+  loaded, and the preview draws pages to a canvas alone, with no layer of
+  links, forms or annotations. Neither of PDF.js's files builds code from
+  what a PDF holds: there is no `eval`, and its one `Function` call is a
+  fixed shim. It runs in the web view like the rest of the page and can
+  reach nothing the page cannot. A PDF made to attack a
   renderer meets PDF.js and the web view's own sandbox, not a program of
   the computer's.
 - *Open in another app* writes a copy, as described above: the store's
@@ -148,7 +170,16 @@ apart because only one of them writes.
   the other program's to read, and Dirt cannot tell what that program
   keeps of it. The apps remove the copies when they next start, and with
   the account's folder at sign-out. **Save a copy** writes one copy where
-  the person chooses, and nothing else.
+  the person chooses, and nothing else. Neither is ever a click on the
+  file itself: a file the preview cannot show answers a click by showing
+  its icons, and opening it is a press of its own.
+- *On Windows both copies are marked as downloaded* (the "Mark of the
+  Web": a `Zone.Identifier` stream with `ZoneId=3`), as `dirt save` marks
+  its copy too, so Windows and the programs that open them treat them as
+  files from the internet: Office opens a document in Protected View, and
+  SmartScreen asks before running what is in it. A drive that keeps no
+  such streams (FAT, most memory sticks) cannot carry the mark, and a copy
+  saved there has none.
 - *A pasted picture* goes from the web view to the app in memory and is
   written once, onto the shelf, as a file attached any other way is.
 

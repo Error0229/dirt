@@ -87,21 +87,50 @@ pub fn kind_word(name: &str) -> String {
     }
 }
 
-/// The type the web view is told a file has when it is shown.
+/// The types the web view may be told a file of each kind has, with the
+/// endings that choose each. The first is the one for a file whose ending
+/// and claimed type choose none.
+const PICTURE_TYPES: &[(&str, &[&str])] = &[
+    ("image/png", &["png"]),
+    ("image/jpeg", &["jpg", "jpeg"]),
+    ("image/gif", &["gif"]),
+    ("image/webp", &["webp"]),
+];
+const AUDIO_TYPES: &[(&str, &[&str])] = &[
+    ("audio/mpeg", &["mp3"]),
+    ("audio/mp4", &["m4a", "aac"]),
+    ("audio/wav", &["wav"]),
+    ("audio/ogg", &["ogg", "oga", "opus"]),
+    ("audio/flac", &["flac"]),
+];
+const VIDEO_TYPES: &[(&str, &[&str])] =
+    &[("video/mp4", &["mp4", "m4v"]), ("video/webm", &["webm"])];
+
+/// The type the web view is told a file has when the preview shows it.
 ///
-/// It is the one the note gives, unless that is empty or says nothing, and
-/// then one taken from the kind. A picture or a sound with no type of its
-/// own is still drawn or played by what is in it.
+/// It is always one of the app's own short list for the kind the app has
+/// decided the file is ([`preview_kind`]): the type a note claims for a
+/// file is never sent as it is, since another device wrote it. Within the
+/// kind the name's ending chooses, then the claimed type if it is on the
+/// list, then the kind's first. The web view is also told not to guess
+/// another (`X-Content-Type-Options: nosniff`, [`super::served`]).
 #[must_use]
-pub fn served_type(name: &str, media_type: &str) -> String {
-    let given = media_type.trim();
-    if !given.is_empty() && given != "application/octet-stream" {
-        return given.to_owned();
-    }
-    match preview_kind(name, given) {
-        Some(PreviewKind::Text) => "text/plain; charset=utf-8".to_owned(),
-        Some(PreviewKind::Pdf) => "application/pdf".to_owned(),
-        _ => "application/octet-stream".to_owned(),
+pub fn served_type(kind: PreviewKind, name: &str, media_type: &str) -> &'static str {
+    let ending = ending(name);
+    let claimed = media_type.trim().to_ascii_lowercase();
+    let choose = |types: &[(&'static str, &[&str])]| {
+        types
+            .iter()
+            .find(|(_, endings)| endings.contains(&ending.as_str()))
+            .or_else(|| types.iter().find(|(known, _)| *known == claimed))
+            .map_or(types[0].0, |(known, _)| *known)
+    };
+    match kind {
+        PreviewKind::Picture => choose(PICTURE_TYPES),
+        PreviewKind::Audio => choose(AUDIO_TYPES),
+        PreviewKind::Video => choose(VIDEO_TYPES),
+        PreviewKind::Pdf => "application/pdf",
+        PreviewKind::Text => "text/plain; charset=utf-8",
     }
 }
 
@@ -169,12 +198,32 @@ mod tests {
         assert_eq!(as_text(b"half \xFF"), "half \u{fffd}");
     }
 
+    /// The type sent is always the app's, for the kind the app decided,
+    /// whatever the note claims.
     #[test]
-    fn the_web_view_is_told_a_type_it_can_use() {
-        assert_eq!(served_type("a.png", "image/png"), "image/png");
-        assert_eq!(served_type("a.pdf", ""), "application/pdf");
+    fn the_web_view_is_told_a_type_of_the_apps_choosing() {
+        use PreviewKind::{Audio, Pdf, Picture, Text, Video};
+        assert_eq!(served_type(Picture, "a.png", "image/png"), "image/png");
+        assert_eq!(served_type(Picture, "a.JPG", "text/html"), "image/jpeg");
+        assert_eq!(served_type(Picture, "photo", "image/webp"), "image/webp");
+        // A claim that is not on the list, or could not be a header.
+        assert_eq!(served_type(Picture, "photo", "text/html"), "image/png");
         assert_eq!(
-            served_type("main.rs", "application/octet-stream"),
+            served_type(Picture, "photo", "image/png\r\nX: y"),
+            "image/png"
+        );
+        assert_eq!(
+            served_type(Audio, "standup.m4a", "audio/whatever"),
+            "audio/mp4"
+        );
+        assert_eq!(served_type(Audio, "voice", "audio/ogg"), "audio/ogg");
+        assert_eq!(served_type(Video, "clip.webm", ""), "video/webm");
+        assert_eq!(
+            served_type(Pdf, "receipt.pdf", "text/html"),
+            "application/pdf"
+        );
+        assert_eq!(
+            served_type(Text, "main.rs", "text/html"),
             "text/plain; charset=utf-8"
         );
     }

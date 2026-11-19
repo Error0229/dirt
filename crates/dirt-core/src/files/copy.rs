@@ -18,6 +18,11 @@ use std::path::{Path, PathBuf};
 /// were `target` the device's own copy of the file, or a link to it,
 /// emptying it first would leave nothing to copy and destroy the file.
 /// And the old file is there whole until the new one is.
+///
+/// On Windows the copy is marked as a file that came from the internet
+/// ([`mark_as_downloaded`]) before it takes its name, so that Windows and
+/// the programs that open it treat it as one: Office opens it in Protected
+/// View, and `SmartScreen` asks before running anything in it.
 pub fn save_copy(held: &Path, target: &Path, replace: bool) -> io::Result<()> {
     let written = if replace {
         beside(target)
@@ -32,6 +37,7 @@ pub fn save_copy(held: &Path, target: &Path, replace: bool) -> io::Result<()> {
         .and_then(|mut from| io::copy(&mut from, &mut to))
         .and_then(|_| {
             drop(to);
+            mark_as_downloaded(&written);
             if replace {
                 fs::rename(&written, target)
             } else {
@@ -45,6 +51,30 @@ pub fn save_copy(held: &Path, target: &Path, replace: bool) -> io::Result<()> {
     }
     copied
 }
+
+/// Marks a file on Windows as one that came from the internet.
+///
+/// The mark is the `Zone.Identifier` stream with `ZoneId=3`, the "Mark of
+/// the Web" a browser leaves on a download. A file reaches a device inside
+/// a note, from another device of the account, which may be in the wrong
+/// hands; so a copy handed out of Dirt is treated as a download would be.
+///
+/// A drive that keeps no such streams (FAT, most memory sticks) cannot
+/// carry the mark: the copy is written without it, and the log says so.
+#[cfg(windows)]
+pub fn mark_as_downloaded(path: &Path) {
+    let mut stream = path.as_os_str().to_owned();
+    stream.push(":Zone.Identifier");
+    if let Err(error) = fs::write(PathBuf::from(stream), "[ZoneTransfer]\r\nZoneId=3\r\n") {
+        tracing::warn!("A copy could not be marked as downloaded: {error}");
+    }
+}
+
+/// Marks a file as one that came from the internet: on Windows only, which
+/// is the one system with such a mark that the programs opening a file
+/// heed. Elsewhere this does nothing.
+#[cfg(not(windows))]
+pub const fn mark_as_downloaded(_path: &Path) {}
 
 /// A name in `target`'s folder that nothing has, to write a file under
 /// before it takes `target`'s place.
@@ -215,6 +245,41 @@ pub fn runs_as_a_program(name: &str) -> bool {
         "ppam",
         "ppsm",
         "sldm",
+        // Office's older kinds, which may carry macros whatever their
+        // ending, and Excel's add-ins and links that run or fetch.
+        "doc",
+        "dot",
+        "xls",
+        "xlt",
+        "xla",
+        "xlm",
+        "xll",
+        "ppt",
+        "pps",
+        "pot",
+        "iqy",
+        "slk",
+        // More that Windows runs, installs or follows.
+        "wsc",
+        "sct",
+        "ws",
+        "msu",
+        "appref-ms",
+        "settingcontent-ms",
+        "theme",
+        "themepack",
+        "diagcab",
+        "jnlp",
+        "xbap",
+        "website",
+        "mht",
+        "mhtml",
+        // Disk images, which Windows opens by mounting: what is inside
+        // then escapes the mark a copy carries.
+        "iso",
+        "img",
+        "vhd",
+        "vhdx",
     ];
     let name = super::safe_file_name(name);
     match name.rsplit_once('.') {
@@ -372,6 +437,39 @@ mod tests {
         assert!(!opened.exists(), "nothing was copied anywhere");
     }
 
+    /// On Windows a copy handed out, saved or made for opening, carries the
+    /// mark a browser leaves on a download, so that Windows and Office
+    /// treat it as one.
+    #[cfg(windows)]
+    #[test]
+    fn a_copy_handed_out_is_marked_as_downloaded() {
+        let folder = tempfile::tempdir().unwrap();
+        let held = folder.path().join("held");
+        fs::write(&held, b"a spreadsheet").unwrap();
+        let zone = |path: &Path| {
+            let mut stream = path.as_os_str().to_owned();
+            stream.push(":Zone.Identifier");
+            fs::read_to_string(PathBuf::from(stream)).unwrap_or_default()
+        };
+
+        let saved = folder.path().join("budget.xlsx");
+        save_copy(&held, &saved, false).unwrap();
+        assert!(zone(&saved).contains("ZoneId=3"), "{}", zone(&saved));
+        // Replacing goes through a file beside it: the mark goes with it.
+        save_copy(&held, &saved, true).unwrap();
+        assert!(zone(&saved).contains("ZoneId=3"));
+        let opened = copy_for_opening(
+            &folder.path().join("opened"),
+            &held,
+            uuid::Uuid::from_u128(1),
+            "budget.xlsx",
+        )
+        .unwrap();
+        assert!(zone(&opened).contains("ZoneId=3"));
+        // The store's own file is not marked.
+        assert_eq!(zone(&held), "");
+    }
+
     /// On a computer with several users, nobody but the owner can look
     /// into the folder the copies are in, however it came to be there.
     #[cfg(unix)]
@@ -421,6 +519,19 @@ mod tests {
             "Thing.app",
             "program.AppImage",
             "game.apk",
+            // Office's older kinds and add-ins, and what Windows follows
+            // or mounts.
+            "budget.xls",
+            "letter.doc",
+            "talk.pps",
+            "addin.xll",
+            "query.iqy",
+            "component.wsc",
+            "update.msu",
+            "app.appref-ms",
+            "page.mht",
+            "disk.iso",
+            "drive.VHDX",
             // The ending is what is left when a name is made safe: a
             // space or a dot after it changes nothing.
             "setup.exe ",

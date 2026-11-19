@@ -16,7 +16,10 @@ pub mod seal;
 pub mod shelf;
 pub mod thumbnail;
 
-pub use copy::{clear_copies, copy_for_opening, runs_as_a_program, save_copy};
+pub use copy::{clear_copies, copy_for_opening, mark_as_downloaded, runs_as_a_program, save_copy};
+/// How many files a note may have, a thumbnail counting as one: what an
+/// app may take from one drop or paste.
+pub use dirt_proto::api::limits::MAX_FILES_PER_NOTE;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -101,7 +104,7 @@ pub fn safe_file_name(name: &str) -> String {
     let stem = cleaned.split('.').next().unwrap_or_default().trim();
     let kept_for_a_device = matches!(
         stem.to_ascii_uppercase().as_str(),
-        "CON" | "PRN" | "AUX" | "NUL"
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
     ) || (stem.is_ascii()
         && stem.len() == 4
         && (stem[..3].eq_ignore_ascii_case("COM") || stem[..3].eq_ignore_ascii_case("LPT"))
@@ -415,6 +418,8 @@ mod tests {
         assert_eq!(safe_file_name("con.txt"), "_con.txt");
         assert_eq!(safe_file_name("LPT1.jpg"), "_LPT1.jpg");
         assert_eq!(safe_file_name("com9"), "_com9");
+        assert_eq!(safe_file_name("CONIN$"), "_CONIN$");
+        assert_eq!(safe_file_name("conout$.txt"), "_conout$.txt");
         assert_eq!(safe_file_name("console.txt"), "console.txt");
         assert_eq!(safe_file_name("command.com"), "command.com");
         // What a file system refuses, or shows as something else.

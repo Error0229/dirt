@@ -210,16 +210,22 @@ fn PreviewItem(showing: Showing, name: String, thumbnail: Option<String>) -> Ele
                     class: "dui-pv-picture",
                     src: "{address}",
                     alt: "{name}",
+                    draggable: "false",
                     "data-dui-zoom": "",
                 }
             },
             PreviewKind::Video => rsx! {
+                // The web view's own controls, without the ones that write
+                // a copy of the video or send it to another screen.
                 video {
                     class: "dui-pv-video",
                     src: "{address}",
                     controls: true,
                     autoplay: true,
                     playsinline: true,
+                    "controlslist": "nodownload noremoteplayback noplaybackrate",
+                    "disablepictureinpicture": "",
+                    "disableremoteplayback": "",
                 }
             },
             PreviewKind::Audio => rsx! {

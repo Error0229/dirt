@@ -8,8 +8,15 @@
 //! the character maps for CJK text in such fonts, and the decoders for
 //! JPEG 2000 and JBIG2 images, all in `assets/pdfjs`. Nothing is fetched
 //! at run time. The script loads the renderer only when a PDF is first
-//! shown, so it costs nothing until then. It runs with PDF.js's scripting
-//! and `eval` both off: a PDF's own scripts never run.
+//! shown, so it costs nothing until then.
+//!
+//! A PDF's own scripts never run. PDF.js runs a PDF's JavaScript only
+//! through its viewer's scripting sandbox (`QuickJS`), which is neither
+//! bundled nor loaded; the preview draws pages to a canvas alone, with no
+//! layer of links, forms or annotations; and neither of PDF.js's two files
+//! builds code from what a PDF holds (no `eval`, and its one `Function`
+//! call is a fixed shim for the global object). Version 6.4.299 has no
+//! `isEvalSupported` switch, and needs none.
 //!
 //! It is in `dirt-ui`, which only the two apps build: the CLI and the
 //! server carry none of it. Its version, its size and its licence are in

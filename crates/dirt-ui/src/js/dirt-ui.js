@@ -1674,9 +1674,11 @@
 
   // A picture pasted into the page: `onPastedFiles` hears the files of a
   // paste into the field `selector` names that has no text, and the paste
-  // puts nothing in the field. A file past 16 MiB is named and not sent:
-  // the app says it is too large.
-  const PASTE_MOST = 16 * 1024 * 1024;
+  // puts nothing in the field. Only what a note can take is sent over to
+  // the app: at most 20 files (`limits::MAX_FILES_PER_NOTE`), each named
+  // but without its bytes past 10 MiB (`limits::MAX_FILE_BYTES`), which
+  // the app then says is too large.
+  const PASTE_MOST = 10 * 1024 * 1024, PASTE_FILES = 20;
   let pastedTo = null;
   function onPastedFiles(selector, send) { pastedTo = { selector, send }; }
   const asBase64 = file => new Promise(resolve => {
@@ -1690,7 +1692,7 @@
     if (!event.target.closest(pastedTo.selector)) return;
     const data = event.clipboardData;
     if (data.getData('text/plain')) return;
-    const files = [...(data.files || [])];
+    const files = [...(data.files || [])].slice(0, PASTE_FILES);
     if (!files.length) return;
     event.preventDefault();
     const { send } = pastedTo;
@@ -1814,6 +1816,15 @@
     if (touchUi()) modal.classList.toggle('bare');
     else tell(modal, 'dismiss');
   });
+  // What the preview shows is not handed out by the web view: no menu of
+  // its own (Save image as, Save video as) and no dragging it out of the
+  // window, which would write a copy where it was dropped. The app's own
+  // menu, whose entries are the note's, is not shown over it either.
+  ['contextmenu', 'dragstart'].forEach(name => document.addEventListener(name, event => {
+    if (!event.target.closest || !event.target.closest('[data-dui-modal="preview"]')) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }, true));
   // A double click on a picture zooms it to twice its size about the
   // point clicked, and back.
   function zoom(picture, x, y, on) {
@@ -2012,7 +2023,6 @@
         cMapPacked: true,
         standardFontDataUrl: new URL('standard_fonts/', folder).href,
         wasmUrl: new URL('wasm/', folder).href,
-        isEvalSupported: false,
         enableXfa: false,
       });
       return state.task.promise;
