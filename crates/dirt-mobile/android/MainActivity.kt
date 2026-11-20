@@ -527,9 +527,14 @@ class MainActivity : WryActivity() {
     }
 
     // Leaving the app: the accent may have been changed in Settings, and the
-    // widget on the home screen is drawn again in it.
+    // widget on the home screen is drawn again in it. The page is told,
+    // because it may still be visible: the capture sheet and Android's own
+    // dialogs are drawn over it without hiding it, and the dock ends its
+    // listening then, so that the sheet's mic and the dock's never hear the
+    // same thought twice (design 8.9).
     override fun onPause() {
         super.onPause()
+        page?.evaluateJavascript("window.dispatchEvent(new Event('dirt-pause'))", null)
         runCatching { dev.dirt.capture.CaptureWidget.refresh(this) }
     }
 

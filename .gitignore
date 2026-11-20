@@ -58,4 +58,5 @@ dx.lock
 /crates/dirt-desktop/voice/
 /crates/dirt-mobile/android/native/src/main/jniLibs/
 /crates/dirt-mobile/android/native/src/main/assets/voice/
+/crates/dirt-mobile/android/native/src/main/res/values/dirt_voice.xml
 /.dirt-build-cache/

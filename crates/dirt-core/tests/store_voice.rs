@@ -322,6 +322,33 @@ async fn a_recording_whose_words_cannot_be_made_is_given_up_and_says_why() {
     assert_eq!(note.voice.unwrap().words, Words::Waiting);
 }
 
+/// A reading the process does not survive (a phone short of memory ends
+/// the app as the model loads) still counts as a try: the phone is not
+/// asked to load the model at every start for ever, and the row says why.
+#[tokio::test]
+async fn a_reading_that_never_came_back_counts_as_a_try() {
+    let (_folder, store) = temp_store();
+    let id = NoteId::new();
+    store.keep_voice_note(id, recording(), 1_000).await.unwrap();
+    // Each try begins and nothing comes back from it.
+    for _ in 0..dirt_core::voice::MOST_TRIES {
+        store.voice_reading(&id).await.unwrap();
+    }
+    let never = Arc::new(Saying {
+        words: Ok("never read".to_owned()),
+        asked: AtomicUsize::new(0),
+    });
+    make_words(&store, never.clone(), VoiceRecording::Keep, |_| {})
+        .await
+        .unwrap();
+    assert_eq!(never.asked.load(Ordering::SeqCst), 0);
+    let problems = store.voice_problems(vec![id]).await.unwrap();
+    assert_eq!(
+        problems.get(&id).map(String::as_str),
+        Some(dirt_core::store::READING_STOPPED)
+    );
+}
+
 /// The words are told of as each note's are put in, not after the round.
 #[tokio::test]
 async fn each_note_is_told_of_as_its_words_are_put_in() {

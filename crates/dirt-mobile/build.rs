@@ -59,12 +59,19 @@ fn main() {
 /// - the engine's libraries in `src/main/jniLibs/<ABI>/`, which the app's
 ///   own library is linked against;
 /// - the model, Silero's detector and the notice in `src/main/assets/voice/`,
-///   stored uncompressed (`build.gradle.kts`) and copied once, on first use,
-///   into the app's folder that is not backed up (`VoiceFiles.kt`), since
-///   the engine opens its files by path.
+///   left compressed in the APK and copied out once, on first use, into
+///   the app's folder that is not backed up (`VoiceFiles.kt`): the engine
+///   opens its files by path, and a file inside the APK has none, so it is
+///   copied out whether it is stored compressed or not;
+/// - `src/main/res/values/dirt_voice.xml`, which says whether this build
+///   has voice, for what the manifest offers only with it (Talk).
 ///
-/// Hard links to the build cache, not copies; neither folder is in git. A
-/// build without voice empties both, and the app offers no mic.
+/// Hard links to the build cache where it can, copies where it cannot;
+/// none of it is in git. Each is made again when what it was made from
+/// changed (its size or its time, recorded in `OUT_DIR`), so a new pin of
+/// the same size is not missed. A build without voice empties both
+/// folders, and the app offers no mic.
+#[allow(clippy::too_many_lines)]
 fn put_voice_files() -> io::Result<()> {
     println!("cargo:rerun-if-env-changed=DEP_DIRT_VOICE_FOLDER");
     println!("cargo:rerun-if-env-changed=DEP_DIRT_VOICE_ENGINE");
@@ -105,6 +112,25 @@ fn put_voice_files() -> io::Result<()> {
         _ => Vec::new(),
     };
     let is_library = |path: &Path| path.extension().is_some_and(|ending| ending == "so");
+    // What each file in the two folders was made from, as it was then.
+    let record = env::var_os("OUT_DIR")
+        .map_or_else(|| PathBuf::from("."), PathBuf::from)
+        .join("voice-files.txt");
+    let before = fs::read_to_string(&record).unwrap_or_default();
+    let mut now = String::new();
+    let identity = |path: &Path| -> String {
+        fs::metadata(path).map_or_else(
+            |_| String::new(),
+            |meta| {
+                let time = meta
+                    .modified()
+                    .ok()
+                    .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |at| at.as_nanos());
+                format!("{} {time}", meta.len())
+            },
+        )
+    };
     for (folder, wanted) in [(&libs, true), (&assets, false)] {
         let names: Vec<_> = sources
             .iter()
@@ -113,10 +139,9 @@ fn put_voice_files() -> io::Result<()> {
             .collect();
         for (source, name) in &names {
             let target = folder.join(name);
-            let same = fs::metadata(&target)
-                .ok()
-                .zip(fs::metadata(source).ok())
-                .is_some_and(|(have, want)| have.len() == want.len());
+            let line = format!("{} {}\n", target.display(), identity(source));
+            let same = target.is_file() && before.lines().any(|seen| format!("{seen}\n") == line);
+            now.push_str(&line);
             if !same {
                 let _ = fs::remove_file(&target);
                 if fs::hard_link(source, &target).is_err() {
@@ -133,6 +158,33 @@ fn put_voice_files() -> io::Result<()> {
                 fs::remove_file(path)?;
             }
         }
+    }
+    fs::write(&record, now)?;
+    // Voice is in this build when the detector and the model came with the
+    // engine: the same that `VoiceFiles.shipped` asks of the assets.
+    let shipped = [
+        "silero_vad.onnx",
+        "encoder.int8.onnx",
+        "decoder.int8.onnx",
+        "joiner.int8.onnx",
+        "tokens.txt",
+    ]
+    .iter()
+    .all(|wanted| {
+        sources
+            .iter()
+            .any(|source| source.file_name() == Some(OsStr::new(wanted)))
+    });
+    let values = main.join("res").join("values");
+    fs::create_dir_all(&values)?;
+    let xml = format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n\
+         <!-- Made by dirt-mobile's build.rs: whether this build has voice. Not in git. -->\n\
+         <resources>\n    <bool name=\"dirt_voice_shipped\">{shipped}</bool>\n</resources>\n"
+    );
+    let file = values.join("dirt_voice.xml");
+    if fs::read_to_string(&file).ok().as_deref() != Some(xml.as_str()) {
+        fs::write(file, xml)?;
     }
     Ok(())
 }

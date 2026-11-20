@@ -1568,12 +1568,14 @@ pub fn MainScreen() -> Element {
 
     // Leaving the app ends listening, keeping what was said: the person
     // said it, and nothing said is lost (6.18). The web view says when its
-    // page is hidden.
+    // page is hidden, and the activity when it is paused, which it is under
+    // the capture sheet, while the page is still seen.
     use_future(move || async move {
         let mut hidden = document::eval(concat!(
             "document.addEventListener('visibilitychange', () => {",
             "  if (document.visibilityState === 'hidden') dioxus.send(true);",
             "});",
+            "window.addEventListener('dirt-pause', () => dioxus.send(true));",
             "await new Promise(() => {});",
         ));
         while hidden.recv::<bool>().await.is_ok() {

@@ -142,16 +142,22 @@ class Listener(private val context: Context, private val onSound: (ShortArray, I
 }
 
 // How loud a piece is, and what was heard: speech, and the quiet after it.
-// The sheet has none of the app's Rust, so not Silero's detector: a piece
-// louder than -42 dBFS counts as speech, which is what the grains and the
-// end of a Talk go by. The app's Rust asks Silero when it takes the
-// recording in, and keeps nothing in which it hears no speech.
+// The sheet has none of the app's Rust, so not Silero's detector. Speech is
+// judged against the room: the noise floor is the quietest tenth of a
+// second of the last three, so steady noise (a car, the street) is the
+// floor and not speech, and a soft voice in a quiet room is still above
+// it. A piece 9 dB over the floor is speech, and one within 6 dB of it is
+// quiet; nothing under -65 dBFS is speech, however quiet the room. This is
+// what the grains, the sheet's shake and the end of a Talk go by. Whether
+// anything was said is Silero's to say, when the app's Rust takes the
+// recording in: the sheet keeps every recording the person kept.
 class Loudness {
     var speechMs = 0L
         private set
     private var quietSince = -1L
     var heardMs = 0L
         private set
+    private val recent = ArrayDeque<Double>()
 
     // The level of the piece, from 0 to 1, as the grains want it.
     fun take(piece: ShortArray, count: Int): Float {
@@ -163,11 +169,14 @@ class Loudness {
         val db = 10 * log10(max(sum / max(count, 1), 1e-10))
         val pieceMs = count * 1000L / Listener.RATE
         heardMs += pieceMs
-        if (db > SPEECH_DB) {
+        recent.addLast(db)
+        while (recent.size > FLOOR_PIECES) recent.removeFirst()
+        val floor = recent.min()
+        if (db > max(floor + SPEECH_OVER_DB, LEAST_SPEECH_DB)) {
             speechMs += pieceMs
             quietSince = -1
-        } else if (quietSince < 0) {
-            quietSince = heardMs - pieceMs
+        } else if (db <= floor + QUIET_WITHIN_DB) {
+            if (quietSince < 0) quietSince = heardMs - pieceMs
         }
         return ((db - QUIETEST_DB) / (LOUDEST_DB - QUIETEST_DB)).toFloat().coerceIn(0f, 1f)
     }
@@ -179,7 +188,11 @@ class Loudness {
     val quietAfterSpeechMs get() = if (!speech || quietSince < 0) 0L else heardMs - quietSince
 
     private companion object {
-        const val SPEECH_DB = -42.0
+        // Three seconds of pieces of a tenth of a second.
+        const val FLOOR_PIECES = 30
+        const val SPEECH_OVER_DB = 9.0
+        const val QUIET_WITHIN_DB = 6.0
+        const val LEAST_SPEECH_DB = -65.0
         const val QUIETEST_DB = -55.0
         const val LOUDEST_DB = -15.0
     }
@@ -188,13 +201,29 @@ class Loudness {
 // The sound as a WAV file, written as it comes and finished at the end:
 // 16 kHz, one channel, 16 bits. The app's Rust takes it in, writes it as
 // Ogg Opus on the note, and removes it.
+//
+// The header is written whole before the first sample, with its lengths
+// nought, and written again with them at the end. A recording whose
+// process ends while it listens is then still a WAV, whose lengths say
+// nothing, and the app's Rust reads it to its end (`capture::samples_of_wav`,
+// tested on bytes this wrote on the emulator).
 class WavWriter(private val file: File) {
     private val out = RandomAccessFile(file, "rw")
     private var bytes = 0L
 
     init {
         out.setLength(0)
-        out.write(ByteArray(44))
+        out.write(header(0))
+    }
+
+    private fun header(data: Long): ByteArray {
+        val head = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
+        head.put("RIFF".toByteArray(Charsets.US_ASCII)).putInt(if (data == 0L) 0 else (36 + data).toInt())
+        head.put("WAVEfmt ".toByteArray(Charsets.US_ASCII)).putInt(16)
+        head.putShort(1).putShort(1).putInt(Listener.RATE).putInt(Listener.RATE * 2)
+        head.putShort(2).putShort(16)
+        head.put("data".toByteArray(Charsets.US_ASCII)).putInt(data.toInt())
+        return head.array()
     }
 
     fun write(piece: ShortArray, count: Int) {
@@ -207,14 +236,8 @@ class WavWriter(private val file: File) {
     val durationMs get() = bytes / 2 * 1000 / Listener.RATE
 
     fun finish() {
-        val head = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
-        head.put("RIFF".toByteArray(Charsets.US_ASCII)).putInt((36 + bytes).toInt())
-        head.put("WAVEfmt ".toByteArray(Charsets.US_ASCII)).putInt(16)
-        head.putShort(1).putShort(1).putInt(Listener.RATE).putInt(Listener.RATE * 2)
-        head.putShort(2).putShort(16)
-        head.put("data".toByteArray(Charsets.US_ASCII)).putInt(bytes.toInt())
         out.seek(0)
-        out.write(head.array())
+        out.write(header(bytes))
         out.fd.sync()
         out.close()
     }

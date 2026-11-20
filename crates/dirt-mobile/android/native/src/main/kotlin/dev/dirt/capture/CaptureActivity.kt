@@ -366,7 +366,17 @@ class CaptureActivity : Activity() {
     // made again for a change.
     override fun onStop() {
         super.onStop()
+        // Listening that began after the pause (Talk or the widget's mic
+        // asked again while the sheet was going) ends here, kept.
+        if (talk != null) end(true)
         if (!isFinishing && !isChangingConfigurations) finish()
+    }
+
+    // The last safety net: the microphone is never left open, and what
+    // was said is kept.
+    override fun onDestroy() {
+        if (talk != null) end(true)
+        super.onDestroy()
     }
 
     // What the sheet has to say: a toast, or over the lock screen, where
@@ -402,7 +412,7 @@ class CaptureActivity : Activity() {
     // mic), or to listen and end on a pause (Talk).
     private fun voiceAsked(intent: Intent?): Int = when {
         intent?.component?.className == TALK_ALIAS -> TALK
-        intent?.getBooleanExtra(EXTRA_LISTEN, false) == true -> HANDS_FREE
+        intent?.component?.className == LISTEN_ALIAS -> HANDS_FREE
         else -> NO_VOICE
     }
 
@@ -616,54 +626,57 @@ class CaptureActivity : Activity() {
     }
 
     // Ends listening: kept (✓, letting go, a pause, leaving) or thrown away
-    // (✕, a slide to the left). Kept with no speech in it is nothing
-    // heard: the sheet shakes once and goes, and nothing is made.
+    // (✕, a slide to the left). Kept, the recording is handed to the job
+    // whatever the sheet heard: Silero, in the app's Rust, says whether
+    // anything was said, and makes nothing of it if not. The sheet's own
+    // ear only says how it goes: when it heard no speech it shakes once
+    // and goes, as for nothing heard; a soft voice it missed is still kept.
     private fun end(keep: Boolean) {
         val now = talk ?: return
         talk = null
         now.listener.stop()
         held(false)
-        if (keep && now.loudness.speech && !now.failed) {
-            val whole = runCatching {
-                now.writer.finish()
-                Waiting.keepRecording(now.part)
-            }.getOrDefault(false)
-            if (whole) {
-                Log.i(TAG, "kept a recording of ${now.writer.durationMs} ms locked=$locked")
-                sheet.announceForAccessibility(getString(R.string.dirt_kept))
-                runCatching { WordsJob.schedule(applicationContext) }
-                    .onFailure { failure -> Log.w(TAG, "the job could not be asked for: $failure") }
-                // What was typed stays as a draft, as when the sheet is
-                // closed: `onPause` keeps it.
-                leave(true)
-                return
-            }
+        if (!keep) {
+            now.writer.throwAway()
+            sheet.announceForAccessibility(getString(R.string.dirt_thrown))
+            backToTyping()
+            return
+        }
+        val whole = !now.failed && runCatching {
+            now.writer.finish()
+            Waiting.keepRecording(now.part)
+        }.getOrDefault(false)
+        if (!whole) {
             now.writer.throwAway()
             say(R.string.dirt_voice_not_kept)
             backToTyping()
             return
         }
-        now.writer.throwAway()
-        if (keep) {
-            sheet.announceForAccessibility(getString(R.string.dirt_nothing_heard))
-            val shake = ObjectAnimator.ofFloat(
-                sheet,
-                "translationX",
-                0f,
-                -dp(7).toFloat(),
-                dp(6).toFloat(),
-                -dp(3).toFloat(),
-                0f,
-            )
-            shake.duration = 320
-            shake.addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) = leave(false)
-            })
-            shake.start()
-        } else {
-            sheet.announceForAccessibility(getString(R.string.dirt_thrown))
-            backToTyping()
+        Log.i(TAG, "kept a recording of ${now.writer.durationMs} ms locked=$locked speech=${now.loudness.speech}")
+        runCatching { WordsJob.schedule(applicationContext) }
+            .onFailure { failure -> Log.w(TAG, "the job could not be asked for: $failure") }
+        // What was typed stays as a draft, as when the sheet is closed:
+        // `onPause` keeps it.
+        if (now.loudness.speech) {
+            sheet.announceForAccessibility(getString(R.string.dirt_kept))
+            leave(true)
+            return
         }
+        sheet.announceForAccessibility(getString(R.string.dirt_nothing_heard))
+        val shake = ObjectAnimator.ofFloat(
+            sheet,
+            "translationX",
+            0f,
+            -dp(7).toFloat(),
+            dp(6).toFloat(),
+            -dp(3).toFloat(),
+            0f,
+        )
+        shake.duration = 320
+        shake.addListener(object : AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: Animator) = leave(false)
+        })
+        shake.start()
     }
 
     // Thrown away: the sheet is for typing again, with the keyboard up.
@@ -681,10 +694,11 @@ class CaptureActivity : Activity() {
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
         const val DRAFT_BEFORE = "draft_before"
 
-        // Voice: the activity-alias Talk is, the widget's mic's extra, and
-        // the numbers of 6.18 and 7.11.
+        // Voice: the activity-aliases that open the sheet listening (Talk,
+        // and the widget's mic, which no other app can start), and the
+        // numbers of 6.18 and 7.11.
         const val TALK_ALIAS = "dev.dirt.capture.Talk"
-        const val EXTRA_LISTEN = "dev.dirt.capture.LISTEN"
+        const val LISTEN_ALIAS = "dev.dirt.capture.Listen"
         const val NO_VOICE = 0
         const val HANDS_FREE = 1
         const val TALK = 2

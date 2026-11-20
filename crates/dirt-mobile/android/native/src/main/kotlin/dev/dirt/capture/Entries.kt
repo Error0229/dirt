@@ -26,12 +26,14 @@ private fun sheetLater(context: Context): PendingIntent =
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
-// The sheet, listening hands-free: the widget's mic (6.18).
+// The sheet, listening hands-free: the widget's mic (6.18). Through an
+// alias that is not exported, so that only Dirt's own widget can open the
+// sheet listening; the sheet itself is exported, for the note-taking role.
 private fun listeningLater(context: Context): PendingIntent =
     PendingIntent.getActivity(
         context,
         2,
-        sheet(context).putExtra("dev.dirt.capture.LISTEN", true),
+        Intent().setClassName(context, "dev.dirt.capture.Listen").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 

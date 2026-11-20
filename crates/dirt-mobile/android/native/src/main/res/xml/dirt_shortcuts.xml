@@ -15,8 +15,9 @@
             android:targetClass="dev.dirt.capture.CaptureActivity"
             android:targetPackage="com.example.DirtMobile" />
     </shortcut>
+    <!-- Only in a build with voice (`dirt_voice_shipped`, build.rs). -->
     <shortcut
-        android:enabled="true"
+        android:enabled="@bool/dirt_voice_shipped"
         android:icon="@drawable/dirt_talk"
         android:shortcutId="talk"
         android:shortcutShortLabel="@string/dirt_talk">

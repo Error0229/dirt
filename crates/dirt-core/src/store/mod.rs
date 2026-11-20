@@ -32,7 +32,7 @@ pub use sync_state::{
     NoteProblem, ProblemKind, PurgeApplied, PurgeCandidate, SyncProgress, UnsentNote,
 };
 pub use tags::{TagCount, TagRule};
-pub use voice::{VoiceWaiting, WordsPut};
+pub use voice::{VoiceWaiting, WordsPut, READING_STOPPED};
 
 /// The name a voice recording has among a note's files.
 pub const VOICE_FILE_NAME: &str = "Voice recording.opus";
@@ -798,7 +798,15 @@ impl Store {
             .await
     }
 
-    /// Making a recording's words failed: it waits for the next try.
+    /// A try at a recording's words begins. It is counted now, so that one
+    /// the process does not survive counts too (`dirt_core::voice::MOST_TRIES`).
+    pub async fn voice_reading(&self, note: &NoteId) -> Result<()> {
+        let note = *note;
+        self.write(move |c| voice::reading(c, &note)).await
+    }
+
+    /// Making a recording's words failed: it waits for the next try, and
+    /// its row says why once the tries have run out.
     pub async fn voice_not_read(&self, note: &NoteId, why: &str) -> Result<()> {
         let (note, why) = (*note, why.to_owned());
         self.write(move |c| voice::not_read(c, &note, &why)).await

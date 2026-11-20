@@ -349,6 +349,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-android-
 
+      # The engine's Android libraries (43 MiB) and Silero's detector, fetched
+      # by their pins: kept across runs, as the other jobs keep theirs.
+      - name: Cache what dirt-voice fetches
+        uses: actions/cache@v6
+        with:
+          path: .dirt-build-cache
+          key: ${{ runner.os }}-dirt-voice-android-${{ hashFiles('crates/dirt-voice/build.rs', 'crates/dirt-voice/sherpa-onnx-sys/build.rs') }}
+
       # A build, not a check: only linking shows whether the bundled SQLite
       # and the rest of the native code fit together for Android.
       - name: Build dirt-mobile for the Android target
@@ -363,6 +371,8 @@ jobs:
           export CXX_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android${ANDROID_API}-clang++"
           export AR_x86_64_linux_android="$TOOLCHAIN/llvm-ar"
           cargo build -p dirt-mobile --target x86_64-linux-android
-          # The interface's gallery replaces the app when its feature is
-          # on, and no other job compiles it for Android.
-          cargo check -p dirt-mobile --target x86_64-linux-android --features gallery
+          # The code that is Android's alone (the voice, the jobs' way in)
+          # is linted nowhere else. With the gallery too: it replaces the
+          # app when its feature is on, and no other job compiles it.
+          cargo clippy -p dirt-mobile --target x86_64-linux-android --all-targets -- -D warnings
+          cargo clippy -p dirt-mobile --target x86_64-linux-android --all-targets --features gallery -- -D warnings

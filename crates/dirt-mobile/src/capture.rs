@@ -29,6 +29,11 @@
 //!   without the app being opened; the words job makes the words of what
 //!   was said, and asks for the capture job.
 //!
+//! A waiting file that cannot be read, three times over, is set aside in
+//! `<files>/dirt/set-aside/`, not removed: it may be what someone said,
+//! and a later version, or the person with a computer, can still find it.
+//! It is not tried again, so it is not read at every start for ever.
+//!
 //! The sheet and the widget take the theme and the accent the person chose
 //! from a small file the app writes ([`write_look`]).
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
@@ -53,6 +58,14 @@ pub const LOOK_FILE: &str = "look";
 /// listening at ten minutes, so no sheet is still writing it.
 const UNFINISHED_AFTER: Duration = Duration::from_mins(11);
 
+/// Where a waiting file goes that could not be read, under the app's data
+/// folder.
+pub const SET_ASIDE_FOLDER: &str = "set-aside";
+
+/// How many times a waiting file may fail to be read before it is set
+/// aside.
+const MOST_FAILURES: u32 = 3;
+
 /// A recording the sheet kept, as a note keeps it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recorded {
@@ -63,10 +76,21 @@ pub struct Recorded {
     pub speech: bool,
 }
 
+/// Why a recording from the sheet was not made what a note keeps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unrecorded {
+    /// The file is not a WAV the sheet writes: the file's own fault, which
+    /// counts towards setting it aside.
+    NotAWav,
+    /// Something else went wrong (the engine), said in words. The file
+    /// waits for the next time, as it was.
+    Failed(String),
+}
+
 /// Makes a WAV the sheet kept into what a note keeps: the app's voice
 /// (`voice::recorder`). A build without voice has none, and leaves the
 /// recordings where they are; its sheet has no mic.
-pub type Recorder = Arc<dyn Fn(&[u8]) -> Result<Recorded, String> + Send + Sync>;
+pub type Recorder = Arc<dyn Fn(&[u8]) -> Result<Recorded, Unrecorded> + Send + Sync>;
 
 /// What became of the waiting thoughts.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +107,8 @@ pub struct TakenIn {
     /// Files left where they are: not named by a note's ID, unreadable, or
     /// refused by the store. They are tried again next time.
     pub left: usize,
+    /// Files set aside now, after failing to be read too often.
+    pub set_aside: usize,
 }
 
 /// What a waiting file holds.
@@ -181,17 +207,57 @@ pub fn samples_of_wav(wav: &[u8]) -> Option<Vec<f32>> {
     None
 }
 
+/// The file that counts how many times `file` failed to be read.
+fn failures_file(file: &Path) -> PathBuf {
+    let mut name = file.file_name().unwrap_or_default().to_owned();
+    name.push(".failed");
+    file.with_file_name(name)
+}
+
+/// `file` could not be read, once more. After [`MOST_FAILURES`] it is set
+/// aside, kept, and not tried again; until then it is left where it is.
+fn could_not_read(file: &Path, data_folder: &Path, taken: &mut TakenIn) {
+    let count = failures_file(file);
+    let failures = std::fs::read_to_string(&count)
+        .ok()
+        .and_then(|text| text.trim().parse::<u32>().ok())
+        .unwrap_or(0)
+        + 1;
+    if failures < MOST_FAILURES {
+        let _ = std::fs::write(&count, failures.to_string());
+        taken.left += 1;
+        return;
+    }
+    let aside = data_folder.join(SET_ASIDE_FOLDER);
+    let moved = std::fs::create_dir_all(&aside)
+        .and_then(|()| std::fs::rename(file, aside.join(file.file_name().unwrap_or_default())));
+    if moved.is_ok() {
+        tracing::warn!("A waiting file could not be read {failures} times, and was set aside");
+        let _ = std::fs::remove_file(&count);
+        taken.set_aside += 1;
+    } else {
+        let _ = std::fs::write(&count, failures.to_string());
+        taken.left += 1;
+    }
+}
+
+/// `file` was made a note, or was nothing: it goes, and its count with it.
+fn done_with(file: &Path) {
+    let _ = std::fs::remove_file(file);
+    let _ = std::fs::remove_file(failures_file(file));
+}
+
 /// Makes a note of every waiting thought, and of every recording with
 /// `recorder`. See the module's documentation.
 pub async fn take_in(store: &Store, data_folder: &Path, recorder: Option<&Recorder>) -> TakenIn {
     let mut taken = TakenIn::default();
     for (file, kind) in waiting_files(data_folder) {
         let Some(id) = id_of(&file) else {
-            taken.left += 1;
+            could_not_read(&file, data_folder, &mut taken);
             continue;
         };
         if kind == Kind::Said {
-            take_in_said(store, &file, id, recorder, &mut taken).await;
+            take_in_said(store, data_folder, &file, id, recorder, &mut taken).await;
             continue;
         }
         let text = match std::fs::read_to_string(&file) {
@@ -202,13 +268,13 @@ pub async fn take_in(store: &Store, data_folder: &Path, recorder: Option<&Record
                 continue;
             }
             Err(_) => {
-                taken.left += 1;
+                could_not_read(&file, data_folder, &mut taken);
                 continue;
             }
         };
         let text = text.trim();
         if text.is_empty() {
-            let _ = std::fs::remove_file(&file);
+            done_with(&file);
             continue;
         }
         match store.take_in_note(id, text).await {
@@ -219,7 +285,7 @@ pub async fn take_in(store: &Store, data_folder: &Path, recorder: Option<&Record
                 continue;
             }
         }
-        let _ = std::fs::remove_file(&file);
+        done_with(&file);
     }
     taken
 }
@@ -227,6 +293,7 @@ pub async fn take_in(store: &Store, data_folder: &Path, recorder: Option<&Record
 /// Makes a note of one recording the sheet kept.
 async fn take_in_said(
     store: &Store,
+    data_folder: &Path,
     file: &Path,
     id: NoteId,
     recorder: Option<&Recorder>,
@@ -243,7 +310,7 @@ async fn take_in_said(
             return;
         }
         Err(_) => {
-            taken.left += 1;
+            could_not_read(file, data_folder, taken);
             return;
         }
     };
@@ -251,7 +318,12 @@ async fn take_in_said(
     let recorded = tokio::task::spawn_blocking(move || recorder(&wav)).await;
     let recorded = match recorded {
         Ok(Ok(recorded)) => recorded,
-        Ok(Err(error)) => {
+        Ok(Err(Unrecorded::NotAWav)) => {
+            tracing::warn!("A recording from the sheet is not a WAV it writes");
+            could_not_read(file, data_folder, taken);
+            return;
+        }
+        Ok(Err(Unrecorded::Failed(error))) => {
             tracing::warn!("A recording from the sheet could not be read: {error}");
             taken.left += 1;
             return;
@@ -279,7 +351,7 @@ async fn take_in_said(
     } else {
         taken.unheard += 1;
     }
-    let _ = std::fs::remove_file(file);
+    done_with(file);
 }
 
 /// Writes the theme and the accent the person chose where the sheet and the
@@ -567,7 +639,7 @@ mod tests {
     /// that is not silence, and the file is the samples' count.
     fn stand_in_recorder() -> Recorder {
         Arc::new(|wav: &[u8]| {
-            let samples = samples_of_wav(wav).ok_or("not a WAV")?;
+            let samples = samples_of_wav(wav).ok_or(Unrecorded::NotAWav)?;
             Ok(Recorded {
                 file: format!("{} samples", samples.len()).into_bytes(),
                 duration_ms: samples.len() as u64 / 16,
@@ -601,11 +673,48 @@ mod tests {
             samples_of_wav(&wav(&[16384, -32768], true)),
             Some(vec![0.5, -1.0])
         );
-        assert_eq!(
-            samples_of_wav(&wav(&[16384, -32768], false)),
-            Some(vec![0.5, -1.0])
-        );
         assert_eq!(samples_of_wav(b"not a wav"), None);
+    }
+
+    /// The bytes `WavWriter` (android/native, Microphone.kt) left on the
+    /// emulator when the sheet's process was killed while it listened, cut
+    /// to their first tenth of a second: its header as it writes it before
+    /// the first sample, with no lengths yet, and what followed.
+    #[test]
+    fn a_recording_the_sheet_never_finished_is_read() {
+        let left = include_bytes!("../tests/sheet-unfinished.wav.part");
+        let samples = samples_of_wav(left).expect("the sheet's own header");
+        assert_eq!(samples.len(), (left.len() - 44) / 2);
+        assert!(!samples.is_empty());
+    }
+
+    /// A waiting file that cannot be read is tried three times, then set
+    /// aside, kept, and not tried again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_waiting_file_that_cannot_be_read_is_set_aside_not_lost() {
+        let folder = tempfile::tempdir().unwrap();
+        let store = Store::open(folder.path().join("notes.db")).unwrap();
+        let waiting = folder.path().join(WAITING_FOLDER);
+        std::fs::create_dir_all(&waiting).unwrap();
+        let id = id_at(u64::try_from(chrono_now_ms()).unwrap() - 60_000);
+        let name = format!("{id}.wav");
+        std::fs::write(
+            waiting.join(&name),
+            b"forty-four bytes of nothing a WAV would have",
+        )
+        .unwrap();
+        let recorder = stand_in_recorder();
+        for _ in 0..2 {
+            let taken = take_in(&store, folder.path(), Some(&recorder)).await;
+            assert_eq!((taken.left, taken.set_aside), (1, 0));
+        }
+        let taken = take_in(&store, folder.path(), Some(&recorder)).await;
+        assert_eq!((taken.left, taken.set_aside), (0, 1));
+        assert!(!waiting.join(&name).exists());
+        assert!(folder.path().join(SET_ASIDE_FOLDER).join(&name).exists());
+        assert_eq!(std::fs::read_dir(&waiting).unwrap().count(), 0);
+        let after = take_in(&store, folder.path(), Some(&recorder)).await;
+        assert_eq!(after, TakenIn::default());
     }
 
     /// A recording the sheet kept becomes a voice note dated when it was

@@ -45,7 +45,7 @@ pub use dirt_ui::voice::{
     make_words_soon, said_here, was_said_here, words_made, Said, Talking, Unheard,
 };
 
-use crate::capture::Recorded;
+use crate::capture::{Recorded, Unrecorded};
 use crate::services::activity;
 use crate::state::AppState;
 
@@ -93,13 +93,13 @@ fn words_folder() -> Option<VoiceFolder> {
 /// detector in `folder`.
 pub fn recorder(folder: VoiceFolder) -> crate::capture::Recorder {
     Arc::new(move |wav: &[u8]| {
-        let samples = crate::capture::samples_of_wav(wav)
-            .ok_or_else(|| "not a WAV the sheet writes".to_owned())?;
-        let mut listening = Listening::start(&folder).map_err(|error| error.to_string())?;
+        let samples = crate::capture::samples_of_wav(wav).ok_or(Unrecorded::NotAWav)?;
+        let failed = |error: VoiceError| Unrecorded::Failed(error.to_string());
+        let mut listening = Listening::start(&folder).map_err(failed)?;
         for piece in samples.chunks(1600) {
-            listening.take(piece).map_err(|error| error.to_string())?;
+            listening.take(piece).map_err(failed)?;
         }
-        let recording = listening.finish().map_err(|error| error.to_string())?;
+        let recording = listening.finish().map_err(failed)?;
         Ok(Recorded {
             file: recording.file,
             duration_ms: recording.duration_ms,

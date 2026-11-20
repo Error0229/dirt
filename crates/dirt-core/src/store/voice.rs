@@ -221,11 +221,29 @@ pub(super) fn put_words(
     Ok(put)
 }
 
-/// Making the note's words failed: it waits on, and says why.
-pub(super) fn not_read(connection: &mut Connection, id: &NoteId, why: &str) -> Result<()> {
+/// What a try says when nothing came back from it: the process ended
+/// while it read (Android stops an app that runs out of memory).
+pub const READING_STOPPED: &str = "the reading stopped before it ended";
+
+/// A try at the note's words begins: it is counted now, before the model
+/// is loaded, so that a reading the process does not survive is counted
+/// too, and says so until another reason replaces it.
+pub(super) fn reading(connection: &mut Connection, id: &NoteId) -> Result<()> {
     let tx = write_transaction(connection)?;
     tx.execute(
         "UPDATE voice_waiting SET tries = tries + 1, problem = ?2 WHERE note_id = ?1",
+        params![id.as_str(), READING_STOPPED],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Making the note's words failed: it waits on, and says why. The try was
+/// counted as it began ([`reading`]).
+pub(super) fn not_read(connection: &mut Connection, id: &NoteId, why: &str) -> Result<()> {
+    let tx = write_transaction(connection)?;
+    tx.execute(
+        "UPDATE voice_waiting SET problem = ?2 WHERE note_id = ?1",
         params![id.as_str(), why],
     )?;
     tx.commit()?;
