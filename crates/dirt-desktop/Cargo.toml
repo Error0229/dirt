@@ -35,8 +35,8 @@ tokio = { version = "1", features = ["time", "rt", "sync"] }
 uuid.workspace = true
 # Hands a file to the system to open with whatever shows files of its kind.
 open = "5"
-global-hotkey = "0.6"
-tray-icon = "0.19"
+# The version Dioxus registers its shortcuts with, so that there is one copy.
+global-hotkey = "0.7"
 rfd = "0.15"
 # Copy and Paste for the app's own menu, and copying a note's text: a
 # web view may not read the clipboard without asking.
