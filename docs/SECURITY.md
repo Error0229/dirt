@@ -384,7 +384,9 @@ below them.
   offers Android's page for the app. Android shows its own sign that the
   microphone is in use while Dirt listens. No service records in the
   background: the microphone is open only while a screen of Dirt's is in
-  front and listening, and leaving that screen ends it.
+  front and listening, and leaving that screen ends it. Another app can
+  open the sheet listening only as the launcher opens Talk, on the screen:
+  the widget's way in to listening is an entry no other app can start.
 - **A thought said in the capture sheet waits as plain sound, briefly.** The
   sheet has none of the app's code, so it writes what it hears to a file of
   its own as it hears it, `dirt/waiting/<note ID>.wav.part`, renamed
@@ -394,8 +396,11 @@ below them.
   makes it a note (the recording as Ogg Opus, as anywhere else) and
   removes the WAV, usually within seconds; one in which no speech is heard
   is removed and nothing is made. A recording whose process ended while it
-  listened is taken in eleven minutes later, so that nothing said is lost.
-  Thrown away (✕), its file is removed at once.
+  listened is still a WAV (its header is written before the first sample)
+  and is taken in eleven minutes later, so that nothing said is lost.
+  Thrown away (✕), its file is removed at once. A waiting file that cannot
+  be read three times over is set aside in `dirt/set-aside/`, kept on the
+  phone as the waiting files are, and never sent.
 - **The words job** runs the app's own code, as the capture job does: it
   opens the device's secrets in Android's encrypted preferences, makes the
   note and its words on the phone, and asks for the capture job, which

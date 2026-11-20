@@ -2026,6 +2026,19 @@ and its words 3.6 to 6.7 s after, over the lock screen too; 385 MB at most
 for the process while reading. Real phones, the real microphone, TalkBack
 and a release build are the checklist's.
 
+**After review** (#302): the sheet writes its WAV's header before the first
+sample, so a recording cut off is still read, and a waiting file that
+cannot be read is set aside after three tries instead of being read for
+ever; the dock ends its listening when the activity pauses under the sheet;
+the widget's way in to listening is an alias no other app can start; the
+sheet's ear judges speech against the room's noise and hands every kept
+recording to Silero; listening that starts after the sheet's pause ends on
+its stop; a try at the words is counted as it begins; the build script
+copies a pinned file again when its source changed; "Dirt Talk" is only in
+a build with voice; CI lints the Android code and keeps what `dirt-voice`
+fetches for it. The engine's pinned Android libraries were found aligned to
+16 KB. Design 8.9 has the decisions.
+
 ### Step 10: finishing
 
 **From step 9b:** 🎙 in the Android page's top bar, which adds what is said
