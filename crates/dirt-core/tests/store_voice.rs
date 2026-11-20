@@ -353,3 +353,38 @@ async fn each_note_is_told_of_as_its_words_are_put_in() {
     .unwrap();
     assert_eq!(told, [(1, true), (2, true)]);
 }
+
+/// A recording that waited outside the store (Android's capture sheet) is
+/// one note, dated when it was said, however often it is taken in.
+#[tokio::test]
+async fn a_recording_taken_in_is_dated_when_it_was_said_and_made_once() {
+    let (_folder, store) = temp_store();
+    let said_at = dirt_core::util::now_ms() - 3_600_000;
+    let id: NoteId = uuid::Uuid::new_v7(uuid::Timestamp::from_unix(
+        uuid::NoContext,
+        u64::try_from(said_at / 1000).unwrap(),
+        u32::try_from(said_at % 1000).unwrap() * 1_000_000,
+    ))
+    .to_string()
+    .parse()
+    .unwrap();
+    let note = store
+        .take_in_voice_note(id, recording(), 5_000)
+        .await
+        .unwrap()
+        .expect("made");
+    assert_eq!(note.updated_at, said_at);
+    assert_eq!(note.voice.unwrap().words, Words::Waiting);
+    assert_eq!(store.voice_waiting().await.unwrap().len(), 1);
+    // Again, after a crash before its file was removed: no second note.
+    assert_eq!(
+        store
+            .take_in_voice_note(id, recording(), 5_000)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(store.list_notes(10, 0).await.unwrap().len(), 1);
+    // And nothing left on the shelf for the second.
+    assert_eq!(store.files_in_use().await.unwrap().len(), 1);
+}

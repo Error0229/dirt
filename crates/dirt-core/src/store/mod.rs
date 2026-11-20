@@ -699,6 +699,41 @@ impl Store {
                 "note {id} has no time in its ID: a note's ID is a UUID v7"
             )));
         }
+        self.keep_voice(id, recording, duration_ms, now_ms())
+            .await?
+            .ok_or_else(|| Error::InvalidInput(format!("note {id} already exists")))
+    }
+
+    /// Makes a note of a recording that waited outside the store, under the
+    /// ID it was given when it was said: Android's capture sheet keeps a
+    /// recording in a file named by its ID (interface design 8.9), as it
+    /// does a typed thought ([`Self::take_in_note`]).
+    ///
+    /// The note is dated at the time its ID carries, never later than now,
+    /// and is made only if no note has this ID: `None` says one was there
+    /// already. Otherwise as [`Self::keep_voice_note`].
+    pub async fn take_in_voice_note(
+        &self,
+        id: NoteId,
+        recording: Vec<u8>,
+        duration_ms: u64,
+    ) -> Result<Option<Note>> {
+        let Some(said_at) = id.created_at_ms() else {
+            return Err(Error::InvalidInput(format!(
+                "note {id} has no time in its ID: a note's ID is a UUID v7"
+            )));
+        };
+        self.keep_voice(id, recording, duration_ms, said_at.min(now_ms()))
+            .await
+    }
+
+    async fn keep_voice(
+        &self,
+        id: NoteId,
+        recording: Vec<u8>,
+        duration_ms: u64,
+        now: i64,
+    ) -> Result<Option<Note>> {
         let size = recording.len() as u64;
         let most = u64::try_from(limits::MAX_FILE_BYTES).unwrap_or(u64::MAX);
         if seal::sealed_size(size) > most {
@@ -706,7 +741,6 @@ impl Store {
                 "the recording is too large to keep: {size} bytes"
             )));
         }
-        let now = now_ms();
         let attachment = Attachment {
             file_id: uuid::Uuid::now_v7(),
             name: VOICE_FILE_NAME.to_owned(),
@@ -726,7 +760,7 @@ impl Store {
         let kept = self
             .write(move |c| voice::keep(c, id, &attachment, duration_ms, now))
             .await;
-        if kept.is_err() {
+        if !matches!(kept, Ok(Some(_))) {
             let _ = shelf.remove(file_id);
         }
         kept

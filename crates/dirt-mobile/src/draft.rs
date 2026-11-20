@@ -35,7 +35,7 @@ pub enum Typed {
 }
 
 /// One page's draft.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Draft {
     /// The store the page was opened on. Its writes go there, even if
     /// another store is taken into use while it is being left.
@@ -169,13 +169,45 @@ impl Draft {
         true
     }
 
-    /// What to write next: the note and its text, if the store does not
-    /// have the text yet.
-    pub fn to_save(&self) -> Option<(NoteId, String)> {
+    /// What to write next: the note, the text the page saved before, which
+    /// what it holds now was typed over, and that text, if the store does
+    /// not have it yet. The store makes the changes from the one to the
+    /// other to what the note holds now (`Store::update_note_from`), so that
+    /// what came meanwhile, the words of what was said or another device's
+    /// edit, is not saved over (design 8.9).
+    pub fn to_save(&self) -> Option<(NoteId, String, String)> {
         match self.note {
-            Some(note) if self.text != self.saved => Some((note, self.text.clone())),
+            Some(note) if self.text != self.saved => {
+                Some((note, self.saved.clone(), self.text.clone()))
+            }
             _ => None,
         }
+    }
+
+    /// The store's text of the page's note is `held`, which has what the
+    /// page saved and something the page did not write: the words of what
+    /// was said. The page's changes since it last saved are made to the
+    /// store's text, which is the page's base from now on. Returns the
+    /// page's new text when it changed.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn took(&mut self, note: NoteId, held: &str) -> Option<String> {
+        if self.note != Some(note) || held == self.saved {
+            return None;
+        }
+        let merged = dirt_core::notes::merge3(&self.saved, &self.text, held);
+        held.clone_into(&mut self.saved);
+        self.version += 1;
+        let changed = merged != self.text;
+        self.text = merged;
+        changed.then(|| self.text.clone())
+    }
+
+    /// The page's field holds `text`, which the page had not been told of:
+    /// what [`Self::took`] gave it, with whatever was typed meanwhile.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn holds(&mut self, text: String) {
+        self.version += 1;
+        self.text = text;
     }
 
     /// The store has `text`.
@@ -214,7 +246,10 @@ mod tests {
         assert_eq!(draft.typed("  bu"), Typed::Save(3));
         let note = NoteId::new();
         draft.created(note, "  b");
-        assert_eq!(draft.to_save(), Some((note, "  bu".to_owned())));
+        assert_eq!(
+            draft.to_save(),
+            Some((note, "  b".to_owned(), "  bu".to_owned()))
+        );
     }
 
     #[test]
@@ -227,7 +262,10 @@ mod tests {
         assert!(!draft.claim_create());
         let note = NoteId::new();
         draft.created(note, "");
-        assert_eq!(draft.to_save(), Some((note, "milk".to_owned())));
+        assert_eq!(
+            draft.to_save(),
+            Some((note, String::new(), "milk".to_owned()))
+        );
         // Once there is a note, nothing makes another.
         assert!(!draft.claim_create());
         assert_eq!(draft.typed("milk and eggs"), Typed::Save(2));
@@ -267,11 +305,44 @@ mod tests {
         draft.typed("new");
         assert!(draft.begin_save());
         assert!(!draft.begin_save());
-        assert_eq!(draft.to_save(), Some((note, "new".to_owned())));
+        assert_eq!(
+            draft.to_save(),
+            Some((note, "old".to_owned(), "new".to_owned()))
+        );
         draft.saved("new");
         assert_eq!(draft.to_save(), None);
         draft.end_save();
         assert!(draft.begin_save());
+    }
+
+    /// The words of a thought said arrive at the start of the note while
+    /// its page is open and being typed on: the page keeps what was typed
+    /// and gains the words, and the next save goes from the store's text.
+    #[test]
+    fn words_that_came_meanwhile_are_taken_into_the_page() {
+        let note = NoteId::new();
+        let mut draft = Draft::of_note(None, note, "");
+        draft.typed("milk");
+        draft.saved("milk");
+        assert_eq!(
+            draft.took(note, "milk"),
+            None,
+            "the store has what the page saved"
+        );
+        draft.typed("milk and eggs");
+        assert_eq!(
+            draft.took(note, "Buy bread\n\nmilk"),
+            Some("Buy bread\n\nmilk and eggs".to_owned())
+        );
+        assert_eq!(
+            draft.to_save(),
+            Some((
+                note,
+                "Buy bread\n\nmilk".to_owned(),
+                "Buy bread\n\nmilk and eggs".to_owned()
+            ))
+        );
+        assert_eq!(draft.took(NoteId::new(), "other"), None);
     }
 
     #[test]

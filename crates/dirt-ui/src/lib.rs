@@ -81,6 +81,7 @@ pub mod settings;
 pub mod text;
 pub mod time;
 pub mod tokens;
+pub mod voice;
 pub mod webview;
 
 pub use appearance::{Appearance, Platform, TextSize};

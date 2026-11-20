@@ -38,16 +38,19 @@ pub enum WordsPut {
 
 /// Makes the note of a recording: empty, with the recording attached and
 /// marked, waiting for its words on this device.
+///
+/// `None`, and nothing written, when a note has this ID already, deleted or
+/// not: a recording taken in twice is one note.
 pub(super) fn keep(
     connection: &mut Connection,
     id: NoteId,
     attachment: &Attachment,
     duration_ms: u64,
     now_ms: i64,
-) -> Result<Note> {
+) -> Result<Option<Note>> {
     let tx = write_transaction(connection)?;
     if load_for_update(&tx, &id)?.is_some() {
-        return Err(Error::InvalidInput(format!("note {id} already exists")));
+        return Ok(None);
     }
     let doc = NoteDoc::new(client_id(&tx)?);
     doc.attach(attachment, now_ms);
@@ -63,7 +66,7 @@ pub(super) fn keep(
         params![id.as_str(), now_ms],
     )?;
     tx.commit()?;
-    Ok(note)
+    Ok(Some(note))
 }
 
 /// The recordings this device made that wait for their words, the oldest

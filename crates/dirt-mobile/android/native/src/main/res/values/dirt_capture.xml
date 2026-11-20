@@ -12,6 +12,22 @@
     <string name="dirt_open_dirt">Open Dirt</string>
     <string name="dirt_new_note">New note</string>
 
+    <!-- Voice (design 6.18, 8.9). -->
+    <string name="dirt_talk">Talk</string>
+    <string name="dirt_talk_app">Dirt Talk</string>
+    <string name="dirt_mic">Hold to talk, or tap</string>
+    <string name="dirt_mic_refused">Dirt may not use the microphone. Press to be asked again</string>
+    <string name="dirt_mic_refused_for_good">Allow the microphone in Android’s Settings: Apps, Dirt, Permissions</string>
+    <string name="dirt_mic_locked">Unlock the phone to let Dirt use the microphone</string>
+    <string name="dirt_mic_failed">The microphone could not be used</string>
+    <string name="dirt_throw_away">Throw away</string>
+    <string name="dirt_keep_it">Keep it</string>
+    <string name="dirt_listening">Listening</string>
+    <string name="dirt_kept">Kept</string>
+    <string name="dirt_thrown">Thrown away</string>
+    <string name="dirt_nothing_heard">Nothing heard</string>
+    <string name="dirt_voice_not_kept">What was said could not be kept</string>
+
     <!-- What dims the screen behind the sheet: the mockup's. -->
     <color name="dirt_scrim">#61140F0B</color>
 

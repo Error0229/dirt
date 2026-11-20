@@ -25,7 +25,8 @@
 //! and a job of its own makes them notes. This takes in whatever still
 //! waits as the app starts and each time the person returns to it, and
 //! reads the list again, since a note the job made is in the store already
-//! and nothing else tells the list of it.
+//! and nothing else tells the list of it. A recording the sheet kept is
+//! taken in the same way, and its words are made then (`voice`).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -200,7 +201,13 @@ pub fn AppShell() -> Element {
             // Thoughts the capture sheet left waiting become notes now, if
             // its job has not made them already, and are sent: the sync the
             // session began as it opened may have run before they were made.
-            let taken = take_in(note_store.core(), &default_mobile_data_directory()).await;
+            let recorder = crate::voice::app_recorder();
+            let taken = take_in(
+                note_store.core(),
+                &default_mobile_data_directory(),
+                recorder.as_ref(),
+            )
+            .await;
             if taken.made > 0 {
                 if let Some(opened) = &opened_session {
                     opened.notify(Trigger::Changed);
@@ -332,12 +339,21 @@ pub fn AppShell() -> Element {
             // again either way.
             let open = store.peek().clone();
             if let Some(open) = open {
-                let taken = take_in(open.core(), &default_mobile_data_directory()).await;
+                let recorder = crate::voice::app_recorder();
+                let taken = take_in(
+                    open.core(),
+                    &default_mobile_data_directory(),
+                    recorder.as_ref(),
+                )
+                .await;
                 if taken.made > 0 {
                     if let Some(current) = session.peek().clone() {
                         current.notify(Trigger::Changed);
                     }
                 }
+                // Words that were left to make, the sheet's job's or this
+                // app's from before, are made now.
+                crate::voice::make_words_soon();
                 state.reread();
             }
             if let Some(current) = session.peek().clone() {
@@ -351,6 +367,9 @@ pub fn AppShell() -> Element {
             *capture_ready.write() += 1;
         }
     });
+
+    // The words of what was said on this phone, made in the background.
+    crate::voice::use_words_maker(&state);
 
     // The capture sheet and the widget are drawn outside the web view, in
     // the theme and the accent chosen here: they read them from a file.

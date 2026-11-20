@@ -9,6 +9,13 @@
     <!-- The job is kept across a restart of the phone (`setPersisted`), so
          that a thought kept offline is still made a note and synced. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Voice (design 6.18, 8.9): asked for at the first press of a mic,
+         in Android's own dialog. Only while the person holds or has tapped
+         a mic: nothing listens otherwise, and no service records in the
+         background. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- A phone with no microphone still installs Dirt, and has no mic. -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application>
         <!-- The capture sheet. A task of its own, with no affinity to the
@@ -34,6 +41,31 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- Talk (6.18, 8.6): the sheet listening at once, ending on a
+             pause. Among the apps as "Dirt Talk", so that a phone's
+             hardware key (the side key's double press on Samsung, Quick
+             Tap on Pixel) can be set to open it, over the lock screen
+             too where the phone allows. -->
+        <activity-alias
+            android:name="dev.dirt.capture.Talk"
+            android:exported="true"
+            android:icon="@drawable/dirt_talk"
+            android:label="@string/dirt_talk_app"
+            android:targetActivity="dev.dirt.capture.CaptureActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Makes the waiting recordings notes, and their words, on this
+             phone; then asks for the job below. Asked for by the sheet's
+             keeping of a recording and by nothing else. -->
+        <service
+            android:name="dev.dirt.capture.WordsJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!-- Makes the waiting thoughts notes and syncs once. Asked for by
              the sheet's tick and by nothing else. -->

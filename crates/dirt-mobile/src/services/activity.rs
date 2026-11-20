@@ -20,6 +20,11 @@
 //!   app. [`open_file`] lends one file to another app, to show.
 //! - **Animations.** [`animations_off`] says whether Android's "Remove
 //!   animations" is on, which the web view reads only when it starts.
+//! - **Voice.** [`microphone_allowed`], [`ask_for_microphone`] and
+//!   [`take_microphone_answer`] ask for the microphone in Android's own
+//!   dialog; [`start_microphone`] and [`stop_microphone`] open and close it
+//!   for the dock (`voice`); [`voice_shipped`] and [`voice_folder`] say
+//!   where the speech model is.
 //!
 //! All of it is JNI, as `secure_storage` is, and for the same two reasons
 //! classes are loaded through the Activity's class loader and a Java
@@ -279,4 +284,58 @@ pub fn animations_off() -> bool {
 /// says a note could not be saved. Returns `false` if it could not.
 pub fn copy_text(text: &str) -> bool {
     ask("copyText", &[text])
+}
+
+// ---- Voice (interface design 6.18, 8.9) ------------------------------------------
+
+/// Whether the app may use the microphone now.
+pub fn microphone_allowed() -> bool {
+    ask("microphoneAllowed", &[])
+}
+
+/// Asks for the microphone in Android's own dialog; the answer comes by
+/// [`take_microphone_answer`]. `false` if there was no screen to ask over.
+pub fn ask_for_microphone() -> bool {
+    ask("askForMicrophone", &[])
+}
+
+/// Android's answer, once: "granted", "refused", or "`refused_for_good`".
+pub fn take_microphone_answer() -> Option<String> {
+    take_text("takeMicrophoneAnswer")
+}
+
+/// Opens the microphone, which hands its sound to `voice`: 0 listening, 1
+/// not allowed, 2 it could not be opened.
+pub fn start_microphone() -> i32 {
+    with_activity(|env, class| {
+        env.call_static_method(class, "startMicrophone", "()I", &[])?
+            .i()
+    })
+    .unwrap_or_else(|error| {
+        tracing::warn!("MainActivity.startMicrophone could not be called: {error}");
+        2
+    })
+}
+
+/// Closes it, once every piece heard has been handed over.
+pub fn stop_microphone() {
+    ask("stopMicrophone", &[]);
+}
+
+/// Whether this build has voice: the speech model is among its assets.
+pub fn voice_shipped() -> bool {
+    ask("voiceShipped", &[])
+}
+
+/// The voice folder, copied out of the APK as far as `what` needs:
+/// "listening" or "words". The first "words" copies the model, which
+/// takes a moment: never on the window's thread.
+pub fn voice_folder(what: &str) -> Option<String> {
+    take_text_for("voiceFolder", what)
+}
+
+/// Opens Android's page for this app, where the microphone is allowed
+/// once it was refused for good.
+pub fn open_app_settings() -> bool {
+    ask("openAppSettings", &[])
 }

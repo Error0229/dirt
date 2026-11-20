@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Throw away: the cross of design 4.4 (Lucide's, ISC). Tinted where it
+     is used. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="20dp" android:height="20dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M18,6L6,18M6,6l12,12"
+        android:strokeColor="#FFFFFFFF" android:strokeWidth="2"
+        android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

@@ -56,4 +56,6 @@ dx.lock
 # The voice folder each app ships (the speech model and its engine), put
 # together from the build cache when the app is built: never committed.
 /crates/dirt-desktop/voice/
+/crates/dirt-mobile/android/native/src/main/jniLibs/
+/crates/dirt-mobile/android/native/src/main/assets/voice/
 /.dirt-build-cache/

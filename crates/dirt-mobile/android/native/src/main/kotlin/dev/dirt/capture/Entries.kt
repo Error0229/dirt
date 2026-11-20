@@ -26,6 +26,15 @@ private fun sheetLater(context: Context): PendingIntent =
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
+// The sheet, listening hands-free: the widget's mic (6.18).
+private fun listeningLater(context: Context): PendingIntent =
+    PendingIntent.getActivity(
+        context,
+        2,
+        sheet(context).putExtra("dev.dirt.capture.LISTEN", true),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
 // The Quick Settings tile, "New note". It opens the sheet without asking
 // for the phone to be unlocked first (`unlockAndRun` would ask): whether
 // the sheet then shows over the lock screen is the phone's choice (8.6).
@@ -47,10 +56,11 @@ class CaptureTile : TileService() {
     }
 }
 
-// The widget: one bar. Its logo opens the app; the bar, the sheet. The
-// logo takes the accent the person chose, light or dark as the system is,
+// The widget: one bar. Its logo opens the app; the bar, the sheet; its mic,
+// the sheet listening hands-free, in a build with voice. The logo and the
+// mic take the accent the person chose, light or dark as the system is,
 // where Android lets a widget's colour follow the system (12 and later);
-// before that it is Clay.
+// before that they are Clay.
 class CaptureWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         ids.forEach { id -> manager.updateAppWidget(id, views(context)) }
@@ -60,6 +70,12 @@ class CaptureWidget : AppWidgetProvider() {
         private fun views(context: Context): RemoteViews {
             val views = RemoteViews(context.packageName, R.layout.dirt_capture_widget)
             views.setOnClickPendingIntent(R.id.dirt_widget_bar, sheetLater(context))
+            if (VoiceFiles.shipped(context)) {
+                views.setViewVisibility(R.id.dirt_widget_mic, android.view.View.VISIBLE)
+                views.setOnClickPendingIntent(R.id.dirt_widget_mic, listeningLater(context))
+            } else {
+                views.setViewVisibility(R.id.dirt_widget_mic, android.view.View.GONE)
+            }
             context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { app ->
                 views.setOnClickPendingIntent(
                     R.id.dirt_widget_logo,
@@ -75,6 +91,7 @@ class CaptureWidget : AppWidgetProvider() {
                 val accent = Look.accent(context)
                 views.setColorStateList(R.id.dirt_widget_square, "setImageTintList", Look.accentColour(accent))
                 views.setColorStateList(R.id.dirt_widget_sprout, "setImageTintList", Look.onAccentColour(accent))
+                views.setColorStateList(R.id.dirt_widget_mic, "setImageTintList", Look.accentColour(accent))
             }
             return views
         }

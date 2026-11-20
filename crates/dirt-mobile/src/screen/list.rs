@@ -5,14 +5,15 @@
 //!
 //! The list is pulled down to sync, and a card is swiped left to archive
 //! it. Both follow the finger in `dirt-ui`'s script, which says only how
-//! they ended.
+//! they ended. The dock's mic is held to talk, or tapped for hands-free,
+//! and listens in a sheet over the lower half of the screen (6.18, 8.9).
 
 use dioxus::prelude::*;
 use dirt_core::models::Layer;
 use dirt_core::store::TagRule;
 use dirt_ui::components::{
-    EmptyList, FindField, IconButton, LayerLine, LoadMore, NoteCard, NoteSummary, Pile, PullToSync,
-    ScrollArea, SyncStatus, TagOption, TagStrip,
+    EmptyList, FindField, IconButton, LayerLine, Listening, LoadMore, MicButton, NoteCard,
+    NoteSummary, Pile, PullToSync, ScrollArea, SyncStatus, TagOption, TagStrip,
 };
 use dirt_ui::events::{use_outcome, Outcome};
 use dirt_ui::{find, Icon};
@@ -54,6 +55,7 @@ fn items(listing: &Listing, clock: dirt_ui::time::Clock) -> Vec<Item> {
                 listing.first_file.get(&note.id).map(String::as_str),
             )
             .waiting(listing.waiting.contains(&note.id))
+            .unread(listing.unread.get(&note.id).map(String::as_str))
             .thumbnail(listing.thumbnails.get(&note.id).cloned());
         items.push(Item::Note(Box::new(summary)));
     }
@@ -165,9 +167,21 @@ pub fn Main() -> Element {
             screen.show_archived(false);
         }
     });
+    // Back while it listens keeps what was said, as leaving does.
+    let talk_back = use_outcome(move |outcome| {
+        if outcome == Outcome::Back {
+            screen.talking.end(true);
+        }
+    });
+    let talking = *screen.talking.view.read();
+    let unheard = screen.talking.unheard.read().clone();
+    let mic_tip = unheard
+        .as_ref()
+        .map_or("Hold to talk, or tap", crate::voice::Unheard::tip);
+    let refused = unheard.is_some();
 
     rsx! {
-        div { class: "dm",
+        div { class: if talking.is_some() { "dm talking" } else { "dm" },
             header { class: "dm-top",
                 h1 { "Notes" }
                 IconButton {
@@ -300,6 +314,22 @@ pub fn Main() -> Element {
                     }
                 }
             }
+            if let Some(view) = talking {
+                div {
+                    key: "{view.serial}",
+                    class: "dm-talk",
+                    "data-dui-id": "{talk_back}",
+                    "data-dui-back": view.ended.is_none().then_some(""),
+                    Listening {
+                        ms: view.ms,
+                        level: view.level,
+                        ended: view.ended,
+                        on_keep: move |()| screen.talking.end(true),
+                        on_throw: move |()| screen.talking.end(false),
+                        on_gone: move |()| screen.talked(view.serial),
+                    }
+                }
+            }
             footer { class: "dm-dock",
                 button {
                     id: BAR_ID,
@@ -307,6 +337,14 @@ pub fn Main() -> Element {
                     class: "dm-bar",
                     onclick: move |_| screen.new_page(),
                     "What\u{2019}s on your mind?"
+                }
+                if crate::voice::offered() {
+                    MicButton {
+                        label: mic_tip,
+                        refused,
+                        class: "dm-mic",
+                        on_talk: move |talk| screen.talk(talk),
+                    }
                 }
             }
         }

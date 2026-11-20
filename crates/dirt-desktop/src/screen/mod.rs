@@ -598,7 +598,7 @@ impl Screen {
         self.calm();
         let store = self.store();
         let session = self.app.session.peek().clone();
-        let keep = Callback::new(move |recording: dirt_voice::Recording| {
+        let keep = Callback::new(move |recording: crate::voice::Said| {
             self.keep_said(recording, store.as_ref(), session.as_ref());
         });
         self.talking.listen(hands_free, keep);
@@ -608,7 +608,7 @@ impl Screen {
     /// as a typed thought does. Its words follow.
     fn keep_said(
         self,
-        recording: dirt_voice::Recording,
+        recording: crate::voice::Said,
         store: Option<&Arc<Store>>,
         session: Option<&dirt_core::session::Session>,
     ) {
@@ -1512,7 +1512,7 @@ pub fn MainScreen() -> Element {
         move || app.note_changed(),
     );
     files::use_served_files();
-    let talking = Talking::use_new();
+    let talking = Talking::use_new(crate::voice::open_ear);
     let screen = use_context_provider(|| Screen {
         app,
         toasts,

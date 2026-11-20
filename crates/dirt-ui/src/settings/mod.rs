@@ -11,9 +11,9 @@
 //! words about sync come from `dirt_core::sync::overview`.
 //!
 //! Voice, the fifth section of 6.9, is shown by an app that has voice: it
-//! says so with `voice`. One that has not yet (Android until the plan's
-//! step 9b) shows the other five: a section with nothing in it would be a
-//! heading over nothing.
+//! says so with `voice`. A build without it (`DIRT_VOICE=off`, or no model)
+//! shows the other five: a section with nothing in it would be a heading
+//! over nothing.
 
 mod account;
 mod code;
@@ -43,7 +43,7 @@ use crate::icons::{Icon, IconSize, IconSvg};
 pub use code::CodeComparison;
 pub use devices::RecoveryWords;
 pub use join_banner::JoinBanner;
-pub use voice::{HEARD_HERE, MODEL_CREDIT};
+pub use voice::{HEARD_HERE, MODEL_CREDIT, SIDE_KEY};
 
 /// Work an app does for Settings that takes a while: signing in in the
 /// browser, writing an export.

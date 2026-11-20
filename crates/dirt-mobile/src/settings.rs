@@ -5,7 +5,8 @@
 //!
 //! What only Android can do is here: signing in in a browser tab over the
 //! app, saving an export as one zip file where the person chooses on
-//! Android's own screen, and the clipboard.
+//! Android's own screen, and the clipboard. Voice is shown where this build
+//! has it (6.18, 8.9).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -159,6 +160,7 @@ pub fn SettingsSheet() -> Element {
     let nav = settings_nav();
     let linked = linked(&app);
     let appearance = Appearance::from_settings(&app.settings.read());
+    let voice = crate::voice::offered().then_some(app.settings.read().voice_recording);
 
     let sign_in: SignIn =
         use_callback(move |session: Session| Box::pin(sign_in(session)) as Task<_>);
@@ -174,6 +176,11 @@ pub fn SettingsSheet() -> Element {
         let mut next = settings.peek().clone();
         chosen.write_to(&mut next);
         settings.set(next);
+        app.save_settings();
+    };
+    let change_voice = move |kept| {
+        let mut settings = app.settings;
+        settings.write().voice_recording = kept;
         app.save_settings();
     };
     // Marked sensitive, so that Android 13 and later show none of it as
@@ -199,6 +206,8 @@ pub fn SettingsSheet() -> Element {
                 linked,
                 appearance,
                 on_appearance: change_appearance,
+                voice,
+                on_voice: change_voice,
                 sign_in,
                 export,
                 copy,

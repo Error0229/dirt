@@ -37,6 +37,12 @@ fn main() {
     println!("cargo:rerun-if-changed=../../.env.client");
     println!("cargo:rerun-if-changed=../../.env.client.example");
 
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+        if let Err(error) = put_voice_files() {
+            panic!("could not put the voice files in place: {error}");
+        }
+    }
+
     if let Err(error) = write_mobile_bootstrap_config() {
         println!("cargo:warning=failed to generate mobile bootstrap config: {error}");
     }
@@ -44,6 +50,91 @@ fn main() {
     if let Err(error) = write_android_resources() {
         println!("cargo:warning=failed to generate Android resources: {error}");
     }
+}
+
+/// Puts what `dirt-voice`'s build made into the native module
+/// (`android/native`), which `dx` copies into the Gradle project, so that
+/// the APK carries it (interface design 8.9):
+///
+/// - the engine's libraries in `src/main/jniLibs/<ABI>/`, which the app's
+///   own library is linked against;
+/// - the model, Silero's detector and the notice in `src/main/assets/voice/`,
+///   stored uncompressed (`build.gradle.kts`) and copied once, on first use,
+///   into the app's folder that is not backed up (`VoiceFiles.kt`), since
+///   the engine opens its files by path.
+///
+/// Hard links to the build cache, not copies; neither folder is in git. A
+/// build without voice empties both, and the app offers no mic.
+fn put_voice_files() -> io::Result<()> {
+    println!("cargo:rerun-if-env-changed=DEP_DIRT_VOICE_FOLDER");
+    println!("cargo:rerun-if-env-changed=DEP_DIRT_VOICE_ENGINE");
+    let abi = match env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+        Ok("aarch64") => "arm64-v8a",
+        Ok("x86_64") => "x86_64",
+        Ok("arm") => "armeabi-v7a",
+        Ok("x86") => "x86",
+        _ => return Ok(()),
+    };
+    let manifest_dir =
+        env::var_os("CARGO_MANIFEST_DIR").map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let main = manifest_dir
+        .join("android")
+        .join("native")
+        .join("src")
+        .join("main");
+    let libs = main.join("jniLibs").join(abi);
+    let assets = main.join("assets").join("voice");
+    println!("cargo:rerun-if-changed={}", libs.display());
+    println!("cargo:rerun-if-changed={}", assets.display());
+    fs::create_dir_all(&libs)?;
+    fs::create_dir_all(&assets)?;
+    let from = env::var_os("DEP_DIRT_VOICE_FOLDER").map(PathBuf::from);
+    let sources: Vec<PathBuf> = match &from {
+        Some(from) if env::var("DEP_DIRT_VOICE_ENGINE").as_deref() == Ok("1") => {
+            fs::read_dir(from)?
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                // The engine's Java bindings: the app calls its C API.
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_none_or(|name| !name.contains("-jni"))
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+    let is_library = |path: &Path| path.extension().is_some_and(|ending| ending == "so");
+    for (folder, wanted) in [(&libs, true), (&assets, false)] {
+        let names: Vec<_> = sources
+            .iter()
+            .filter(|source| is_library(source) == wanted)
+            .filter_map(|source| source.file_name().map(|name| (source, name.to_owned())))
+            .collect();
+        for (source, name) in &names {
+            let target = folder.join(name);
+            let same = fs::metadata(&target)
+                .ok()
+                .zip(fs::metadata(source).ok())
+                .is_some_and(|(have, want)| have.len() == want.len());
+            if !same {
+                let _ = fs::remove_file(&target);
+                if fs::hard_link(source, &target).is_err() {
+                    fs::copy(source, &target)?;
+                }
+            }
+        }
+        for entry in fs::read_dir(folder)? {
+            let path = entry?.path();
+            let known = path
+                .file_name()
+                .is_some_and(|found| names.iter().any(|(_, name)| name == found));
+            if !known {
+                fs::remove_file(path)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn write_android_resources() -> io::Result<()> {

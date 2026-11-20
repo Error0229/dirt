@@ -14,6 +14,9 @@ use crate::icons::Icon;
 /// The one line the section opens with (6.18).
 pub const HEARD_HERE: &str = "Turned into text here. Your voice is never sent anywhere.";
 
+/// What Android's Settings → Voice says of talking from a hardware key.
+pub const SIDE_KEY: &str = "Set your phone's side key, or Quick Tap, to open Dirt Talk: it listens at once, over the lock screen too where the phone allows, and keeps the thought at a pause";
+
 /// The credit the model's licence, CC BY 4.0, asks for: who made it, the
 /// licence, and that it was changed.
 pub const MODEL_CREDIT: &str =
@@ -58,6 +61,10 @@ pub(super) fn Voice(
                 Row { icon: Icon::Laptop, title: "Talk from any app", detail: "Hold the keys, speak, let go",
                     span { class: "dui-keys", kbd { "Ctrl" } kbd { "Alt" } kbd { "N" } }
                 }
+            } else {
+                // Android lets a hardware key open an app, not a page of
+                // one: Talk is among the apps as "Dirt Talk" (8.9).
+                Row { icon: Icon::Phone, title: "Talk without opening Dirt", detail: SIDE_KEY }
             }
             Row { icon: Icon::Info, title: "Speech model", detail: MODEL_CREDIT }
         }
