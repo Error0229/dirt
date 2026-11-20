@@ -230,6 +230,9 @@ pub struct Heap {
     /// the script drops onto the heap as a thought settles. Empty for an
     /// empty pile.
     pub svg: String,
+    /// Where each grain lies, which the picture is drawn from, and the
+    /// pile widget's too ([`Heap::widget`]).
+    placed: Option<Placed>,
 }
 
 impl Heap {
@@ -246,10 +249,48 @@ impl Heap {
         let grains: Vec<Grain> = notes.iter().map(PileNote::grain).collect();
         let seeds: Vec<u32> = grains.iter().map(|grain| grain.seed).collect();
         let rests = pile_up(&seeds);
+        let placed = place(&grains, &rests, widest);
         Self {
             grains: notes.len(),
-            svg: draw(&grains, &rests, widest),
+            svg: placed.svg(),
+            placed: Some(placed),
         }
+    }
+
+    /// The heap as the pile widget on Android's home screen draws it
+    /// (interface design 8.5): a few lines of text, which say how many
+    /// thoughts there are, where each grain lies and in which shade, and
+    /// nothing else of any note. `line` is said under the heap.
+    ///
+    /// ```text
+    /// dirt-pile 1
+    /// 1,254 thoughts
+    /// <left> <top> <width> <height> <grain>     the box, in tenths of a pixel
+    /// <x> <y> <rx> <ry>                         the shadow under the heap
+    /// #c4a27e <x> <y> <x> <y> ...               the grains of each shade
+    /// ```
+    ///
+    /// An empty pile has its first two lines alone.
+    #[must_use]
+    pub fn widget(&self, line: &str) -> String {
+        let mut text = format!("dirt-pile 1\n{}\n", line.replace('\n', " "));
+        let Some(placed) = &self.placed else {
+            return text;
+        };
+        let [left, top, width, height] = placed.view;
+        let [x, y, rx, ry] = placed.shadow;
+        let _ = writeln!(text, "{left} {top} {width} {height} {}", placed.stroke);
+        let _ = writeln!(text, "{x} {y} {rx} {ry}");
+        for (shade, dots) in &placed.groups {
+            text.push_str(&hex(*shade));
+            for (x, y) in dots {
+                let _ = write!(text, " {x} {y}");
+            }
+            text.push('\n');
+        }
+        let (shade, (x, y), _) = placed.top;
+        let _ = writeln!(text, "{} {x} {y}", hex(shade));
+        text
     }
 }
 
@@ -358,9 +399,29 @@ fn tenths(pixels: f64) -> i64 {
     (pixels * SCALE).round() as i64
 }
 
-/// The picture of grains that have come to rest.
+/// A shade as it is drawn: hue, saturation and lightness.
+type Shade = (u16, u8, u8);
+
+/// The heap's grains, placed: what its pictures are drawn from. Lengths are
+/// in tenths of a CSS pixel, as the picture is written.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct Placed {
+    /// The picture's box: left, top, width and height.
+    view: [i64; 4],
+    /// The soft shadow under the heap: its middle, and its two radii.
+    shadow: [i64; 4],
+    /// How wide a grain is drawn.
+    stroke: i64,
+    /// The grains of each shade, all but the newest.
+    groups: Vec<(Shade, Vec<(i64, i64)>)>,
+    /// The newest grain, drawn on its own: its shade, where it lies, and
+    /// its radius.
+    top: (Shade, (i64, i64), i64),
+}
+
+/// Where the grains that have come to rest lie, and in which shade.
 #[allow(clippy::cast_precision_loss)]
-fn draw(grains: &[Grain], rests: &[(Rest, f64, f64)], widest: f64) -> String {
+fn place(grains: &[Grain], rests: &[(Rest, f64, f64)], widest: f64) -> Placed {
     let count = rests.len();
     let size = GRAIN.min(widest / 2.3f64.mul_add((count as f64).sqrt(), 6.0));
     let row = size * ROW;
@@ -385,7 +446,7 @@ fn draw(grains: &[Grain], rests: &[(Rest, f64, f64)], widest: f64) -> String {
         let t = (half.mul_add(0.5, f64::from(column - peak)) / (half * 1.3)).clamp(0.0, 1.0);
         0.24f64.mul_add(-(t * t * 2.0f64.mul_add(-t, 3.0)), 1.06)
     };
-    let place = |rest: &(Rest, f64, f64)| {
+    let at = |rest: &(Rest, f64, f64)| {
         let (Rest { column, row: level }, jitter_x, jitter_y) = *rest;
         let offset = if level % 2 == 1 { size / 2.0 } else { 0.0 };
         let x =
@@ -401,54 +462,119 @@ fn draw(grains: &[Grain], rests: &[(Rest, f64, f64)], widest: f64) -> String {
         let lightness = (f64::from(grain.lightness) * light(column) / 2.0).round() as u8 * 2;
         ((grain.hue / 3) * 3, (grain.saturation / 4) * 4, lightness)
     };
-    let css = |(hue, saturation, lightness): (u16, u8, u8)| {
-        format!("hsl({hue} {saturation}% {lightness}%)")
-    };
 
-    let mut groups: Vec<((u16, u8, u8), String)> = Vec::new();
-    let mut index_of = std::collections::HashMap::<(u16, u8, u8), usize>::new();
+    let mut groups: Vec<(Shade, Vec<(i64, i64)>)> = Vec::new();
+    let mut index_of = std::collections::HashMap::<Shade, usize>::new();
     let newest = count - 1;
     for (grain, rest) in grains.iter().zip(rests).take(newest) {
         let shade = colour(grain, rest.0.column);
-        let (x, y) = place(rest);
-        let at = *index_of.entry(shade).or_insert_with(|| {
-            groups.push((shade, String::new()));
+        let index = *index_of.entry(shade).or_insert_with(|| {
+            groups.push((shade, Vec::new()));
             groups.len() - 1
         });
-        // A line of no length with round ends is a dot.
-        let _ = write!(groups[at].1, "M{x} {y}h0");
+        groups[index].1.push(at(rest));
     }
+    Placed {
+        view: [
+            tenths(-size),
+            tenths(-height - 2.0),
+            tenths(2.0f64.mul_add(size, width)),
+            tenths(size.mul_add(1.6, height + 2.0)),
+        ],
+        shadow: [
+            tenths(width / 2.0),
+            tenths(size * 0.3),
+            tenths(width * 0.6),
+            tenths(size * 1.3),
+        ],
+        stroke: tenths(size * 1.6),
+        groups,
+        top: (
+            colour(&grains[newest], rests[newest].0.column),
+            at(&rests[newest]),
+            tenths(size * 0.8),
+        ),
+    }
+}
 
-    let left = tenths(-size);
-    let top = tenths(-height - 2.0);
-    let view_width = tenths(2.0f64.mul_add(size, width));
-    let view_height = tenths(size.mul_add(1.6, height + 2.0));
-    let mut svg = format!(
-        "<svg viewBox=\"{left} {top} {view_width} {view_height}\" width=\"{:.0}\" height=\"{:.0}\" aria-hidden=\"true\">\
-         <defs><radialGradient id=\"dui-pile-shadow\"><stop offset=\"0\" stop-color=\"#000\" stop-opacity=\".28\"/>\
-         <stop offset=\"1\" stop-color=\"#000\" stop-opacity=\"0\"/></radialGradient></defs>\
-         <ellipse cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\" fill=\"url(#dui-pile-shadow)\"/>\
-         <g fill=\"none\" stroke-linecap=\"round\" stroke-width=\"{}\">",
-        2.0f64.mul_add(size, width),
-        size.mul_add(1.6, height + 2.0),
-        tenths(width / 2.0),
-        tenths(size * 0.3),
-        tenths(width * 0.6),
-        tenths(size * 1.3),
-        tenths(size * 1.6),
+/// A shade as CSS writes it.
+fn css((hue, saturation, lightness): Shade) -> String {
+    format!("hsl({hue} {saturation}% {lightness}%)")
+}
+
+/// A shade as `#rrggbb`, for what draws without CSS: the pile widget.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn hex((hue, saturation, lightness): Shade) -> String {
+    let (turn, chroma, light) = (
+        f64::from(hue) / 360.0,
+        f64::from(saturation) / 100.0,
+        f64::from(lightness) / 100.0,
     );
-    for (shade, dots) in &groups {
-        let _ = write!(svg, "<path stroke=\"{}\" d=\"{dots}\"/>", css(*shade));
+    let high = if light < 0.5 {
+        light * (1.0 + chroma)
+    } else {
+        light.mul_add(-chroma, light + chroma)
+    };
+    let low = 2.0f64.mul_add(light, -high);
+    let channel = |at: f64| {
+        let at = at.rem_euclid(1.0);
+        let value = if at < 1.0 / 6.0 {
+            ((high - low) * 6.0).mul_add(at, low)
+        } else if at < 0.5 {
+            high
+        } else if at < 2.0 / 3.0 {
+            ((high - low) * 6.0).mul_add(2.0 / 3.0 - at, low)
+        } else {
+            low
+        };
+        (value * 255.0).round().clamp(0.0, 255.0) as u8
+    };
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        channel(turn + 1.0 / 3.0),
+        channel(turn),
+        channel(turn - 1.0 / 3.0)
+    )
+}
+
+impl Placed {
+    /// The picture for the page: one SVG.
+    fn svg(&self) -> String {
+        let [left, top, view_width, view_height] = self.view;
+        let [cx, cy, rx, ry] = self.shadow;
+        #[allow(clippy::cast_precision_loss)]
+        let (width, height) = (view_width as f64 / SCALE, view_height as f64 / SCALE);
+        let mut svg = format!(
+            "<svg viewBox=\"{left} {top} {view_width} {view_height}\" width=\"{width:.0}\" height=\"{height:.0}\" aria-hidden=\"true\">\
+             <defs><radialGradient id=\"dui-pile-shadow\"><stop offset=\"0\" stop-color=\"#000\" stop-opacity=\".28\"/>\
+             <stop offset=\"1\" stop-color=\"#000\" stop-opacity=\"0\"/></radialGradient></defs>\
+             <ellipse cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" fill=\"url(#dui-pile-shadow)\"/>\
+             <g fill=\"none\" stroke-linecap=\"round\" stroke-width=\"{}\">",
+            self.stroke,
+        );
+        for (shade, dots) in &self.groups {
+            let _ = write!(svg, "<path stroke=\"{}\" d=\"", css(*shade));
+            for (x, y) in dots {
+                // A line of no length with round ends is a dot.
+                let _ = write!(svg, "M{x} {y}h0");
+            }
+            svg.push_str("\"/>");
+        }
+        svg.push_str("</g>");
+        let (shade, (x, y), radius) = self.top;
+        let _ = write!(
+            svg,
+            "<circle class=\"dui-pile-top\" cx=\"{x}\" cy=\"{y}\" r=\"{radius}\" fill=\"{}\"/></svg>",
+            css(shade),
+        );
+        svg
     }
-    svg.push_str("</g>");
-    let (x, y) = place(&rests[newest]);
-    let _ = write!(
-        svg,
-        "<circle class=\"dui-pile-top\" cx=\"{x}\" cy=\"{y}\" r=\"{}\" fill=\"{}\"/></svg>",
-        tenths(size * 0.8),
-        css(colour(&grains[newest], rests[newest].0.column)),
-    );
-    svg
+}
+
+/// The picture of grains that have come to rest, for the page.
+#[cfg(test)]
+fn draw(grains: &[Grain], rests: &[(Rest, f64, f64)], widest: f64) -> String {
+    place(grains, rests, widest).svg()
 }
 
 #[cfg(test)]
@@ -495,6 +621,40 @@ mod tests {
                 .unwrap()
         };
         (number("width"), number("height"))
+    }
+
+    #[test]
+    fn a_shade_is_written_for_the_widget_as_css_would_draw_it() {
+        assert_eq!(hex((0, 100, 50)), "#ff0000");
+        assert_eq!(hex((120, 100, 25)), "#008000");
+        assert_eq!(hex((30, 40, 60)), "#c29970");
+        assert_eq!(hex((0, 0, 100)), "#ffffff");
+    }
+
+    /// The widget is told the grains and the line, and nothing of a note.
+    #[test]
+    fn the_widget_is_given_the_grains_and_one_line() {
+        let notes = notes(40);
+        let heap = Heap::of(&notes, LIST_WIDTH);
+        let text = heap.widget("40 thoughts");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "dirt-pile 1");
+        assert_eq!(lines[1], "40 thoughts");
+        assert_eq!(lines[2].split(' ').count(), 5);
+        assert_eq!(lines[3].split(' ').count(), 4);
+        let dots: usize = lines[4..]
+            .iter()
+            .map(|line| {
+                let mut words = line.split(' ');
+                assert!(words.next().unwrap().starts_with('#'));
+                words.count() / 2
+            })
+            .sum();
+        assert_eq!(dots, 40);
+        assert_eq!(
+            Heap::default().widget("No thoughts yet"),
+            "dirt-pile 1\nNo thoughts yet\n"
+        );
     }
 
     #[test]

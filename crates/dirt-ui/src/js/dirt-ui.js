@@ -1290,6 +1290,7 @@
     }
     element.value = value;
     if (caret) element.setSelectionRange(caret[0], caret[1]);
+    tellText(element, false, false);
     return [value, all];
   }
   function setValue(selector, text) {
@@ -1298,6 +1299,102 @@
     const keep = document.activeElement === element ? [element.selectionStart, element.selectionEnd] : null;
     element.value = text;
     if (keep) element.setSelectionRange(Math.min(keep[0], text.length), Math.min(keep[1], text.length));
+    tellText(element, false, false);
+  }
+
+  // ---- A note's text, told in order however long (dirt_ui::typing) --------
+  // A note's field (`data-dui-typed`) has no `oninput` of Dioxus's: an
+  // event goes to Rust with all it carries in one request header, which
+  // fails past a few hundred kilobytes. What changed is told instead,
+  // through the hidden carrier beside it (`data-dui-carrier`), whose
+  // `input` Dioxus delivers in order with the keys and the presses: where,
+  // how many units went, and what came, a long paste in pieces. A change
+  // the app made itself (`setValue`, `mergeInto`, the page emptied by Esc)
+  // is told too, so Rust's copy stays the field's, but not as typed.
+  // A piece is kept under 16 KiB of JSON as UTF-8. Dioxus base64s each
+  // event with `String.fromCharCode.apply`, one argument per byte of the
+  // event's JSON, in which the piece's is escaped once more, and
+  // JavaScriptCore (macOS, Linux) takes at most 65,536 arguments. So it is
+  // the bytes that are counted, not the characters: a run of quotes,
+  // backslashes or control characters takes two to six times the room.
+  const PIECE_BYTES = 16 * 1024, PIECE_UNITS = 8192;
+  const encoder = new TextEncoder();
+  const isHigh = unit => unit >= 0xD800 && unit <= 0xDBFF;
+  const isLow = unit => unit >= 0xDC00 && unit <= 0xDFFF;
+  // Half of a pair with no other half becomes U+FFFD, one unit for one, as
+  // the old way through `TextEncoder` made it: JSON writes it as an escape
+  // that Rust cannot read.
+  const wellFormed = text => (typeof text.toWellFormed === 'function'
+    ? text.toWellFormed()
+    : text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '�'));
+  function tellText(field, typed, whole) {
+    if (!field || !field.dataset || field.dataset.duiTyped === undefined) return;
+    const carrier = document.querySelector('[data-dui-carrier="' + field.dataset.duiTyped + '"]');
+    if (!carrier) return;
+    const now = wellFormed(field.value);
+    const fresh = whole || typeof field.duiBase !== 'string';
+    const base = fresh ? '' : field.duiBase;
+    if (!fresh && base === now) return;
+    const most = Math.min(base.length, now.length);
+    let start = 0;
+    while (start < most && base.charCodeAt(start) === now.charCodeAt(start)) start += 1;
+    let end = 0;
+    while (end < most - start
+      && base.charCodeAt(base.length - 1 - end) === now.charCodeAt(now.length - 1 - end)) end += 1;
+    // A character written as two units is never cut in two.
+    if (start > 0 && isHigh(now.charCodeAt(start - 1))) start -= 1;
+    if (end > 0 && isLow(now.charCodeAt(now.length - end))) end -= 1;
+    const came = now.slice(start, now.length - end);
+    let at = start, gone = base.length - start - end, from = 0, first = true;
+    do {
+      let units = Math.min(came.length - from, PIECE_UNITS), to, json;
+      for (;;) {
+        to = from + units;
+        if (to < came.length && isHigh(came.charCodeAt(to - 1))) to += to - 1 > from ? -1 : 1;
+        json = JSON.stringify({ r: fresh && first, a: at, d: gone, i: came.slice(from, to), m: to < came.length, t: typed, n: now.length });
+        if (units <= 1 || encoder.encode(json).length <= PIECE_BYTES) break;
+        units >>= 1;
+      }
+      carrier.value = json;
+      carrier.dispatchEvent(new Event('input', { bubbles: true }));
+      at += to - from;
+      gone = 0;
+      from = to;
+      first = false;
+    } while (from < came.length);
+    carrier.value = '';
+    field.duiBase = now;
+  }
+  // Dioxus listens for each kind of event once, on the app's root, and an
+  // `input` or `change` that reaches it from any text field is sent with
+  // the field's whole text, whoever listens: the note's field's own are
+  // stopped at the field, after its own listeners have heard them.
+  const stopHere = event => event.stopPropagation();
+  function keepToItself(field) {
+    if (field.duiKept) return;
+    field.duiKept = true;
+    field.addEventListener('input', stopHere);
+    field.addEventListener('change', stopHere);
+  }
+  document.addEventListener('focusin', event => {
+    const field = event.target;
+    if (field && field.dataset && field.dataset.duiTyped !== undefined) keepToItself(field);
+  }, true);
+  document.addEventListener('input', event => {
+    const field = event.target;
+    if (!field || !field.dataset || field.dataset.duiTyped === undefined) return;
+    keepToItself(field);
+    field.duiAgain = 0;
+    tellText(field, true, false);
+  }, true);
+  // Rust's copy did not agree with the field: the whole text, as typed. At
+  // most three times for each change the person makes, so that a text the
+  // road cannot carry is never sent round and round.
+  function typedAgain(id) {
+    const field = document.querySelector('[data-dui-typed="' + id + '"]');
+    if (!field || (field.duiAgain || 0) >= 3) return;
+    field.duiAgain = (field.duiAgain || 0) + 1;
+    tellText(field, true, true);
   }
   // Text added at the end of a field, where the caret is not: the tags a
   // new page gets. The field then says so as if it had been typed, so the
@@ -1575,6 +1672,7 @@
     shootPage();
     field.value = '';
     field.setSelectionRange(0, 0);
+    tellText(field, false, false);
   }, true);
 
   // ---- The window's top row (section 7.6) ---------------------------------
@@ -2638,5 +2736,5 @@
     if (document.body) watchPage(); else document.addEventListener('DOMContentLoaded', watchPage);
   }
 
-  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, mergeInto, appendText, paste, back, jump, onPastedFiles };
+  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, mergeInto, appendText, paste, back, jump, onPastedFiles, typedAgain };
 })();

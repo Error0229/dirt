@@ -49,6 +49,7 @@ use dirt_core::Store;
 use dirt_ui::components::{Listening, Logo};
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::events::{use_outcome, Outcome};
+use dirt_ui::typing::use_typing;
 use dirt_ui::{Appearance, UiRoot};
 use tokio::sync::watch;
 
@@ -687,6 +688,8 @@ fn CaptureBox(serial: u64) -> Element {
         Outcome::Gone => capture.gone(serial),
         _ => {}
     });
+    // The box's text, however long, in order with its keys (`dirt_ui::typing`).
+    let typing = use_typing(move |text| capture.typed(serial, text));
 
     let view = capture.view.read().clone();
     let how = match view.shown {
@@ -749,7 +752,7 @@ fn CaptureBox(serial: u64) -> Element {
                 placeholder: "What\u{2019}s on your mind?",
                 spellcheck: "false",
                 readonly: view.shown != Shown::Open,
-                oninput: move |event: FormEvent| capture.typed(serial, event.value()),
+                "data-dui-typed": typing.id(),
                 onkeydown: move |event: KeyboardEvent| {
                     if puts_away(&event) {
                         event.prevent_default();
@@ -759,6 +762,7 @@ fn CaptureBox(serial: u64) -> Element {
                 onfocus: move |_| capture.focused(),
                 onmounted: move |_| dom::focus(&[TEXT], Caret::End),
             }
+            {typing.carrier()}
         }
     }
 }

@@ -304,9 +304,14 @@ class CaptureActivity : Activity() {
         Waiting.setDraft(this, if (locked) draftBefore else "")
         Log.i(TAG, "kept $id locked=$locked")
         // Whatever goes wrong asking for the job, the thought is in its file
-        // and the app takes it in when it next starts or comes back.
-        runCatching { CaptureJob.schedule(applicationContext) }
-            .onFailure { failure -> Log.w(TAG, "the job could not be asked for: $failure") }
+        // and the app takes it in when it next starts or comes back. The
+        // phone's own work makes it a note and a grain on the pile widget,
+        // with no network; it then asks for the job that syncs.
+        runCatching { WordsJob.schedule(applicationContext) }
+            .onFailure { failure ->
+                Log.w(TAG, "the job could not be asked for: $failure")
+                runCatching { CaptureJob.schedule(applicationContext) }
+            }
         leave(true)
     }
 

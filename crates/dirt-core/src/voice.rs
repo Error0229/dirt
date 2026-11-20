@@ -85,22 +85,22 @@ pub async fn make_words(
         let note = waiting.note;
         // Counted before the model is loaded: a phone that cannot hold it
         // ends the process, and is not asked again at every start.
-        store.voice_reading(&note).await?;
+        store.voice_reading(&waiting).await?;
         let Some(recording) = store.file_bytes(waiting.file_id).await? else {
             let why = "the recording is not on this device".to_owned();
-            store.voice_not_read(&note, &why).await?;
+            store.voice_not_read(&waiting, &why).await?;
             made.failed.push((note, why));
             continue;
         };
         match read_aside(Arc::clone(&transcriber), recording).await {
             Ok(words) => {
-                let put = store.put_voice_words(&note, &words, text_only).await?;
+                let put = store.put_words_of(&waiting, &words, text_only).await?;
                 told(&put);
                 made.put.push(put);
             }
             Err(why) => {
                 tracing::warn!("The words of note {note} could not be made: {why}");
-                store.voice_not_read(&note, &why).await?;
+                store.voice_not_read(&waiting, &why).await?;
                 made.failed.push((note, why));
             }
         }

@@ -69,6 +69,11 @@ object Waiting {
         return id to File(folder, "$id.wav.part")
     }
 
+    // Whether a recording from the sheet waits: the phone's work then needs
+    // the speech model.
+    fun hasRecordings(context: Context): Boolean =
+        folder(context).listFiles()?.any { file -> file.name.endsWith(".wav") || file.name.endsWith(".wav.part") } ?: false
+
     // The recording is finished: it waits whole, for the job or the app.
     fun keepRecording(part: File): Boolean {
         val whole = File(part.parentFile, part.name.removeSuffix(".part"))

@@ -17,6 +17,7 @@ use dirt_core::sync::overview::SyncIndicator;
 use dirt_ui::components::{IconButton, Listening, MicButton, ScrollArea};
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::files::FileTiles;
+use dirt_ui::typing::use_typing;
 use dirt_ui::Icon;
 
 use super::{Arrival, Screen, Where, PAGE, PAGE_ID};
@@ -39,6 +40,9 @@ pub fn Page() -> Element {
     });
     let take_focus = view.take_focus;
     let text = view.text.clone();
+    // The page's text, however long, in order with its keys and presses
+    // (`dirt_ui::typing`).
+    let typing = use_typing(move |typed: String| screen.typed(serial, &typed));
     let talking = screen.talking;
     let listening = *talking.view.read();
     let unheard = talking.unheard.read().clone();
@@ -123,7 +127,7 @@ pub fn Page() -> Element {
                         // The keys that empty it, with this computer's
                         // command key (`keys::empties_page`).
                         "data-dui-page": done_keys.then_some(super::keys::COMMAND_KEY),
-                        oninput: move |event: FormEvent| screen.typed(serial, &event.value()),
+                        "data-dui-typed": typing.id(),
                         onfocus: move |_| screen.focused(Where::Page),
                         onblur: move |_| screen.focused(Where::Elsewhere),
                         // The text is given once, when the page is made,
@@ -137,6 +141,7 @@ pub fn Page() -> Element {
                             }
                         },
                     }
+                    {typing.carrier()}
                     if let Some(talk) = listening {
                         div {
                             key: "listening {talk.serial}",

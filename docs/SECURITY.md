@@ -281,6 +281,13 @@ Quick Settings tile and the phone's note-taking role open (interface design
   sees the home screen sees it, so it shows nothing of the notes, not even
   how many. The sheet's only words are its placeholder. None of them can
   open a note or the list.
+- **The pile widget shows how many, and nothing else.** It is optional:
+  the person puts it on the home screen (interface design 8.10). Whoever
+  sees the home screen sees the heap and "1,254 thoughts": how many notes
+  there are, and a shade for each taken from its ID. No word of any note,
+  no tag, no time. It is drawn from a small file the app writes,
+  `dirt/pile`, which holds that and the grains' places and nothing more;
+  tapping it opens the app, which is as locked as the phone is.
 - **A thought waits on the phone as plain text, briefly.** At ✓ the sheet
   writes the thought to a file of its own, `dirt/waiting/<note ID>.txt` in
   the app's private storage, and the job (or the app) makes it a note and

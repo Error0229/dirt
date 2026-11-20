@@ -27,6 +27,7 @@ class CaptureJob : JobService() {
                 runCatching { Core.takeIn(applicationContext, filesDir.absolutePath) }
             }
             Log.i(TAG, "job: ${outcome.getOrElse { failure -> "failed: $failure" }}")
+            runCatching { PileWidget.refresh(applicationContext) }
             // Not asked for again on a failure: what was made is in the
             // store, and the next sync from anywhere sends it; what is not
             // made still waits, for the app.

@@ -51,14 +51,10 @@ pub async fn choose_files() -> Option<Vec<Incoming>> {
     if !activity::pick_files(&request) {
         return None;
     }
-    loop {
-        if let Some(picked) = activity::take_picked(&request) {
-            return match picked {
-                Picked::Cancelled => None,
-                Picked::Files(files) => Some(files),
-            };
-        }
-        tokio::time::sleep(ASK_EVERY).await;
+    // Nothing, if the activity went before the person chose.
+    match activity::outcome_of(&request, ASK_EVERY, activity::take_picked).await? {
+        Picked::Cancelled => None,
+        Picked::Files(files) => Some(files),
     }
 }
 
@@ -148,12 +144,11 @@ pub fn save_a_copy(files: &NoteFiles, toasts: Toasts, file: AttachedFile) {
                     &attachment.media_type,
                     &path.to_string_lossy(),
                 ) {
-                    loop {
-                        if let Some(outcome) = activity::take_save_outcome(&request) {
-                            break Ok(outcome);
-                        }
-                        tokio::time::sleep(ASK_EVERY).await;
-                    }
+                    activity::outcome_of(&request, ASK_EVERY, activity::take_save_outcome)
+                        .await
+                        .ok_or_else(|| {
+                            "The app's screen closed before the place was chosen.".to_owned()
+                        })
                 } else {
                     Err("Android's screen for saving a file could not be opened.".to_owned())
                 }

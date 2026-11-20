@@ -11,6 +11,9 @@
     <string name="dirt_widget_bar">Write a thought</string>
     <string name="dirt_open_dirt">Open Dirt</string>
     <string name="dirt_new_note">New note</string>
+    <string name="dirt_pile_label">Dirt pile</string>
+    <string name="dirt_pile_about">Your thoughts, as a pile of sand</string>
+    <string name="dirt_pile_open">Open Dirt to see your pile</string>
 
     <!-- Voice (design 6.18, 8.9). -->
     <string name="dirt_talk">Talk</string>

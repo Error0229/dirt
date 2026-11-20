@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Two cells by two at first, and resizable (8.5). Nothing on a timer: it
+     is drawn again when the app or the sheet's work changes the pile. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/dirt_pile_about"
+    android:initialLayout="@layout/dirt_pile_widget"
+    android:minHeight="110dp"
+    android:minWidth="110dp"
+    android:minResizeHeight="80dp"
+    android:minResizeWidth="80dp"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellHeight="2"
+    android:targetCellWidth="2"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen" />

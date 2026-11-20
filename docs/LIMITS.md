@@ -318,6 +318,24 @@ references, so the counting costs less than that.
 | Blobs per account | 50 MiB | 20,000 one-line notes are 3.6 MB. If every one were 280 characters edited 20 times they would be 12.7 MB. 50 MiB leaves four times that for long and much-edited notes. For notes averaging under 2,621 bytes the note limit is reached first |
 | Growth a full account still takes | 1 KiB a push, up to 105% | The server cannot tell a delete from an edit, and a full account must still take deletes. A delete adds 18 to 104 bytes |
 
+**A note longer than this, written on a device.** The apps set no limit of
+their own on a note's text: the page takes a note as long as it is written
+or pasted, and the note is made and saved whole on the device (interface
+design 6.4). One whose encrypted blob would be over 1 MiB, about a million
+characters of plain English, more for text with accents or other scripts,
+is kept there and is not sent: the server would refuse it. The sync status
+says "1 note can't sync", and Settings → Sync names the note and says it is
+too large to sync, until it is made shorter (design 9.4). Nothing is lost,
+and the person is told. Before step 10 of the interface redesign the page
+could not carry a note's text past a few hundred kilobytes to the app at
+all, on either app, so such a note was never made; what changed is in the
+design's 6.4. Measured on the desktop, a debug build: a paste of 1,200,045
+characters reached the store whole 1.8 s after it landed, in pieces of at
+most 16 KiB of JSON each, and a key typed at its end after that was heard
+in under 0.1 s; 299,999 characters of quotes, backslashes and control
+characters, which take the most room in a piece, were kept exactly; notes of 50,000 to
+1,300,000 characters opened again whole.
+
 A deleted note keeps its document so that the delete can sync, and so that
 an edit made on another device without knowing of the delete can bring the
 note back. It counts against the note limit until it is purged, thirty days

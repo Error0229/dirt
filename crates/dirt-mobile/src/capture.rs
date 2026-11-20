@@ -468,6 +468,13 @@ pub mod android {
                 "made {} ({} said), nothing heard {}, taken in already {}, left {}",
                 taken.made, taken.said, taken.unheard, taken.already, taken.left
             ));
+            // The pile widget gains the grains of what was taken in; Kotlin
+            // draws it again once this returns (design 8.5).
+            match crate::pile_widget::write_from(&store, &data_folder).await {
+                Ok(true) => said.push("pile drawn".to_owned()),
+                Ok(false) => {}
+                Err(error) => said.push(format!("pile not drawn: {error}")),
+            }
             if let Some(dir) = voice_dir {
                 // What Settings → Voice says to keep is the device's, in
                 // its own store, whoever is signed in.

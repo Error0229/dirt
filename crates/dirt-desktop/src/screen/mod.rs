@@ -1391,9 +1391,14 @@ fn use_listing(screen: &Screen, app: &AppState) {
             }
             let waiting_words: Vec<NoteId> = notes
                 .iter()
+                // A note said waiting for its words, or one with files: a
+                // recording added to a note (8.10) is one of its files, and
+                // leaves the note unmarked.
                 .filter(|note| {
-                    note.voice
-                        .is_some_and(|voice| voice.words == dirt_core::models::Words::Waiting)
+                    with_files.contains(&note.id)
+                        || note
+                            .voice
+                            .is_some_and(|voice| voice.words == dirt_core::models::Words::Waiting)
                 })
                 .map(|note| note.id)
                 .collect();

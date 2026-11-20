@@ -3,7 +3,8 @@
 //! which slides down under it; the list of cards; and the dock, the bar a
 //! new page grows out of. A note opens as a page over all of it, grown out
 //! of its card. The dock's mic listens in a sheet over the lower half of
-//! the screen (6.18, 8.9).
+//! the screen (6.18, 8.9); the page's mic, under the page's bar, and what
+//! is said there is added to the page's note.
 //!
 //! [`Screen`] holds what the screen's parts share: what Find holds, what
 //! the list shows, the page and what is written on it, and the last
@@ -187,8 +188,14 @@ pub struct Screen {
     receiving: Signal<bool>,
     /// What time it is, for the times on cards and the sync status.
     pub clock: Signal<Clock>,
-    /// The dock's listening (6.18).
+    /// The listening of the dock, or of the page's mic (6.18).
     pub talking: Talking,
+    /// The page's mic is listening, not the dock's: the page shows it.
+    pub talking_on_page: Signal<bool>,
+    /// Notes that what was said into a page was added to in this run, with
+    /// how many recordings: a screen reader is told of the words of each
+    /// when they come (section 12).
+    said_into: Signal<HashMap<NoteId, u32>>,
     /// What a screen reader was last told of words that arrived, and how
     /// many times: told again when it reads the same.
     pub words_heard: Signal<(u64, String)>,
@@ -566,6 +573,12 @@ impl Screen {
     }
 
     async fn settle(self, draft: &DraftCell, serial: u64) -> Option<NoteId> {
+        // What was being said into the page is kept first, in its note, so
+        // that a note with no words and a recording coming is not let go.
+        if draft.borrow().has_listened() {
+            let _ = dirt_ui::voice::keeping_settled(KEEPING_AT_MOST).await;
+            wait_long(|| draft.borrow().is_hearing()).await;
+        }
         // A note still being made is waited for, so that it is not lost.
         wait_while(|| draft.borrow().is_creating()).await;
         // A page whose note could not be made is not made now: a note is
@@ -617,6 +630,9 @@ impl Screen {
         if !view.open {
             return;
         }
+        // Listening on the page ends, keeping what was said: it goes to
+        // the note all the same (6.18).
+        self.stop_listening();
         let (note, empty) = {
             let held = view.draft.borrow();
             (held.note(), held.is_empty())
@@ -660,6 +676,7 @@ impl Screen {
         if !view.open {
             return;
         }
+        self.stop_listening();
         let note = view.draft.borrow().note();
         self.close_page(note.map_or(GrowFrom::Nowhere, |id| GrowFrom::Card(card_element_id(&id))));
         spawn(async move {
@@ -1031,21 +1048,179 @@ impl Screen {
         }
         // The press that asks for the microphone, in Android's own dialog,
         // records nothing: no sheet rises behind the dialog.
-        if !crate::services::activity::microphone_allowed() {
-            let mut unheard = self.talking.unheard;
-            spawn(async move {
-                let answer = tokio::task::spawn_blocking(crate::voice::ask)
-                    .await
-                    .unwrap_or_else(|error| Unheard::Failed(error.to_string()));
-                unheard.set((answer != Unheard::Asked).then_some(answer));
-            });
+        if !self.may_listen() {
             return;
         }
         let Some(store) = self.store() else { return };
         // A toast would cover the listening sheet's ✕ and ✓.
         self.toasts.clear();
+        let mut on_page = self.talking_on_page;
+        on_page.set(false);
         let keep = Callback::new(move |said: Said| self.keep_said(&store, said));
         self.talking.listen(hands_free, keep);
+    }
+
+    /// Whether the app may use the microphone now. If not, Android is asked
+    /// in its own dialog, and the press that asks records nothing.
+    fn may_listen(self) -> bool {
+        if crate::services::activity::microphone_allowed() {
+            return true;
+        }
+        let mut unheard = self.talking.unheard;
+        spawn(async move {
+            let answer = tokio::task::spawn_blocking(crate::voice::ask)
+                .await
+                .unwrap_or_else(|error| Unheard::Failed(error.to_string()));
+            unheard.set((answer != Unheard::Asked).then_some(answer));
+        });
+        false
+    }
+
+    /// What the mic in the page's bar asked for (6.18, 8.9).
+    pub fn page_talk(self, talk: Talk) {
+        match talk {
+            Talk::Listen => self.listen_on_page(false),
+            // A tap from a screen reader is the first the page hears of it.
+            Talk::Lock if !self.talking.is_shown() => self.listen_on_page(true),
+            Talk::Lock => self.talking.lock(),
+            Talk::Keep => self.talking.end(true),
+            Talk::Throw => self.talking.end(false),
+        }
+    }
+
+    /// The page listens, under its bar, with the keyboard down. What is
+    /// said is added at the end of the page's note: the recording among its
+    /// files at once, its words once they are made. It goes to the page's
+    /// note in the store the page was opened on, even if the page is left,
+    /// or another store taken into use, before it is kept.
+    fn listen_on_page(mut self, hands_free: bool) {
+        let view = self.page.peek().clone();
+        if !view.open || !crate::voice::offered() || !self.may_listen() {
+            return;
+        }
+        if view.draft.borrow().store().is_none() {
+            return;
+        }
+        self.toasts.clear();
+        dom::blur();
+        self.typing.set(false);
+        self.talking_on_page.set(true);
+        let draft = view.draft;
+        draft.borrow_mut().listens();
+        let keep = Callback::new(move |said: Said| {
+            // Counted at once: leaving the page waits for it.
+            draft.borrow_mut().hearing();
+            self.add_said(Rc::clone(&draft), view.serial, said);
+        });
+        self.talking.listen(hands_free, keep);
+    }
+
+    /// What was said into a page goes to its note: the note it has, or, on
+    /// a page with no note yet, a note of what was said, as the dock makes
+    /// (one note for a page). A note that cannot take it (deleted
+    /// meanwhile, or with no room for another file) does not lose it: it
+    /// becomes a note of its own, and the person is told.
+    fn add_said(self, draft: DraftCell, serial: u64, said: Said) {
+        spawn(async move {
+            wait_while(|| draft.borrow().is_creating()).await;
+            let store = draft.borrow().store();
+            let Some(store) = store else {
+                draft.borrow_mut().heard();
+                return;
+            };
+            let held = draft.borrow().note();
+            let claimed = held.is_none() && draft.borrow_mut().claim_create();
+            let added = if claimed {
+                let note = NoteId::new();
+                crate::voice::said_here(note);
+                let kept = store
+                    .core()
+                    .keep_voice_note(note, said.file.clone(), said.duration_ms)
+                    .await;
+                if kept.is_ok() {
+                    draft.borrow_mut().created(note, "");
+                    self.became_the_pages(serial, note);
+                    self.save(&draft, serial).await;
+                } else {
+                    draft.borrow_mut().create_failed();
+                }
+                kept.map(|_| ())
+            } else {
+                // Made meanwhile by the page's typing, if not before: it
+                // goes there.
+                wait_while(|| draft.borrow().is_creating()).await;
+                let made = draft.borrow().note();
+                match made {
+                    Some(note) => {
+                        let added = store
+                            .core()
+                            .add_voice_to_note(&note, said.file.clone())
+                            .await;
+                        if added.is_ok() {
+                            *self.said_into.write_unchecked().entry(note).or_default() += 1;
+                        }
+                        added.map(|_| ())
+                    }
+                    None => Err(dirt_core::Error::NotFound("the page's note".to_owned())),
+                }
+            };
+            match added {
+                Ok(()) => {
+                    self.files.reread();
+                    self.app.note_changed();
+                    crate::voice::make_words_soon();
+                }
+                Err(error) => self.keep_apart(&store, &error, said).await,
+            }
+            draft.borrow_mut().heard();
+        });
+    }
+
+    /// A note made for the page by what was said into it is the page's,
+    /// if the page is still up.
+    fn became_the_pages(mut self, serial: u64, note: NoteId) {
+        let (same, open) = {
+            let page = self.page.peek();
+            (page.serial == serial, page.open)
+        };
+        if !same {
+            return;
+        }
+        {
+            let mut page = self.page.write();
+            page.note = Some(note);
+            if open {
+                page.from = GrowFrom::Card(card_element_id(&note));
+            }
+        }
+        if open {
+            self.app.current_note_id.set(Some(note));
+        }
+    }
+
+    /// What was said into a page whose note could not take it is kept as a
+    /// note of its own, so that nothing said is lost, and the person is
+    /// told why.
+    async fn keep_apart(self, store: &Arc<MobileNoteStore>, why: &dirt_core::Error, said: Said) {
+        tracing::warn!("What was said could not go to its page's note: {why}");
+        let note = NoteId::new();
+        crate::voice::said_here(note);
+        match store
+            .core()
+            .keep_voice_note(note, said.file, said.duration_ms)
+            .await
+        {
+            Ok(_) => {
+                self.app.note_changed();
+                crate::voice::make_words_soon();
+                self.toasts.show(
+                    Toast::new("What was said is a note of its own")
+                        .icon(Icon::Mic)
+                        .detail(dirt_core::util::as_sentence(why)),
+                );
+            }
+            Err(error) => self.not_done("What was said could not be kept", &error),
+        }
     }
 
     /// Listening ends, keeping what was said: the person leaves the app,
@@ -1083,8 +1258,30 @@ impl Screen {
     /// told, for a thought said here in this run; on its page, they are
     /// brought in.
     pub fn words_came(mut self, note: &Note) {
-        if crate::voice::was_said_here(note.id) {
-            let first = note.outline().title;
+        let said_into = {
+            let mut said = self.said_into.write();
+            match said.get_mut(&note.id) {
+                Some(count) if *count > 1 => {
+                    *count -= 1;
+                    true
+                }
+                Some(_) => said.remove(&note.id).is_some(),
+                None => false,
+            }
+        };
+        let first = if crate::voice::was_said_here(note.id) {
+            Some(note.outline().title)
+        } else if said_into {
+            // At the end of the note: its last line is theirs.
+            note.content
+                .lines()
+                .rev()
+                .find(|line| !line.trim().is_empty())
+                .map(|line| line.trim().to_owned())
+        } else {
+            None
+        };
+        if let Some(first) = first {
             let mut heard = self.words_heard.write();
             heard.0 += 1;
             let mark = if heard.0.is_multiple_of(2) {
@@ -1207,6 +1404,21 @@ impl Screen {
 
 /// Waits, for at most three seconds, while `busy` holds: a note being
 /// made, a save being written.
+/// How long leaving a page waits for what was being said into it to be
+/// kept.
+const KEEPING_AT_MOST: Duration = Duration::from_secs(30);
+
+/// Waits while `busy`, for as long as a recording takes to be kept: at
+/// most half a minute.
+async fn wait_long(busy: impl Fn() -> bool) {
+    for _ in 0..3000 {
+        if !busy() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 async fn wait_while(busy: impl Fn() -> bool) {
     for _ in 0..300 {
         if !busy() {
@@ -1357,9 +1569,14 @@ fn use_listing(screen: &Screen, app: &AppState) {
                 read_card_files(&store, shown, screen.card_files).await;
             let waiting_words: Vec<NoteId> = notes
                 .iter()
+                // A note said waiting for its words, or one with files: a
+                // recording added to a note (8.10) is one of its files, and
+                // leaves the note unmarked.
                 .filter(|note| {
-                    note.voice
-                        .is_some_and(|voice| voice.words == dirt_core::models::Words::Waiting)
+                    with_files.contains(&note.id)
+                        || note
+                            .voice
+                            .is_some_and(|voice| voice.words == dirt_core::models::Words::Waiting)
                 })
                 .map(|note| note.id)
                 .collect();
@@ -1384,6 +1601,9 @@ fn use_listing(screen: &Screen, app: &AppState) {
                 .map(|listing| listing.pile.clone());
             let offset = Clock::now().utc_offset_secs;
             let pile = PileView::read(before, counts, offset, || core.pile()).await;
+            // The pile widget on the home screen is drawn from the same
+            // heap, when it is a new one (8.5).
+            crate::pile_widget::show(&crate::config::default_mobile_data_directory(), &pile);
 
             // What a sync has just brought: new to the list, or edited
             // since it was last read, and not the note being written.
@@ -1510,6 +1730,8 @@ pub fn MainScreen() -> Element {
         receiving: Signal::new(false),
         clock,
         talking,
+        talking_on_page: Signal::new(false),
+        said_into: Signal::new(HashMap::new()),
         words_heard: Signal::new((0, String::new())),
     });
     use_listing(&screen, &app);

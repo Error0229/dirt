@@ -157,8 +157,9 @@ async fn a_deleted_note_waits_and_is_not_written_to() {
         WordsPut::Nothing
     );
     store.restore_note(&id).await.unwrap();
-    // It was let go of when it was found deleted.
-    assert!(store.voice_waiting().await.unwrap().is_empty());
+    // Found deleted, it was not written to, and it still waits: brought
+    // back, it gets its words (step 10's review).
+    assert_eq!(store.voice_waiting().await.unwrap().len(), 1);
     assert_eq!(store.get_note(&id).await.unwrap().unwrap().content, "");
 }
 
@@ -331,8 +332,9 @@ async fn a_reading_that_never_came_back_counts_as_a_try() {
     let id = NoteId::new();
     store.keep_voice_note(id, recording(), 1_000).await.unwrap();
     // Each try begins and nothing comes back from it.
+    let waiting = store.voice_waiting().await.unwrap().remove(0);
     for _ in 0..dirt_core::voice::MOST_TRIES {
-        store.voice_reading(&id).await.unwrap();
+        store.voice_reading(&waiting).await.unwrap();
     }
     let never = Arc::new(Saying {
         words: Ok("never read".to_owned()),
@@ -414,4 +416,328 @@ async fn a_recording_taken_in_is_dated_when_it_was_said_and_made_once() {
     assert_eq!(store.list_notes(10, 0).await.unwrap().len(), 1);
     // And nothing left on the shelf for the second.
     assert_eq!(store.files_in_use().await.unwrap().len(), 1);
+}
+
+// ---- A recording added to a note being written (🎙 in Android's page) ----
+
+/// What is said into a note being written goes among its files at once,
+/// unmarked, and its words come at the note's end, after what was typed,
+/// meanwhile too.
+#[tokio::test]
+async fn a_recording_added_to_a_note_puts_its_words_at_the_end() {
+    let (_folder, store) = temp_store();
+    let note = store.create_note("Groceries").await.unwrap();
+    let added = store
+        .add_voice_to_note(&note.id, recording())
+        .await
+        .unwrap();
+    // Not a note said: no mark, no name from the recording.
+    assert_eq!(added.voice, None);
+    assert_eq!(added.content, "Groceries");
+    let files = store.note_attachments(&note.id).await.unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].name, VOICE_FILE_NAME);
+
+    let waiting = store.voice_waiting().await.unwrap();
+    assert_eq!(waiting.len(), 1);
+    assert!(waiting[0].added);
+    assert_eq!(waiting[0].file_id, files[0].file_id);
+
+    // Typed on while its words were made.
+    store
+        .update_note(&note.id, "Groceries\n- bread")
+        .await
+        .unwrap();
+    let ear = Arc::new(Saying {
+        words: Ok(" and oat milk ".to_owned()),
+        asked: AtomicUsize::new(0),
+    });
+    let made = make_words(&store, ear, VoiceRecording::Keep, |_| {})
+        .await
+        .unwrap();
+    assert!(made.changed());
+    let note = store.get_note(&note.id).await.unwrap().unwrap();
+    assert_eq!(note.content, "Groceries\n- bread\n\nand oat milk");
+    assert_eq!(note.voice, None);
+    assert_eq!(store.note_attachments(&note.id).await.unwrap().len(), 1);
+    assert!(store.voice_waiting().await.unwrap().is_empty());
+}
+
+/// A note may be added to more than once; each recording's words come in
+/// the order they were said. With Text only each recording goes once its
+/// words are in, and a recording with no words stays.
+#[tokio::test]
+async fn several_recordings_added_each_put_their_words_in_turn() {
+    let (_folder, store) = temp_store();
+    let note = store.create_note("Plan\n").await.unwrap();
+    store
+        .add_voice_to_note(&note.id, recording())
+        .await
+        .unwrap();
+    store
+        .add_voice_to_note(&note.id, recording())
+        .await
+        .unwrap();
+    let waiting = store.voice_waiting().await.unwrap();
+    assert_eq!(waiting.len(), 2);
+    let put = store
+        .put_words_of(&waiting[0], "first", true)
+        .await
+        .unwrap();
+    let WordsPut::Made(after) = put else {
+        panic!("{put:?}")
+    };
+    assert_eq!(after.content, "Plan\n\nfirst");
+    // Text only: that recording is off the note.
+    assert_eq!(store.note_attachments(&note.id).await.unwrap().len(), 1);
+    // The second had no words: the note is as it was, recording and all.
+    let put = store.put_words_of(&waiting[1], "  ", true).await.unwrap();
+    assert!(matches!(put, WordsPut::NoneFound(_)));
+    assert_eq!(store.note_attachments(&note.id).await.unwrap().len(), 1);
+    let note = store.get_note(&note.id).await.unwrap().unwrap();
+    assert_eq!(note.content, "Plan\n\nfirst");
+    assert!(store.voice_waiting().await.unwrap().is_empty());
+}
+
+/// A recording taken off the note before its words were made is not read,
+/// and its words are never put in.
+#[tokio::test]
+async fn a_recording_taken_off_the_note_is_not_read() {
+    let (_folder, store) = temp_store();
+    let note = store.create_note("Call the bank").await.unwrap();
+    store
+        .add_voice_to_note(&note.id, recording())
+        .await
+        .unwrap();
+    let file = store.note_attachments(&note.id).await.unwrap()[0].file_id;
+    let waiting = store.voice_waiting().await.unwrap().remove(0);
+    store.detach_file(&note.id, file).await.unwrap();
+    assert!(store.voice_waiting().await.unwrap().is_empty());
+    // Words that were being made as it was taken off are not put in.
+    assert_eq!(
+        store
+            .put_words_of(&waiting, "too late", false)
+            .await
+            .unwrap(),
+        WordsPut::Nothing
+    );
+    let note = store.get_note(&note.id).await.unwrap().unwrap();
+    assert_eq!(note.content, "Call the bank");
+}
+
+/// Only this device makes the words of what was said into a note here; the
+/// note reaches another as a note with one more file.
+#[tokio::test]
+async fn only_the_device_that_heard_it_makes_the_words_of_a_recording_added() {
+    let (_here, heard) = temp_store();
+    let (_there, other) = temp_store();
+    let note = heard.create_note("Offsite").await.unwrap();
+    heard
+        .add_voice_to_note(&note.id, recording())
+        .await
+        .unwrap();
+    let arrived = other
+        .merge_note_document(&note.id, document(&heard, &note.id).await)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(arrived.content, "Offsite");
+    assert!(other.voice_waiting().await.unwrap().is_empty());
+}
+
+/// Moved into the account as the device signs in, a recording added to a
+/// note still gets its words there, at the note's end.
+#[tokio::test]
+async fn a_recording_added_to_a_note_moved_into_the_account_still_gets_its_words() {
+    let (_before, signed_out) = temp_store();
+    let (_after, account) = temp_store();
+    let note = signed_out.create_note("Ideas").await.unwrap();
+    signed_out
+        .add_voice_to_note(&note.id, recording())
+        .await
+        .unwrap();
+    assert_eq!(signed_out.move_notes_into(&account).await.unwrap(), 1);
+    let waiting = account.voice_waiting().await.unwrap();
+    assert_eq!(waiting.len(), 1);
+    assert!(waiting[0].added);
+    let ear = Arc::new(Saying {
+        words: Ok("a garden".to_owned()),
+        asked: AtomicUsize::new(0),
+    });
+    make_words(&account, ear, VoiceRecording::Keep, |_| {})
+        .await
+        .unwrap();
+    let note = account.get_note(&note.id).await.unwrap().unwrap();
+    assert_eq!(note.content, "Ideas\n\na garden");
+}
+
+/// Three failed tries, and the note's row says why, as for a note said.
+#[tokio::test]
+async fn a_recording_added_whose_words_cannot_be_made_is_given_up_and_said() {
+    let (_folder, store) = temp_store();
+    let note = store.create_note("Notes").await.unwrap();
+    store
+        .add_voice_to_note(&note.id, recording())
+        .await
+        .unwrap();
+    let broken = Arc::new(Saying {
+        words: Err("the model would not load".to_owned()),
+        asked: AtomicUsize::new(0),
+    });
+    for _ in 0..=dirt_core::voice::MOST_TRIES {
+        make_words(&store, broken.clone(), VoiceRecording::Keep, |_| {})
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        broken.asked.load(Ordering::SeqCst),
+        dirt_core::voice::MOST_TRIES as usize
+    );
+    let problems = store.voice_problems(vec![note.id]).await.unwrap();
+    assert_eq!(
+        problems.get(&note.id).map(String::as_str),
+        Some("the model would not load")
+    );
+    // The recording stays on the note: nothing said is lost.
+    assert_eq!(store.note_attachments(&note.id).await.unwrap().len(), 1);
+}
+
+/// A note that is not there, or is deleted, takes no recording.
+#[tokio::test]
+async fn a_recording_is_not_added_to_a_note_that_is_gone() {
+    let (_folder, store) = temp_store();
+    let note = store.create_note("Gone soon").await.unwrap();
+    store.delete_note(&note.id).await.unwrap();
+    assert!(matches!(
+        store.add_voice_to_note(&note.id, recording()).await,
+        Err(dirt_core::Error::NotFound(_))
+    ));
+    assert!(matches!(
+        store.add_voice_to_note(&NoteId::new(), recording()).await,
+        Err(dirt_core::Error::NotFound(_))
+    ));
+}
+
+/// What the page typed at the end while the words were being made stays
+/// where it was typed, and the words come after it: the page's save, made
+/// from the text it saved before, is merged into the note that has the
+/// words.
+#[tokio::test]
+async fn typing_at_the_end_while_the_words_are_made_stays_before_them() {
+    let (_folder, store) = temp_store();
+    let note = store.create_note("Buy milk, eg").await.unwrap();
+    store
+        .add_voice_to_note(&note.id, recording())
+        .await
+        .unwrap();
+    let waiting = store.voice_waiting().await.unwrap().remove(0);
+    store
+        .put_words_of(&waiting, "call mum", false)
+        .await
+        .unwrap();
+    // The page saved "Buy milk, eg" and has typed "gs" since.
+    let saved = store
+        .update_note_from(&note.id, "Buy milk, eg", "Buy milk, eggs")
+        .await
+        .unwrap();
+    assert_eq!(saved.content, "Buy milk, eggs\n\ncall mum");
+}
+
+/// Two makers of words reading the same recording at once (the app's and
+/// the sheet's job, in one process) put its words in once.
+#[tokio::test]
+async fn the_words_of_a_recording_added_are_put_in_once() {
+    let (_folder, store) = temp_store();
+    let note = store.create_note("Plan").await.unwrap();
+    store
+        .add_voice_to_note(&note.id, recording())
+        .await
+        .unwrap();
+    let waiting = store.voice_waiting().await.unwrap().remove(0);
+    let first = store.put_words_of(&waiting, "once", false).await.unwrap();
+    assert!(matches!(first, WordsPut::Made(_)));
+    let second = store.put_words_of(&waiting, "once", false).await.unwrap();
+    assert_eq!(second, WordsPut::Nothing);
+    let note = store.get_note(&note.id).await.unwrap().unwrap();
+    assert_eq!(note.content, "Plan\n\nonce");
+}
+
+/// A note deleted while its recording is read keeps the recording waiting,
+/// and brought back it gets its words: for a note said and for a recording
+/// added alike.
+#[tokio::test]
+async fn words_made_while_the_note_is_deleted_wait_for_it_to_come_back() {
+    let (_folder, store) = temp_store();
+    let note = store.create_note("Errands").await.unwrap();
+    store
+        .add_voice_to_note(&note.id, recording())
+        .await
+        .unwrap();
+    let said = NoteId::new();
+    store
+        .keep_voice_note(said, recording(), 2_000)
+        .await
+        .unwrap();
+    let waiting = store.voice_waiting().await.unwrap();
+    assert_eq!(waiting.len(), 2);
+    store.delete_note(&note.id).await.unwrap();
+    store.delete_note(&said).await.unwrap();
+    for one in &waiting {
+        assert_eq!(
+            store.put_words_of(one, "late words", false).await.unwrap(),
+            WordsPut::Nothing
+        );
+    }
+    store.restore_note(&note.id).await.unwrap();
+    store.restore_note(&said).await.unwrap();
+    assert_eq!(store.voice_waiting().await.unwrap().len(), 2);
+    let ear = Arc::new(Saying {
+        words: Ok("back again".to_owned()),
+        asked: AtomicUsize::new(0),
+    });
+    make_words(&store, ear, VoiceRecording::Keep, |_| {})
+        .await
+        .unwrap();
+    let note = store.get_note(&note.id).await.unwrap().unwrap();
+    assert_eq!(note.content, "Errands\n\nback again");
+    let said = store.get_note(&said).await.unwrap().unwrap();
+    assert_eq!(said.content, "back again");
+}
+
+/// Moved into the account as the device signs in, a recording given up on
+/// stays given up: its tries go with it.
+#[tokio::test]
+async fn a_recording_given_up_on_stays_given_up_when_moved() {
+    let (_before, signed_out) = temp_store();
+    let (_after, account) = temp_store();
+    let note = signed_out.create_note("Ideas").await.unwrap();
+    signed_out
+        .add_voice_to_note(&note.id, recording())
+        .await
+        .unwrap();
+    let said = NoteId::new();
+    signed_out
+        .keep_voice_note(said, recording(), 2_000)
+        .await
+        .unwrap();
+    let broken = Arc::new(Saying {
+        words: Err("the model would not load".to_owned()),
+        asked: AtomicUsize::new(0),
+    });
+    for _ in 0..dirt_core::voice::MOST_TRIES {
+        make_words(&signed_out, broken.clone(), VoiceRecording::Keep, |_| {})
+            .await
+            .unwrap();
+    }
+    assert_eq!(signed_out.move_notes_into(&account).await.unwrap(), 2);
+    let ear = Arc::new(Saying {
+        words: Ok("not again".to_owned()),
+        asked: AtomicUsize::new(0),
+    });
+    make_words(&account, ear.clone(), VoiceRecording::Keep, |_| {})
+        .await
+        .unwrap();
+    assert_eq!(ear.asked.load(Ordering::SeqCst), 0);
+    let problems = account.voice_problems(vec![note.id, said]).await.unwrap();
+    assert_eq!(problems.len(), 2);
 }
