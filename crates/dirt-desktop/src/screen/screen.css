@@ -40,6 +40,13 @@
 :root[data-motion="reduced"] .dk-col .dk-text,:root[data-motion="reduced"] .dk-col .dk-files{animation:none}
 @media (prefers-reduced-motion:reduce){.dk-col .dk-text,.dk-col .dk-files{animation:none}}
 
+/* ---- Listening (6.18): the page itself listens. Nothing is written; the
+   grains, the timer, ✕ and ✓ are at its bottom. The mic stays in the
+   gutter while it is held; the other icons go. */
+.dk-listening{position:absolute;inset:0;z-index:4;background:var(--surface);display:flex;flex-direction:column;justify-content:flex-end;padding:0 0 24px}
+.dk-col:has(.dk-listening) .dk-gutter>:not(.dui-mic){visibility:hidden}
+.dk-voice{width:100%}
+
 /* ---- The note's files, under its text: dirt-ui's tiles (6.5) ---------- */
 .dk-files{padding:0 0 22px;flex:none}
 

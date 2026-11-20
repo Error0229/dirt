@@ -56,6 +56,8 @@ pub fn NoteCard(
         time,
         time_in_full,
         has_files,
+        said,
+        words,
         waiting,
         archived,
         thumbnail,
@@ -106,7 +108,7 @@ pub fn NoteCard(
                             draggable: "false",
                         }
                     }
-                    div { class: "dui-card-t",
+                    div { class: "dui-card-t", "data-dui-words": words,
                         if title.is_empty() {
                             "{untitled}"
                         } else {
@@ -120,7 +122,14 @@ pub fn NoteCard(
                     }
                     div { class: "dui-card-meta",
                         span { class: "dui-card-time", "{time}" }
-                        if has_files {
+                        if said {
+                            span {
+                                class: "dui-card-mark",
+                                role: "img",
+                                "aria-label": crate::components::note_row::SAID,
+                                IconSvg { icon: Icon::Mic, size: IconSize::Small }
+                            }
+                        } else if has_files {
                             span {
                                 class: "dui-card-mark",
                                 role: "img",

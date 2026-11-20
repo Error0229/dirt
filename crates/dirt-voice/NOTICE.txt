@@ -1,0 +1,22 @@
+Dirt turns speech into text on the device with these, shipped in this folder.
+
+Parakeet TDT-CTC 110M, by NVIDIA
+  https://huggingface.co/nvidia/parakeet-tdt_ctc-110m
+  Licensed under the Creative Commons Attribution 4.0 International licence
+  (CC BY 4.0): https://creativecommons.org/licenses/by/4.0/
+  Changed: converted to ONNX and its weights quantised to 8 bits by the
+  sherpa-onnx project (sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8,
+  from https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models).
+  Dirt uses that conversion unchanged.
+
+Silero VAD, by the Silero Team
+  https://github.com/snakers4/silero-vad
+  MIT licence.
+
+sherpa-onnx, by the k2-fsa project
+  https://github.com/k2-fsa/sherpa-onnx
+  Apache License 2.0.
+
+ONNX Runtime, by Microsoft, as built into sherpa-onnx's libraries
+  https://github.com/microsoft/onnxruntime
+  MIT licence.

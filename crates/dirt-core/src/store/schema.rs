@@ -61,7 +61,7 @@ fn wait_for_the_file(looks: i32) -> bool {
 }
 
 /// The version of the tables below, kept in SQLite's `user_version`.
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE meta (
@@ -264,6 +264,58 @@ DROP INDEX notes_by_edit;
 CREATE INDEX notes_by_edit ON notes (deleted, archived, edited_at DESC);
 ";
 
+/// Version 7: voice (interface design 6.18).
+///
+/// `voice` is derived from the note's document, as `archived` is: the mark
+/// that one of its files is its voice recording, as `VoiceMark` writes it,
+/// while the note has that file; `NULL` for a typed note. A note already
+/// here may have one all the same, said on another device and merged by a
+/// version from before voice, which keeps a mark it cannot read: the notes'
+/// documents are read once more after this, in [`derive_voice`].
+///
+/// A row of `voice_waiting` is a recording made on this device whose words
+/// are still to be made. Only the device that recorded it makes them: two
+/// devices doing so would add them twice. So the work is this device's
+/// alone and is kept here, not in the note. `tries` and `problem` say how
+/// often making them has failed, and why. A note's row goes with the note.
+const SCHEMA_V7: &str = "
+ALTER TABLE notes ADD COLUMN voice TEXT;
+CREATE TABLE voice_waiting (
+    note_id TEXT PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+    since   INTEGER NOT NULL,
+    tries   INTEGER NOT NULL DEFAULT 0,
+    problem TEXT
+) WITHOUT ROWID;
+";
+
+/// Sets `voice` on the notes whose documents mark a voice recording. Run
+/// once, when the column is added. A document that cannot be read says
+/// nothing, and its note stays typed.
+fn derive_voice(tx: &Transaction<'_>) -> Result<()> {
+    let mut said = Vec::new();
+    {
+        let mut statement = tx.prepare("SELECT rowid, doc FROM notes")?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            let document: Vec<u8> = row.get(1)?;
+            // Reading needs no client ID of its own: nothing is written.
+            let mark = NoteDoc::from_bytes(0, &document)
+                .ok()
+                .and_then(|doc| doc.voice());
+            if let Some(mark) = mark {
+                said.push((row.get::<_, i64>(0)?, mark.to_entry()));
+            }
+        }
+    }
+    for (row, entry) in said {
+        tx.execute(
+            "UPDATE notes SET voice = ?1 WHERE rowid = ?2",
+            rusqlite::params![entry, row],
+        )?;
+    }
+    Ok(())
+}
+
 /// Sets `archived` on the notes whose documents say so. Run once, when the
 /// column is added.
 ///
@@ -317,6 +369,10 @@ pub(super) fn set_up(connection: &mut Connection) -> Result<String> {
     if version < 6 {
         tx.execute_batch(SCHEMA_V6)?;
         derive_archived(&tx)?;
+    }
+    if version < 7 {
+        tx.execute_batch(SCHEMA_V7)?;
+        derive_voice(&tx)?;
     }
     if version < SCHEMA_VERSION {
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -496,6 +552,49 @@ mod tests {
     /// notes. A note that the older version had merged from a device that
     /// could archive is archived from then on: the older version kept the
     /// mark in the document without knowing of it.
+    /// A version from before voice stored a note said on another device:
+    /// its document has the mark, which that version could not read. Once
+    /// the database is this version's, the note is a voice note at once,
+    /// not at its next edit.
+    #[tokio::test]
+    async fn a_note_said_elsewhere_and_stored_before_voice_is_a_voice_note_after() {
+        let (_folder, path) = fresh();
+        let id = "0192d3a8-0000-7000-8000-0000000000a1";
+        {
+            let connection = open_connection(&path).unwrap();
+            for schema in [
+                SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6,
+            ] {
+                connection.execute_batch(schema).unwrap();
+            }
+            connection.pragma_update(None, "user_version", 6).unwrap();
+            let said = NoteDoc::new(33);
+            let attachment = crate::files::Attachment {
+                file_id: uuid::Uuid::now_v7(),
+                name: "Voice recording.opus".to_owned(),
+                media_type: "audio/ogg".to_owned(),
+                size: 10,
+                key: crate::files::FileKey::generate(),
+                added_at_ms: 1_000,
+                thumbnail: None,
+            };
+            said.attach(&attachment, 1_000);
+            said.set_voice(Some(&crate::models::VoiceMark {
+                file_id: attachment.file_id,
+                duration_ms: 9_000,
+                words: crate::models::Words::Waiting,
+            }));
+            insert_v5(&connection, id, &said, Some(1));
+        }
+
+        let store = crate::Store::open(&path).unwrap();
+        let note = store.get_note(&id.parse().unwrap()).await.unwrap().unwrap();
+        let voice = note.voice.expect("the mark, derived");
+        assert_eq!(voice.length(), "0:09");
+        // This device did not record it, and does not make its words.
+        assert!(store.voice_waiting().await.unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn a_database_from_before_archive_opens_and_keeps_its_notes() {
         let (_folder, path) = fresh();

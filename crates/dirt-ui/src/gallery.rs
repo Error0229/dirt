@@ -30,6 +30,7 @@ use crate::components::{
     ScrollArea, Segment, Segmented, Sheet, Slider, Swipeable, Switch, SyncStatus, TagList,
     TagOption, TagStrip, TextSizeSlider, Toast,
 };
+use crate::components::{Ended, Listening, MicButton, Talk};
 use crate::events::Bus;
 use crate::files::FileTile;
 use crate::icons::{Icon, IconSize, IconSvg};
@@ -173,6 +174,7 @@ fn Page(
                 ListParts {}
                 Piles {}
                 SwipeCard {}
+                VoiceShown {}
                 FileTilesShown {}
                 AndroidList {}
                 Icons {}
@@ -760,6 +762,73 @@ fn SwipeCard() -> Element {
                     cards.write().push(card);
                 },
                 "Another card"
+            }
+        }
+    }
+}
+
+/// What listening looks like (6.18). Nothing here listens: the level is
+/// made up, rising and falling as a voice would.
+#[component]
+fn VoiceShown() -> Element {
+    let mut view = use_signal(|| None::<(u64, f32, Option<Ended>)>);
+    let mut serial = use_signal(|| 0_u64);
+    let mut start = move || {
+        if view.peek().is_some() {
+            return;
+        }
+        view.set(Some((0, 0.0, None)));
+        let mine = {
+            let mut serial = serial.write();
+            *serial += 1;
+            *serial
+        };
+        spawn(async move {
+            let mut ms = 0_u64;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                ms += 50;
+                if *serial.peek() != mine || !matches!(*view.peek(), Some((_, _, None))) {
+                    break;
+                }
+                #[allow(clippy::cast_precision_loss)]
+                let at = ms as f32 / 1000.0;
+                let level = ((at * 5.1).sin() * (at * 1.3).sin()).abs() * 0.9;
+                view.set(Some((ms, level, None)));
+            }
+        });
+    };
+    let mut end = move |how: Ended| {
+        let now = *view.peek();
+        if let Some((ms, level, None)) = now {
+            view.set(Some((ms, level, Some(how))));
+        }
+    };
+    rsx! {
+        h2 { "Voice" }
+        p { class: "gal-s",
+            "Hold the mic and let go to keep; tap it for hands-free; held, slide up to lock or left to throw it away."
+        }
+        div { class: "gal-line",
+            MicButton {
+                label: "Hold to talk, or tap",
+                on_talk: move |talk| match talk {
+                    Talk::Listen | Talk::Lock => start(),
+                    Talk::Keep => end(Ended::Kept),
+                    Talk::Throw => end(Ended::Thrown),
+                },
+            }
+            MicButton { label: "The microphone may not be used", refused: true, on_talk: |_| {} }
+            Button { onclick: move |_| end(Ended::NothingHeard), "Nothing heard" }
+        }
+        if let Some((ms, level, ended)) = view() {
+            Listening {
+                ms,
+                level,
+                ended,
+                on_keep: move |()| end(Ended::Kept),
+                on_throw: move |()| end(Ended::Thrown),
+                on_gone: move |()| view.set(None),
             }
         }
     }

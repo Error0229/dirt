@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
+use super::Voice;
+
 /// Returns the pre-compiled regex for extracting `#tag` patterns from note content.
 fn tag_regex() -> &'static Regex {
     static TAG_REGEX: OnceLock<Regex> = OnceLock::new();
@@ -30,6 +32,11 @@ pub struct Note {
     /// search and kept in an export
     #[serde(default)]
     pub archived: bool,
+    /// The note was said, not typed: how long its recording lasts and
+    /// whether its words have been made (interface design 6.18). `None`
+    /// for a typed note, and for one whose recording has been taken off.
+    #[serde(default)]
+    pub voice: Option<Voice>,
 }
 
 impl Note {
@@ -47,6 +54,7 @@ impl Note {
             created_at: now,
             updated_at: now,
             archived: false,
+            voice: None,
         }
     }
 

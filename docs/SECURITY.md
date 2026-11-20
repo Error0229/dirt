@@ -327,6 +327,52 @@ So **whoever holds the locked phone can add notes to the person's account**,
 which reach every device of it, and can read none. That is the price of
 writing without unlocking, and the reason the sheet shows nothing.
 
+## Voice
+
+A thought can be said instead of typed (interface design 6.18). Speech is
+turned into text on the device that heard it, by a model shipped inside
+the app, and is never sent anywhere to be turned into text: not to Dirt's
+server, not to a speech service. The desktop builds this in step 9a of the
+interface plan; Android follows in 9b and keeps to the same rules.
+
+- **What is recorded.** Only while the person asks: from the press of the
+  mic, or of the held hotkey, to ✓, Esc, ✕ or letting go, and ten minutes
+  at most. The microphone is opened at that press and closed at its end;
+  nothing listens otherwise, and a tap of the hotkey for typing does not
+  open it. What is heard is the sound and nothing about it: no words appear
+  while the person speaks.
+- **Where it is kept.** The moment the person lets go, the recording, an
+  Ogg Opus file, becomes a note with the recording attached as its file.
+  It is a file like any other: kept on the device, in the store's folder of
+  files, as the database is (not encrypted by Dirt, out of other users'
+  reach), and sent to the server encrypted with its own key, which the
+  note's document holds. The server sees a file of a few kilobytes and a
+  note's encrypted document, as for any file. Nothing said with no speech in
+  it is kept at all.
+- **Where its words are made.** Afterwards, in the background, by the
+  device that recorded it and by no other, from the copy on its shelf. The
+  model and the engine run in the app's own process; they read the
+  recording from memory and write the words into the note, which is then
+  encrypted and synced like any edit. The model is loaded for that and let
+  go after it.
+- **What leaves the device:** the encrypted note and the encrypted file,
+  as for anything typed. The model is in the app as it was built: nothing
+  is fetched to hear or to read, so no address is asked for, and no one
+  learns when the person speaks.
+- **Text only.** With Settings → Voice → The recording set to **Text only**,
+  the recording is taken off the note once its words are in. Taken off,
+  it goes as any removed file goes: from the server after the wait that
+  lets the other devices see the removal, and from each device's shelf
+  once nothing names it. Until its words are made, or when none are found,
+  it stays, so that nothing said is lost.
+- **The microphone's permission is the system's.** On Windows a desktop
+  app may use the microphone while "Let desktop apps access your
+  microphone" is on in Settings; when it is not, the mic shows a slash and
+  says where to allow it. The system shows that the microphone is in use
+  while Dirt listens.
+- **A development build** can be told to listen to a WAV file instead of the
+  microphone (`DIRT_VOICE_FROM_WAV`); a release build ignores it.
+
 ## The keys
 
 | Key | Made | Kept | Used for |

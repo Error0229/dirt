@@ -90,7 +90,8 @@ fn arrived(current: bool, loaded: Loaded) -> Option<Showing> {
         Showing::Text(as_text(&loaded.bytes))
     } else {
         served::release_all();
-        let address = served::hold(&loaded.name, loaded.bytes, loaded.media_type);
+        let (media_type, bytes) = served::playable(loaded.media_type, loaded.bytes);
+        let address = served::hold(&loaded.name, bytes, media_type);
         Showing::Media {
             kind: loaded.kind,
             address,

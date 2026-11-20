@@ -56,7 +56,8 @@ fn items(listing: &Listing, clock: dirt_ui::time::Clock) -> Vec<Item> {
                 listing.with_files.contains(&note.id),
                 listing.first_file.get(&note.id).map(String::as_str),
             )
-            .waiting(listing.waiting.contains(&note.id));
+            .waiting(listing.waiting.contains(&note.id))
+            .unread(listing.unread.get(&note.id).map(String::as_str));
         items.push(Item::Note(Box::new(summary)));
     }
     items

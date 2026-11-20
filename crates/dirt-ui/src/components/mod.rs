@@ -30,6 +30,7 @@ pub mod swipe;
 pub mod switch;
 pub mod sync_status;
 pub mod toast;
+pub mod voice;
 
 pub use accent_dots::AccentDots;
 pub use banner::Banner;
@@ -53,3 +54,4 @@ pub use swipe::Swipeable;
 pub use switch::Switch;
 pub use sync_status::SyncStatus;
 pub use toast::{use_toasts, Toast, Toasts};
+pub use voice::{Ended, Listening, MicButton, Talk};

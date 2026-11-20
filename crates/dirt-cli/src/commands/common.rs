@@ -5,6 +5,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
+use dirt_core::models::Words;
 use dirt_core::{Note, NoteId, Store};
 use serde::Serialize;
 
@@ -142,7 +143,17 @@ pub fn note_to_list_item(note: &Note) -> NoteListItem {
 
 pub fn note_preview(note: &Note, max_chars: usize) -> String {
     let first_line = note.content.lines().next().unwrap_or("").trim();
-    let collapsed = first_line.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut collapsed = first_line.split_whitespace().collect::<Vec<_>>().join(" ");
+    // A thought said aloud on a device is named by its length until that
+    // device has made its words, as the apps name it (6.18).
+    if collapsed.is_empty() {
+        if let Some(voice) = note.voice {
+            collapsed = match voice.words {
+                Words::NoneFound => format!("Voice \u{b7} {} (no words found)", voice.length()),
+                Words::Waiting | Words::Made => format!("Voice \u{b7} {}", voice.length()),
+            };
+        }
+    }
 
     if collapsed.chars().count() <= max_chars {
         collapsed

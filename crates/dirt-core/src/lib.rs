@@ -34,6 +34,7 @@ pub mod session;
 pub mod store;
 pub mod sync;
 pub mod util;
+pub mod voice;
 
 pub use error::{Error, Result};
 pub use export::ExportNote;

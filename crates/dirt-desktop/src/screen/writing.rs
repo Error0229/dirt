@@ -116,15 +116,18 @@ impl Draft {
         None
     }
 
-    /// What was typed and not yet kept, to be saved now.
+    /// What was typed and not yet kept, to be saved now: with the text it
+    /// was typed over, so that what reached the note meanwhile is kept
+    /// ([`Work::Save`]).
     pub fn flush(&mut self) -> Option<Work> {
         let note = self.note?;
         if self.text == self.saved {
             return None;
         }
-        self.saved.clone_from(&self.text);
+        let base = std::mem::replace(&mut self.saved, self.text.clone());
         Some(Work::Save {
             note,
+            base,
             text: self.text.clone(),
         })
     }
@@ -195,6 +198,33 @@ impl Draft {
         true
     }
 
+    /// The store's copy of the note on the page, read once the page's own
+    /// work for it was done ([`Work::Reread`]): what the page saved is in
+    /// it, and so is whatever came that the page did not write, such as
+    /// the words of what was said (6.18). That is brought into the page:
+    /// the page's changes since it last saved are made to the store's text,
+    /// which is the page's base from now on. Returns the page's new text
+    /// when it changed. `None` when the note is not on the page, or the
+    /// store holds just what the page saved.
+    pub fn took(&mut self, note: &Note) -> Option<String> {
+        if self.note != Some(note.id) || note.content == self.saved {
+            return None;
+        }
+        let merged = dirt_core::notes::merge3(&self.saved, &self.text, &note.content);
+        self.saved.clone_from(&note.content);
+        self.version += 1;
+        let changed = merged != self.text;
+        self.text = merged;
+        changed.then(|| self.text.clone())
+    }
+
+    /// The page's field holds `text`, which the page had not been told of:
+    /// what [`Self::took`] gave it, with whatever was typed meanwhile.
+    pub fn holds(&mut self, text: String) {
+        self.version += 1;
+        self.text = text;
+    }
+
     /// The store's text of the note on the page came after the page showed
     /// it. Taken, and true, if nothing has been typed since; otherwise the
     /// page keeps what was typed.
@@ -212,14 +242,32 @@ impl Draft {
 pub enum Work {
     /// Make the note, under the ID the page gave it.
     Create { note: NoteId, text: String },
-    /// Keep what was typed.
-    Save { note: NoteId, text: String },
+    /// Keep what was typed. `base` is the text the page had saved before
+    /// it, which `text` was typed over: the changes between the two are
+    /// made to what the note holds now (`Store::update_note_from`), so
+    /// that what reached the note meanwhile, the words of what was said
+    /// or another device's edit, is not saved over.
+    Save {
+        note: NoteId,
+        base: String,
+        text: String,
+    },
+    /// Read the note again, once the work asked before this is done: the
+    /// page takes what came there that it did not write ([`Done::Reread`]).
+    Reread { note: NoteId },
     /// Let the note go if it holds nothing (6.1).
     LetGoIfEmpty { note: NoteId },
     /// Archive the note, or delete it.
     PutAway { note: NoteId, delete: bool },
     /// Attach files to the note: dropped, chosen or pasted.
     Attach { note: NoteId, files: Vec<Incoming> },
+    /// Keep what was said as a note, under the ID given, with its
+    /// recording (6.18). Its words are made afterwards.
+    KeepVoice {
+        note: NoteId,
+        recording: Vec<u8>,
+        duration_ms: u64,
+    },
 }
 
 /// How a piece of work went.
@@ -240,6 +288,12 @@ pub enum Done {
     },
     /// Files were attached, but for those named in `failed`, with why.
     Attached { note: NoteId, failed: Vec<String> },
+    /// What was said is a note now; its words are on their way.
+    KeptVoice(NoteId),
+    /// The note as the store has it, read again after the work before.
+    Reread(Box<Note>),
+    /// What was said could not be kept, for the store's reason `why`.
+    VoiceUnkept { note: NoteId, why: String },
     /// What was typed could not be kept: `text` is what the write carried,
     /// to be given back to the person, and `why` the store's reason.
     /// `making` says the store could not make the note at all; later work
@@ -261,7 +315,10 @@ impl Done {
     pub const fn changed(&self) -> bool {
         !matches!(
             self,
-            Self::Failed | Self::Unsaved { .. } | Self::LetGo { gone: false, .. }
+            Self::Failed
+                | Self::Unsaved { .. }
+                | Self::LetGo { gone: false, .. }
+                | Self::VoiceUnkept { .. }
         )
     }
 }
@@ -281,18 +338,28 @@ pub async fn run(store: &Arc<Store>, work: Work) -> Done {
                 }
             }
         },
-        Work::Save { note, text } => match store.update_note(&note, &text).await {
-            Ok(_) => Done::Saved(note),
+        Work::Reread { note } => match store.get_note(&note).await {
+            Ok(Some(found)) => Done::Reread(Box::new(found)),
+            Ok(None) => Done::Failed,
             Err(error) => {
-                tracing::error!("Could not save the note: {error}");
-                Done::Unsaved {
-                    note,
-                    text,
-                    why: dirt_core::util::as_sentence(&error),
-                    making: false,
-                }
+                tracing::error!("Could not read the note again: {error}");
+                Done::Failed
             }
         },
+        Work::Save { note, base, text } => {
+            match store.update_note_from(&note, &base, &text).await {
+                Ok(_) => Done::Saved(note),
+                Err(error) => {
+                    tracing::error!("Could not save the note: {error}");
+                    Done::Unsaved {
+                        note,
+                        text,
+                        why: dirt_core::util::as_sentence(&error),
+                        making: false,
+                    }
+                }
+            }
+        }
         Work::LetGoIfEmpty { note } => match store.let_go_if_empty(&note).await {
             Ok(LetGo::Kept) => Done::LetGo { note, gone: false },
             Ok(LetGo::Dropped | LetGo::Deleted | LetGo::Gone) => Done::LetGo { note, gone: true },
@@ -332,6 +399,23 @@ pub async fn run(store: &Arc<Store>, work: Work) -> Done {
             let failed = attach_all(Arc::clone(store), note, files).await;
             Done::Attached { note, failed }
         }
+        Work::KeepVoice {
+            note,
+            recording,
+            duration_ms,
+        } => match store.keep_voice_note(note, recording, duration_ms).await {
+            Ok(_) => {
+                crate::voice::make_words_soon();
+                Done::KeptVoice(note)
+            }
+            Err(error) => {
+                tracing::error!("Could not keep what was said: {error}");
+                Done::VoiceUnkept {
+                    note,
+                    why: dirt_core::util::as_sentence(&error),
+                }
+            }
+        },
     }
 }
 
@@ -354,7 +438,8 @@ fn not_done(work: Work, why: &str, made: bool) -> Done {
             why: why.to_owned(),
             making: true,
         },
-        Work::Save { note, text } => Done::Unsaved {
+        Work::Reread { .. } => Done::Failed,
+        Work::Save { note, text, .. } => Done::Unsaved {
             note,
             text,
             why: why.to_owned(),
@@ -373,6 +458,10 @@ fn not_done(work: Work, why: &str, made: bool) -> Done {
             delete,
             kept: false,
         },
+        Work::KeepVoice { note, .. } => Done::VoiceUnkept {
+            note,
+            why: why.to_owned(),
+        },
     }
 }
 
@@ -383,9 +472,11 @@ impl Work {
         match self {
             Self::Create { note, .. }
             | Self::Save { note, .. }
+            | Self::Reread { note }
             | Self::LetGoIfEmpty { note }
             | Self::PutAway { note, .. }
-            | Self::Attach { note, .. } => *note,
+            | Self::Attach { note, .. }
+            | Self::KeepVoice { note, .. } => *note,
         }
     }
 }
@@ -495,7 +586,7 @@ impl Scribe {
     ) {
         for work in work {
             let serial = self.shared.serial.fetch_add(1, Ordering::SeqCst) + 1;
-            if let Work::Create { note, text } | Work::Save { note, text } = &work {
+            if let Work::Create { note, text } | Work::Save { note, text, .. } = &work {
                 self.shared.texts().insert(*note, (serial, text.clone()));
             }
             self.shared.waiting.fetch_add(1, Ordering::SeqCst);
@@ -646,6 +737,7 @@ mod tests {
                 },
                 Work::Save {
                     note: first,
+                    base: "b".into(),
                     text: "bread".into()
                 },
                 Work::Create {
@@ -654,6 +746,7 @@ mod tests {
                 },
                 Work::Save {
                     note: second,
+                    base: "m".into(),
                     text: "milk".into()
                 },
             ]
@@ -859,6 +952,75 @@ mod tests {
 
     /// The store's text reaches a note shown from the list only while
     /// nothing has been typed in it.
+    /// The race of finding 1 of the review of #301: a save of the page is
+    /// waiting in the queue when the words of what was said reach the
+    /// note. The save does not take them out, with Text only either, and
+    /// the page then shows them before what was typed.
+    #[tokio::test]
+    async fn words_that_arrive_while_a_save_waits_are_kept_and_reach_the_page() {
+        for text_only in [false, true] {
+            let (_folder, store) = temp_store();
+            let note = NoteId::new();
+            store
+                .keep_voice_note(note, b"OggS".to_vec(), 4_000)
+                .await
+                .unwrap();
+            let mut page = Draft::default();
+            page.show(&store.get_note(&note).await.unwrap().unwrap());
+            page.typed("and #milk".to_owned());
+            let waiting = page.flush().unwrap();
+            // The words are put in while that save waits its turn.
+            store
+                .put_voice_words(&note, "Buy oat milk.", text_only)
+                .await
+                .unwrap();
+            run_all(&store, vec![waiting]).await;
+            // Then typed further, not yet saved.
+            page.typed("and #milk, eggs".to_owned());
+            let read = run_all(&store, vec![Work::Reread { note }]).await;
+            let Some(Done::Reread(kept)) = read.into_iter().next() else {
+                panic!("the note was not read again");
+            };
+            assert_eq!(kept.content, "Buy oat milk.\n\nand #milk");
+            assert_eq!(
+                page.took(&kept).as_deref(),
+                Some("Buy oat milk.\n\nand #milk, eggs")
+            );
+            let next = page.flush().unwrap();
+            run_all(&store, vec![next]).await;
+            assert_eq!(
+                store.get_note(&note).await.unwrap().unwrap().content,
+                "Buy oat milk.\n\nand #milk, eggs"
+            );
+            assert_eq!(
+                page.took(&store.get_note(&note).await.unwrap().unwrap()),
+                None
+            );
+        }
+    }
+
+    /// A save made from an older text keeps what came meanwhile: the
+    /// changes from its base are what is saved.
+    #[tokio::test]
+    async fn a_save_is_made_from_what_it_was_typed_over() {
+        let (_folder, store) = temp_store();
+        let note = store.create_note("one two").await.unwrap().id;
+        store.update_note(&note, "zero one two").await.unwrap();
+        run_all(
+            &store,
+            vec![Work::Save {
+                note,
+                base: "one two".into(),
+                text: "one two three".into(),
+            }],
+        )
+        .await;
+        assert_eq!(
+            store.get_note(&note).await.unwrap().unwrap().content,
+            "zero one two three"
+        );
+    }
+
     #[test]
     fn a_fresher_text_is_taken_only_before_typing() {
         let older = Note::new("one");
@@ -1015,6 +1177,7 @@ mod tests {
             None,
             [Work::Save {
                 note: gone.id,
+                base: String::new(),
                 text: "written after all".into(),
             }],
         );
@@ -1041,6 +1204,7 @@ mod tests {
             None,
             [Work::Save {
                 note: note.id,
+                base: "first".into(),
                 text: "first, and more".into(),
             }],
         );
@@ -1069,6 +1233,7 @@ mod tests {
                 },
                 Work::Save {
                     note: note.id,
+                    base: "hello".into(),
                     text: "hello world".into(),
                 },
             ],

@@ -16,6 +16,7 @@ mod schema;
 mod settings;
 mod sync_state;
 mod tags;
+mod voice;
 
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
@@ -31,6 +32,13 @@ pub use sync_state::{
     NoteProblem, ProblemKind, PurgeApplied, PurgeCandidate, SyncProgress, UnsentNote,
 };
 pub use tags::{TagCount, TagRule};
+pub use voice::{VoiceWaiting, WordsPut};
+
+/// The name a voice recording has among a note's files.
+pub const VOICE_FILE_NAME: &str = "Voice recording.opus";
+
+/// What kind of file a voice recording is: Ogg Opus (6.18).
+pub const VOICE_MEDIA_TYPE: &str = "audio/ogg";
 
 use dirt_proto::api::limits;
 
@@ -670,11 +678,114 @@ impl Store {
         .await
     }
 
+    // ---- Voice (interface design 6.18) ----
+
+    /// Keeps a recording as a note, at once: under the ID the caller made,
+    /// with no words yet, the recording attached as its file and marked as
+    /// its voice recording, and waiting on this device for its words
+    /// ([`Self::voice_waiting`]). The recording is an Ogg Opus file of
+    /// `duration_ms`.
+    ///
+    /// A recording larger than a file may be is [`Error::InvalidInput`],
+    /// as is an ID that is not a UUID v7 or that a note has already.
+    pub async fn keep_voice_note(
+        &self,
+        id: NoteId,
+        recording: Vec<u8>,
+        duration_ms: u64,
+    ) -> Result<Note> {
+        if id.as_uuid().get_version_num() != 7 {
+            return Err(Error::InvalidInput(format!(
+                "note {id} has no time in its ID: a note's ID is a UUID v7"
+            )));
+        }
+        let size = recording.len() as u64;
+        let most = u64::try_from(limits::MAX_FILE_BYTES).unwrap_or(u64::MAX);
+        if seal::sealed_size(size) > most {
+            return Err(Error::InvalidInput(format!(
+                "the recording is too large to keep: {size} bytes"
+            )));
+        }
+        let now = now_ms();
+        let attachment = Attachment {
+            file_id: uuid::Uuid::now_v7(),
+            name: VOICE_FILE_NAME.to_owned(),
+            media_type: VOICE_MEDIA_TYPE.to_owned(),
+            size,
+            key: FileKey::generate(),
+            added_at_ms: now,
+            thumbnail: None,
+        };
+        let shelf = self.shelf();
+        let file_id = attachment.file_id;
+        // The file first, away from the thread that writes, as any file
+        // attached is.
+        let put = shelf.clone();
+        self.read(move |_| Ok(put.put(file_id, &recording)?))
+            .await?;
+        let kept = self
+            .write(move |c| voice::keep(c, id, &attachment, duration_ms, now))
+            .await;
+        if kept.is_err() {
+            let _ = shelf.remove(file_id);
+        }
+        kept
+    }
+
+    /// The recordings made on this device whose words are still to be
+    /// made, the oldest first. Only the device that recorded a thought
+    /// makes its words.
+    pub async fn voice_waiting(&self) -> Result<Vec<VoiceWaiting>> {
+        self.read(|c| voice::waiting(c)).await
+    }
+
+    /// Puts a recording's words at the start of its note, and marks them
+    /// made; see [`WordsPut`]. `words` empty means none were found. With
+    /// `text_only` the recording is taken off the note once its words are
+    /// in (Settings → Voice → Text only).
+    pub async fn put_voice_words(
+        &self,
+        note: &NoteId,
+        words: &str,
+        text_only: bool,
+    ) -> Result<WordsPut> {
+        let (note, words) = (*note, words.to_owned());
+        self.write(move |c| voice::put_words(c, &note, &words, text_only, now_ms()))
+            .await
+    }
+
+    /// Of these notes, those whose words this device has stopped trying to
+    /// make, each with why the last try failed: what their rows say.
+    pub async fn voice_problems(
+        &self,
+        notes: Vec<NoteId>,
+    ) -> Result<std::collections::HashMap<NoteId, String>> {
+        self.read(move |c| voice::problems(c, &notes, crate::voice::MOST_TRIES))
+            .await
+    }
+
+    /// Making a recording's words failed: it waits for the next try.
+    pub async fn voice_not_read(&self, note: &NoteId, why: &str) -> Result<()> {
+        let (note, why) = (*note, why.to_owned());
+        self.write(move |c| voice::not_read(c, &note, &why)).await
+    }
+
     /// Replaces a note's text. Only the parts that changed are recorded, so
     /// an edit made on another device at the same time merges with this one.
     pub async fn update_note(&self, id: &NoteId, content: &str) -> Result<Note> {
         let (id, content) = (*id, content.to_owned());
-        self.write(move |c| notes::update(c, &id, &content, now_ms()))
+        self.write(move |c| notes::update(c, &id, None, &content, now_ms()))
+            .await
+    }
+
+    /// Saves a note's text as a page that showed `base` changed it to
+    /// `content`: the changes from `base` are made to the text the note has
+    /// now, so that what came meanwhile is kept (the words of what was
+    /// said, an edit from another device). With the note still at `base`
+    /// this is [`Self::update_note`].
+    pub async fn update_note_from(&self, id: &NoteId, base: &str, content: &str) -> Result<Note> {
+        let (id, base, content) = (*id, base.to_owned(), content.to_owned());
+        self.write(move |c| notes::update(c, &id, Some(&base), &content, now_ms()))
             .await
     }
 
@@ -1057,6 +1168,13 @@ impl Store {
             target
                 .merge_note_document(&snapshot.id, snapshot.document.clone())
                 .await?;
+            // A recording made here whose words are still to be made is
+            // the target's to make them for: it is this device's store
+            // from now on.
+            let id = snapshot.id;
+            if self.read(move |c| voice::is_waiting(c, &id)).await? {
+                target.write(move |c| voice::wait(c, &id, now_ms())).await?;
+            }
             copied.push((snapshot.id, snapshot.document));
         }
         Ok(copied)

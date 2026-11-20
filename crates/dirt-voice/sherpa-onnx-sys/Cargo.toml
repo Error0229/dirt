@@ -1,0 +1,31 @@
+# sherpa-onnx's bindings to its C API, version 2.0.1, as published on
+# crates.io, with its build script replaced by Dirt's own (README.md).
+# The root manifest patches crates.io's copy with this one, and keeps it out
+# of the workspace's members: it is not Dirt's code, and is not linted.
+[package]
+name = "sherpa-onnx-sys"
+version = "2.0.1"
+edition = "2021"
+build = "build.rs"
+links = "sherpa-onnx"
+description = "Raw FFI bindings to the sherpa-onnx C API, built from pinned prebuilt libraries"
+license = "Apache-2.0"
+repository = "https://github.com/k2-fsa/sherpa-onnx"
+publish = false
+
+[lib]
+name = "sherpa_onnx_sys"
+path = "src/lib.rs"
+
+# Kept so that `sherpa-onnx`, which names them, resolves. The build script
+# chooses how to link by the target instead (README.md).
+[features]
+default = []
+shared = []
+static = []
+
+[build-dependencies]
+bzip2 = "0.4"
+sha2 = "0.10"
+tar = "0.4"
+ureq = { version = "2.12", features = ["proxy-from-env"] }

@@ -10,3 +10,7 @@ html,body{background:transparent;margin:0;overflow:hidden}
 /* Grows with the thought to about twelve lines, then scrolls. */
 .dk-capture-text{flex:1;min-width:0;min-height:72px;max-height:288px;field-sizing:content;overflow-y:auto;scrollbar-width:thin;margin:0;padding:0;border:0;outline:0;resize:none;background:none;color:var(--text);font:400 17px/24px var(--font);caret-color:var(--accent)}
 .dk-capture-text::placeholder{color:var(--text-3)}
+/* Held, the keys open it listening (6.18): the grains, the timer, ✕ and ✓
+   in the text's place. */
+.dk-capture-listening{flex:1;min-width:0;min-height:72px;display:flex;align-items:center}
+.dk-capture-listening .dui-voice{flex:1;min-width:0}

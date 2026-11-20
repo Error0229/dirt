@@ -1,0 +1,52 @@
+[package]
+name = "dirt-voice"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Speech turned into text on the device: the recording, the pauses and the words"
+# Says to the apps' build scripts where the voice folder is
+# (`DEP_DIRT_VOICE_FOLDER`): the model, Silero's detector, and on Windows
+# the engine's libraries, which the apps ship.
+links = "dirt-voice"
+build = "build.rs"
+
+[features]
+# The desktop's microphone, through cpal. Android records with its own
+# AudioRecord and hands the samples over.
+microphone = ["dep:cpal"]
+
+[dependencies]
+# sherpa-onnx's own build script is replaced by the vendored copy in
+# `sherpa-onnx-sys/` (the root manifest's `[patch.crates-io]`), which
+# fetches its libraries by a pinned hash. It is named here as well as
+# through `sherpa-onnx` so that this crate's build script hears where the
+# libraries are.
+sherpa-onnx = { version = "=2.0.1", default-features = false }
+sherpa-onnx-sys = { version = "=2.0.1", default-features = false }
+# The recording: Opus (libopus, built from source by the crate) in an Ogg
+# container (trial 1).
+opus = "0.4"
+ogg = "0.9"
+# WAV files: the stand-in for a microphone, and the tests.
+hound = "3.5"
+cpal = { version = "0.18", optional = true }
+thiserror.workspace = true
+tracing.workspace = true
+
+# Loads the engine's libraries from the voice folder (`folder`).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
+
+[dev-dependencies]
+# A folder of its own for the test that moves the voice folder.
+tempfile = "3"
+
+[build-dependencies]
+bzip2 = "0.4"
+sha2 = "0.10"
+tar = "0.4"
+ureq = { version = "2.12", features = ["proxy-from-env"] }
+
+[lints]
+workspace = true

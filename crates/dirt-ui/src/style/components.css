@@ -582,3 +582,17 @@
 .dui-logo{flex:none;display:block}
 /* Where quick capture's grain lands on the tray icon, a ring pulses once (5.5). */
 .dui-capture-pulse{position:fixed;z-index:1301;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;border:2px solid var(--accent);box-sizing:border-box;pointer-events:none}
+/* Voice (5.5, 6.18). The mic grows to 132% while held (pop); with a slash
+   it is greyed. While listening: the grains (drawn by the script), the
+   timer, ✕, and ✓ with a ring that breathes with the voice. */
+.dui-mic{touch-action:none;user-select:none;-webkit-user-select:none;transition:background var(--d-1),color var(--d-1),transform var(--d-pop) var(--sp-pop)}
+.dui-mic.held{transform:scale(1.32);color:var(--accent)}
+.dui-mic.refused{color:var(--text-3)}
+.dui-voice{display:flex;align-items:center;gap:6px;position:relative}
+.dui-voice-said{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.dui-voice-grains{flex:1;min-width:0;height:44px;display:block}
+.dui-voice-time{font:500 12px var(--mono);color:var(--text-3);font-variant-numeric:tabular-nums;min-width:4ch;margin-right:8px;text-align:right}
+.dui-voice-keep{width:40px;height:40px;border:0;border-radius:50%;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;flex:none;cursor:pointer;transition:transform var(--d-pop) var(--sp-pop);box-shadow:0 0 0 calc(var(--lvl,0) * 10px) var(--accent-soft)}
+.dui-voice-keep:active{transform:scale(.9)}
+.dui-voice-keep .dui-i{width:18px;height:18px}
+.dui-set-value{font-size:13.5px;color:var(--text-2);flex:none}

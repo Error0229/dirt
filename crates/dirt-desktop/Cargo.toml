@@ -18,6 +18,10 @@ gallery = ["dirt-ui/gallery"]
 [dependencies]
 dirt-core = { path = "../dirt-core" }
 dirt-ui = { path = "../dirt-ui" }
+# Speech turned into text on this computer (interface design 6.18), with
+# the microphone. Its build puts the voice folder together, which this
+# app ships (`build.rs`, `voice`).
+dirt-voice = { path = "../dirt-voice", features = ["microphone"] }
 dioxus = { workspace = true, features = ["desktop"] }
 serde_json.workspace = true
 tracing.workspace = true

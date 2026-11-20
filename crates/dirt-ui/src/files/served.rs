@@ -72,6 +72,30 @@ pub fn hold(name: &str, bytes: Vec<u8>, media_type: &'static str) -> String {
     format!("/{ADDRESS}/{key}")
 }
 
+/// What turns an Ogg Opus sound into a WAV, for a web view that cannot
+/// play Ogg Opus (by its documentation, macOS's before 15.4; interface
+/// design 6.18). An app sets it only where its web view says so.
+static OGG_AS_WAV: OnceLock<fn(&[u8]) -> Option<Vec<u8>>> = OnceLock::new();
+
+/// Has the preview hand the web view an Ogg Opus sound decoded, as a WAV
+/// made in memory, because the web view cannot play it as it is. Nothing
+/// is written to disk.
+pub fn play_ogg_as_wav(decode: fn(&[u8]) -> Option<Vec<u8>>) {
+    let _ = OGG_AS_WAV.set(decode);
+}
+
+/// The bytes the web view is handed for a file of this type: the file's
+/// own, or, for an Ogg sound the web view cannot play, the same sound as a
+/// WAV.
+pub(crate) fn playable(media_type: &'static str, bytes: Vec<u8>) -> (&'static str, Vec<u8>) {
+    if media_type == "audio/ogg" {
+        if let Some(wav) = OGG_AS_WAV.get().and_then(|decode| decode(&bytes)) {
+            return ("audio/wav", wav);
+        }
+    }
+    (media_type, bytes)
+}
+
 /// Lets go of every file held. The web view keeps what it has already
 /// drawn until the element is taken away.
 pub fn release_all() {

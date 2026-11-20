@@ -78,6 +78,17 @@ answer with 20,000 notes in it.
 
 The hotkey is shown in Settings and cannot be changed there.
 
+## Voice
+
+| | Desktop | Android | CLI |
+|---|---|---|---|
+| Say a thought | The mic in the blank page's gutter: hold it, speak, let go; or tap it, and ✓ or Enter keeps what was said, ✕ or Esc throws it away. Held, a slide up listens on hands-free and a slide to the left throws it away. While it listens the page shows a row of grains that move with the voice and a timer, and nothing else. Nothing heard: it shakes and nothing is made. Stops at ten minutes, keeping what was said | Not yet (interface step 9b) | No |
+| Say a thought from any app | Hold Ctrl Alt N: quick capture opens listening, and letting go keeps it; it flies to the tray as a typed thought does. A tap opens it for typing, as before | Not yet (step 9b) | No |
+| What is kept | At once, a note with the recording (Ogg Opus) as its file, named "Voice · 0:12" with a mic on its row until its words come. The words are made afterwards on this computer, in the background, and put at the start of the note; if Dirt is closed first, they are made when it next starts. "No words found" when the model found none | A note said on another device shows its name and its mic, and its words when that device has made them | `dirt list` names such a note "Voice · 0:12" until its words come, "(no words found)" when there were none |
+| Where speech becomes text | On this computer, with the model shipped in the app (Parakeet TDT-CTC 110M, NVIDIA, CC BY 4.0, credited in Settings → Voice). Nothing is sent anywhere but the encrypted note and file | Not yet (step 9b) | Not applicable |
+| Keep the recording, or the text only | Settings → Voice → The recording: Keep, or Text only, which takes the recording off once its words are in | Not yet (step 9b) | No |
+| Play a recording | The file preview, as any sound | The file preview, as any sound | `dirt save`, then play it |
+
 ## Account and devices
 
 | | Desktop | Android | CLI |

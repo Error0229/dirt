@@ -8,5 +8,7 @@
 
 mod diff;
 mod doc;
+mod merge;
 
 pub use doc::{DocError, NoteDoc, VersionVector};
+pub use merge::{merge3, text_changes};
