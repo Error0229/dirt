@@ -357,6 +357,19 @@ class MainActivity : WryActivity() {
             }.isSuccess
         }
 
+        // Whether a screen reader that explores by touch is on (TalkBack):
+        // the interface's toasts then stay until they are dismissed (design
+        // section 12). Asked as the app starts and each time the person
+        // comes back to it.
+        @Keep
+        @JvmStatic
+        fun screenReaderOn(): Boolean {
+            val activity = current.get() ?: return false
+            val manager = activity.getSystemService(android.view.accessibility.AccessibilityManager::class.java)
+                ?: return false
+            return manager.isEnabled && manager.isTouchExplorationEnabled
+        }
+
         // Whether Android's "Remove animations" is on: the animators'
         // duration scale is nought. The web view reads it only when it
         // starts, so the interface asks each time the person comes back.

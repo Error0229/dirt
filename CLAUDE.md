@@ -6,9 +6,26 @@ Dirt ("Do I Remember That?") is a cross-platform note-taking app focused on capt
 
 The project is also a system design case study. Multi-user accounts, three clients, sync and end-to-end encryption are all real requirements. Do not propose cutting scope to reduce complexity; justify each part against the requirements instead.
 
-## Status: the redesign is built
+## Status: both redesigns are built
 
-All nine steps of an approved redesign are built on `main`, and the owner has taken the six decisions that were theirs (`docs/OWNER_DECISIONS.md`). There are two servers: production at `https://api.dirt.catjam.dev`, and `dirt-trial`, where changes are tried and data is thrown away (`docs/DEPLOY.md`, "What exists"). Try things on the trial server, never on production. What is left needs a person: some of the manual checklist (`docs/MANUAL_CHECKLIST.md`, #243) and the short list at the end of `docs/OWNER_DECISIONS.md`. Devices sign in through Clerk and sync their notes, encrypted, through the new server. A second device is let in by comparing a code with one that is already in, or by the recovery phrase. `docs/SECURITY.md` describes what is protected. Read both documents before changing architecture, sync, login or storage:
+Two redesigns are built on `main`:
+
+- **The system redesign** (nine steps): accounts, three clients on one core, sync and end-to-end encryption, files, export. The owner has taken the six decisions that were theirs (`docs/OWNER_DECISIONS.md`).
+- **The interface redesign** (ten steps, finished 2026-11-20): a new interface for the desktop and Android apps, with archive, undo, voice, capture from outside the app, the file preview and the pile.
+
+There are two servers: production at `https://api.dirt.catjam.dev`, and `dirt-trial`, where changes are tried and data is thrown away (`docs/DEPLOY.md`, "What exists"). Try things on the trial server, never on production.
+
+Devices sign in through Clerk and sync their notes, encrypted, through the new server. A second device is let in by comparing a code with one that is already in, or by the recovery phrase. `docs/SECURITY.md` describes what is protected.
+
+What is left:
+
+- The items of `docs/MANUAL_CHECKLIST.md` marked "Person": a real microphone, real phones, TalkBack and Narrator, WebKit on macOS and Linux, release builds, and whatever acts on somebody's screen.
+- The short list at the end of `docs/OWNER_DECISIONS.md`.
+- Issue #303, an audit of how the apps use Dioxus 0.7: three bugs (a quick-capture hand-over a newer command can replace, a held hotkey that can leave the microphone on, thumbnail work that outlives its note) and some simplifications. Check each before fixing it.
+
+## The system: standing rules
+
+Read these before changing architecture, sync, login or storage:
 
 - `docs/plans/2026-11-10-system-redesign-design.md` - requirements, decisions and the target design
 - `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md` - build order, trials and clean-up
@@ -26,31 +43,34 @@ Rules the redesign set, which still hold:
 - A program opens its own store with `Store::open_in`, which closes the data folder to the computer's other users first. `Store::open` is for a database file the person named, whose folder is theirs.
 - When a document goes out of date, archive it under `docs/archive/` with a banner; do not leave it in place.
 
-## Now: the interface redesign
+## The interface: standing rules
 
-The work in hand is a new interface for the desktop and Android apps, with the features it adds: archive, undo, voice, capture from outside the app, the file preview, the pile. The owner approved the design on 2026-11-16. Read these before changing anything a person sees or touches:
+Read these before changing anything a person sees or touches:
 
-- `docs/ui/design.md` - the design: principles, tokens, motion, components, flows. `docs/ui/mockup.html` shows it working
-- `docs/plans/2026-11-16-interface-redesign-implementation-plan.md` - the trials, the steps and their order, what is decided and what is still the owner's
+- `docs/ui/design.md` - the design: principles, tokens, motion, components, flows, and what was settled as each part was built. `docs/ui/mockup.html` shows it working
+- `docs/plans/2026-11-16-interface-redesign-implementation-plan.md` - how it was built, step by step, and what each step ran
 
-Rules it sets:
+Rules it set, which still hold:
 
 - Where the mockup and the design document disagree, the mockup holds for how long a movement takes and on which curve, and the document for everything else. Correct the document in the pull request that finds the disagreement.
 - What the design leaves open or gets wrong is settled by whoever builds it, and written into the design document.
 - The interface is built for English. Other languages are later work (system design, section 16.3).
-- Each app works after every pull request. The pull request that replaces a screen deletes the old one.
+- Each app works after every pull request. A change to what a client does changes its rows in `docs/feature-parity.md` and its items in `docs/MANUAL_CHECKLIST.md`.
 - What the two apps share of the interface is in `dirt-ui`: the tokens, the fonts, the icons, the motion script and the components. A component both apps need goes there, not into an app. It is a client crate: no SQL, HTTP or cryptography in it.
-- The colours are written once, in `dirt_ui::tokens`, and the style sheet is made from them. A colour that changes is checked by `dirt_ui::contrast`'s tests, and the table in design section 4.1 changes with it.
+- The colours are written once, in `dirt_ui::tokens`, and the style sheet is made from them. A colour that changes is checked by `dirt_ui::contrast`'s tests, and the table in design section 4.1 changes with it. The Android capture sheet's and widgets' colours are made from the same tokens and held to them by a test.
 - Anything that follows a finger or a pointer runs in `dirt-ui`'s script (`crates/dirt-ui/src/js/dirt-ui.js`) from first touch to release, and tells Rust only how it ended (`dirt_ui::events`). The script that animates a list watches the page; it is not called from Rust.
-- `dirt-ui`'s classes begin with `dui-`. A screen being replaced does not reuse a class of the old interface.
+- A note's text field has no `oninput`: it is heard through `dirt_ui::typing` (`data-dui-typed` and its carrier), which tells Rust each change in order and in pieces. Dioxus sends an `input` from any text field with the field's whole text, which fails past a few hundred kilobytes (design 6.4).
+- `dirt-ui`'s classes begin with `dui-`, the desktop's with `dk-` and Android's with `dm-`.
 - Speech becomes text on the device that heard it, with the model shipped in the app, and in `dirt-voice` alone. It reads sound and gives words; it has no SQL, HTTP or cryptography, and `dirt-core` does not depend on it (an app hands the core its engine as a `dirt_core::voice::Transcriber`). Only the device that recorded a thought makes its words.
 - The speech model and the engine's libraries are never committed. Their builds fetch them by an address and a SHA-256 written in `crates/dirt-voice/build.rs` and `crates/dirt-voice/sherpa-onnx-sys/build.rs`, into the build cache. Change a pin only after trying what it pins.
+- What runs on Android without the app's screen (the capture sheet, its jobs, the Quick Settings tile, the two widgets) is Kotlin in the native module, `crates/dirt-mobile/android/native`, and reaches the app's Rust only through `Core` (`dirt-mobile::capture`). It shows nothing of a note but the pile widget's count of them.
 
 ## Tech Stack
 
 What the code on `main` uses today:
 
-- **UI Framework**: Dioxus 0.7 (desktop and Android). The new interface's tokens, fonts (Inter and JetBrains Mono, bundled), icons, motion and components are in `dirt-ui`, which both apps use
+- **UI Framework**: Dioxus 0.7 (desktop and Android). The interface's tokens, fonts (Inter and JetBrains Mono, bundled), icons, motion and components are in `dirt-ui`, which both apps use, with PDF.js bundled for the file preview
+- **Android outside the web view**: Kotlin in the native module (`crates/dirt-mobile/android/native`), declared with `#[manganis::ffi]`: the capture sheet, its two JobScheduler jobs, the Quick Settings tile, the bar widget and the pile widget
 - **CLI**: clap
 - **Notes**: one `yrs` CRDT document per note (`dirt-core::notes`)
 - **Local database**: SQLite through `rusqlite` with the bundled build, FTS5 for full-text search (`dirt-core::store`)
@@ -77,13 +97,16 @@ crates/
 ├── dirt-ui/       # What the two apps share of the interface: tokens, fonts, icons, motion, components, and a gallery of them
 ├── dirt-voice/    # Speech turned into text on the device: the recording, the pauses, the words; its vendored sherpa-onnx-sys
 ├── dirt-desktop/  # Dioxus desktop application
-├── dirt-mobile/   # Dioxus Android application
+├── dirt-mobile/   # Dioxus Android application; android/native is its Kotlin module
 └── dirt-cli/      # Command-line interface (`dirt`)
 scripts/           # Dumping the server's database and restoring it
 docs/
 ├── DESIGN.md      # Product vision and standing decisions
-├── plans/         # Redesign and implementation plan
-└── archive/       # Documents for the system before the redesign
+├── ui/            # The interface's design and its mockup
+├── plans/         # The two redesigns and their implementation plans
+├── trials/        # The system redesign's trials
+├── brainstorms/   # Feature brainstorms
+└── archive/       # Superseded documents, kept as a record
 ```
 
 ## Development Commands
@@ -129,6 +152,16 @@ cargo fmt --all
 # Lint code (--workspace is required: without it cargo lints only the root package)
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+# Lint the Android code, as CI does: what is Android's alone is linted
+# nowhere else. Needs the NDK's clang as the linker and CC for the target
+# (see .github/workflows/ci.yml); with and without the gallery
+cargo clippy -p dirt-mobile --target x86_64-linux-android --all-targets -- -D warnings
+cargo clippy -p dirt-mobile --target x86_64-linux-android --all-targets --features gallery -- -D warnings
+
+# Build the Android app for the emulator (debug), or for a phone
+dx build --platform android --package dirt-mobile --target x86_64-linux-android
+dx build --platform android --package dirt-mobile --target aarch64-linux-android
+
 # List Makefile shortcuts
 make help
 
@@ -154,7 +187,7 @@ Android builds run Gradle, which may need a different JDK from the machine's def
 - Use `use_signal` for local state
 - Use `use_context` / `use_context_provider` for global state
 - Keep components small and focused
-- Prefer inline styles during development, extract to CSS later
+- Styles are in style sheets made from the tokens (`dirt-ui`'s, and each app's `screen.css`); an inline `style` only sets a custom property the sheet reads (`--i`, `--n`)
 
 ### Database
 - All IDs use UUID v7 (time-sortable, client-generated)
@@ -202,7 +235,7 @@ Hooks run:
 - `docs/OWNER_DECISIONS.md` - What only the owner could decide, what was decided, and what is still the owner's: plans, storage, the sign-in service
 - `docs/feature-parity.md` - What each client does. Change a client's row in the pull request that changes the client
 - `docs/MANUAL_CHECKLIST.md` - What to try by hand on real devices
-- `docs/plans/` - The redesign and its implementation plan, and the interface redesign's plan
+- `docs/plans/` - The system redesign and its implementation plan, and the interface redesign's plan
 - `docs/brainstorms/` - Feature brainstorms
 - `docs/archive/` - Superseded documents, kept as a record
 

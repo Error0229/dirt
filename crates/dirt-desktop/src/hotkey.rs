@@ -19,8 +19,6 @@ pub fn default_hotkey() -> HotKey {
 /// Manages global hotkey registration
 pub struct HotkeyManager {
     _manager: GlobalHotKeyManager,
-    #[allow(dead_code)]
-    pub hotkey: HotKey,
 }
 
 impl HotkeyManager {
@@ -32,9 +30,6 @@ impl HotkeyManager {
         manager.register(hotkey)?;
         tracing::info!("Registered global hotkey: Ctrl+Alt+N");
 
-        Ok(Self {
-            _manager: manager,
-            hotkey,
-        })
+        Ok(Self { _manager: manager })
     }
 }

@@ -5,18 +5,24 @@
 
 ## Status
 
-`main` holds a redesign whose nine steps are all built, and a server runs
-it at `https://api.dirt.catjam.dev`. That server is the owner's own for now:
-its database is on a free plan that heavy use can suspend, so it is not yet
+`main` holds two finished redesigns: the system's, in nine steps, and the
+desktop and Android apps' interface, in ten. A server runs it at
+`https://api.dirt.catjam.dev`. That server is the owner's own for now: its
+database is on a free plan that heavy use can suspend, so it is not yet
 offered to anyone else
 ([docs/OWNER_DECISIONS.md](docs/OWNER_DECISIONS.md)). What is left needs a
-person: a checklist to try by hand on real devices
-([docs/MANUAL_CHECKLIST.md](docs/MANUAL_CHECKLIST.md)).
+person: the items of a checklist marked "Person", tried by hand on real
+devices ([docs/MANUAL_CHECKLIST.md](docs/MANUAL_CHECKLIST.md)), and an
+audit of how the apps use Dioxus, with three bugs to check and fix (issue
+#303).
 
-- **What is changing and why:**
-  [docs/plans/2026-11-10-system-redesign-design.md](docs/plans/2026-11-10-system-redesign-design.md)
-- **Build order:**
+- **The system's design:**
+  [docs/plans/2026-11-10-system-redesign-design.md](docs/plans/2026-11-10-system-redesign-design.md),
+  built by
   [docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md](docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md)
+- **The interface's design:** [docs/ui/design.md](docs/ui/design.md), with
+  a working mockup, [docs/ui/mockup.html](docs/ui/mockup.html), built by
+  [docs/plans/2026-11-16-interface-redesign-implementation-plan.md](docs/plans/2026-11-16-interface-redesign-implementation-plan.md)
 
 **What it does.** Devices sign in through Clerk and sync their notes
 through the new server, which stores only ciphertext it cannot read. A
@@ -26,6 +32,15 @@ attached to a note is encrypted on the device and kept in object storage
 the server only signs links for. Everything can be exported, notes and
 files, at any time. The desktop app, the Android app and the CLI are all on
 the new core.
+
+**How it looks and feels.** A thought is typed on a page that is always
+there, or said aloud and turned into text on the device that heard it.
+Notes are archived rather than deleted, and both can be undone. Each note
+is a grain of sand, and under the list lies the pile they make. On the
+desktop, quick capture opens over any app from Ctrl Alt N; on Android, a
+capture sheet opens from a home-screen widget, the app's icon, a Quick
+Settings tile or a hardware key, over the lock screen too, and a second
+widget shows the pile. Files open in a preview inside the app.
 [docs/SECURITY.md](docs/SECURITY.md) says what is protected and what is not,
 and [docs/feature-parity.md](docs/feature-parity.md) what each client does.
 
@@ -34,9 +49,11 @@ and [docs/feature-parity.md](docs/feature-parity.md) what each client does.
 | Crate | Purpose |
 |---|---|
 | `dirt-proto` | Types shared by the server and the clients. |
+| `dirt-ui` | What the two apps share of the interface: the tokens, the fonts, the icons, the motion script, the components and the pile, with a gallery of them (`make run-gallery-desktop`). |
+| `dirt-voice` | Speech turned into text on the device, with NVIDIA's Parakeet TDT-CTC 110M through sherpa-onnx: the recording, the pauses, the words. The CLI and the server do not build it. |
 | `dirt-core` | Everything the clients share: notes as mergeable documents, the local store (notes, tags, search, settings), files attached to notes, encryption, sign-in, the session, sync, and export. |
 | `dirt-desktop` | Dioxus desktop app. |
-| `dirt-mobile` | Dioxus Android app. |
+| `dirt-mobile` | Dioxus Android app, and in `android/native` the Kotlin that runs without its screen: the capture sheet, its jobs, the tile and the widgets. |
 | `dirt-cli` | `dirt add`, `dirt list`, `dirt search`, `dirt attach`, `dirt export` and more. |
 | `dirt-api` | The server, on axum and Postgres: it checks a Clerk sign-in, keeps the device registry, and stores encrypted note blobs it cannot read. See [docs/BACKEND_API.md](docs/BACKEND_API.md). |
 | `dirt-sim` | Tests only: two or three real client cores syncing through the real server in one process, with lost answers, tampered blobs, replays and restored backups. |
@@ -118,6 +135,17 @@ cd crates/dirt-desktop && dx serve
 `cargo run -p dirt-desktop` starts it too, but without its style sheets:
 `dx` is what bundles them.
 
+### Run the Android app
+
+```bash
+make run-mobile-android    # dx serve for the emulator; or:
+dx build --platform android --package dirt-mobile --target aarch64-linux-android
+```
+
+Gradle may need another JDK than the computer's: set
+`DIRT_ANDROID_JAVA_HOME` to it (JDK 21 works) and the `make` targets hand
+it to `dx` and Gradle for that command only.
+
 The first build fetches the speech model the app ships for voice (108 MB,
 NVIDIA's Parakeet TDT-CTC 110M) and the engine's libraries, each checked
 against a pinned hash, into a build cache outside `target/`; `CLAUDE.md`
@@ -188,8 +216,9 @@ cargo run -p dirt-api                # listens on 0.0.0.0:8080
   server being unable to read them means. The account can be reset and
   started again.
 - **The desktop app does not watch the file.** It reloads its list when its
-  window regains focus. If the CLI changes a note that is open in the desktop
-  editor, the desktop app's next save replaces that change.
+  window regains focus. If the CLI changes a note that is open on the
+  desktop's page, the page does not show the change until the note is opened
+  again; its next save is merged with it and does not undo it.
 
 ## Testing
 
@@ -197,7 +226,7 @@ cargo run -p dirt-api                # listens on 0.0.0.0:8080
 docker compose up -d   # the server's tests and the sync simulation need Postgres
 export DATABASE_URL=postgres://postgres:dirt@127.0.0.1:55432/postgres
 cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 bash .github/scripts/security-guard.sh   # secret-leak guardrails
 ```
 
@@ -213,11 +242,15 @@ processes, so they run wherever `cargo test` does.
   clients does, feature by feature.
 - [docs/MANUAL_CHECKLIST.md](docs/MANUAL_CHECKLIST.md): what to try by hand
   on real devices before a release.
-- [docs/plans/](docs/plans/): the redesign and its implementation plan.
-- [docs/mobile-ui-conventions.md](docs/mobile-ui-conventions.md): conventions
-  for the Android interface.
-- [docs/archive/](docs/archive/): documents for the system before the
-  redesign.
+- [docs/ui/design.md](docs/ui/design.md): the interface of the two apps,
+  with its mockup.
+- [docs/LIMITS.md](docs/LIMITS.md): every limit the server enforces, and
+  why.
+- [docs/OWNER_DECISIONS.md](docs/OWNER_DECISIONS.md): what only the owner
+  could decide, and what is still theirs.
+- [docs/plans/](docs/plans/): the two redesigns and their implementation
+  plans.
+- [docs/archive/](docs/archive/): superseded documents, kept as a record.
 
 ## License
 

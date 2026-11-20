@@ -50,3 +50,8 @@ ureq = { version = "2.12", features = ["proxy-from-env"] }
 
 [lints]
 workspace = true
+
+# `sherpa-onnx-sys` is named only so that this crate's build script hears
+# where the engine's libraries are (`DEP_SHERPA_ONNX_*`); no Rust uses it.
+[package.metadata.cargo-machete]
+ignored = ["sherpa-onnx-sys"]

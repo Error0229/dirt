@@ -73,11 +73,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "rt", "sync", 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# CLI
-clap = { version = "4.0", features = ["derive"] }
-
 # Testing
-pretty_assertions = "1.4"
 wiremock = "0.6"
 
 # Dioxus

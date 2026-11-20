@@ -2,7 +2,7 @@
 title: "Step 8: hardening"
 type: plan
 date: 2026-11-12
-status: built; five decisions are with the owner
+status: built; the owner's decisions are taken (docs/OWNER_DECISIONS.md)
 parent: docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md
 tracking: "#244"
 ---

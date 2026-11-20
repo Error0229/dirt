@@ -53,5 +53,5 @@ pub use slider::{Slider, TextSizeSlider};
 pub use swipe::Swipeable;
 pub use switch::Switch;
 pub use sync_status::SyncStatus;
-pub use toast::{use_toasts, Toast, Toasts};
+pub use toast::{set_screen_reader, use_toasts, Toast, Toasts};
 pub use voice::{Ended, Listening, MicButton, Talk};

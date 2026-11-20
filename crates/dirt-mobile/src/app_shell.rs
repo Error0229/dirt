@@ -47,7 +47,7 @@ use crate::capture::{take_in, write_look};
 use crate::config::default_mobile_data_directory;
 use crate::data::MobileNoteStore;
 use crate::screen::MainScreen;
-use crate::services::activity::{animations_off, take_redirect};
+use crate::services::activity::{animations_off, screen_reader_on, take_redirect};
 use crate::services::secure_storage::EncryptedPrefs;
 use crate::settings::SettingsSheet;
 use crate::state::AppState;
@@ -121,6 +121,7 @@ pub fn AppShell() -> Element {
     let mut device_store: Signal<Option<Store>> = use_signal(|| None);
     let mut settings = use_signal(Settings::default);
     let mut reduced_motion = use_signal(animations_off);
+    use_hook(|| dirt_ui::components::set_screen_reader(screen_reader_on()));
     let mut session: Signal<Option<Session>> = use_signal(|| None);
     let mut session_state = use_signal(|| SessionState::SignedOut);
     let mut sync_status = use_signal(SyncStatus::default);
@@ -363,6 +364,7 @@ pub fn AppShell() -> Element {
             if *reduced_motion.peek() != off {
                 reduced_motion.set(off);
             }
+            dirt_ui::components::set_screen_reader(screen_reader_on());
             // A share or the widget may be what brought the app forward.
             *capture_ready.write() += 1;
         }

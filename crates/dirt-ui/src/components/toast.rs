@@ -25,6 +25,21 @@ const STAYS_MS: u32 = 2600;
 /// How long a toast with **Undo** stays.
 const STAYS_WITH_UNDO_MS: u32 = 6000;
 
+/// A screen reader is on (Android's TalkBack): toasts stay until they are
+/// dismissed, with ✕, so that Undo is still there by the time the reader
+/// reaches it (section 12). The app says so as it starts and each time the
+/// person comes back to it.
+static SCREEN_READER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Says whether a screen reader is on. Toasts shown from now on follow it.
+pub fn set_screen_reader(on: bool) {
+    SCREEN_READER.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn screen_reader() -> bool {
+    SCREEN_READER.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A toast to show.
 #[derive(Clone, PartialEq)]
 pub struct Toast {
@@ -214,7 +229,8 @@ fn ToastView(serial: u64, toast: Toast, platform: Platform) -> Element {
             toasts.dismiss(serial);
         }
     });
-    let stays = if toast.hold {
+    let hold = toast.hold || screen_reader();
+    let stays = if hold {
         None
     } else if toast.undo.is_some() {
         Some(STAYS_WITH_UNDO_MS)
@@ -268,7 +284,7 @@ fn ToastView(serial: u64, toast: Toast, platform: Platform) -> Element {
                     "{label}"
                 }
             }
-            if toast.hold {
+            if hold {
                 IconButton {
                     icon: Icon::X,
                     label: "Dismiss",
