@@ -217,8 +217,12 @@ fn use_facts(linked: Linked) -> Facts {
         devices: Signal::new(Vec::new()),
         reload: Signal::new(0),
     });
-    // Of how sync goes, only a change in the devices waiting.
-    let pending = use_memo(move || linked.status.read().pending_devices);
+    // Of how sync goes, only the devices waiting, and each finished
+    // cycle: what other devices changed is read again then.
+    let pending = use_memo(move || {
+        let status = linked.status.read();
+        (status.pending_devices, status.last_synced_ms)
+    });
     let _read = use_resource(move || {
         let open = nav.is_open();
         let _ = facts.reload.read();

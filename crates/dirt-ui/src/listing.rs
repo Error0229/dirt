@@ -146,17 +146,19 @@ impl Find {
         })
     }
 
-    /// The tags offered to narrow what Find finds, read while they are
-    /// asked for, from the store `store` reads.
+    /// The tags offered to narrow what Find finds, from the store `store`
+    /// reads: while they are shown, and while Find holds a lone `#tag`,
+    /// which Enter picks the first of.
     pub fn use_tag_offers(
         self,
         store: impl Fn() -> Option<Store> + 'static,
         notes_read: Signal<u64>,
     ) -> Resource<Vec<TagCount>> {
         use_resource(move || {
-            let store = store().filter(|_| *self.tags_open.read());
-            let _ = notes_read.read();
             let text = self.text.read().clone();
+            let wanted = *self.tags_open.read() || find::is_lone_tag(&text);
+            let store = store().filter(|_| wanted);
+            let _ = notes_read.read();
             let tags = self.tags.read().clone();
             let rule = *self.rule.read();
             async move {
