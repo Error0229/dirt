@@ -26,24 +26,20 @@ use crate::icons::Icon;
 #[component]
 pub(super) fn Sync(linked: Linked, open_note: EventHandler<NoteId>, platform: Platform) -> Element {
     let nav = settings_nav();
-    let mut overview = use_signal(|| None::<SyncOverview>);
     // The notes that cannot sync are in the store: read again whenever
     // sync says something new, while Settings is open.
-    let _read = use_resource(move || {
+    let overview = use_resource(move || {
         let _ = linked.status.read();
         let state = *linked.state.read();
         let open = nav.is_open();
         let session = linked.session.read().clone();
         async move {
-            if !open || !state.is_ready() {
-                return;
-            }
-            if let Some(session) = session {
-                match session.sync_overview().await {
-                    Ok(read) => overview.set(Some(read)),
-                    Err(error) => tracing::warn!("Could not read how sync stands: {error}"),
-                }
-            }
+            let session = session.filter(|_| open && state.is_ready())?;
+            session
+                .sync_overview()
+                .await
+                .inspect_err(|error| tracing::warn!("Could not read how sync stands: {error}"))
+                .ok()
         }
     });
 
@@ -65,7 +61,7 @@ pub(super) fn Sync(linked: Linked, open_note: EventHandler<NoteId>, platform: Pl
     // Until the store has been read, the worker's own figures stand in;
     // the worker's figures are newer for everything but the lists.
     let mut shown = SyncOverview::from(&status);
-    if let Some(read) = overview.read().as_ref() {
+    if let Some(read) = overview.read().as_ref().and_then(Option::as_ref) {
         shown.problems.clone_from(&read.problems);
         shown.file_problems.clone_from(&read.file_problems);
     }

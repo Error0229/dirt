@@ -103,7 +103,7 @@ pub fn App() -> Element {
     let mut current_note_id = use_signal(|| None);
     let open_request = use_signal(|| None);
     let notes_read = use_signal(|| 0_u64);
-    let mut pulled = use_signal(|| 0_u64);
+    let pulled = use_signal(|| 0_u64);
     let mut settings = use_signal(dirt_core::models::Settings::default);
     let nav = dirt_ui::settings::use_settings_nav();
     let mut quitting = use_signal(|| false);
@@ -246,29 +246,7 @@ pub fn App() -> Element {
 
     // Follow sync: show its status, and read the notes again when a cycle
     // has brought notes from another device or sent some.
-    let _sync_watch = use_resource(move || {
-        let current = session();
-        async move {
-            let Some(current) = current else { return };
-            let mut statuses = current.watch_sync();
-            let mut pulled_before = statuses.borrow().pulled;
-            let mut synced_before = statuses.borrow().last_synced_ms;
-            while statuses.changed().await.is_ok() {
-                let status = statuses.borrow_and_update().clone();
-                if status.pulled != pulled_before {
-                    pulled_before = status.pulled;
-                    *pulled.write() += 1;
-                    state.reread();
-                } else if status.last_synced_ms != synced_before {
-                    // A cycle that only sent: the notes it sent are on the
-                    // server now, and the list stops marking them.
-                    state.reread();
-                }
-                synced_before = status.last_synced_ms;
-                sync_status.set(status);
-            }
-        }
-    });
+    dirt_ui::listing::use_sync_watch(session, sync_status, pulled, notes_read);
 
     // The window gaining focus is the person coming back to the app. The
     // CLI may have signed in or out, or written notes, in the meantime:

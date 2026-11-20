@@ -217,15 +217,16 @@ fn use_facts(linked: Linked) -> Facts {
         devices: Signal::new(Vec::new()),
         reload: Signal::new(0),
     });
+    // Of how sync goes, only a change in the devices waiting.
+    let pending = use_memo(move || linked.status.read().pending_devices);
     let _read = use_resource(move || {
         let open = nav.is_open();
         let _ = facts.reload.read();
+        let _ = pending.read();
         let state = *linked.state.read();
-        let pending = linked.status.read().pending_devices;
         let session = linked.session.read().clone();
         let (mut me, mut devices) = (facts.me, facts.devices);
         async move {
-            let _ = pending;
             let signed_in = matches!(
                 state,
                 SessionState::Ready { .. } | SessionState::WaitingForApproval { .. }
@@ -332,14 +333,16 @@ pub fn SettingsPage(
     let nav = settings_nav();
     use_facts(linked);
     // A section asked for is brought into sight once the page has been
-    // drawn for it.
+    // drawn for it, if Settings is still open and nothing else was asked.
     use_effect(move || {
-        let (_, section) = *nav.jump.read();
+        let asked = *nav.jump.read();
         let open = *nav.open.read();
-        if let (true, Some(section)) = (open, section) {
+        if let (true, Some(section)) = (open, asked.1) {
             spawn(async move {
                 tokio::time::sleep(Duration::from_millis(30)).await;
-                jump(section, true);
+                if *nav.open.peek() && *nav.jump.peek() == asked {
+                    jump(section, true);
+                }
             });
         }
     });

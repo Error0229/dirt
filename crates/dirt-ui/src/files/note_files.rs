@@ -191,17 +191,21 @@ pub fn use_note_files(
         }
     });
 
-    // Reading the list fetches nothing, so the tiles are there at once.
-    let _reader = use_resource(move || {
-        let note = note();
-        let _ = (files.reread)();
+    // Of how sync goes, only what can change the files.
+    let synced = use_memo(move || {
         let status = sync.read();
-        let _ = (
+        (
             status.pulled,
             status.files_unsent,
             status.file_problems,
             status.syncing,
-        );
+        )
+    });
+    // Reading the list fetches nothing, so the tiles are there at once.
+    let _reader = use_resource(move || {
+        let note = note();
+        let _ = (files.reread)();
+        let _ = synced.read();
         let mut listed = files.listed;
         async move {
             let note = note?;

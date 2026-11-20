@@ -71,23 +71,21 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn, notes_brought: EventHandl
     });
     // Notes in the local store: those a sign-in would bring, or those
     // written before signing in that are still not in the account.
-    let mut local = use_signal(|| 0_usize);
-    let _count = use_resource(move || {
+    let local = use_resource(move || {
         // Notes are written while Settings is closed: counted as it opens.
         let _ = nav.is_open();
         let state = *linked.state.read();
         let _ = facts.reload.read();
         let session = linked.session.read().clone();
         async move {
-            let Some(session) = session else { return };
-            let count = match state {
+            let Some(session) = session else { return 0 };
+            match state {
                 SessionState::SignedOut | SessionState::SigningIn => {
                     session.store().note_count().await.unwrap_or(0)
                 }
                 SessionState::Ready { .. } => session.local_notes_waiting().await.unwrap_or(0),
                 SessionState::WaitingForApproval { .. } => 0,
-            };
-            local.set(count);
+            }
         }
     });
 
@@ -146,7 +144,7 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn, notes_brought: EventHandl
                 session.cancel_sign_in();
                 return;
             }
-            let bring_now = *bring.peek() && *local.peek() > 0;
+            let bring_now = *bring.peek() && local.peek().unwrap_or(0) > 0;
             spawn(async move {
                 match sign_in.call(session).await {
                     Ok(SessionState::Ready { .. }) if bring_now => bring_in(),
@@ -284,7 +282,7 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn, notes_brought: EventHandl
     );
     let ready = state.is_ready();
     let waiting_in = matches!(state, SessionState::WaitingForApproval { .. });
-    let count = local();
+    let count = local().unwrap_or(0);
 
     rsx! {
         Card {
