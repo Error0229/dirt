@@ -1311,14 +1311,27 @@
   // how many units went, and what came, a long paste in pieces. A change
   // the app made itself (`setValue`, `mergeInto`, the page emptied by Esc)
   // is told too, so Rust's copy stays the field's, but not as typed.
-  const PIECE = 16384;
+  // A piece is kept under 16 KiB of JSON as UTF-8. Dioxus base64s each
+  // event with `String.fromCharCode.apply`, one argument per byte of the
+  // event's JSON, in which the piece's is escaped once more, and
+  // JavaScriptCore (macOS, Linux) takes at most 65,536 arguments. So it is
+  // the bytes that are counted, not the characters: a run of quotes,
+  // backslashes or control characters takes two to six times the room.
+  const PIECE_BYTES = 16 * 1024, PIECE_UNITS = 8192;
+  const encoder = new TextEncoder();
   const isHigh = unit => unit >= 0xD800 && unit <= 0xDBFF;
   const isLow = unit => unit >= 0xDC00 && unit <= 0xDFFF;
+  // Half of a pair with no other half becomes U+FFFD, one unit for one, as
+  // the old way through `TextEncoder` made it: JSON writes it as an escape
+  // that Rust cannot read.
+  const wellFormed = text => (typeof text.toWellFormed === 'function'
+    ? text.toWellFormed()
+    : text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '�'));
   function tellText(field, typed, whole) {
     if (!field || !field.dataset || field.dataset.duiTyped === undefined) return;
     const carrier = document.querySelector('[data-dui-carrier="' + field.dataset.duiTyped + '"]');
     if (!carrier) return;
-    const now = field.value;
+    const now = wellFormed(field.value);
     const fresh = whole || typeof field.duiBase !== 'string';
     const base = fresh ? '' : field.duiBase;
     if (!fresh && base === now) return;
@@ -1334,10 +1347,15 @@
     const came = now.slice(start, now.length - end);
     let at = start, gone = base.length - start - end, from = 0, first = true;
     do {
-      let to = Math.min(came.length, from + PIECE);
-      if (to < came.length && isHigh(came.charCodeAt(to - 1))) to -= 1;
-      const more = to < came.length;
-      carrier.value = JSON.stringify({ r: fresh && first, a: at, d: gone, i: came.slice(from, to), m: more, t: typed, n: now.length });
+      let units = Math.min(came.length - from, PIECE_UNITS), to, json;
+      for (;;) {
+        to = from + units;
+        if (to < came.length && isHigh(came.charCodeAt(to - 1))) to += to - 1 > from ? -1 : 1;
+        json = JSON.stringify({ r: fresh && first, a: at, d: gone, i: came.slice(from, to), m: to < came.length, t: typed, n: now.length });
+        if (units <= 1 || encoder.encode(json).length <= PIECE_BYTES) break;
+        units >>= 1;
+      }
+      carrier.value = json;
       carrier.dispatchEvent(new Event('input', { bubbles: true }));
       at += to - from;
       gone = 0;
@@ -1366,11 +1384,17 @@
     const field = event.target;
     if (!field || !field.dataset || field.dataset.duiTyped === undefined) return;
     keepToItself(field);
+    field.duiAgain = 0;
     tellText(field, true, false);
   }, true);
-  // Rust's copy did not agree with the field: the whole text, as typed.
+  // Rust's copy did not agree with the field: the whole text, as typed. At
+  // most three times for each change the person makes, so that a text the
+  // road cannot carry is never sent round and round.
   function typedAgain(id) {
-    tellText(document.querySelector('[data-dui-typed="' + id + '"]'), true, true);
+    const field = document.querySelector('[data-dui-typed="' + id + '"]');
+    if (!field || (field.duiAgain || 0) >= 3) return;
+    field.duiAgain = (field.duiAgain || 0) + 1;
+    tellText(field, true, true);
   }
   // Text added at the end of a field, where the caret is not: the tags a
   // new page gets. The field then says so as if it had been typed, so the

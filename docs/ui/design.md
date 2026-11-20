@@ -874,13 +874,21 @@ hundred kilobytes the script that encodes it failed
 was never made, and the app never heard the text. So a note's field
 (`data-dui-typed`) has no `oninput`, and the script stops its `input` and
 `change` at the field. It tells Rust what changed instead (where, how much
-went, what came, a long paste in pieces of 16,384 characters) through a
-hidden field beside it, by the same synchronous road as every key and
-press, so the app has heard every character before it hears the Esc or ⌄
-that leaves the page (`dirt_ui::typing`). A change the app makes itself (a
-note opened, words merged in, the desktop's page emptied by Esc) is told
-too, so Rust's copy stays the field's, and each change says the field's
-length, which a copy that disagrees asks for whole again. Text the app
+went, what came) through a hidden field beside it, by the same synchronous
+road as every key and press, so the app has heard every character before it
+hears the Esc or ⌄ that leaves the page (`dirt_ui::typing`). A long paste
+goes in pieces of at most 16 KiB of JSON, counted in bytes, not
+characters: Dioxus hands each byte of an event to `apply` as one argument,
+JavaScriptCore (macOS, Linux) takes at most 65,536, and a quote, a
+backslash or a control character takes two to six bytes. Half of a
+character written as two UTF-16 units, with no other half, becomes U+FFFD,
+as it did before: it has no place in a Rust string. A change the app makes
+itself (a note opened, words merged in, the desktop's page emptied by Esc)
+is told too, so Rust's copy stays the field's, and each change says the
+field's length. A copy that disagrees, or a piece that cannot be read, asks
+for the whole text again and takes no other change until it comes; the
+script answers at most three such asks for each change the person makes,
+so a text the road cannot carry is never sent round and round. Text the app
 gives the page goes as it did, in one script: 1.3 million characters were
 shown whole. A note's text has no limit of its own on the device. One
 larger than the server takes (an encrypted note of 1 MiB, about a million
@@ -1950,13 +1958,14 @@ screen reader.
 |---|---|
 | The page's mic | In the page's top bar, after the space and before 📎, on a new page and on a note, where the build has voice. Its press, its slash when the microphone was refused, and Android's dialog at the first press are the dock's (8.9) |
 | While it listens | A band under the bar, as the dock's sheet draws it: the grains, the timer, ✕ and ✓. The keyboard goes down; the note dims and takes no touch, since nothing is written while it listens (6.18). The bar stays, with ‹ or ⌄ and the mic only: 📎 and the box go, as the desktop's gutter's do (7.11) |
-| What is said goes | To the end of the note, after a blank line, once its words are made (`Store::add_voice_to_note`): the recording is one of the note's files at once, "Voice recording.opus", and its words follow. The words come into the page by the three-way merge, as a note said's do (7.11, 8.9): never written over what is typed meanwhile, and typed on the end at the same moment, the page's words and the said ones are both kept. A note may be said into more than once; each recording's words come in the order they were said |
+| What is said goes | To the end of the note, after a blank line, once its words are made (`Store::add_voice_to_note`): the recording is one of the note's files at once, "Voice recording.opus", and its words follow. The words come into the page by the three-way merge, as a note said's do (7.11, 8.9): never written over what is typed meanwhile. What is typed at the end while they are made stays where it was typed, and the words come after it: where the page and the store both added at the very end of what the page last saved, the page's goes first (`notes::merge3`), as at the start the words go first. A note may be said into more than once; each recording's words come in the order they were said, and each recording's words are put in once, even by two makers of words at once (the app's and the sheet's job), since putting them in takes this device's row for the recording in the same transaction |
 | Not a note said | The note is not marked as said and is not named by the recording: it has no mic on its card and keeps its title. The recording is its file like any other (6.5); with **Text only** it is taken off once its words are in, and with no words found it stays, so that nothing said is lost |
 | A page with no note yet | What is said makes the page's note, as the dock's mic does: a note said, named "Voice · 0:08" until its words come, at its start. What is typed on the page then follows them. One note for the page: a first character typed in the same moment, and files chosen, go to it |
 | Back, ⌄, leaving | Back while it listens keeps what was said and the page stays. ⌄, ‹, the box, opening Settings, the app going behind another, or another store taken into use end listening, keeping what was said, and it still goes to the page's note, in the store the page was opened on. The page is left only once what was being said is in its note, so that a note with no words and a recording coming is not let go |
 | A note that cannot take it | Deleted on another device meanwhile, or with no room for another file (20): what was said becomes a note of its own, and a toast says "What was said is a note of its own", with why. Nothing said is lost |
 | Words that cannot be made | Tried three times, as for a note said; then its card says "Its words could not be made" with why, while the note still has the recording |
 | Taken off before its words | A recording taken off the note before its words were made is not read, and its words are never put in: the person took it off |
+| Deleted while its words are made | The words are not put in and the recording waits, unread, for the note to come back; brought back by **Undo**, it gets its words. A note said is treated the same (6.18). Moved into the account as the phone signs in, a recording keeps its tries, so one given up on stays given up |
 | Another device | Sees one more file on the note, then the words as an edit. Only this phone makes them. A note moved into the account as the phone signs in keeps its recordings' words to be made here |
 | The screen reader | Told "Words arrived: …" with the last line of the note, which is the words', when they come for a recording said in this run |
 | The pile widget | Optional, two cells by two, resizable. The surface with a hairline and corners of 24 dp, as the bar's; light and dark as the system is. The heap fills the room above one line, "1,254 thoughts" ("No thoughts yet" for an empty pile, and "Open Dirt to see your pile" before the app has ever drawn it). Tapping it anywhere opens Dirt. Among the widgets it is "Dirt pile" |

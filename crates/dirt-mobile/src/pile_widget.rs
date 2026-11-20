@@ -35,18 +35,23 @@ pub fn line(thoughts: usize) -> String {
 }
 
 /// Writes the widget's file for `heap`, unless it says that already.
-/// Written aside and renamed, so the widget never reads half of it.
-/// Returns whether it changed.
+/// Written aside under a name of its own and renamed, so the widget never
+/// reads half of it, and the app's list and the sheet's job writing at once
+/// in one process never write into one file. Returns whether it changed.
 pub fn write(data_folder: &Path, heap: &Heap) -> std::io::Result<bool> {
+    static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let text = heap.widget(&line(heap.grains));
     let path = data_folder.join(PILE_FILE);
     if std::fs::read_to_string(&path).is_ok_and(|now| now == text) {
         return Ok(false);
     }
     std::fs::create_dir_all(data_folder)?;
-    let aside = data_folder.join(format!("{PILE_FILE}.part"));
-    std::fs::write(&aside, text)?;
-    std::fs::rename(aside, path)?;
+    let write = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let aside = data_folder.join(format!("{PILE_FILE}.{}-{write}.part", std::process::id()));
+    if let Err(error) = std::fs::write(&aside, text).and_then(|()| std::fs::rename(&aside, path)) {
+        let _ = std::fs::remove_file(&aside);
+        return Err(error);
+    }
     Ok(true)
 }
 

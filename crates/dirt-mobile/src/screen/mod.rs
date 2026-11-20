@@ -192,9 +192,10 @@ pub struct Screen {
     pub talking: Talking,
     /// The page's mic is listening, not the dock's: the page shows it.
     pub talking_on_page: Signal<bool>,
-    /// Notes that what was said into a page was added to in this run,
-    /// whose words a screen reader is told of when they come (section 12).
-    said_into: Signal<HashSet<NoteId>>,
+    /// Notes that what was said into a page was added to in this run, with
+    /// how many recordings: a screen reader is told of the words of each
+    /// when they come (section 12).
+    said_into: Signal<HashMap<NoteId, u32>>,
     /// What a screen reader was last told of words that arrived, and how
     /// many times: told again when it reads the same.
     pub words_heard: Signal<(u64, String)>,
@@ -1156,7 +1157,7 @@ impl Screen {
                             .add_voice_to_note(&note, said.file.clone())
                             .await;
                         if added.is_ok() {
-                            self.said_into.write_unchecked().insert(note);
+                            *self.said_into.write_unchecked().entry(note).or_default() += 1;
                         }
                         added.map(|_| ())
                     }
@@ -1257,7 +1258,17 @@ impl Screen {
     /// told, for a thought said here in this run; on its page, they are
     /// brought in.
     pub fn words_came(mut self, note: &Note) {
-        let said_into = self.said_into.write().remove(&note.id);
+        let said_into = {
+            let mut said = self.said_into.write();
+            match said.get_mut(&note.id) {
+                Some(count) if *count > 1 => {
+                    *count -= 1;
+                    true
+                }
+                Some(_) => said.remove(&note.id).is_some(),
+                None => false,
+            }
+        };
         let first = if crate::voice::was_said_here(note.id) {
             Some(note.outline().title)
         } else if said_into {
@@ -1558,9 +1569,14 @@ fn use_listing(screen: &Screen, app: &AppState) {
                 read_card_files(&store, shown, screen.card_files).await;
             let waiting_words: Vec<NoteId> = notes
                 .iter()
+                // A note said waiting for its words, or one with files: a
+                // recording added to a note (8.10) is one of its files, and
+                // leaves the note unmarked.
                 .filter(|note| {
-                    note.voice
-                        .is_some_and(|voice| voice.words == dirt_core::models::Words::Waiting)
+                    with_files.contains(&note.id)
+                        || note
+                            .voice
+                            .is_some_and(|voice| voice.words == dirt_core::models::Words::Waiting)
                 })
                 .map(|note| note.id)
                 .collect();
@@ -1715,7 +1731,7 @@ pub fn MainScreen() -> Element {
         clock,
         talking,
         talking_on_page: Signal::new(false),
-        said_into: Signal::new(HashSet::new()),
+        said_into: Signal::new(HashMap::new()),
         words_heard: Signal::new((0, String::new())),
     });
     use_listing(&screen, &app);

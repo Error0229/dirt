@@ -330,8 +330,10 @@ and the person is told. Before step 10 of the interface redesign the page
 could not carry a note's text past a few hundred kilobytes to the app at
 all, on either app, so such a note was never made; what changed is in the
 design's 6.4. Measured on the desktop, a debug build: a paste of 1,200,045
-characters reached the store whole 1.1 s after it landed, and a key typed
-at its end after that was heard in under 0.1 s; notes of 50,000 to
+characters reached the store whole 1.8 s after it landed, in pieces of at
+most 16 KiB of JSON each, and a key typed at its end after that was heard
+in under 0.1 s; 299,999 characters of quotes, backslashes and control
+characters, which take the most room in a piece, were kept exactly; notes of 50,000 to
 1,300,000 characters opened again whole.
 
 A deleted note keeps its document so that the delete can sync, and so that

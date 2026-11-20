@@ -1266,8 +1266,8 @@ impl Store {
             // the target's to make them for: it is this device's store
             // from now on.
             let id = snapshot.id;
-            if self.read(move |c| voice::is_waiting(c, &id)).await? {
-                target.write(move |c| voice::wait(c, &id, now_ms())).await?;
+            if let Some(pending) = self.read(move |c| voice::waiting_row(c, &id)).await? {
+                target.write(move |c| voice::wait(c, &id, &pending)).await?;
             }
             let added = self.read(move |c| voice::added_waiting(c, &id)).await?;
             if !added.is_empty() {

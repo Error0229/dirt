@@ -186,52 +186,82 @@ pub(super) fn problems(
     Ok(found)
 }
 
-/// Whether this device has a recording of this note waiting for words.
-pub(super) fn is_waiting(connection: &Connection, id: &NoteId) -> Result<bool> {
+/// This device's row for a recording of this note waiting for words, if
+/// it has one.
+pub(super) fn waiting_row(connection: &Connection, id: &NoteId) -> Result<Option<Pending>> {
     Ok(connection
         .query_row(
-            "SELECT 1 FROM voice_waiting WHERE note_id = ?1",
+            "SELECT since, tries, problem FROM voice_waiting WHERE note_id = ?1",
             [id.as_str()],
-            |_| Ok(()),
+            |row| {
+                Ok(Pending {
+                    since: row.get(0)?,
+                    tries: row.get(1)?,
+                    problem: row.get(2)?,
+                })
+            },
         )
-        .optional()?
-        .is_some())
+        .optional()?)
+}
+
+/// A row of this device's work on a recording, as it is carried to another
+/// store: when it began, how many tries have failed, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Pending {
+    pub since: i64,
+    pub tries: u32,
+    pub problem: Option<String>,
 }
 
 /// The recordings added to this note on this device whose words are still
-/// to be made, each with when it was added.
+/// to be made.
 pub(super) fn added_waiting(
     connection: &Connection,
     id: &NoteId,
-) -> Result<Vec<(uuid::Uuid, i64)>> {
-    let mut statement =
-        connection.prepare("SELECT file_id, since FROM voice_added WHERE note_id = ?1")?;
+) -> Result<Vec<(uuid::Uuid, Pending)>> {
+    let mut statement = connection
+        .prepare("SELECT file_id, since, tries, problem FROM voice_added WHERE note_id = ?1")?;
     let rows = statement.query_map([id.as_str()], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        Ok((
+            row.get::<_, String>(0)?,
+            Pending {
+                since: row.get(1)?,
+                tries: row.get(2)?,
+                problem: row.get(3)?,
+            },
+        ))
     })?;
     let mut found = Vec::new();
     for row in rows {
-        let (file_id, since) = row?;
+        let (file_id, pending) = row?;
         if let Ok(file_id) = file_id.parse() {
-            found.push((file_id, since));
+            found.push((file_id, pending));
         }
     }
     Ok(found)
 }
 
 /// Makes this device the one that makes the words of the recordings added
-/// to the note: a note moved here from the store they were said into.
+/// to the note: a note moved here from the store they were said into. The
+/// tries carry over, so a recording given up on stays given up.
 pub(super) fn wait_added(
     connection: &mut Connection,
     id: &NoteId,
-    files: &[(uuid::Uuid, i64)],
+    files: &[(uuid::Uuid, Pending)],
 ) -> Result<()> {
     let tx = write_transaction(connection)?;
     if load_for_update(&tx, id)?.is_some() {
-        for (file_id, since) in files {
+        for (file_id, pending) in files {
             tx.execute(
-                "INSERT OR IGNORE INTO voice_added (file_id, note_id, since) VALUES (?1, ?2, ?3)",
-                params![file_id.to_string(), id.as_str(), since],
+                "INSERT OR IGNORE INTO voice_added (file_id, note_id, since, tries, problem) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    file_id.to_string(),
+                    id.as_str(),
+                    pending.since,
+                    pending.tries,
+                    pending.problem
+                ],
             )?;
         }
     }
@@ -297,10 +327,18 @@ fn at_the_end(typed: &str, words: &str) -> String {
 /// Puts the words of a recording added to a note at the note's end, after
 /// a blank line, and marks them made: it waits no longer.
 ///
+/// One rule, in one transaction: the words go in only while this device
+/// still has the recording's row, and putting them in consumes it. So two
+/// makers of words reading the same recording at once (the app's and the
+/// sheet's job, in one process) put them in once. A note deleted meanwhile
+/// is not written and keeps its row: the recording waits, unread, for the
+/// note to come back, as a note said does. One that no longer has the
+/// recording, the person having taken it off, is not written either, and
+/// waits no longer.
+///
 /// With `text_only` the recording is then taken off the note. With no
-/// words the note is left as it is, recording and all, so that nothing
-/// said is lost. A note deleted meanwhile, or one that no longer has the
-/// recording, is not written: the person took the recording off.
+/// words the note is left as it is, recording and all, so that nothing said
+/// is lost.
 pub(super) fn put_added_words(
     connection: &mut Connection,
     id: &NoteId,
@@ -310,16 +348,21 @@ pub(super) fn put_added_words(
     now_ms: i64,
 ) -> Result<WordsPut> {
     let tx = write_transaction(connection)?;
-    tx.execute(
-        "DELETE FROM voice_added WHERE file_id = ?1",
-        [file_id.to_string()],
-    )?;
     let Some((row, bytes, _)) = load_for_update(&tx, id)? else {
+        // Purged: its rows went with it.
         tx.commit()?;
         return Ok(WordsPut::Nothing);
     };
     let doc = NoteDoc::from_bytes(client_id(&tx)?, &bytes)?;
-    if doc.is_deleted() || !doc.named_files().contains(&file_id) {
+    if doc.is_deleted() {
+        tx.commit()?;
+        return Ok(WordsPut::Nothing);
+    }
+    let pending = tx.execute(
+        "DELETE FROM voice_added WHERE file_id = ?1 AND note_id = ?2",
+        params![file_id.to_string(), id.as_str()],
+    )?;
+    if pending == 0 || !doc.named_files().contains(&file_id) {
         tx.commit()?;
         return Ok(WordsPut::Nothing);
     }
@@ -340,13 +383,15 @@ pub(super) fn put_added_words(
 }
 
 /// Makes this device the one that makes the note's words: a note moved
-/// here from the store it was recorded in.
-pub(super) fn wait(connection: &mut Connection, id: &NoteId, now_ms: i64) -> Result<()> {
+/// here from the store it was recorded in. The tries carry over, so a
+/// recording given up on stays given up.
+pub(super) fn wait(connection: &mut Connection, id: &NoteId, pending: &Pending) -> Result<()> {
     let tx = write_transaction(connection)?;
     if load_for_update(&tx, id)?.is_some() {
         tx.execute(
-            "INSERT OR IGNORE INTO voice_waiting (note_id, since) VALUES (?1, ?2)",
-            params![id.as_str(), now_ms],
+            "INSERT OR IGNORE INTO voice_waiting (note_id, since, tries, problem) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![id.as_str(), pending.since, pending.tries, pending.problem],
         )?;
     }
     tx.commit()?;
@@ -380,8 +425,13 @@ pub(super) fn put_words(
         return Ok(WordsPut::Nothing);
     };
     let doc = NoteDoc::from_bytes(client_id(&tx)?, &bytes)?;
-    let mark = doc.voice().filter(|mark| mark.words == Words::Waiting);
-    let (Some(mark), false) = (mark, doc.is_deleted()) else {
+    // Deleted while its words were made: it keeps its row, and the
+    // recording waits, unread, for the note to come back.
+    if doc.is_deleted() {
+        tx.commit()?;
+        return Ok(WordsPut::Nothing);
+    }
+    let Some(mark) = doc.voice().filter(|mark| mark.words == Words::Waiting) else {
         done(&tx)?;
         tx.commit()?;
         return Ok(WordsPut::Nothing);

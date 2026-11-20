@@ -261,13 +261,6 @@ class MainActivity : WryActivity() {
             finishing.remove(request)
         }
 
-        // The request's files are being copied in, or its file written: it
-        // is under way until its outcome is set.
-        @Synchronized
-        private fun beginFinishing(request: String) {
-            finishing.add(request)
-        }
-
         // Whether a choosing of files or a save asked for as `request` is
         // still under way: Android's screen is up for it, its files are
         // being copied or its file written, or its outcome waits to be
@@ -294,11 +287,16 @@ class MainActivity : WryActivity() {
             return true
         }
 
-        // The request the chooser was on screen for, now that it is not.
+        // The request the chooser was on screen for, now that it is not. It
+        // is under way until its outcome is set (`setPicked`), and is
+        // handed from the one to the other under the same lock, so that
+        // `underway` never sees it as neither in the moment between: the
+        // app would stop waiting, and drop what was chosen.
         @Synchronized
         private fun endPicking(): String? {
-            val request = pickingFor
+            val request = pickingFor ?: return null
             pickingFor = null
+            finishing.add(request)
             return request
         }
 
@@ -458,11 +456,14 @@ class MainActivity : WryActivity() {
         }
 
         // The save that screen was up for, now that it is not: its request
-        // and what it writes, taken in one step.
+        // and what it writes, taken in one step. It is under way until its
+        // outcome is set (`setSaveOutcome`), handed over under the same lock
+        // as `endPicking` hands a choosing over.
         @Synchronized
         private fun endSaving(): Saving? {
-            val save = saving
+            val save = saving ?: return null
             saving = null
+            finishing.add(save.request)
             return save
         }
 
@@ -775,7 +776,6 @@ class MainActivity : WryActivity() {
             setPicked(request, "cancelled")
             return
         }
-        beginFinishing(request)
         Thread {
             setPicked(request, copyAllIn(chosen).toString())
             runOnUiThread { tellThePage() }
@@ -793,7 +793,6 @@ class MainActivity : WryActivity() {
             setSaveOutcome(request, "cancelled")
             return
         }
-        beginFinishing(request)
         // Off the main thread: a file may be ten megabytes and an export
         // of the notes many times that, and the place may be slow.
         Thread {

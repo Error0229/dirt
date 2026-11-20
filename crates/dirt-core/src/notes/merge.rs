@@ -134,7 +134,18 @@ pub fn merge3(base: &str, ours: &str, theirs: &str) -> String {
     // From the last to the first, so that each is placed in text that the
     // ones before it have not moved.
     for change in changes(base, ours).into_iter().rev() {
-        let start = place(&theirs_ops, change.start).1;
+        // Where both inserted at one point of the base, ours goes after
+        // theirs: words put at the start of a note come before what is
+        // typed there. At the very end of the base it goes before: what is
+        // typed at the end goes on from the text it was typed after, and
+        // words put at the end of a note (a recording added to it) come
+        // after it.
+        let at = place(&theirs_ops, change.start);
+        let start = if change.start == base.len() {
+            at.0
+        } else {
+            at.1
+        };
         let end = if change.end > change.start {
             place(&theirs_ops, change.end).0.max(start)
         } else {
@@ -176,6 +187,32 @@ mod tests {
         assert_eq!(
             merge3("", "typed", "Call the dentist"),
             "Call the dentist\n\ntyped"
+        );
+    }
+
+    #[test]
+    fn words_put_at_the_end_come_after_what_is_typed_at_the_end() {
+        let base = "Buy milk, eg";
+        let theirs = "Buy milk, eg\n\ncall mum";
+        // Typed on at the end while the words were being made.
+        assert_eq!(
+            merge3(base, "Buy milk, eggs", theirs),
+            "Buy milk, eggs\n\ncall mum"
+        );
+        // A new line typed at the end, and more.
+        assert_eq!(
+            merge3(base, "Buy milk, eggs\n- bread", theirs),
+            "Buy milk, eggs\n- bread\n\ncall mum"
+        );
+        // The end typed over: the words stay after it.
+        assert_eq!(
+            merge3(base, "Buy milk, bread", theirs),
+            "Buy milk, bread\n\ncall mum"
+        );
+        // Typed elsewhere: the words at the end are untouched.
+        assert_eq!(
+            merge3(base, "Buy oat milk, eg", theirs),
+            "Buy oat milk, eg\n\ncall mum"
         );
     }
 

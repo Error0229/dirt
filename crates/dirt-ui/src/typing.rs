@@ -15,8 +15,11 @@
 //! (`data-dui-typed`) and tells Rust what changed: where, how much went,
 //! and what came, through a hidden field beside it, the carrier, whose
 //! `input` event Dioxus delivers by the same synchronous request as every
-//! other. A change larger than [`PIECE`] characters, a long paste, goes in
-//! pieces. Rust keeps the field's text and rebuilds it from the changes.
+//! other. A change whose JSON would be larger than [`PIECE_BYTES`], a long
+//! paste, goes in pieces. Rust keeps the field's text and rebuilds it from
+//! the changes. Half of a character written as two UTF-16 units, with no
+//! other half, is told as U+FFFD, as the old way made it: it has no place
+//! in a Rust string.
 //!
 //! The order is the point: a change comes by the same road as the keys and
 //! the presses, so the app has heard every character typed before it hears
@@ -26,17 +29,25 @@
 //! Rust's copy stays the field's; it is not told to the app as typing.
 //!
 //! Each change says the field's length once it is made. A copy that does
-//! not agree (it should never happen) asks the script for the whole text
-//! again, and the app hears it as typed.
+//! not agree, or a piece that cannot be read (neither should happen), asks
+//! the script for the whole text again, and the app hears it as typed;
+//! meanwhile the pieces of other changes are not taken, since the copy
+//! they would change is not the field's. The script answers at most three
+//! such asks for each change the person makes, so that a text the road
+//! cannot carry is never sent round and round.
 
 use dioxus::prelude::*;
 use serde::Deserialize;
 
-/// The most characters one piece of a change carries.
+/// The most bytes one piece of a change takes, as the JSON the script
+/// writes, in UTF-8.
 ///
-/// They are UTF-16 units, as the page counts them: a long paste is told in
-/// pieces of this size, each well under what the road carries.
-pub const PIECE: usize = 16_384;
+/// Dioxus base64s each event with `String.fromCharCode.apply`, one
+/// argument per byte, and the piece is escaped again inside the event, so a
+/// piece is at most about twice this there. `JavaScriptCore` (macOS, Linux)
+/// takes at most 65,536 arguments. The script counts the bytes, not the
+/// characters: quotes, backslashes and control characters take two to six.
+pub const PIECE_BYTES: usize = 16 * 1024;
 
 /// One piece of a change to the field, as the script tells it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -67,6 +78,9 @@ struct Held {
     text: String,
     /// A change in pieces is under way, and was typed.
     typed: bool,
+    /// The copy did not agree with the field, and the whole text was asked
+    /// for: pieces of other changes are not taken until it comes.
+    lost: bool,
 }
 
 /// The byte where the `units`th UTF-16 unit of `text` begins, counting
@@ -92,6 +106,7 @@ impl Held {
     fn take(&mut self, piece: &Piece) -> Result<Option<bool>, ()> {
         if piece.r {
             self.text.clear();
+            self.lost = false;
         }
         let start = byte_at(&self.text, 0, piece.a).ok_or(())?;
         let end = byte_at(&self.text, start, piece.d).ok_or(())?;
@@ -162,8 +177,19 @@ impl Typing {
     fn heard(mut self, message: &str) {
         let Ok(piece) = serde_json::from_str::<Piece>(message) else {
             tracing::error!("The page told of a change to a note that could not be read");
+            self.ask_again();
             return;
         };
+        let lost = self.copy.peek().lost;
+        if lost && !piece.r {
+            // A change to a copy that is not the field's: the whole text is
+            // asked for again once it has ended, which the script answers
+            // a few times for each change the person makes.
+            if !piece.m {
+                self.ask_again();
+            }
+            return;
+        }
         let taken = self.copy.write().take(&piece);
         match taken {
             Ok(None | Some(false)) => {}
@@ -175,13 +201,21 @@ impl Typing {
                 tracing::error!(
                     "The app's copy of a note's text and the page's differ: asking again"
                 );
-                *self.copy.write() = Held::default();
-                document::eval(&format!(
-                    "window.DirtUi && DirtUi.typedAgain({});",
-                    serde_json::Value::String(self.id())
-                ));
+                self.ask_again();
             }
         }
+    }
+
+    /// The copy is the field's no longer: the whole text is asked for.
+    fn ask_again(mut self) {
+        *self.copy.write() = Held {
+            lost: true,
+            ..Held::default()
+        };
+        document::eval(&format!(
+            "window.DirtUi && DirtUi.typedAgain({});",
+            serde_json::Value::String(self.id())
+        ));
     }
 }
 
@@ -216,6 +250,7 @@ mod tests {
 
     #[test]
     fn a_long_paste_comes_in_pieces_and_is_told_once_whole() {
+        const PIECE: usize = 8_192;
         let mut copy = Held::default();
         let long = "a".repeat(PIECE * 3 + 5);
         let parts: Vec<&str> = [
