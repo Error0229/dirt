@@ -21,13 +21,14 @@ mod state;
 mod tray;
 mod voice;
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use dioxus::desktop::{Config, WindowCloseBehaviour};
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
-use hotkey::HotkeyManager;
+use hotkey::{Hold, HotkeyManager};
 use single_instance::SingleInstance;
 
 /// Atomic flag indicating tray is enabled
@@ -138,32 +139,28 @@ pub fn without_the_web_views_own_keys(config: Config) -> Config {
 /// waiting for typing (6.18, 7.2): the mic's line between a tap and a hold.
 const HELD_AFTER: Duration = Duration::from_millis(280);
 
-/// The keys are down: from the press until they are let go.
-static HOTKEY_DOWN: AtomicBool = AtomicBool::new(false);
+/// The hotkey's press, from the press until it is let go. What each
+/// change asks of quick capture is asked while this is held, so that the
+/// asks go in the order the changes were made (`hotkey::Hold`).
+static HOLD: Mutex<Hold> = Mutex::new(Hold::new());
 
-/// Counts presses, so that a hold is told apart from the press before.
-static PRESSES: AtomicU64 = AtomicU64::new(0);
-
-/// This press has been held long enough to talk. Only then does letting
-/// go say anything: quick capture keeps only the latest thing asked of it,
-/// and a quick tap's letting go would otherwise take the place of its
-/// opening.
-static TALKING: AtomicBool = AtomicBool::new(false);
+fn hold() -> MutexGuard<'static, Hold> {
+    HOLD.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Ctrl Alt N was pressed: quick capture opens, for typing. Held past
 /// [`HELD_AFTER`], it listens instead. The system repeats a key held down;
 /// a repeat is not another press.
 fn hotkey_pressed() {
-    if HOTKEY_DOWN.swap(true, Ordering::SeqCst) {
+    let Some(press) = hold().pressed() else {
         return;
-    }
+    };
     tracing::info!("Hotkey pressed (Ctrl+Alt+N)");
     capture::link().open(Instant::now());
-    let press = PRESSES.fetch_add(1, Ordering::SeqCst) + 1;
     thread::spawn(move || {
         thread::sleep(HELD_AFTER);
-        if HOTKEY_DOWN.load(Ordering::SeqCst) && PRESSES.load(Ordering::SeqCst) == press {
-            TALKING.store(true, Ordering::SeqCst);
+        let mut hold = hold();
+        if hold.held(press) {
             capture::link().talk();
         }
     });
@@ -171,7 +168,8 @@ fn hotkey_pressed() {
 
 /// Ctrl Alt N was let go: what was said while it was held is kept.
 fn hotkey_released() {
-    if HOTKEY_DOWN.swap(false, Ordering::SeqCst) && TALKING.swap(false, Ordering::SeqCst) {
+    let mut hold = hold();
+    if hold.released() {
         capture::link().let_go();
     }
 }

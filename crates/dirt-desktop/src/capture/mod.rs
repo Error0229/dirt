@@ -51,7 +51,7 @@ use dirt_ui::dom::{self, Caret};
 use dirt_ui::events::{use_outcome, Outcome};
 use dirt_ui::typing::use_typing;
 use dirt_ui::{Appearance, UiRoot};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::keyboard::{self, Foreground};
 use crate::screen::keys;
@@ -101,16 +101,16 @@ fn window_size(box_height: f64) -> LogicalSize<f64> {
 
 // ---- What the rest of the app tells it ---------------------------------
 
-/// What quick capture was last asked to do.
-#[derive(Debug, Clone, Copy, Default)]
+/// What quick capture is asked to do. Each is heard, in the order it was
+/// asked: none takes the place of another.
+#[derive(Debug)]
 enum Asked {
-    #[default]
-    Nothing,
     /// Open, for a key or a menu chosen at that moment.
     Open(Instant),
     /// Hand over what is written, now: the app is quitting, or taking
-    /// another store into use.
-    HandOver,
+    /// another store into use. Answered once it has, and only by this:
+    /// handling a later ask does not count as handing over.
+    HandOver(oneshot::Sender<()>),
     /// The keys that opened it are still down: listen (6.18).
     Talk,
     /// The keys were let go: keep what was said while they were held.
@@ -127,9 +127,9 @@ pub struct Context {
 /// How the rest of the app reaches quick capture's window, which has a
 /// virtual DOM of its own.
 pub struct Link {
-    asks: watch::Sender<(u64, Asked)>,
-    /// The last ask quick capture has done.
-    done: watch::Sender<u64>,
+    asks: mpsc::UnboundedSender<Asked>,
+    /// Where the window hears what is asked, while it listens.
+    heard: tokio::sync::Mutex<mpsc::UnboundedReceiver<Asked>>,
     appearance: watch::Sender<Appearance>,
     context: Mutex<Context>,
 }
@@ -137,23 +137,23 @@ pub struct Link {
 /// The app's one link to quick capture.
 pub fn link() -> &'static Link {
     static LINK: OnceLock<Link> = OnceLock::new();
-    LINK.get_or_init(|| Link {
-        asks: watch::Sender::new((0, Asked::Nothing)),
-        done: watch::Sender::new(0),
-        appearance: watch::Sender::new(Appearance::default()),
-        context: Mutex::new(Context::default()),
-    })
+    LINK.get_or_init(Link::new)
 }
 
 impl Link {
-    fn ask(&self, asked: Asked) -> u64 {
-        let mut asked_as = 0;
-        self.asks.send_modify(|(serial, what)| {
-            *serial += 1;
-            *what = asked;
-            asked_as = *serial;
-        });
-        asked_as
+    fn new() -> Self {
+        let (asks, heard) = mpsc::unbounded_channel();
+        Self {
+            asks,
+            heard: tokio::sync::Mutex::new(heard),
+            appearance: watch::Sender::new(Appearance::default()),
+            context: Mutex::new(Context::default()),
+        }
+    }
+
+    fn ask(&self, asked: Asked) {
+        // The link holds the receiving end too, so this cannot fail.
+        let _ = self.asks.send(asked);
     }
 
     /// Opens quick capture: the hotkey was pressed, or New Note chosen, at
@@ -178,12 +178,11 @@ impl Link {
     /// quits, and before another store is taken into use, which waits for
     /// the queue next.
     pub async fn hand_over(&self, at_most: Duration) -> bool {
-        let serial = self.ask(Asked::HandOver);
-        let mut done = self.done.subscribe();
-        let handed = tokio::time::timeout(at_most, done.wait_for(|done| *done >= serial))
+        let (done, handed) = oneshot::channel();
+        self.ask(Asked::HandOver(done));
+        tokio::time::timeout(at_most, handed)
             .await
-            .is_ok_and(|seen| seen.is_ok());
-        handed
+            .is_ok_and(|answer| answer.is_ok())
     }
 
     /// The store in use and the session, as the main window has them.
@@ -397,16 +396,9 @@ impl Capture {
 
     // ---- Talking (6.18) ----
 
-    /// The keys are held: the box listens, unless something has been typed
-    /// in it already.
-    ///
-    /// The keys being held is a request to open too: an opening asked for
-    /// a moment before may not have been heard yet, since only the latest
-    /// thing asked is kept.
+    /// The keys are held: the box their press opened listens, unless
+    /// something has been typed in it already.
     fn talk(self) {
-        if self.view.peek().shown == Shown::Hidden {
-            self.open(Instant::now());
-        }
         if self.view.peek().shown != Shown::Open
             || !self.draft.peek().is_blank()
             || !crate::voice::offered()
@@ -602,28 +594,21 @@ fn QuickCapture() -> Element {
     });
 
     use_future(move || async move {
-        let mut asks = link().asks.subscribe();
-        loop {
-            let (serial, asked) = *asks.borrow_and_update();
-            if serial > 0 {
-                match asked {
-                    Asked::Open(at) => capture.open(at),
-                    Asked::HandOver => {
-                        capture.put_away(Why::Closed);
-                        // What was being said is handed to the queue, in
-                        // its own store, before the hand-over is done.
-                        if !crate::voice::keeping_settled(KEEPING_AT_MOST).await {
-                            tracing::warn!("A recording was not kept in time");
-                        }
+        let mut asks = link().heard.lock().await;
+        while let Some(asked) = asks.recv().await {
+            match asked {
+                Asked::Open(at) => capture.open(at),
+                Asked::HandOver(done) => {
+                    capture.put_away(Why::Closed);
+                    // What was being said is handed to the queue, in its
+                    // own store, before the hand-over is done.
+                    if !crate::voice::keeping_settled(KEEPING_AT_MOST).await {
+                        tracing::warn!("A recording was not kept in time");
                     }
-                    Asked::Talk => capture.talk(),
-                    Asked::LetGo => capture.let_go(),
-                    Asked::Nothing => {}
+                    let _ = done.send(());
                 }
-                link().done.send_replace(serial);
-            }
-            if asks.changed().await.is_err() {
-                break;
+                Asked::Talk => capture.talk(),
+                Asked::LetGo => capture.let_go(),
             }
         }
     });
@@ -781,5 +766,65 @@ fn puts_away(event: &KeyboardEvent) -> bool {
             keys::command(event) && !modifiers.intersects(Modifiers::ALT | Modifiers::SHIFT)
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Asks sent one after another are all heard, in order: a later one
+    /// takes the place of none before it, so letting go always follows
+    /// the talking it ends.
+    #[tokio::test]
+    async fn every_ask_is_heard_in_order() {
+        let link = Link::new();
+        link.open(Instant::now());
+        link.talk();
+        link.let_go();
+        let mut heard = link.heard.lock().await;
+        assert!(matches!(heard.recv().await, Some(Asked::Open(_))));
+        assert!(matches!(heard.recv().await, Some(Asked::Talk)));
+        assert!(matches!(heard.recv().await, Some(Asked::LetGo)));
+    }
+
+    /// A hand-over is done when the window answers it, and not when it has
+    /// handled an ask that came after it.
+    #[tokio::test]
+    async fn a_hand_over_is_done_only_when_it_is_answered() {
+        let link = Link::new();
+        let window = async {
+            let mut heard = link.heard.lock().await;
+            // Pressed again just after the app asked for the hand-over.
+            link.open(Instant::now());
+            let Some(Asked::HandOver(done)) = heard.recv().await else {
+                panic!("the hand-over is heard first");
+            };
+            assert!(matches!(heard.recv().await, Some(Asked::Open(_))));
+            done.send(()).expect("the hand-over is still waited for");
+        };
+        let (handed, ()) = tokio::join!(link.hand_over(Duration::from_secs(5)), window);
+        assert!(handed);
+    }
+
+    /// A hand-over the window never answers is not counted as done, however
+    /// many later asks it handles.
+    #[tokio::test]
+    async fn a_hand_over_not_answered_is_not_done() {
+        let link = Link::new();
+        let window = async {
+            let mut heard = link.heard.lock().await;
+            link.talk();
+            link.let_go();
+            let Some(Asked::HandOver(done)) = heard.recv().await else {
+                panic!("the hand-over is heard first");
+            };
+            assert!(matches!(heard.recv().await, Some(Asked::Talk)));
+            assert!(matches!(heard.recv().await, Some(Asked::LetGo)));
+            // The window went before it had handed over.
+            drop(done);
+        };
+        let (handed, ()) = tokio::join!(link.hand_over(Duration::from_secs(5)), window);
+        assert!(!handed);
     }
 }
