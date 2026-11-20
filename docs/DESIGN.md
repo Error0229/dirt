@@ -9,6 +9,9 @@ the principles, and the standing product decisions.
   [plans/2026-11-10-system-redesign-design.md](plans/2026-11-10-system-redesign-design.md)
 - **Build order:**
   [plans/2026-11-10-refactor-system-redesign-implementation-plan.md](plans/2026-11-10-refactor-system-redesign-implementation-plan.md)
+- **The interface of the desktop and Android apps:**
+  [ui/design.md](ui/design.md), built by
+  [plans/2026-11-16-interface-redesign-implementation-plan.md](plans/2026-11-16-interface-redesign-implementation-plan.md)
 - **Earlier design, roadmap and decision records:**
   [archive/DESIGN-2026-02.md](archive/DESIGN-2026-02.md)
 

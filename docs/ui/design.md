@@ -2223,3 +2223,23 @@ built.
 - Reduced motion: section 5.5.
 - Colour never carries meaning alone: the sync states differ in icon and
   word as well as colour.
+
+**Checked when the interface was finished** (implementation plan, step
+10b), item by item, against the code of both apps. What the code shows is
+written here; what only a person can judge is in `docs/MANUAL_CHECKLIST.md`.
+
+| Item | Found | Left to a person |
+|---|---|---|
+| Contrast | Held by `dirt_ui::contrast`'s tests: every pair of 4.1, both themes, every accent | How it looks on a real screen in sunlight: no item |
+| Icon buttons' names | Every `IconButton` takes its name from its tooltip and hides its icon (`aria-hidden`); every other button with an icon has words of its own | D35, A41 |
+| Focus always visible | `:focus-visible` gives a 2 px ring of `--focus` everywhere in the interface, text fields their border; the list shows it on its highlight, a card inside its edge | D93 |
+| A keyboard path on the desktop | The keys of 7.4, listed by Ctrl / | D32 |
+| Controls that hide | The desktop fades the gutter and the window's controls with opacity only, so they stay in the tab order, and `:focus-within` shows them; a row's box shows on `:focus-visible`. On Android the page's bar comes back at a touch, and fades only while typing | D93 |
+| Dialogs | Settings, the file preview and confirmations hold the focus while open, Esc closes them, and the focus goes back to what opened them (the script's modals) | D49, D58, D14 |
+| Toasts | A polite live region; errors an alert. **Undo** has Ctrl Z on the desktop. On Android a toast did not stay while TalkBack was on: it does now. The app asks Android whether a screen reader that explores by touch is on as it starts and each time the person comes back, and a toast shown then holds, with ✕, until it is dismissed (`dirt_ui::components::set_screen_reader`). On the emulator with TalkBack on, "Archived" with **Undo** was still there after 9 s, with ✕; with it off, it went by itself | A71 |
+| Every gesture has a button | The box in the note's bar for a swipe; the sync icon for a pull | No item |
+| Voice is never the only way | Every mic has a page or a field to type on beside it, and a tap listens hands-free | No item |
+| A screen reader told of listening | "Listening", "Kept", "Thrown away", "Nothing heard" in the listening view's status, and "Words arrived: …" for a thought said or added to a note in this run; the grains are a canvas hidden from it | D87, A62 |
+| Text size | 13 to 20 px (`TextSize`). Android's web view takes the system's font scale as its text zoom when it is made, and the activity is made again when the scale changes (`fontScale` is not among the changes it takes itself), so the app follows it: on the emulator, at a font scale of 1.3 the dock's words went from 16 px to 20.8 px | A72 |
+| Reduced motion | The script's, from the system's setting, and on Android from "Remove animations" each time the person comes back | D66, A39 |
+| Colour never alone | Each sync state has an icon of its own, and its words as the status's name | No item |

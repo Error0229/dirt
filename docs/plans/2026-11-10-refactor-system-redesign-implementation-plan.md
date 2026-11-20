@@ -1,7 +1,7 @@
 ---
 title: "refactor: Rebuild Dirt core and server per the 2026-11-10 redesign"
 type: refactor
-status: active
+status: done; what needs a person is in docs/MANUAL_CHECKLIST.md
 date: 2026-11-10
 design: docs/plans/2026-11-10-system-redesign-design.md
 ---

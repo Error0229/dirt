@@ -310,6 +310,13 @@ pub fn animations_off() -> bool {
     ask("animationsOff", &[])
 }
 
+/// Whether a screen reader that explores by touch (`TalkBack`) is on: the
+/// interface's toasts then stay until they are dismissed (design section
+/// 12). Asked as the app starts and each time the person comes back.
+pub fn screen_reader_on() -> bool {
+    ask("screenReaderOn", &[])
+}
+
 /// Puts `text` on Android's clipboard: **Copy text** on the error that
 /// says a note could not be saved. Returns `false` if it could not.
 pub fn copy_text(text: &str) -> bool {

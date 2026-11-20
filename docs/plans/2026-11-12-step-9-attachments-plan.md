@@ -2,7 +2,7 @@
 title: "Step 9: attachments"
 type: plan
 date: 2026-11-12
-status: planned; the design review is done, nothing is built
+status: built; what needs a person is in docs/MANUAL_CHECKLIST.md
 parent: docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md
 tracking: "#245"
 ---

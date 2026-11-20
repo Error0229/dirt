@@ -1,7 +1,7 @@
 ---
 title: "feat: Build the interface redesign of 2026-11-16"
 type: feat
-status: active
+status: done; what needs a person is in docs/MANUAL_CHECKLIST.md
 date: 2026-11-16
 design: docs/ui/design.md
 ---
@@ -2085,6 +2085,38 @@ Android's screens for choosing a place and choosing files end when the
 activity says nothing is under way any more, and an activity finished for
 good while one is up gives its asking an answer. What it settled is in
 design 6.4, 8.10 and 9.6.
+
+**After review** (#304): typing at the end while an added recording's
+words are made stays before them; the words go in once, and wait for a
+note deleted meanwhile; Android's waits hand over under one lock; a
+piece of a typed change is sized by its bytes, lone surrogates become
+U+FFFD, and a copy that is lost is asked for again a few times at most.
+
+**10b built.** The pass over design section 12 is written into the design,
+item by item: one item failed, a toast on Android with TalkBack on, which
+now stays until it is dismissed; what only a person can judge became items
+of the checklist (D93, A71, A72). `docs/MANUAL_CHECKLIST.md` is rewritten
+for the new interface: the same items under their numbers, grouped by
+device and flow, with a column marking what only a person can check. What
+was left of the old interface: two crates' unused `thiserror`, two unused
+workspace dependencies (`clap`, `pretty_assertions`), a field of the
+hotkey that nothing read, a string of the capture sheet's that nothing
+used, and `docs/mobile-ui-conventions.md`, archived (`cargo machete`, and
+a scan of every style sheet's classes against the code, found nothing
+else). `README.md` and `CLAUDE.md` describe what is built.
+
+## Done
+
+The interface redesign is built, on both apps. What is left:
+
+- The items of `docs/MANUAL_CHECKLIST.md` marked "Person": the real
+  microphone, real phones, TalkBack and Narrator, WebKit on macOS and
+  Linux, release builds.
+- Issue #303, an audit of how the apps use Dioxus 0.7, made after step 9:
+  three bugs (quick capture's hand-over, which a newer command can replace;
+  a held hotkey that can leave the microphone on; thumbnail work that
+  outlives its note) and some simplifications. Each is to be checked
+  before it is fixed.
 
 ## What runs alongside what
 

@@ -41,7 +41,6 @@ rfd = "0.15"
 # Copy and Paste for the app's own menu, and copying a note's text: a
 # web view may not read the clipboard without asking.
 arboard = { version = "3", default-features = false }
-thiserror.workspace = true
 single-instance = "0.3"
 # Opens the system browser on the sign-in page.
 webbrowser = "1"

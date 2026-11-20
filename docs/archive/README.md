@@ -17,6 +17,7 @@ For the current design, read
 | `feature-parity.md` | Which client had which feature | Written fresh in build step 7 |
 | `RELEASE_CHECKLIST.md` | Release gate that depended on a workflow that checked nothing | Not yet replaced |
 | `2026-02-04-feat-phase-0-and-1-desktop-mvp-plan.md` | The first implementation plan | Completed |
+| `mobile-ui-conventions.md` | How the Android app's old interface built its controls (archived 2026-11-20, after the interface redesign) | `dirt-ui` and the design in `../ui/design.md` |
 
 Build steps refer to
 [../plans/2026-11-10-refactor-system-redesign-implementation-plan.md](../plans/2026-11-10-refactor-system-redesign-implementation-plan.md).

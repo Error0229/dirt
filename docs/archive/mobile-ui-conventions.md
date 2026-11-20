@@ -1,5 +1,12 @@
 # Mobile UI Component Conventions
 
+> **Archived on 2026-11-20.** This described the Android app's interface
+> before the interface redesign of 2026-11-16, which replaced it screen by
+> screen and deleted `crates/dirt-mobile/src/ui.rs`, its wrappers and
+> `MOBILE_UI_STYLES`; no part of Dirt uses `dioxus_primitives`. What both
+> apps share of the interface is now `dirt-ui`, and its rules are in
+> `CLAUDE.md` and [../ui/design.md](../ui/design.md).
+
 This project uses the official Dioxus component ecosystem for mobile UI behavior.
 
 ## Rules

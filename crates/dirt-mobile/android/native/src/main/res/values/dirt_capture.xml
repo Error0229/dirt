@@ -24,7 +24,6 @@
     <string name="dirt_mic_locked">Unlock the phone to let Dirt use the microphone</string>
     <string name="dirt_mic_failed">The microphone could not be used</string>
     <string name="dirt_throw_away">Throw away</string>
-    <string name="dirt_keep_it">Keep it</string>
     <string name="dirt_listening">Listening</string>
     <string name="dirt_kept">Kept</string>
     <string name="dirt_thrown">Thrown away</string>

@@ -6,7 +6,20 @@ system. Everything else is covered by tests of `dirt-core` and by
 `dirt-sim`, which runs real client cores against the real server.
 
 Run it before a release, and after changing anything it names. Record the
-run at the end.
+run at the end. It is laid out to be walked through by hand, device by
+device, each in the order a person meets things: starting and writing,
+finding, putting away, syncing, the account, Settings, files, capture from
+outside, voice, screen readers. It was rewritten for the new interface in
+step 10b of the interface plan; the items keep the numbers they had, which
+other documents and earlier runs refer to, so the numbers are not in
+order. A15 became part of A2.
+
+**Who.** "Person" marks what no agent can check: what needs a real
+microphone, a real phone, a screen reader (Narrator, TalkBack), WebKit on
+macOS or Linux, a release build, or acts on the screen, the keyboard, the
+browser or the dialogs of a computer somebody is using. The others an
+agent can run too, with the stand-ins below, and the runs at the end say
+which were.
 
 ## Before starting
 
@@ -22,18 +35,12 @@ run at the end.
   build runs without its style sheets.
 - The Android app on an emulator, and on a physical device when one is to
   hand. Record which.
+- A second device in the same account, for the items that sync: the CLI
+  on its own data folder will do.
 
 Afterwards, delete the test account, the keychain entry and the app's data.
 
 ## Desktop app
-
-D2, D3, D4, D68 to D74 and D75 to D90 need a person at the keyboard: a global hotkey, the tray, the microphone and
-the system browser cannot be driven from a script without acting on whatever
-else is on the screen. So do D10, D18, D20, D21, D24, D25, D33 and D36, and
-D38's drop, D42 and D43, which move the window on the person's screen. A file dialog opens in the
-person's own folders with one of their files selected, and "Open" starts
-another program on their screen; neither is for a script on a desktop that
-somebody is using.
 
 A development build kept off the screen with `DIRT_WINDOW_AT` never takes
 the keyboard from the app in front, nor flashes in the taskbar: neither its
@@ -57,206 +64,318 @@ browser of your own), and `DIRT_EXPORT_TO=<folder>` exports into that
 folder without asking. A release build ignores both, so D4 and D10 are
 still for a person in a release build.
 
-| # | Do | Expect |
-|---|---|---|
-| D1 | Start the app with no account | The list, and "Not signed in" in Settings → Account |
-| D2 | Press Ctrl+Alt+N with another window in front, type two lines (Enter between them), press Esc | A small box comes into focus in the middle of the screen the pointer is on, the cursor in it, at once. It grows a line at a time to twelve lines, then scrolls. Esc: the box shrinks to a grain of the note's shade, which flies to the tray icon on a curve, where a ring pulses once, and the keys go straight back to the window that was in front: what is typed straight after Esc lands there. The note is in the main window's list, whole, and on another device after it syncs |
-| D3 | Close the window | The app stays in the tray. "Open Dirt" brings the window back, "New Note" opens quick capture over whatever is in front (the main window stays as it was), "Quit" ends it |
-| D4 | Write a note signed out. Settings → Account → Sign in, with "Bring the 1 note on this device into the account" left checked | The button turns to "Waiting for browser" with a spinner, and pressing it again stops waiting. The system browser opens on the sign-in page. After it, Account says "Signed in · Encrypted on your devices", the note is in the list and reaches the server. Unchecked, the note stays on this device, and Account offers "Bring them in" |
-| D5 | Write a note. Settings → Sync | "Everything on this device has reached the server", "Last synced just now", and Sync now beside it |
-| D6 | Change a note on another device, then click on the app's window | The change appears without pressing anything |
-| D7 | Settings → Sync with a note that cannot be synced (see "Making a note that cannot be synced") | The note by name, the reason, and what releases it. Pressing the name opens the note |
-| D8 | Sign in on another device; sync here (click the window, or Ctrl R) | A banner drops from the top: "<device> wants to join", **Review** and ✕. **Review** opens Settings at Devices with seven pictures and their names, and the same code as digits under them, the same as the other device's (the CLI prints both). Pressing **They match** twice sends one answer. **They match** on both: the pictures gather into a drawn tick, "<device> is in", and the device is in the list. ✕ dismisses the banner for that device |
-| D13 | Settings → Account → Sign out, with a recovery phrase made | "Signed out", and the account's folder under `stores` in the data folder is gone while the app is still open |
-| D14 | Settings → Account → Account actions → Start the account again; Delete the account | Each row turns pale red and asks, with Cancel focused; Esc is Cancel and gives the focus back to the row. Delete is offered only once DELETE is typed. Afterwards a toast says what happened and the server holds what the CLI's C8 and C9 expect |
-| D15 | Settings → Devices → ✕ on a device, then Account actions → Change the account key | "Remove <device>? It stops getting notes." in the row; Remove says "<device> removed". The change asks in its row, and its toast says the key was changed and that a new recovery phrase is needed; the Recovery phrase row says "Not made yet" |
-| D9 | Settings → Devices → Recovery phrase → Make one; Copy; Save as a file; I've written it down | The 24 words, numbered, in four columns. Save as a file opens the save dialog with `dirt-recovery-phrase.txt`; the file has the words numbered and on one line, and a paragraph on what they are. Copy puts them on the clipboard with a toast to clear it after; on Windows, with clipboard history and sync across devices turned on, Win V does not list them and another device signed in to the same Microsoft account does not get them. The words go when "I've written it down" is pressed or Settings closes, and are not shown again |
-| D10 | Settings → Export: JSON, Export; then Markdown, Export | A dialog for choosing a folder each time. In the folder chosen is a new one, `dirt-export-<time>`, holding `notes.json` or `notes.md` and, under `files`, a folder for each note with files. The app says how many notes and files were exported, and where. What was in the chosen folder is untouched |
-| D11 | Ctrl F, type a word; then press a tag on a row | The list narrows on every key, the word marked in each row. The tag becomes a token in Find. Esc in Find, again and again, empties the text, then takes back the tags, then goes back to the page. A note older than the 100 most recent is found |
-| D16 | With more than 100 notes, scroll to the end of the list | 100 more notes appear below as the end comes near, with no button, for as long as there are older ones. The older ones lie under their layers' names ("This week", "Earlier this month", "October"). An open note stays open |
-| D12 | Settings → Appearance: Light, Dark, Auto; each accent dot; the text-size slider; then Ctrl + and Ctrl − | The window follows at once, the new look spreading from where it was pressed. Each dot's tooltip is its name, Clay's "(default)". The text follows the slider's thumb while it is held. The text size goes from 13 to 20 and is kept. There is no choice of font |
-| D17 | Open a note and press its paperclip (or Ctrl Shift A); choose a picture and a text file together | Both tiles grow out of the paperclip under the note, the picture with its thumbnail. While they are sent each says "uploading" with a clay line running along its foot; after a moment neither says anything more than its size and kind |
-| D18 | Drag files from the file manager over the window, onto the list and onto Find, with a note open; let go. Then the same with no note open | While they are over the window a dashed clay edge says "Drop to attach to this note", or "Drop to make a note of it". They are attached, the tiles growing out of where they were dropped. The window does not leave the app to show a file. With no note open the files become a note of their own, named after the first in the list |
-| D19 | On another device attach a picture to the same note; sync here | The file appears with its thumbnail and says it is not on this device |
-| D20 | Press "Open in another app" on that file, then on a file in the preview | It is fetched, with a ring turning on its tile, and opens in the system's viewer under its own name. The tile no longer says it is not on this device. The copy is under `stores/<store>/opened/` in the data folder, and is gone after the app starts again |
-| D21 | Press "Save a copy" on it | The dialog proposes the file's name. The saved copy is the same as the original |
-| D22 | Press "Remove from the note"; sync the other device | The file is gone from the note on both |
-| D23 | Attach a file named `something.exe` (any file will do) | It is attached. Its tile offers "Save a copy" and "Remove from the note", and no "Open in another app" |
-| D24 | With a note whose file this device has never opened, export | The file is in the export, the same as the original: it was fetched. Its row in the note no longer says it is not on this device |
-| D25 | The same with the network off | The export is written without the file. The app names the file and the note, and says why |
-| D26 | On Linux or macOS: start the app, then `ls -ld` the data folder (`~/.local/share/dirt` or `~/Library/Application Support/dirt`) | `drwx------`: nobody but the owner. One that was `drwxr-xr-x` before the app started is closed too |
-| D27 | Start the app | The list, and beside it a blank page with the cursor in it. Type a thought: its row appears at the top of the list as you type. Esc (or Ctrl Enter, or ✓): the page is blank again, the cursor still in it, while the words gather into a grain that is tossed onto the note's row, which appears as it lands, with a little dust. Type and erase everything, then Esc: no note is left |
-| D28 | Press `#` in Find, pick a tag, pick another, switch "all of them" to "any of them"; then write on the blank page | The list of tags opens under Find and stays open, each tag with how many notes it would leave, Tab beside the first. The notes narrow with each pick. The new page gets the chosen tags at its end |
-| D29 | Hover a row and press its box; press **Undo**. Then Del on a row in the list; wait for the toast to go and press Ctrl Z. Then Shift Del | The note leaves the list with "Archived · Undo", and comes back. After the toast has gone, Ctrl Z still brings back the last one. Shift Del says "Note deleted · Undo". No question is asked first |
-| D30 | Press "3 archived" under the pile; open an archived note | The archived notes, newest first. The note's gutter has "Back to the list" and the bin. Esc goes back to the list. Find shows archived notes after the rest under "Archived" |
-| D31 | Press the sync status with the network off, with a note that cannot be synced, and signed out | "Offline · 1 waiting" with a hollow dot on the note; Settings opens at Sync; Settings opens at Account. Otherwise a press syncs, and Ctrl R does the same |
-| D32 | Ctrl /; then every key in the panel | The panel lists the keys of interface design 7.4, and each does what it says |
-| D33 | In a release build, right-click in the page's text with some of it selected, and in Find | The app's own menu: Copy, Paste, Select all, and in a note "Copy the note". Paste puts in what was copied in another program |
-| D34 | Make the window narrower than 720 px | The list takes the window. A note opens over it, and Esc goes back. The + at the foot of the list opens a blank page |
-| D35 | Narrator on: move through the list with the arrow keys; archive a note; sync | Each row is read as an option with its title; the box and the tags on the chosen row are reached with Tab. The toast is read. The sync status is read when it changes, and not after every note |
-| D36 | With an input method for Chinese or Japanese, compose in the page and press Esc and Enter while composing | The keys go to the input method; the note is not put away |
-| D37 | Type a thought, press Esc and type the next straight away, a dozen times, as fast as you can | Each thought is a note of its own, whole. No character of one is in the next, and none is lost |
-| D38 | In the list, press ↓ twice quickly; then drop a file on the blank page while typing its first character | The choice moves two rows. There is one note, with the file and the character |
-| D39 | Delete a note in the middle of the list and press **Undo**; on a second device, sync | It comes back where it was, on both, not at the top |
-| D40 | Settings → Appearance → Focus while writing: Slide, Rail and Zen in turn. Type a few words in a note, and stop | The first key fades the note's icons and the window's controls, and the list to half; nothing moves. After a pause (or at a new line) the list goes as the style says: Slide folds it away and the column glides to the middle; Rail folds it to a column of grains, the open note's a clay bar; Zen as Slide, with warmer paper and larger type |
-| D41 | While writing, move the mouse in the middle of the page; then towards the note's icons, the top right corner and the left edge | A move in the middle shows nothing. The icons come back near them, the window's controls near the corner. In Slide and Zen a handle grows at the left edge, and reaching it brings the list back. In Rail a grain's tooltip is its note's title and a click opens it, focus kept; the chevron brings the list back. Esc ends any of them with a blank page |
-| D42 | Windows: drag the window by the empty top of the page and of the list; double-click there; drag each edge and corner, the top one too | It moves, snaps when dragged to a screen's edge, maximises and restores, and resizes from every edge. Find, the `#`, the rows and the buttons do not move it |
-| D43 | Windows: the window's own −, ▢ and ✕ at the top right, maximised and not; Alt F4, Win ↑, Win ↓ | Minimise, maximise and restore (the icon changes), and close to the tray, from which "Open Dirt" brings it back. Under the pointer ✕ is red with white. On Windows 11 the corner of ✕ follows the window's rounded corner when it is not maximised. Hovering ▢ offers no Snap Layouts: that is accepted (design 7.6) |
-| D45 | Type a thought on the page and, at once, Ctrl Alt N; type another in quick capture and choose Quit in the tray at once; start the app again | Both thoughts are kept whole: the page's stays on the page's note, and quick capture opens over the window |
-| D46 | macOS: Ctrl Enter and Ctrl N in the page, then Cmd Enter and Cmd N. Windows: Win Esc in the page | On a Mac, Ctrl Enter and Ctrl N are not done: the page keeps the note and nothing is saved over it. Cmd Enter and Cmd N are done. Win Esc is done and leaves a blank page with no second note |
-| D47 | Make writing fail while the app runs (a full disk, or the store's file made read-only), and type a thought; type another in a second note; press **Copy text**; then mend it and type on the page | "2 notes could not be saved" stays above the toasts, with the reason in its tooltip; archiving a note meanwhile shows its own toast and leaves the error. **Copy text** gives both thoughts' newest words. The next key on the page, once mended, makes the note with all that is on it. Nothing is made again later |
-| D48 | Signed in, type a thought and sign out at once in Settings | The thought is in the account's notes when signing in again (it was kept before the account's store was removed) |
-| D49 | Settings: the gear, Ctrl , and Esc; Tab through it; scroll it; press each name on the rail | It grows out of the gear and shrinks back into it. Focus goes into it, Tab stays inside, Esc closes it, and focus goes back to the gear. The rail's highlight follows the scroll, and a name on it brings its section into sight |
-| D50 | On a new device: sign in, and keep Settings open | It opens at Devices: "Open Dirt on a device that's already in", and "No other device? Use your recovery phrase.". Once the other device answers, the seven pictures; **They don't** signs this device out with "Nothing was shared"; **They match** lets it in and the notes arrive |
-| D51 | On a new device: "No other device? Use your recovery phrase."; type the 24 words | "Use the phrase" waits for 24 words. The device is let in and the notes arrive. A wrong word is refused, with the reason in the error's tooltip |
-| D52 | On another device ask to start the account again (`dirt auth reset`, while it waits to be let in); sync here | Settings → Account: "Someone asked to start this account again", with when, and **Refuse**. Refused, the row goes |
-| D54 | Leave a sign-out's question ("… Sign out all the same?") or Delete's typed DELETE open and close Settings; open it again | Nothing is still asked; the row is as it was |
-| D55 | With the new device's Settings showing the pictures, sign it out and in again there (it begins again), then press **They match** on the device already in, on the old pictures | Nothing is sent. "The pictures changed …" over the new pictures; they match the new device's |
-| D56 | Archive a note with a long first line so that its toast is wide, and leave the pointer on the gear | The toast is above the list's foot; the gear and the sync status can be pressed |
-| D53 | Settings → Account → Sign out on the account's only device, with no recovery phrase | Not signed out: an error says so, with why in its tooltip |
-| D57 | Attach a picture, a PDF of several pages, a text file, a sound, an MP4 video and a `.docx`. Click the picture; → through the others; ← back; then Esc, Space, a click on the dark backdrop and ✕ in turn | The preview grows out of the picture's tile on a near-black backdrop, and shrinks back into whichever tile it shows when it closes. The PDF's pages one under another, its text crisp; the text in mono, scrolling with the drawn scrollbar; the sound's card with its bars, which fill as it plays and seek where pressed; the video with its own controls. The `.docx` is not among them: a click on its tile opens it in another app. Under the pointer the name shows at the top left and ‹ › at the sides; a dot for each file at the foot. Double-click zooms the picture to twice its size and back |
-| D58 | Tab to a tile and press Space; Tab around the preview; Esc | The preview opens; Tab stays inside it; Esc closes it and the tile has the keyboard again |
-| D59 | Copy a picture in another program (a screenshot, Win Shift S) and paste it into an open note, then into the blank page; copy cells of a spreadsheet and paste them | The picture is attached as "Pasted picture.png"; on the blank page it makes a note of it. The cells paste as text, and nothing is attached |
-| D60 | On a file this device does not hold (D19), click its tile; then the same with the network off | A clay ring turns on the tile, and the preview opens when the file has come. Offline, an error says "… could not be fetched", why in its tooltip, and stays until dismissed |
-| D61 | Linux, with the WebKitGTK the distribution ships: preview a PDF and a picture | The PDF's pages are drawn (the bundled PDF.js), the same as on Windows |
-| D62 | Press Remove on a tile, and in the preview | "File removed". In the preview the next file takes its place, or it closes with none left |
-| D63 | Windows: Open in another app on a `.xlsx`, and Save a copy of it; open the saved copy in Excel. Then right-click the video in the preview, and drag the picture out of it to the desktop | Excel opens both in Protected View; the file's Properties say it came from another computer. The video has no Download in its controls and no menu; the picture does not leave the window |
-| D64 | Click the tile of a `.docx`; then of a `.doc` | The `.docx` shows its icons, and opens only from Open. The `.doc` has no Open at all, only Save a copy and Remove |
-| D65 | With a few hundred notes, scroll to the end of the list; point at the heap. Then, with only a few notes so that the heap is in sight, write a thought and press Esc | Under the last note, a heap of sand with "… thoughts since …" and "… archived" under it; pointing at it says how many thoughts. The new thought's grain lands on its row, and a grain drops onto the top of the heap |
-| D66 | Archive a note from its row's box; then with reduced motion on (Windows: Settings → Accessibility → Visual effects → Animation effects off), write a thought and press Esc, and archive another | A grain falls from the row's left edge as it folds shut. With reduced motion the new row only fades in, and the archived one fades, with no grain |
-| D67 | In Rail, write in a note so that the list folds to the rail | Each dot is its note's grain, in its own shade of sand and one of a few slightly irregular rounds; the open note's is a clay bar |
-| D68 | Linux and macOS: Ctrl Alt N (Cmd Option N on a Mac), type, Esc; and Cmd Enter on a Mac | Quick capture opens over the app in front and takes the keys. Put away, it goes at once with no flight (design 7.10), and the keys go back to the app that was in front. The note is in the list |
-| D69 | Windows: quick capture with the tray icon in view on the taskbar, and again with it among the hidden icons (the ^ on the taskbar) | The grain lands on the icon, or on the ^ when the icon is hidden, and the ring pulses there. Nothing is drawn anywhere else on the screen afterwards |
-| D70 | Windows, two screens of different scales (100% and 150%), the taskbar on one: quick capture with the pointer on each | It opens in the middle of the screen the pointer is on, sharp. On the taskbar's screen the grain flies to the tray; on the other it falls and fades where the box was |
-| D71 | Open quick capture, type, and click another window; open it again with nothing typed and click another window; then Alt F4 in it | The click puts it away, saved, and the click itself reaches the window clicked. With nothing typed it fades and nothing is made. Alt F4 saves and hides it |
-| D72 | Open quick capture and press Ctrl Alt N again; press Esc and, before the grain lands, Ctrl Alt N | The first keeps the box and its text. The second stops the flight and opens a blank box in the middle |
-| D73 | Release build, Windows: close the window to the tray, make writing fail (D47), write a thought in quick capture and press Esc, then type in another app for a minute | Nothing typed reaches Dirt. When the write fails, the main window comes back behind the app being typed in, with "A note could not be saved", and its taskbar button flashes |
-| D74 | With quick capture open and a thought in it, sign out in Settings (or have another device remove this one) | Quick capture puts itself away, its thought handed to the account's store first. Once signed out, the account's folder under `stores` goes: nothing holds it open |
-| D44 | Linux and macOS: start the app | It keeps the system's title bar, until the window without one has been tried there (design 7.6). Everything else is as on Windows |
-| D75 | Hold the mic in the blank page's gutter, say a short thought into the real microphone, let go | The mic grows while held. The page shows a row of grains that move with the voice, and a timer from the first second; nothing else, no words. Letting go: the grains gather into one, which settles onto a new row "Voice · 0:04" with a mic on it; within a few seconds its words take the name's place, fading in. The system's indicator shows the microphone in use only while it listens |
-| D76 | Tap the mic, speak, press Enter. Tap it, speak, press Esc. Hold it, slide up and let go, speak, press ✓. Hold it and slide left | A tap listens hands-free: Enter or ✓ keeps it; Esc or ✕ throws it away, the grains blowing off to the left, and nothing is made. Slid up, it listens on after the finger is lifted. Slid left, it is thrown away |
-| D77 | Hold the mic in a quiet room and let go without a word | The row of grains shakes once and goes. No note is made |
-| D78 | With another app in front, hold Ctrl Alt N, say a thought, let go. Then tap Ctrl Alt N, type, Esc | Held, quick capture opens and then listens (the grains and the timer in the box); letting go keeps it, and the box shrinks to its grain, which flies to the tray, and the keys go back to the app in front. The note gets its words. A tap opens it for typing only: the microphone is not opened (no indicator) |
-| D79 | Windows: Settings → Privacy & security → Microphone, "Let desktop apps access your microphone" off; press the mic. Turn it on again and press it | Nothing is heard and nothing made. The mic shows a slash; its tooltip says "Allow the microphone for desktop apps in Windows Settings, Privacy & security, Microphone". Allowed, the next press listens and the slash goes |
-| D80 | With no microphone (unplugged, or disabled in Sound settings), press the mic | The slash, and "No microphone was found" in its tooltip |
-| D81 | Say a thought and choose Quit in the tray at once; start the app again | The note is there, "Voice · 0:0x", and gets its words soon after the app starts |
-| D82 | Settings → Voice: The recording, Text only; say a thought. Then Keep, and say another | With Text only the words come and the recording is taken off: no file under the note, no mic on its row. With Keep both stay, and the preview plays the recording |
-| D83 | Say a thought and open its note at once, before its words come; type a word | The page shows the recording's tile and can be typed on. The words come at the start, a blank line, then what was typed; the caret stays where it was in the typed words |
-| D84 | Tap the mic and talk, or leave it listening, for more than ten minutes | At 10:00 it stops and keeps what was said; its words are made, piece by piece, none lost between pieces |
-| D85 | A release build made with `dx bundle`, installed on a computer with no network; say a thought | It is kept and gets its words: the model is inside the app, and nothing is fetched |
-| D86 | macOS 15.4 or later, macOS before 15.4, and Linux: say a thought; preview its recording | Heard, kept and made into words. The recording plays; before macOS 15.4 it plays decoded (the log says "recordings are played decoded"). macOS asks for the microphone the first time, in its own dialog |
-| D87 | Narrator on: press the mic, let go; wait for the words | "Listening" is read as it starts and "Kept" as it ends; "Words arrived: …" when the words come |
-| D89 | Tap the mic and talk hands-free; close the window to the tray while it listens. Open Dirt again | Listening ended as the window closed: the note is there with what was said before closing, and the system's indicator went with it |
-| D90 | Signed in, hold Ctrl Alt N and talk; sign out in Settings (or have another device remove this one) before letting go | What was said is a note in the account's store, which reaches the account's other devices, and not in the signed-out store |
-| D88 | A second device signed into the account: say a thought on this one, sync both | The other device shows "Voice · 0:04" with the mic until this one has made the words, then the words. It never makes them itself |
-| D91 | Paste about a megabyte of text into the page (from a long web page or a file); type a word at its end; press Esc and type the next thought; open the long note again | The long note is made with all of it and the word, and the next thought is a note of its own. It opens again whole. Past about a million characters the sync status says "1 note can't sync" and Settings → Sync names it as too large to sync |
-| D92 | macOS and Linux (their web view is WebKit): paste about a megabyte of text full of quotes, backslashes and code into the page; type at its end; press Esc; open it again | The note is whole, with the word typed at its end. A piece of a change that WebKit could not carry would show as the log's "The app's copy of a note's text and the page's differ" |
+An agent's run on a computer somebody is using sets every stand-in from
+the start, `DIRT_OPENED_TO_FILE=<file>` too (a file's "Open in another app"
+writes its path there instead of starting another program on the person's
+screen), gives the web view a data folder and a debugging port of its own
+(`WEBVIEW2_USER_DATA_FOLDER`, and `--remote-debugging-port` in
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`), and stops the app by its process
+ID. A web view that shares a data folder with a Dirt already running joins
+that one's browser process and ignores its own arguments.
+
+### Starting, and writing
+
+The page is always there; the first character makes the note (design 6.1, 7.9).
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| D1 |  | Start the app with no account | The list, and "Not signed in" in Settings → Account |
+| D27 |  | Start the app | The list, and beside it a blank page with the cursor in it. Type a thought: its row appears at the top of the list as you type. Esc (or Ctrl Enter, or ✓): the page is blank again, the cursor still in it, while the words gather into a grain that is tossed onto the note's row, which appears as it lands, with a little dust. Type and erase everything, then Esc: no note is left |
+| D37 |  | Type a thought, press Esc and type the next straight away, a dozen times, as fast as you can | Each thought is a note of its own, whole. No character of one is in the next, and none is lost |
+| D38 | Person | In the list, press ↓ twice quickly; then drop a file on the blank page while typing its first character | The choice moves two rows. There is one note, with the file and the character |
+| D45 |  | Type a thought on the page and, at once, Ctrl Alt N; type another in quick capture and choose Quit in the tray at once; start the app again | Both thoughts are kept whole: the page's stays on the page's note, and quick capture opens over the window |
+| D46 | Person | macOS: Ctrl Enter and Ctrl N in the page, then Cmd Enter and Cmd N. Windows: Win Esc in the page | On a Mac, Ctrl Enter and Ctrl N are not done: the page keeps the note and nothing is saved over it. Cmd Enter and Cmd N are done. Win Esc is done and leaves a blank page with no second note |
+| D36 | Person | With an input method for Chinese or Japanese, compose in the page and press Esc and Enter while composing | The keys go to the input method; the note is not put away |
+| D47 |  | Make writing fail while the app runs (a full disk, or the store's file made read-only), and type a thought; type another in a second note; press **Copy text**; then mend it and type on the page | "2 notes could not be saved" stays above the toasts, with the reason in its tooltip; archiving a note meanwhile shows its own toast and leaves the error. **Copy text** gives both thoughts' newest words. The next key on the page, once mended, makes the note with all that is on it. Nothing is made again later |
+| D48 |  | Signed in, type a thought and sign out at once in Settings | The thought is in the account's notes when signing in again (it was kept before the account's store was removed) |
+| D91 | Person | Paste about a megabyte of text into the page (from a long web page or a file); type a word at its end; press Esc and type the next thought; open the long note again | The long note is made with all of it and the word, and the next thought is a note of its own. It opens again whole. Past about a million characters the sync status says "1 note can't sync" and Settings → Sync names it as too large to sync |
+| D92 | Person | macOS and Linux (their web view is WebKit): paste about a megabyte of text full of quotes, backslashes and code into the page; type at its end; press Esc; open it again | The note is whole, with the word typed at its end. A piece of a change that WebKit could not carry would show as the log's "The app's copy of a note's text and the page's differ" |
+| D93 |  | Tab and Shift Tab through the main window: the list, Find, the page and its gutter, the window's controls, the sync status; then Settings and the file preview | Wherever the keyboard is, a 2 px ring of the focus colour shows it, but in text fields, which show it with their border; a control that hides while writing (the gutter, the window's controls, a row's box) shows while it has the focus |
+
+### Finding, tags and the list
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| D11 |  | Ctrl F, type a word; then press a tag on a row | The list narrows on every key, the word marked in each row. The tag becomes a token in Find. Esc in Find, again and again, empties the text, then takes back the tags, then goes back to the page. A note older than the 100 most recent is found |
+| D28 |  | Press `#` in Find, pick a tag, pick another, switch "all of them" to "any of them"; then write on the blank page | The list of tags opens under Find and stays open, each tag with how many notes it would leave, Tab beside the first. The notes narrow with each pick. The new page gets the chosen tags at its end |
+| D16 |  | With more than 100 notes, scroll to the end of the list | 100 more notes appear below as the end comes near, with no button, for as long as there are older ones. The older ones lie under their layers' names ("This week", "Earlier this month", "October"). An open note stays open |
+| D65 |  | With a few hundred notes, scroll to the end of the list; point at the heap. Then, with only a few notes so that the heap is in sight, write a thought and press Esc | Under the last note, a heap of sand with "… thoughts since …" and "… archived" under it; pointing at it says how many thoughts. The new thought's grain lands on its row, and a grain drops onto the top of the heap |
+| D66 |  | Archive a note from its row's box; then with reduced motion on (Windows: Settings → Accessibility → Visual effects → Animation effects off), write a thought and press Esc, and archive another | A grain falls from the row's left edge as it folds shut. With reduced motion the new row only fades in, and the archived one fades, with no grain |
+| D67 |  | In Rail, write in a note so that the list folds to the rail | Each dot is its note's grain, in its own shade of sand and one of a few slightly irregular rounds; the open note's is a clay bar |
+| D34 |  | Make the window narrower than 720 px | The list takes the window. A note opens over it, and Esc goes back. The + at the foot of the list opens a blank page |
+
+### Archive, delete and Undo
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| D29 |  | Hover a row and press its box; press **Undo**. Then Del on a row in the list; wait for the toast to go and press Ctrl Z. Then Shift Del | The note leaves the list with "Archived · Undo", and comes back. After the toast has gone, Ctrl Z still brings back the last one. Shift Del says "Note deleted · Undo". No question is asked first |
+| D30 |  | Press "3 archived" under the pile; open an archived note | The archived notes, newest first. The note's gutter has "Back to the list" and the bin. Esc goes back to the list. Find shows archived notes after the rest under "Archived" |
+| D39 |  | Delete a note in the middle of the list and press **Undo**; on a second device, sync | It comes back where it was, on both, not at the top |
+| D56 |  | Archive a note with a long first line so that its toast is wide, and leave the pointer on the gear | The toast is above the list's foot; the gear and the sync status can be pressed |
+
+### Focus while writing, the keys and the window
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| D40 |  | Settings → Appearance → Focus while writing: Slide, Rail and Zen in turn. Type a few words in a note, and stop | The first key fades the note's icons and the window's controls, and the list to half; nothing moves. After a pause (or at a new line) the list goes as the style says: Slide folds it away and the column glides to the middle; Rail folds it to a column of grains, the open note's a clay bar; Zen as Slide, with warmer paper and larger type |
+| D41 |  | While writing, move the mouse in the middle of the page; then towards the note's icons, the top right corner and the left edge | A move in the middle shows nothing. The icons come back near them, the window's controls near the corner. In Slide and Zen a handle grows at the left edge, and reaching it brings the list back. In Rail a grain's tooltip is its note's title and a click opens it, focus kept; the chevron brings the list back. Esc ends any of them with a blank page |
+| D32 |  | Ctrl /; then every key in the panel | The panel lists the keys of interface design 7.4, and each does what it says |
+| D33 | Person | In a release build, right-click in the page's text with some of it selected, and in Find | The app's own menu: Copy, Paste, Select all, and in a note "Copy the note". Paste puts in what was copied in another program |
+| D42 | Person | Windows: drag the window by the empty top of the page and of the list; double-click there; drag each edge and corner, the top one too | It moves, snaps when dragged to a screen's edge, maximises and restores, and resizes from every edge. Find, the `#`, the rows and the buttons do not move it |
+| D43 | Person | Windows: the window's own −, ▢ and ✕ at the top right, maximised and not; Alt F4, Win ↑, Win ↓ | Minimise, maximise and restore (the icon changes), and close to the tray, from which "Open Dirt" brings it back. Under the pointer ✕ is red with white. On Windows 11 the corner of ✕ follows the window's rounded corner when it is not maximised. Hovering ▢ offers no Snap Layouts: that is accepted (design 7.6) |
+| D44 | Person | Linux and macOS: start the app | It keeps the system's title bar, until the window without one has been tried there (design 7.6). Everything else is as on Windows |
+
+### Quick capture and the tray
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| D2 | Person | Press Ctrl+Alt+N with another window in front, type two lines (Enter between them), press Esc | A small box comes into focus in the middle of the screen the pointer is on, the cursor in it, at once. It grows a line at a time to twelve lines, then scrolls. Esc: the box shrinks to a grain of the note's shade, which flies to the tray icon on a curve, where a ring pulses once, and the keys go straight back to the window that was in front: what is typed straight after Esc lands there. The note is in the main window's list, whole, and on another device after it syncs |
+| D3 | Person | Close the window | The app stays in the tray. "Open Dirt" brings the window back, "New Note" opens quick capture over whatever is in front (the main window stays as it was), "Quit" ends it |
+| D68 | Person | Linux and macOS: Ctrl Alt N (Cmd Option N on a Mac), type, Esc; and Cmd Enter on a Mac | Quick capture opens over the app in front and takes the keys. Put away, it goes at once with no flight (design 7.10), and the keys go back to the app that was in front. The note is in the list |
+| D69 | Person | Windows: quick capture with the tray icon in view on the taskbar, and again with it among the hidden icons (the ^ on the taskbar) | The grain lands on the icon, or on the ^ when the icon is hidden, and the ring pulses there. Nothing is drawn anywhere else on the screen afterwards |
+| D70 | Person | Windows, two screens of different scales (100% and 150%), the taskbar on one: quick capture with the pointer on each | It opens in the middle of the screen the pointer is on, sharp. On the taskbar's screen the grain flies to the tray; on the other it falls and fades where the box was |
+| D71 | Person | Open quick capture, type, and click another window; open it again with nothing typed and click another window; then Alt F4 in it | The click puts it away, saved, and the click itself reaches the window clicked. With nothing typed it fades and nothing is made. Alt F4 saves and hides it |
+| D72 | Person | Open quick capture and press Ctrl Alt N again; press Esc and, before the grain lands, Ctrl Alt N | The first keeps the box and its text. The second stops the flight and opens a blank box in the middle |
+| D73 | Person | Release build, Windows: close the window to the tray, make writing fail (D47), write a thought in quick capture and press Esc, then type in another app for a minute | Nothing typed reaches Dirt. When the write fails, the main window comes back behind the app being typed in, with "A note could not be saved", and its taskbar button flashes |
+| D74 | Person | With quick capture open and a thought in it, sign out in Settings (or have another device remove this one) | Quick capture puts itself away, its thought handed to the account's store first. Once signed out, the account's folder under `stores` goes: nothing holds it open |
+
+### Voice
+
+Run with the real microphone and the real keys; an agent can run the same with `DIRT_VOICE_FROM_WAV` and `hotkey down` and `hotkey up`, which is not the same thing.
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| D75 | Person | Hold the mic in the blank page's gutter, say a short thought into the real microphone, let go | The mic grows while held. The page shows a row of grains that move with the voice, and a timer from the first second; nothing else, no words. Letting go: the grains gather into one, which settles onto a new row "Voice · 0:04" with a mic on it; within a few seconds its words take the name's place, fading in. The system's indicator shows the microphone in use only while it listens |
+| D76 | Person | Tap the mic, speak, press Enter. Tap it, speak, press Esc. Hold it, slide up and let go, speak, press ✓. Hold it and slide left | A tap listens hands-free: Enter or ✓ keeps it; Esc or ✕ throws it away, the grains blowing off to the left, and nothing is made. Slid up, it listens on after the finger is lifted. Slid left, it is thrown away |
+| D77 | Person | Hold the mic in a quiet room and let go without a word | The row of grains shakes once and goes. No note is made |
+| D78 | Person | With another app in front, hold Ctrl Alt N, say a thought, let go. Then tap Ctrl Alt N, type, Esc | Held, quick capture opens and then listens (the grains and the timer in the box); letting go keeps it, and the box shrinks to its grain, which flies to the tray, and the keys go back to the app in front. The note gets its words. A tap opens it for typing only: the microphone is not opened (no indicator) |
+| D79 | Person | Windows: Settings → Privacy & security → Microphone, "Let desktop apps access your microphone" off; press the mic. Turn it on again and press it | Nothing is heard and nothing made. The mic shows a slash; its tooltip says "Allow the microphone for desktop apps in Windows Settings, Privacy & security, Microphone". Allowed, the next press listens and the slash goes |
+| D80 | Person | With no microphone (unplugged, or disabled in Sound settings), press the mic | The slash, and "No microphone was found" in its tooltip |
+| D81 | Person | Say a thought and choose Quit in the tray at once; start the app again | The note is there, "Voice · 0:0x", and gets its words soon after the app starts |
+| D82 |  | Settings → Voice: The recording, Text only; say a thought. Then Keep, and say another | With Text only the words come and the recording is taken off: no file under the note, no mic on its row. With Keep both stay, and the preview plays the recording |
+| D83 |  | Say a thought and open its note at once, before its words come; type a word | The page shows the recording's tile and can be typed on. The words come at the start, a blank line, then what was typed; the caret stays where it was in the typed words |
+| D84 | Person | Tap the mic and talk, or leave it listening, for more than ten minutes | At 10:00 it stops and keeps what was said; its words are made, piece by piece, none lost between pieces |
+| D89 | Person | Tap the mic and talk hands-free; close the window to the tray while it listens. Open Dirt again | Listening ended as the window closed: the note is there with what was said before closing, and the system's indicator went with it |
+| D90 | Person | Signed in, hold Ctrl Alt N and talk; sign out in Settings (or have another device remove this one) before letting go | What was said is a note in the account's store, which reaches the account's other devices, and not in the signed-out store |
+| D88 | Person | A second device signed into the account: say a thought on this one, sync both | The other device shows "Voice · 0:04" with the mic until this one has made the words, then the words. It never makes them itself |
+| D87 | Person | Narrator on: press the mic, let go; wait for the words | "Listening" is read as it starts and "Kept" as it ends; "Words arrived: …" when the words come |
+| D85 | Person | A release build made with `dx bundle`, installed on a computer with no network; say a thought | It is kept and gets its words: the model is inside the app, and nothing is fetched |
+| D86 | Person | macOS 15.4 or later, macOS before 15.4, and Linux: say a thought; preview its recording | Heard, kept and made into words. The recording plays; before macOS 15.4 it plays decoded (the log says "recordings are played decoded"). macOS asks for the microphone the first time, in its own dialog |
+
+### Files and the preview
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| D17 |  | Open a note and press its paperclip (or Ctrl Shift A); choose a picture and a text file together | Both tiles grow out of the paperclip under the note, the picture with its thumbnail. While they are sent each says "uploading" with a clay line running along its foot; after a moment neither says anything more than its size and kind |
+| D18 | Person | Drag files from the file manager over the window, onto the list and onto Find, with a note open; let go. Then the same with no note open | While they are over the window a dashed clay edge says "Drop to attach to this note", or "Drop to make a note of it". They are attached, the tiles growing out of where they were dropped. The window does not leave the app to show a file. With no note open the files become a note of their own, named after the first in the list |
+| D19 |  | On another device attach a picture to the same note; sync here | The file appears with its thumbnail and says it is not on this device |
+| D20 | Person | Press "Open in another app" on that file, then on a file in the preview | It is fetched, with a ring turning on its tile, and opens in the system's viewer under its own name. The tile no longer says it is not on this device. The copy is under `stores/<store>/opened/` in the data folder, and is gone after the app starts again |
+| D21 | Person | Press "Save a copy" on it | The dialog proposes the file's name. The saved copy is the same as the original |
+| D22 |  | Press "Remove from the note"; sync the other device | The file is gone from the note on both |
+| D23 |  | Attach a file named `something.exe` (any file will do) | It is attached. Its tile offers "Save a copy" and "Remove from the note", and no "Open in another app" |
+| D57 |  | Attach a picture, a PDF of several pages, a text file, a sound, an MP4 video and a `.docx`. Click the picture; → through the others; ← back; then Esc, Space, a click on the dark backdrop and ✕ in turn | The preview grows out of the picture's tile on a near-black backdrop, and shrinks back into whichever tile it shows when it closes. The PDF's pages one under another, its text crisp; the text in mono, scrolling with the drawn scrollbar; the sound's card with its bars, which fill as it plays and seek where pressed; the video with its own controls. The `.docx` is not among them: a click on its tile opens it in another app. Under the pointer the name shows at the top left and ‹ › at the sides; a dot for each file at the foot. Double-click zooms the picture to twice its size and back |
+| D58 |  | Tab to a tile and press Space; Tab around the preview; Esc | The preview opens; Tab stays inside it; Esc closes it and the tile has the keyboard again |
+| D59 | Person | Copy a picture in another program (a screenshot, Win Shift S) and paste it into an open note, then into the blank page; copy cells of a spreadsheet and paste them | The picture is attached as "Pasted picture.png"; on the blank page it makes a note of it. The cells paste as text, and nothing is attached |
+| D60 |  | On a file this device does not hold (D19), click its tile; then the same with the network off | A clay ring turns on the tile, and the preview opens when the file has come. Offline, an error says "… could not be fetched", why in its tooltip, and stays until dismissed |
+| D62 |  | Press Remove on a tile, and in the preview | "File removed". In the preview the next file takes its place, or it closes with none left |
+| D63 | Person | Windows: Open in another app on a `.xlsx`, and Save a copy of it; open the saved copy in Excel. Then right-click the video in the preview, and drag the picture out of it to the desktop | Excel opens both in Protected View; the file's Properties say it came from another computer. The video has no Download in its controls and no menu; the picture does not leave the window |
+| D64 |  | Click the tile of a `.docx`; then of a `.doc` | The `.docx` shows its icons, and opens only from Open. The `.doc` has no Open at all, only Save a copy and Remove |
+| D61 | Person | Linux, with the WebKitGTK the distribution ships: preview a PDF and a picture | The PDF's pages are drawn (the bundled PDF.js), the same as on Windows |
+
+### Account, devices and sync
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| D4 | Person | Write a note signed out. Settings → Account → Sign in, with "Bring the 1 note on this device into the account" left checked | The button turns to "Waiting for browser" with a spinner, and pressing it again stops waiting. The system browser opens on the sign-in page. After it, Account says "Signed in · Encrypted on your devices", the note is in the list and reaches the server. Unchecked, the note stays on this device, and Account offers "Bring them in" |
+| D5 |  | Write a note. Settings → Sync | "Everything on this device has reached the server", "Last synced just now", and Sync now beside it |
+| D6 |  | Change a note on another device, then click on the app's window | The change appears without pressing anything |
+| D7 |  | Settings → Sync with a note that cannot be synced (see "Making a note that cannot be synced") | The note by name, the reason, and what releases it. Pressing the name opens the note |
+| D31 |  | Press the sync status with the network off, with a note that cannot be synced, and signed out | "Offline · 1 waiting" with a hollow dot on the note; Settings opens at Sync; Settings opens at Account. Otherwise a press syncs, and Ctrl R does the same |
+| D8 |  | Sign in on another device; sync here (click the window, or Ctrl R) | A banner drops from the top: "<device> wants to join", **Review** and ✕. **Review** opens Settings at Devices with seven pictures and their names, and the same code as digits under them, the same as the other device's (the CLI prints both). Pressing **They match** twice sends one answer. **They match** on both: the pictures gather into a drawn tick, "<device> is in", and the device is in the list. ✕ dismisses the banner for that device |
+| D50 |  | On a new device: sign in, and keep Settings open | It opens at Devices: "Open Dirt on a device that's already in", and "No other device? Use your recovery phrase.". Once the other device answers, the seven pictures; **They don't** signs this device out with "Nothing was shared"; **They match** lets it in and the notes arrive |
+| D51 |  | On a new device: "No other device? Use your recovery phrase."; type the 24 words | "Use the phrase" waits for 24 words. The device is let in and the notes arrive. A wrong word is refused, with the reason in the error's tooltip |
+| D55 |  | With the new device's Settings showing the pictures, sign it out and in again there (it begins again), then press **They match** on the device already in, on the old pictures | Nothing is sent. "The pictures changed …" over the new pictures; they match the new device's |
+| D9 |  | Settings → Devices → Recovery phrase → Make one; Copy; Save as a file; I've written it down | The 24 words, numbered, in four columns. Save as a file opens the save dialog with `dirt-recovery-phrase.txt`; the file has the words numbered and on one line, and a paragraph on what they are. Copy puts them on the clipboard with a toast to clear it after; on Windows, with clipboard history and sync across devices turned on, Win V does not list them and another device signed in to the same Microsoft account does not get them. The words go when "I've written it down" is pressed or Settings closes, and are not shown again |
+| D52 |  | On another device ask to start the account again (`dirt auth reset`, while it waits to be let in); sync here | Settings → Account: "Someone asked to start this account again", with when, and **Refuse**. Refused, the row goes |
+| D13 |  | Settings → Account → Sign out, with a recovery phrase made | "Signed out", and the account's folder under `stores` in the data folder is gone while the app is still open |
+| D53 |  | Settings → Account → Sign out on the account's only device, with no recovery phrase | Not signed out: an error says so, with why in its tooltip |
+| D54 |  | Leave a sign-out's question ("… Sign out all the same?") or Delete's typed DELETE open and close Settings; open it again | Nothing is still asked; the row is as it was |
+| D14 |  | Settings → Account → Account actions → Start the account again; Delete the account | Each row turns pale red and asks, with Cancel focused; Esc is Cancel and gives the focus back to the row. Delete is offered only once DELETE is typed. Afterwards a toast says what happened and the server holds what the CLI's C8 and C9 expect |
+| D15 |  | Settings → Devices → ✕ on a device, then Account actions → Change the account key | "Remove <device>? It stops getting notes." in the row; Remove says "<device> removed". The change asks in its row, and its toast says the key was changed and that a new recovery phrase is needed; the Recovery phrase row says "Not made yet" |
+
+### Settings and export
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| D49 |  | Settings: the gear, Ctrl , and Esc; Tab through it; scroll it; press each name on the rail | It grows out of the gear and shrinks back into it. Focus goes into it, Tab stays inside, Esc closes it, and focus goes back to the gear. The rail's highlight follows the scroll, and a name on it brings its section into sight |
+| D12 |  | Settings → Appearance: Light, Dark, Auto; each accent dot; the text-size slider; then Ctrl + and Ctrl − | The window follows at once, the new look spreading from where it was pressed. Each dot's tooltip is its name, Clay's "(default)". The text follows the slider's thumb while it is held. The text size goes from 13 to 20 and is kept. There is no choice of font |
+| D10 | Person | Settings → Export: JSON, Export; then Markdown, Export | A dialog for choosing a folder each time. In the folder chosen is a new one, `dirt-export-<time>`, holding `notes.json` or `notes.md` and, under `files`, a folder for each note with files. The app says how many notes and files were exported, and where. What was in the chosen folder is untouched |
+| D24 | Person | With a note whose file this device has never opened, export | The file is in the export, the same as the original: it was fetched. Its row in the note no longer says it is not on this device |
+| D25 | Person | The same with the network off | The export is written without the file. The app names the file and the note, and says why |
+| D26 | Person | On Linux or macOS: start the app, then `ls -ld` the data folder (`~/.local/share/dirt` or `~/Library/Application Support/dirt`) | `drwx------`: nobody but the owner. One that was `drwxr-xr-x` before the app started is closed too |
+
+### Screen readers
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| D35 | Person | Narrator on: move through the list with the arrow keys; archive a note; sync | Each row is read as an option with its title; the box and the tags on the chosen row are reached with Tab. The toast is read. The sync status is read when it changes, and not after every note |
 
 ## Android app
 
-| # | Do | Expect |
-|---|---|---|
-| A1 | Start the app with no account | "Notes", with 🔍, the sync icon (a laptop: this device only) and Settings; the list, a faint feather if there are no notes; the bar "What's on your mind?" at the bottom. Nothing is focused and the keyboard is down |
-| A2 | Write a note signed out; the gear, then Settings → Account → Sign in, the box "Bring the 1 note …" left checked | Settings rises as a sheet, the list stepping back. "Waiting for browser" while a browser tab is over the app. After "Allow" it closes by itself, Account says "Signed in", and the note is in the account |
-| A3 | Sign in again from a fresh install, and stop the app's process while the browser tab is in front (`adb shell am kill <package>`), then press "Allow" | The app starts again and is signed in |
-| A4 | In another app, share a piece of text to Dirt; share again and press **Undo** on the toast | Dirt comes forward with the text as the newest note, and the toast "Saved to Dirt" with **Undo**. **Undo** takes the second note away again, with no other toast; another device does not keep it |
-| A5 | The same with Dirt not running | Dirt starts with the text as the newest note |
-| A6 | Share a web page from the browser | A note with the page's title on the first line and its address below |
-| A7 | Add the Dirt widget to the home screen: a bar, "Write a thought". Press the bar; then press its logo | The bar opens the capture sheet over the home screen, the keyboard up, not the app. The logo opens the app at the list |
-| A8 | 🔍, type a word; then `#`, a tag, another tag, and the last pill | Find slides down under the title with the keyboard up, and the list narrows on every key, the word marked on each card. `#` opens a strip of pills; a picked one fills and moves to the front, and with two the last pill switches between "all of them" and "any of them". A note older than the 100 most recent is found. Archived notes come after the rest, under "Archived". Find's cross, or Back, closes it and the list is whole again |
-| A9 | Open a note found by searching and change it; press ‹ | The note grows out of its card with the cursor at the end and the keyboard up. There is no Save: the change is on its card when the note shrinks back into it |
-| A19 | With more than 100 notes, scroll to the end of the list | 100 more notes appear below as the end comes near, with no button, for as long as there are older ones. The older ones lie under their layers' names ("This week", "Earlier this month", "October") |
-| A10 | Settings → Export: JSON, Export; then Markdown, Export | The row's words over its controls. Android's screen for choosing a place, with `dirt-export-<time>.zip` proposed. After "Save" the toast names the file and says how many notes and files went. The zip file holds `notes.json` or `notes.md` and, under `files`, each note's files, the same as the originals. Backing out says nothing. Files that could not be had are listed under the row |
-| A11 | Change a note on another device. Leave Dirt and come back | The change appears |
-| A12 | Settings → Sync with a note that cannot be synced | The note by name, the reason, and what releases it. Pressing it closes Settings and opens the note |
-| A13 | On a new device: sign in and keep Settings open; on the device already in, the banner's **Review** | The new device waits at Devices ("Open Dirt on a device that's already in"). The banner drops under the top bar, which stays in reach. Both show the same seven pictures and digits; **They don't** on the new device signs it out with "Nothing was shared"; **They match** on both lets it in, and the notes arrive |
-| A14 | On a new device: "No other device? Use your recovery phrase."; type the 24 words | "Use the phrase" waits for 24 words. The device is let in and the notes arrive. A phrase with a word wrong is refused, with the reason in the error |
-| A16 | Remove the device from another one, then sync | "This device can no longer sync", and a button to sign in again |
-| A17 | With the device offline, change the account's key on another device and write a note there; write a note here; go online and sync | Both notes are on both devices. Nothing is asked of the person |
-| A18 | Settings → Account → Account actions: change the key; start the account again; delete the account (DELETE typed); a reset asked by a waiting device, refused; Devices: ✕ on a device, Add a device, the phrase made, copied, saved as a file and removed | As D14, D15, D8 and D52. On a phone each question is on its own line over its buttons. After **Copy**, Android's own preview and the keyboard's clipboard suggestion show dots, not the words (Android 13 and later). **Save as a file** opens Android's screen for choosing a place with `dirt-recovery-phrase.txt`, and nothing of it is left in the app's own storage afterwards |
-| A15 | A sign-in on a physical device | As A2 |
-| A20 | Open a note and press the paperclip in its bar; choose a photograph | Android's screen for choosing files. The photograph's tile grows under the note with its thumbnail and its three icons, and after a moment says nothing but its size and kind. Back in the list, the card shows the thumbnail |
-| A21 | On another device attach a picture and a text file to a note; open the note here | Both are listed as not on this device, the picture with its thumbnail |
-| A22 | Press "Open in another app" on the text file, on its tile and then in the preview | A ring turns on the tile while it is fetched. Android offers the apps that show such a file; the one chosen shows it, under its own name. `adb shell dumpsys activity permissions` lists one grant, to read that one file, for that app |
-| A23 | Press "Save a copy" | Android's screen for choosing a place, with the file's name. The saved copy is the same as the original |
-| A24 | Press "Remove"; sync the other device | The file is gone from the note on both |
-| A25 | In another app, share a picture to Dirt | Dirt is among the apps offered. A note appears at the top of the list, called after the picture, with the picture attached |
-| A26 | Tap the bar and, with nothing typed, press the paperclip and choose a file | A note is made of the file, named after it on its card, and the page stays open on it |
-| A27 | Attach a file larger than 10 MiB | It is not attached, and the app says how large a file may be |
-| A28 | Export with a note whose file this device has never opened | The file is in the zip file: it was fetched first |
-| A29 | The same in aeroplane mode | The zip file is saved without the file. The app names the file and the note, and says why, in red |
-| A30 | Tap the bar, type a thought, press ⌄. Tap the bar again, type and erase everything, press Back | The page grows out of the bar with the keyboard up; the first character makes the note. At ⌄ the page closes to a small circle where its words began, and a grain is tossed from there onto the note's card at the top of the list, which appears as it lands. The emptied page goes back into the bar and leaves no note |
-| A31 | Tap the bar, type a word, press Back and at once tap the bar again and type | Both thoughts are kept, each as typed: nothing typed straight after Back is lost |
-| A32 | Swipe a card left a little and let go; then past the mark. Press **Undo** | The card follows the finger and springs back; past the mark it flies off, the gap folds shut, and "Archived · Undo" shows. **Undo** brings it back into its place |
-| A33 | Press "3 archived" under the pile; swipe an archived card left; press **Undo**. Open an archived note | The archived notes, newest first, with ‹. The swipe's background is red, and "Note deleted · Undo". The note's bar has "Back to the list" and the bin. Back goes to the list |
-| A34 | Open a note, press its box | The page shrinks into its card and the card folds away, with "Archived · Undo" |
-| A35 | Pull the list down a little and let go; then past the mark, signed in | The list follows with resistance and settles. Past the mark it holds while the arrow turns, a sync runs, and it settles back |
-| A36 | Signed in, with the network off, write a note; with a note that cannot be synced; signed out. Tap the sync icon each time, and long-press it | A grey dot on the icon and a hollow dot on the card; an amber dot, and a tap opens Settings; a laptop, and a tap opens Settings. A long press gives the words and then the tooltip ("Offline · 1 waiting. Notes wait here and go when you're back") |
-| A37 | Tap a tag on a card | Find comes down with the tag as a filled pill, and the list narrows to it |
-| A38 | Settings → Appearance: Auto, Light, Dark, an accent, the text size. With Auto, change the system's dark theme while the app is open | The app follows at once and keeps the choice over a restart. With Auto it follows the system's change without restarting, the status bar with it |
-| A39 | Turn "Remove animations" on in Android's accessibility settings while the app is open; come back to it; open a note and swipe a card | From the return, things fade instead of moving; the swiped card still follows the finger |
-| A40 | Back, in turn, with Settings open, a note open, the archived notes shown, Find down with the strip's offers, and nothing open | Each closes what is open, in that order. With nothing open the app goes behind the others, and comes back as it was |
-| A41 | TalkBack on: move through the list, open a note, archive one, sync | Each card is read by its title and its edit time; the bar's icons by their names; the toast is read; the sync icon is read when it changes |
-| A42 | Hold the store busy for longer than it waits (`run-as <package> sh -c '(echo "BEGIN EXCLUSIVE;"; sleep 45; echo "ROLLBACK;") \| sqlite3 <the store>'`, detached with `nohup … &`), then tap the bar and type | After about half a minute, "A note could not be saved" with **Copy text**, which stays until dismissed; an archive's toast meanwhile shows under it. **Copy text** puts the page's newest words on the clipboard. Once the store is free the next key makes the note with all of it |
-| A43 | Pull the list down, and while pulling put a second finger on the screen | The pull settles back; the list is not left half pulled |
-| A44 | Attach a picture, a PDF of several pages, a text file, a sound, an MP4 and a `.docx`. Tap the picture; swipe left through the others and right back; on the PDF scroll its pages, then swipe sideways; pinch the picture open and closed; tap the dark backdrop; swipe down | The preview grows out of the picture's tile. Each kind shows as on the desktop (D57), the PDF's pages drawn; a sideways swipe steps even over the PDF and the text, which scroll under a finger moving up or down. The pinch zooms the picture to 2× and back. A tap on the backdrop hides and shows the controls; a swipe down, Back or ✕ closes it. The status bar is dark while it is open. The `.docx` is not among them: a tap on its tile only shows its icons |
-| A45 | Long-press the video and the picture in the preview; play the video | No menu, no Download in the video's controls, no picture-in-picture, no casting |
-| A46 | Choose 25 files at once with the paperclip; share 25 pictures to Dirt | 20 are attached; an error names the other 5 |
-| A48 | Long-press the app's icon and choose **New note** | The capture sheet, as from the widget |
-| A49 | In the sheet: type two lines (Return between them), clear them, type again and press ✓; open it again, type, and press Back; open it again | ✓ springs in only while there is text. Return is a new line. ✓ lifts the sheet away and nothing says "Saved"; the thought is at the top of the list when the app is opened, dated when it was typed. Back sinks the sheet; the next opening shows what was typed |
-| A50 | Turn the network off, keep a thought in the sheet, open the app, then turn the network on | The thought is in the app's list at once. With the network back it reaches the other device by itself |
-| A51 | Choose an accent in Settings → Appearance and go Home; switch the phone between light and dark | The widget's logo takes the accent (Android 12 and later), and the widget follows light and dark. The sheet takes the accent and the theme chosen in the app |
-| A47 | With a few hundred notes, scroll to the end of the list; then with "Remove animations" on, tap the bar, type and press ⌄ | The heap of sand under the last card, "… thoughts since …" and "… archived". With animations removed the page fades and the new card fades in, with no grain |
-| A52 | On a fresh install, press the dock's mic | Android's dialog asks for the microphone. Nothing is recorded by that press. After "While using the app", hold the mic, say a sentence, let go: a sheet rose over the lower half with the grains and the timer, and the note is at the top of the list as "Voice · 0:0x" with the mic, then its words |
-| A53 | Tap the dock's mic and talk; press ✓. Tap again and press ✕. Hold, slide up, let go and press ✓. Hold, slide left | Hands-free until ✓, which keeps it; ✕ throws it away (the grains blow off); a slide up goes on hands-free; a slide left throws it away |
-| A54 | Tap the mic and stay quiet; press ✓ | The sheet shakes once and goes; nothing is made |
-| A55 | Tap the mic and talk; press Home. Come back | Listening ended as the app left: the note is there with what was said |
-| A56 | Revoke the microphone in Android's Settings; press the mic and choose "Don't allow". Press it again and "Don't allow" again. Press it a third time | The first refusal: a slash, and a toast "Dirt may not use the microphone. Press to be asked again". The second press asks again. After the second refusal Android asks no more: a press says "Allow the microphone in Android's Settings: Apps, Dirt, Permissions" with **Settings**, which opens Android's page for Dirt |
-| A57 | In the capture sheet (the widget's bar), press 🎙 and hold, talk, let go; then tap 🎙, talk and press ✓; then tap 🎙 and press ✕ | The grains and the timer take the field's place while it listens. Kept, the sheet lifts away and the note is in the app's list as "Voice · 0:0x", then its words, with Dirt not opened. ✕ goes back to typing |
-| A58 | The widget's mic; then Talk from a long press on the app's icon | The sheet opens listening, the keyboard down. From the widget it listens until ✓; Talk keeps the thought by itself 1.6 s after speech stops |
-| A59 | Say a thought in the capture sheet with Dirt's process stopped and the network off; open Dirt an hour later | The note and its words are there: the words job made them without a network. With the network back they reach the other device |
-| A60 | Settings → Voice | "Turned into text here. Your voice is never sent anywhere.", The recording (Keep, Text only), Language "English", "Talk without opening Dirt" with the side key, and the speech model's credit |
-| A61 | Say a thought and open its note at once, before its words come; type a word | The words come at the start, a blank line, then what was typed |
-| A62 | TalkBack on: press the dock's mic, let go; wait for the words | "Listening", "Kept", and "Words arrived: …" when the words come |
-| A63 | A release build: check its size, and `unzip -v` it | Under `assets/voice/` the model, the detector and the notice; under `lib/<ABI>/` the engine's two libraries and no `libsherpa-onnx-jni.so`. Record the size. The first thought said copies the model out once, into `no_backup/voice` in the app's storage |
-| A64 | Open a note; hold 🎙 in its bar, say a sentence, let go. Then tap 🎙, say another, type nothing, press ✓ | It listens under the bar with the keyboard down, the note dimmed, 📎 and the box gone. Kept, the recording is a tile under the note at once, and the words come at the end of the note, after a blank line; the second's after the first's. The card keeps its title and has no mic |
-| A65 | Open a note and tap 🎙; type nothing. While it listens press Back; tap 🎙 again, talk, and press ‹ | Back keeps what was said and the page stays. ‹ ends listening, keeping it: the words come at the end of that note though the page is closed |
-| A66 | Open a note, tap 🎙 and talk; while it listens type on the note from another device, and sync both when the words have come | Both the words and the other device's change are in the note: neither is written over |
-| A67 | On a new page with nothing written, hold 🎙 and say something | The page's note is a note said, "Voice · 0:0x" until its words come, as from the dock; what is then typed on the page follows the words |
-| A68 | Add the "Dirt pile" widget (two cells by two). Look at it beside the list's pile; keep a thought from the capture sheet with the network off; resize it; tap it | The same heap as under the list, in the same shades, and "N thoughts". After the thought, one more grain and N+1, without opening Dirt. Resized smaller, the heap gets smaller. A tap opens Dirt. Light and dark as the phone is |
-| A69 | Paste about a megabyte of text into a page (copy it from a long web page or a file); type a word at its end; press ⌄; open the note again | The note is made with all of it and the word; it opens again whole. Past about a million characters the sync icon turns amber and Settings → Sync names the note as too large to sync; nothing is lost |
-| A70 | Developer options → "Don't keep activities" on. Settings → Export, choose a place and save; then Settings → Export again and press Back on Android's screen. Turn the option off | The first export is saved and says so; the second says nothing and the next export can be asked for at once. Neither waits for ever |
+### Starting, and writing
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| A1 |  | Start the app with no account | "Notes", with 🔍, the sync icon (a laptop: this device only) and Settings; the list, a faint feather if there are no notes; the bar "What's on your mind?" at the bottom. Nothing is focused and the keyboard is down |
+| A30 |  | Tap the bar, type a thought, press ⌄. Tap the bar again, type and erase everything, press Back | The page grows out of the bar with the keyboard up; the first character makes the note. At ⌄ the page closes to a small circle where its words began, and a grain is tossed from there onto the note's card at the top of the list, which appears as it lands. The emptied page goes back into the bar and leaves no note |
+| A31 |  | Tap the bar, type a word, press Back and at once tap the bar again and type | Both thoughts are kept, each as typed: nothing typed straight after Back is lost |
+| A9 |  | Open a note found by searching and change it; press ‹ | The note grows out of its card with the cursor at the end and the keyboard up. There is no Save: the change is on its card when the note shrinks back into it |
+| A26 |  | Tap the bar and, with nothing typed, press the paperclip and choose a file | A note is made of the file, named after it on its card, and the page stays open on it |
+| A69 | Person | Paste about a megabyte of text into a page (copy it from a long web page or a file); type a word at its end; press ⌄; open the note again | The note is made with all of it and the word; it opens again whole. Past about a million characters the sync icon turns amber and Settings → Sync names the note as too large to sync; nothing is lost |
+| A42 |  | Hold the store busy for longer than it waits (`run-as <package> sh -c '(echo "BEGIN EXCLUSIVE;"; sleep 45; echo "ROLLBACK;") \| sqlite3 <the store>'`, detached with `nohup … &`), then tap the bar and type | After about half a minute, "A note could not be saved" with **Copy text**, which stays until dismissed; an archive's toast meanwhile shows under it. **Copy text** puts the page's newest words on the clipboard. Once the store is free the next key makes the note with all of it |
+
+### Finding, tags and the list
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| A8 |  | 🔍, type a word; then `#`, a tag, another tag, and the last pill | Find slides down under the title with the keyboard up, and the list narrows on every key, the word marked on each card. `#` opens a strip of pills; a picked one fills and moves to the front, and with two the last pill switches between "all of them" and "any of them". A note older than the 100 most recent is found. Archived notes come after the rest, under "Archived". Find's cross, or Back, closes it and the list is whole again |
+| A37 |  | Tap a tag on a card | Find comes down with the tag as a filled pill, and the list narrows to it |
+| A19 |  | With more than 100 notes, scroll to the end of the list | 100 more notes appear below as the end comes near, with no button, for as long as there are older ones. The older ones lie under their layers' names ("This week", "Earlier this month", "October") |
+| A47 |  | With a few hundred notes, scroll to the end of the list; then with "Remove animations" on, tap the bar, type and press ⌄ | The heap of sand under the last card, "… thoughts since …" and "… archived". With animations removed the page fades and the new card fades in, with no grain |
+| A40 |  | Back, in turn, with Settings open, a note open, the archived notes shown, Find down with the strip's offers, and nothing open | Each closes what is open, in that order. With nothing open the app goes behind the others, and comes back as it was |
+
+### Archive, delete and Undo
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| A32 |  | Swipe a card left a little and let go; then past the mark. Press **Undo** | The card follows the finger and springs back; past the mark it flies off, the gap folds shut, and "Archived · Undo" shows. **Undo** brings it back into its place |
+| A33 |  | Press "3 archived" under the pile; swipe an archived card left; press **Undo**. Open an archived note | The archived notes, newest first, with ‹. The swipe's background is red, and "Note deleted · Undo". The note's bar has "Back to the list" and the bin. Back goes to the list |
+| A34 |  | Open a note, press its box | The page shrinks into its card and the card folds away, with "Archived · Undo" |
+
+### Sync
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| A35 |  | Pull the list down a little and let go; then past the mark, signed in | The list follows with resistance and settles. Past the mark it holds while the arrow turns, a sync runs, and it settles back |
+| A43 |  | Pull the list down, and while pulling put a second finger on the screen | The pull settles back; the list is not left half pulled |
+| A36 |  | Signed in, with the network off, write a note; with a note that cannot be synced; signed out. Tap the sync icon each time, and long-press it | A grey dot on the icon and a hollow dot on the card; an amber dot, and a tap opens Settings; a laptop, and a tap opens Settings. A long press gives the words and then the tooltip ("Offline · 1 waiting. Notes wait here and go when you're back") |
+| A11 |  | Change a note on another device. Leave Dirt and come back | The change appears |
+| A12 |  | Settings → Sync with a note that cannot be synced | The note by name, the reason, and what releases it. Pressing it closes Settings and opens the note |
+
+### Account and devices
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| A2 | Person | Write a note signed out; the gear, then Settings → Account → Sign in, the box "Bring the 1 note …" left checked. On a physical device too (it was A15) | Settings rises as a sheet, the list stepping back. "Waiting for browser" while a browser tab is over the app. After "Allow" it closes by itself, Account says "Signed in", and the note is in the account |
+| A3 |  | Sign in again from a fresh install, and stop the app's process while the browser tab is in front (`adb shell am kill <package>`), then press "Allow" | The app starts again and is signed in |
+| A13 |  | On a new device: sign in and keep Settings open; on the device already in, the banner's **Review** | The new device waits at Devices ("Open Dirt on a device that's already in"). The banner drops under the top bar, which stays in reach. Both show the same seven pictures and digits; **They don't** on the new device signs it out with "Nothing was shared"; **They match** on both lets it in, and the notes arrive |
+| A14 |  | On a new device: "No other device? Use your recovery phrase."; type the 24 words | "Use the phrase" waits for 24 words. The device is let in and the notes arrive. A phrase with a word wrong is refused, with the reason in the error |
+| A16 |  | Remove the device from another one, then sync | "This device can no longer sync", and a button to sign in again |
+| A17 |  | With the device offline, change the account's key on another device and write a note there; write a note here; go online and sync | Both notes are on both devices. Nothing is asked of the person |
+| A18 |  | Settings → Account → Account actions: change the key; start the account again; delete the account (DELETE typed); a reset asked by a waiting device, refused; Devices: ✕ on a device, Add a device, the phrase made, copied, saved as a file and removed | As D14, D15, D8 and D52. On a phone each question is on its own line over its buttons. After **Copy**, Android's own preview and the keyboard's clipboard suggestion show dots, not the words (Android 13 and later). **Save as a file** opens Android's screen for choosing a place with `dirt-recovery-phrase.txt`, and nothing of it is left in the app's own storage afterwards |
+
+### Settings, appearance and export
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| A38 |  | Settings → Appearance: Auto, Light, Dark, an accent, the text size. With Auto, change the system's dark theme while the app is open | The app follows at once and keeps the choice over a restart. With Auto it follows the system's change without restarting, the status bar with it |
+| A39 |  | Turn "Remove animations" on in Android's accessibility settings while the app is open; come back to it; open a note and swipe a card | From the return, things fade instead of moving; the swiped card still follows the finger |
+| A72 | Person | Android's Settings → Display → Font size (and Display size) at the largest; open Dirt; then the smallest | The text of the list, a note and Settings follows the system's size, on top of the size chosen in Settings → Appearance; nothing is cut off or overlaps, and the dock and the page's bar still fit |
+| A10 |  | Settings → Export: JSON, Export; then Markdown, Export | The row's words over its controls. Android's screen for choosing a place, with `dirt-export-<time>.zip` proposed. After "Save" the toast names the file and says how many notes and files went. The zip file holds `notes.json` or `notes.md` and, under `files`, each note's files, the same as the originals. Backing out says nothing. Files that could not be had are listed under the row |
+| A28 |  | Export with a note whose file this device has never opened | The file is in the zip file: it was fetched first |
+| A29 |  | The same in aeroplane mode | The zip file is saved without the file. The app names the file and the note, and says why, in red |
+| A70 |  | Developer options → "Don't keep activities" on. Settings → Export, choose a place and save; then Settings → Export again and press Back on Android's screen. Turn the option off | The first export is saved and says so; the second says nothing and the next export can be asked for at once. Neither waits for ever |
+
+### Files and the preview
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| A20 |  | Open a note and press the paperclip in its bar; choose a photograph | Android's screen for choosing files. The photograph's tile grows under the note with its thumbnail and its three icons, and after a moment says nothing but its size and kind. Back in the list, the card shows the thumbnail |
+| A21 |  | On another device attach a picture and a text file to a note; open the note here | Both are listed as not on this device, the picture with its thumbnail |
+| A22 |  | Press "Open in another app" on the text file, on its tile and then in the preview | A ring turns on the tile while it is fetched. Android offers the apps that show such a file; the one chosen shows it, under its own name. `adb shell dumpsys activity permissions` lists one grant, to read that one file, for that app |
+| A23 |  | Press "Save a copy" | Android's screen for choosing a place, with the file's name. The saved copy is the same as the original |
+| A24 |  | Press "Remove"; sync the other device | The file is gone from the note on both |
+| A27 |  | Attach a file larger than 10 MiB | It is not attached, and the app says how large a file may be |
+| A44 |  | Attach a picture, a PDF of several pages, a text file, a sound, an MP4 and a `.docx`. Tap the picture; swipe left through the others and right back; on the PDF scroll its pages, then swipe sideways; pinch the picture open and closed; tap the dark backdrop; swipe down | The preview grows out of the picture's tile. Each kind shows as on the desktop (D57), the PDF's pages drawn; a sideways swipe steps even over the PDF and the text, which scroll under a finger moving up or down. The pinch zooms the picture to 2× and back. A tap on the backdrop hides and shows the controls; a swipe down, Back or ✕ closes it. The status bar is dark while it is open. The `.docx` is not among them: a tap on its tile only shows its icons |
+| A45 |  | Long-press the video and the picture in the preview; play the video | No menu, no Download in the video's controls, no picture-in-picture, no casting |
+| A46 |  | Choose 25 files at once with the paperclip; share 25 pictures to Dirt | 20 are attached; an error names the other 5 |
+
+### From other apps, the widgets and the capture sheet
+
+On the emulator; the same on real phones is L1 to L16.
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| A4 |  | In another app, share a piece of text to Dirt; share again and press **Undo** on the toast | Dirt comes forward with the text as the newest note, and the toast "Saved to Dirt" with **Undo**. **Undo** takes the second note away again, with no other toast; another device does not keep it |
+| A5 |  | The same with Dirt not running | Dirt starts with the text as the newest note |
+| A6 |  | Share a web page from the browser | A note with the page's title on the first line and its address below |
+| A25 |  | In another app, share a picture to Dirt | Dirt is among the apps offered. A note appears at the top of the list, called after the picture, with the picture attached |
+| A7 |  | Add the Dirt widget to the home screen: a bar, "Write a thought". Press the bar; then press its logo | The bar opens the capture sheet over the home screen, the keyboard up, not the app. The logo opens the app at the list |
+| A48 |  | Long-press the app's icon and choose **New note** | The capture sheet, as from the widget |
+| A49 |  | In the sheet: type two lines (Return between them), clear them, type again and press ✓; open it again, type, and press Back; open it again | ✓ springs in only while there is text. Return is a new line. ✓ lifts the sheet away and nothing says "Saved"; the thought is at the top of the list when the app is opened, dated when it was typed. Back sinks the sheet; the next opening shows what was typed |
+| A50 |  | Turn the network off, keep a thought in the sheet, open the app, then turn the network on | The thought is in the app's list at once. With the network back it reaches the other device by itself |
+| A51 |  | Choose an accent in Settings → Appearance and go Home; switch the phone between light and dark | The widget's logo takes the accent (Android 12 and later), and the widget follows light and dark. The sheet takes the accent and the theme chosen in the app |
+| A68 |  | Add the "Dirt pile" widget (two cells by two). Look at it beside the list's pile; keep a thought from the capture sheet with the network off; resize it; tap it | The same heap as under the list, in the same shades, and "N thoughts". After the thought, one more grain and N+1, without opening Dirt. Resized smaller, the heap gets smaller. A tap opens Dirt. Light and dark as the phone is |
+
+### Voice
+
+Run with the real microphone; an agent can run the same on the emulator with `dirt/stand-in.wav`, which is not the same thing.
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| A52 | Person | On a fresh install, press the dock's mic | Android's dialog asks for the microphone. Nothing is recorded by that press. After "While using the app", hold the mic, say a sentence, let go: a sheet rose over the lower half with the grains and the timer, and the note is at the top of the list as "Voice · 0:0x" with the mic, then its words |
+| A53 |  | Tap the dock's mic and talk; press ✓. Tap again and press ✕. Hold, slide up, let go and press ✓. Hold, slide left | Hands-free until ✓, which keeps it; ✕ throws it away (the grains blow off); a slide up goes on hands-free; a slide left throws it away |
+| A54 |  | Tap the mic and stay quiet; press ✓ | The sheet shakes once and goes; nothing is made |
+| A55 | Person | Tap the mic and talk; press Home. Come back | Listening ended as the app left: the note is there with what was said |
+| A56 | Person | Revoke the microphone in Android's Settings; press the mic and choose "Don't allow". Press it again and "Don't allow" again. Press it a third time | The first refusal: a slash, and a toast "Dirt may not use the microphone. Press to be asked again". The second press asks again. After the second refusal Android asks no more: a press says "Allow the microphone in Android's Settings: Apps, Dirt, Permissions" with **Settings**, which opens Android's page for Dirt |
+| A61 |  | Say a thought and open its note at once, before its words come; type a word | The words come at the start, a blank line, then what was typed |
+| A64 |  | Open a note; hold 🎙 in its bar, say a sentence, let go. Then tap 🎙, say another, type nothing, press ✓ | It listens under the bar with the keyboard down, the note dimmed, 📎 and the box gone. Kept, the recording is a tile under the note at once, and the words come at the end of the note, after a blank line; the second's after the first's. The card keeps its title and has no mic |
+| A65 |  | Open a note and tap 🎙; type nothing. While it listens press Back; tap 🎙 again, talk, and press ‹ | Back keeps what was said and the page stays. ‹ ends listening, keeping it: the words come at the end of that note though the page is closed |
+| A66 |  | Open a note, tap 🎙 and talk; while it listens type on the note from another device, and sync both when the words have come | Both the words and the other device's change are in the note: neither is written over |
+| A67 |  | On a new page with nothing written, hold 🎙 and say something | The page's note is a note said, "Voice · 0:0x" until its words come, as from the dock; what is then typed on the page follows the words |
+| A57 |  | In the capture sheet (the widget's bar), press 🎙 and hold, talk, let go; then tap 🎙, talk and press ✓; then tap 🎙 and press ✕ | The grains and the timer take the field's place while it listens. Kept, the sheet lifts away and the note is in the app's list as "Voice · 0:0x", then its words, with Dirt not opened. ✕ goes back to typing |
+| A58 |  | The widget's mic; then Talk from a long press on the app's icon | The sheet opens listening, the keyboard down. From the widget it listens until ✓; Talk keeps the thought by itself 1.6 s after speech stops |
+| A59 |  | Say a thought in the capture sheet with Dirt's process stopped and the network off; open Dirt an hour later | The note and its words are there: the words job made them without a network. With the network back they reach the other device |
+| A60 |  | Settings → Voice | "Turned into text here. Your voice is never sent anywhere.", The recording (Keep, Text only), Language "English", "Talk without opening Dirt" with the side key, and the speech model's credit |
+| A63 | Person | A release build: check its size, and `unzip -v` it | Under `assets/voice/` the model, the detector and the notice; under `lib/<ABI>/` the engine's two libraries and no `libsherpa-onnx-jni.so`. Record the size. The first thought said copies the model out once, into `no_backup/voice` in the app's storage |
+
+### Screen readers
+
+| # | Who | Do | Expect |
+|---|---|---|---|
+| A41 | Person | TalkBack on: move through the list, open a note, archive one, sync | Each card is read by its title and its edit time; the bar's icons by their names; the toast is read; the sync icon is read when it changes |
+| A62 | Person | TalkBack on: press the dock's mic, let go; wait for the words | "Listening", "Kept", and "Words arrived: …" when the words come |
+| A71 | Person | TalkBack on: archive a card, and wait. Then turn TalkBack off, leave the app and come back, and archive another | With TalkBack on, "Archived" with **Undo** stays, with ✕, until it is dismissed, and **Undo** can be reached and pressed. With TalkBack off the toast goes by itself after six seconds, as before |
 
 ## CLI
 
-| # | Do | Expect |
-|---|---|---|
-| C1 | `dirt auth status` with no server set | "No server is configured", and what to set |
-| C2 | `dirt auth login` | The browser opens; afterwards "Signed in" |
-| C3 | `dirt "a thought"`, then `dirt auth status` | The note's ID at once; the status names the server and says it synced |
-| C4 | `dirt sync --verbose` with a note that cannot be synced | The note by name and ID, the reason, and what releases it |
-| C5 | `dirt auth join` on a waiting device, `dirt devices approve` on another | The same code on both. With `y` on both, the new device is let in |
-| C6 | `dirt auth phrase new`, then `dirt auth recover` on a waiting device | 24 words; typing them lets the device in |
-| C7 | `dirt devices`, `dirt devices remove <ID>` | The list; the removed device can no longer sync |
-| C8 | `dirt auth reset --yes` on an approved device | The account starts again with this device as its only one. The notes on this device are sent again under a new key; the other devices and the recovery phrase are gone |
-| C9 | `dirt auth delete-account --yes` | The account is gone from the server; the notes are still on this computer |
-| C10 | `dirt auth logout` on the only device of an account with no phrase | Refused, with the reason |
-| C11 | `dirt devices remove <ID> --change-key`, then write a note and `dirt sync --verbose` | The device is removed and the key changed. The removed device cannot sync. The other devices get the note |
-| C12 | `dirt auth change-key` on an account with a recovery phrase | The key is changed, and the command says the phrase no longer works and how to make a new one. `dirt auth recover` with the old phrase on a waiting device is refused |
-
-| C13 | `dirt attach <note> <a picture>`, then `dirt files <note>` | The file's ID. The list shows the file with its size and kind and nothing more, because it has been sent |
-| C14 | On another device: `dirt sync`, `dirt files <note>`, `dirt save <note> <name>` | The file is listed as not on this device; saving fetches it, and the copy is the same as the original byte for byte |
-| C15 | `dirt save` again to the same place | Refused: the file is already there. With `--force` it is replaced |
-| C16 | `dirt attach` with the file storage out of reach | The file's ID on standard output, and on standard error that 1 file is waiting. `dirt files` says so too. `dirt sync` once the storage is back sends it |
-| C17 | `dirt detach <note> <name>`, then `dirt sync` on the other device | The file is gone from the note on both |
-| C18 | On a device that has not fetched a note's file: `dirt export --folder out` | `out` on standard output, and on standard error how many notes and files. `out/notes.json` names the file with its path, and the file at that path is the same as the original |
-| C19 | `dirt export --folder out` again | Refused: `out` is already there, and nothing in it is changed |
-| C20 | With the file storage out of reach, on a device that lacks a file: `dirt export --folder out2` | `out2` is written without the file. Standard error names the file, its note and the reason, and the exit status is 1 |
-| C21 | `dirt export`, and `dirt export --format markdown --output notes.md` | The notes' text, naming each note's files with no path. Standard error says how many files are named and not exported |
-| C22 | On Linux or macOS: any command, then `ls -ld` the data folder | `drwx------`. A folder that was open to others before is closed. With `--db-path` in another folder, that folder's permissions do not change |
-| C23 | `dirt archive <ID>`, then `dirt list`, `dirt list --archived` and `dirt search <a word of it>` | The note's ID. It is gone from the list, is in the archived list with the time it had, and is found, after the notes that are not archived, with `(archived)` at the end of its line |
-| C24 | After C23, on another device: `dirt sync`, then the desktop app or the Android app on that account | The note is out of the list there too, and the app's search still finds it. `dirt unarchive <ID>` on either device brings it back to both lists |
-| C25 | `dirt delete <ID>`, `dirt sync` on another device, then `dirt restore <the start of the ID>` on either | The note is gone from both, and back on both after the restore and a sync, with the text it had |
+| # | Who | Do | Expect |
+|---|---|---|---|
+| C1 |  | `dirt auth status` with no server set | "No server is configured", and what to set |
+| C2 | Person | `dirt auth login` | The browser opens; afterwards "Signed in" |
+| C3 |  | `dirt "a thought"`, then `dirt auth status` | The note's ID at once; the status names the server and says it synced |
+| C4 |  | `dirt sync --verbose` with a note that cannot be synced | The note by name and ID, the reason, and what releases it |
+| C5 |  | `dirt auth join` on a waiting device, `dirt devices approve` on another | The same code on both. With `y` on both, the new device is let in |
+| C6 |  | `dirt auth phrase new`, then `dirt auth recover` on a waiting device | 24 words; typing them lets the device in |
+| C7 |  | `dirt devices`, `dirt devices remove <ID>` | The list; the removed device can no longer sync |
+| C8 |  | `dirt auth reset --yes` on an approved device | The account starts again with this device as its only one. The notes on this device are sent again under a new key; the other devices and the recovery phrase are gone |
+| C9 |  | `dirt auth delete-account --yes` | The account is gone from the server; the notes are still on this computer |
+| C10 |  | `dirt auth logout` on the only device of an account with no phrase | Refused, with the reason |
+| C11 |  | `dirt devices remove <ID> --change-key`, then write a note and `dirt sync --verbose` | The device is removed and the key changed. The removed device cannot sync. The other devices get the note |
+| C12 |  | `dirt auth change-key` on an account with a recovery phrase | The key is changed, and the command says the phrase no longer works and how to make a new one. `dirt auth recover` with the old phrase on a waiting device is refused |
+| C13 |  | `dirt attach <note> <a picture>`, then `dirt files <note>` | The file's ID. The list shows the file with its size and kind and nothing more, because it has been sent |
+| C14 |  | On another device: `dirt sync`, `dirt files <note>`, `dirt save <note> <name>` | The file is listed as not on this device; saving fetches it, and the copy is the same as the original byte for byte |
+| C15 |  | `dirt save` again to the same place | Refused: the file is already there. With `--force` it is replaced |
+| C16 |  | `dirt attach` with the file storage out of reach | The file's ID on standard output, and on standard error that 1 file is waiting. `dirt files` says so too. `dirt sync` once the storage is back sends it |
+| C17 |  | `dirt detach <note> <name>`, then `dirt sync` on the other device | The file is gone from the note on both |
+| C18 |  | On a device that has not fetched a note's file: `dirt export --folder out` | `out` on standard output, and on standard error how many notes and files. `out/notes.json` names the file with its path, and the file at that path is the same as the original |
+| C19 |  | `dirt export --folder out` again | Refused: `out` is already there, and nothing in it is changed |
+| C20 |  | With the file storage out of reach, on a device that lacks a file: `dirt export --folder out2` | `out2` is written without the file. Standard error names the file, its note and the reason, and the exit status is 1 |
+| C21 |  | `dirt export`, and `dirt export --format markdown --output notes.md` | The notes' text, naming each note's files with no path. Standard error says how many files are named and not exported |
+| C22 |  | On Linux or macOS: any command, then `ls -ld` the data folder | `drwx------`. A folder that was open to others before is closed. With `--db-path` in another folder, that folder's permissions do not change |
+| C23 |  | `dirt archive <ID>`, then `dirt list`, `dirt list --archived` and `dirt search <a word of it>` | The note's ID. It is gone from the list, is in the archived list with the time it had, and is found, after the notes that are not archived, with `(archived)` at the end of its line |
+| C24 |  | After C23, on another device: `dirt sync`, then the desktop app or the Android app on that account | The note is out of the list there too, and the app's search still finds it. `dirt unarchive <ID>` on either device brings it back to both lists |
+| C25 |  | `dirt delete <ID>`, `dirt sync` on another device, then `dirt restore <the start of the ID>` on either | The note is gone from both, and back on both after the restore and a sync, with the text it had |
 
 ## Capture from outside the app, on real phones
 
@@ -267,24 +386,24 @@ Samsung, with a PIN set, the device signed in and let in, and a second
 device to look from. Record the phone, its Android version and its
 keyboard.
 
-| # | Do | Expect |
-|---|---|---|
-| L1 | Add Dirt's "New note" tile to Quick Settings. Lock the phone, wake it, pull Quick Settings down and press the tile | The sheet over the lock screen, the phone still locked, with "Adds a note. Your notes stay locked." above the field and the keyboard up. If the phone asks for the PIN first instead, record that: it is the phone's choice |
-| L2 | In that sheet, type a thought and press ✓. Leave the phone locked; sync the other device after ten seconds | The sheet goes and the phone is still locked. The thought is on the other device, dated when it was typed |
-| L3 | Unlocked, open the sheet from the widget, type a few words and go Home. Lock the phone, open the sheet over the lock screen, type something else and press Back. Unlock and open the sheet again | Over the lock screen the field was empty. Unlocked, both pieces are there, the earlier first |
-| L4 | Over the lock screen, in the sheet, press each of the keyboard's own buttons: the clipboard, the suggestions, its settings | Nothing copied before the lock and no word from a note is shown. Record what each button does |
-| L5 | Over the lock screen, from the sheet, try to reach the app: the recent apps, Back and Home, and Dirt's notification if one shows | The phone asks for the PIN, or shows the lock screen. Nothing of a note is seen |
-| L6 | Samsung: set Dirt as one of the lock screen's shortcuts, lock, and use it. On a phone that offers Android's note-taking role, choose Dirt and use the lock screen's note shortcut | The sheet over the lock screen, as in L1 |
-| L7 | Restart the phone and, before unlocking it, pull Quick Settings down and press the tile | The tile is unavailable, or the phone asks for the PIN. Nothing typed before the restart is lost |
-| L8 | With the battery saver on, and Dirt not opened for a day (on a Samsung, also with Dirt among the "sleeping apps"), capture from the widget and press ✓ | The thought reaches the other device. Record how long it took |
-| L9 | With Dirt's process stopped by the phone (not force-stopped: from Android 15 a force-stopped app's widget does nothing until the app is opened again), press the widget's bar; then again with the app running in the background | Typing works within about a second each time. Film it, or say how it felt |
-| L10 | Keep a thought with the phone offline; leave the phone; turn the network on an hour later without opening Dirt | The thought reaches the other device once the phone is online, dated when it was typed |
-| L11 | Settings → Apps → Dirt → Force stop; press the widget's bar; open Dirt from its icon, go Home and press the bar again | The first press does nothing (Android cancels a force-stopped app's widget actions); after Dirt has been opened the bar opens the sheet again |
-| L12 | Samsung: Settings → Advanced features → Side button → Double press → Open app → "Dirt Talk". Pixel: Settings → System → Gestures → Quick Tap → Open app → "Dirt Talk". Unlocked, then locked, use it and say a thought without touching the screen | It listens at once and keeps the thought 1.6 s after the speech ends, with no touch. Locked: if the phone opens it over the lock screen, the line "Adds a note. Your notes stay locked." shows, and the note reaches the other device with its words. If the phone asks for the PIN first, record that |
-| L13 | Over the lock screen, in the sheet opened from the tile, press 🎙 on a phone where Dirt has never been allowed the microphone | "Unlock the phone to let Dirt use the microphone" on the line above the field; no dialog |
-| L14 | Over the lock screen, tap 🎙 and leave it listening; watch the status bar | Android's microphone sign shows while it listens. It stops at ten minutes and keeps what was said |
-| L15 | Say a thought of about ten seconds on the phone; time its words | Record how long from letting go to the words on the card, the phone's memory while it reads (Android Studio's profiler), and whether the phone grew warm. The first thought copies the model out of the app first |
-| L16 | Put the "Dirt pile" widget on a real phone's home screen, with a few hundred notes; keep a thought from the capture sheet; leave the app after archiving one | The heap is sand, not a blur or a blot, at the launcher's size; the thought adds a grain at once; archiving changes nothing. Record the launcher and how the widget's corners and colours sit beside the phone's own |
+| # | Who | Do | Expect |
+|---|---|---|---|
+| L1 | Person | Add Dirt's "New note" tile to Quick Settings. Lock the phone, wake it, pull Quick Settings down and press the tile | The sheet over the lock screen, the phone still locked, with "Adds a note. Your notes stay locked." above the field and the keyboard up. If the phone asks for the PIN first instead, record that: it is the phone's choice |
+| L2 | Person | In that sheet, type a thought and press ✓. Leave the phone locked; sync the other device after ten seconds | The sheet goes and the phone is still locked. The thought is on the other device, dated when it was typed |
+| L3 | Person | Unlocked, open the sheet from the widget, type a few words and go Home. Lock the phone, open the sheet over the lock screen, type something else and press Back. Unlock and open the sheet again | Over the lock screen the field was empty. Unlocked, both pieces are there, the earlier first |
+| L4 | Person | Over the lock screen, in the sheet, press each of the keyboard's own buttons: the clipboard, the suggestions, its settings | Nothing copied before the lock and no word from a note is shown. Record what each button does |
+| L5 | Person | Over the lock screen, from the sheet, try to reach the app: the recent apps, Back and Home, and Dirt's notification if one shows | The phone asks for the PIN, or shows the lock screen. Nothing of a note is seen |
+| L6 | Person | Samsung: set Dirt as one of the lock screen's shortcuts, lock, and use it. On a phone that offers Android's note-taking role, choose Dirt and use the lock screen's note shortcut | The sheet over the lock screen, as in L1 |
+| L7 | Person | Restart the phone and, before unlocking it, pull Quick Settings down and press the tile | The tile is unavailable, or the phone asks for the PIN. Nothing typed before the restart is lost |
+| L8 | Person | With the battery saver on, and Dirt not opened for a day (on a Samsung, also with Dirt among the "sleeping apps"), capture from the widget and press ✓ | The thought reaches the other device. Record how long it took |
+| L9 | Person | With Dirt's process stopped by the phone (not force-stopped: from Android 15 a force-stopped app's widget does nothing until the app is opened again), press the widget's bar; then again with the app running in the background | Typing works within about a second each time. Film it, or say how it felt |
+| L10 | Person | Keep a thought with the phone offline; leave the phone; turn the network on an hour later without opening Dirt | The thought reaches the other device once the phone is online, dated when it was typed |
+| L11 | Person | Settings → Apps → Dirt → Force stop; press the widget's bar; open Dirt from its icon, go Home and press the bar again | The first press does nothing (Android cancels a force-stopped app's widget actions); after Dirt has been opened the bar opens the sheet again |
+| L12 | Person | Samsung: Settings → Advanced features → Side button → Double press → Open app → "Dirt Talk". Pixel: Settings → System → Gestures → Quick Tap → Open app → "Dirt Talk". Unlocked, then locked, use it and say a thought without touching the screen | It listens at once and keeps the thought 1.6 s after the speech ends, with no touch. Locked: if the phone opens it over the lock screen, the line "Adds a note. Your notes stay locked." shows, and the note reaches the other device with its words. If the phone asks for the PIN first, record that |
+| L13 | Person | Over the lock screen, in the sheet opened from the tile, press 🎙 on a phone where Dirt has never been allowed the microphone | "Unlock the phone to let Dirt use the microphone" on the line above the field; no dialog |
+| L14 | Person | Over the lock screen, tap 🎙 and leave it listening; watch the status bar | Android's microphone sign shows while it listens. It stops at ten minutes and keeps what was said |
+| L15 | Person | Say a thought of about ten seconds on the phone; time its words | Record how long from letting go to the words on the card, the phone's memory while it reads (Android Studio's profiler), and whether the phone grew warm. The first thought copies the model out of the app first |
+| L16 | Person | Put the "Dirt pile" widget on a real phone's home screen, with a few hundred notes; keep a thought from the capture sheet; leave the app after archiving one | The heap is sand, not a blur or a blot, at the launcher's size; the thought adds a grain at once; archiving changes nothing. Record the launcher and how the widget's corners and colours sit beside the phone's own |
 
 ## The interface's gallery
 
@@ -294,17 +413,17 @@ every component in place of the app. Set `DIRT_DATA_DIR` for the desktop
 one. These are for what a script cannot see or this project's machines do
 not have: a real phone, Linux, macOS, a screen reader, and a release build.
 
-| # | Do | Expect |
-|---|---|---|
-| G1 | The gallery on Windows, in a window on the screen. Choose Light, Dark, an accent | Every word is in Inter. The new look spreads in a circle from the press |
-| G2 | In it, press "Open the panel", so that it lies over the list's buttons | The panel covers what is behind it down to its bottom edge. (In a window on the screen, the buttons behind were once drawn over its last 20 px; a script's window off the screen does not show whether that is gone) |
-| G3 | Press "Shuffle" several times | The rows slide to their new places. The line under the buttons gives a median frame at the display's rate, and no frame much longer in a release build on a machine doing nothing else |
-| G4 | The gallery on a real phone: `dx build --platform android --target aarch64-linux-android --package dirt-mobile --features gallery`. Shuffle; swipe a card a little and let go, then far; drag the sheet down by its top edge; hold a finger on an icon | Frames at the phone's rate. The card stays under the finger, springs back, and flies off past 96 px with one message to Rust. The sheet follows the finger and closes. The icon's name appears above it and the icon is not pressed |
-| G5 | On the phone, turn on Remove animations in Android's accessibility settings, start the gallery, and shuffle. Then use the gallery's own "Reduced motion" switch with the setting off | With the setting on from the start, the rows change places at once, without sliding. (Changed while the gallery is open, Android's WebView does not notice until the next start; the app itself reads it again on return, A39.) The gallery's switch takes effect at the next shuffle, both ways |
-| G6 | The gallery on Linux | It looks as it does on Windows, scrollbars included. On a WebKitGTK before 2.44 the springs are the `cubic-bezier` ones, and where View Transitions are missing a new theme cross-fades |
-| G7 | The gallery on macOS | The same, and the toast's **Undo** shows ⌘ Z |
-| G8 | A release build of the desktop app on each system. With text typed in a note, press Ctrl R, F5, Ctrl F, Ctrl P, Ctrl +, Ctrl −, Ctrl 0, F12 and Ctrl Shift I; turn the wheel with Ctrl held; right-click | Nothing of a browser's happens: the text is still there, and there is no find bar, print dialog, zoom, developer tools or browser menu |
-| G9 | The gallery with a screen reader on (Narrator, TalkBack) | Every icon button is read by its name. A toast is read when it appears. The panel and the sheet are read as dialogs, and what is behind them is not reached until they close |
+| # | Who | Do | Expect |
+|---|---|---|---|
+| G1 |  | The gallery on Windows, in a window on the screen. Choose Light, Dark, an accent | Every word is in Inter. The new look spreads in a circle from the press |
+| G2 |  | In it, press "Open the panel", so that it lies over the list's buttons | The panel covers what is behind it down to its bottom edge. (In a window on the screen, the buttons behind were once drawn over its last 20 px; a script's window off the screen does not show whether that is gone) |
+| G3 |  | Press "Shuffle" several times | The rows slide to their new places. The line under the buttons gives a median frame at the display's rate, and no frame much longer in a release build on a machine doing nothing else |
+| G4 | Person | The gallery on a real phone: `dx build --platform android --target aarch64-linux-android --package dirt-mobile --features gallery`. Shuffle; swipe a card a little and let go, then far; drag the sheet down by its top edge; hold a finger on an icon | Frames at the phone's rate. The card stays under the finger, springs back, and flies off past 96 px with one message to Rust. The sheet follows the finger and closes. The icon's name appears above it and the icon is not pressed |
+| G5 | Person | On the phone, turn on Remove animations in Android's accessibility settings, start the gallery, and shuffle. Then use the gallery's own "Reduced motion" switch with the setting off | With the setting on from the start, the rows change places at once, without sliding. (Changed while the gallery is open, Android's WebView does not notice until the next start; the app itself reads it again on return, A39.) The gallery's switch takes effect at the next shuffle, both ways |
+| G6 | Person | The gallery on Linux | It looks as it does on Windows, scrollbars included. On a WebKitGTK before 2.44 the springs are the `cubic-bezier` ones, and where View Transitions are missing a new theme cross-fades |
+| G7 | Person | The gallery on macOS | The same, and the toast's **Undo** shows ⌘ Z |
+| G8 | Person | A release build of the desktop app on each system. With text typed in a note, press Ctrl R, F5, Ctrl F, Ctrl P, Ctrl +, Ctrl −, Ctrl 0, F12 and Ctrl Shift I; turn the wheel with Ctrl held; right-click | Nothing of a browser's happens: the text is still there, and there is no find bar, print dialog, zoom, developer tools or browser menu |
+| G9 | Person | The gallery with a screen reader on (Narrator, TalkBack) | Every icon button is read by its name. A toast is read when it appears. The panel and the sheet are read as dialogs, and what is behind them is not reached until they close |
 
 ## Making a note that cannot be synced
 
@@ -345,6 +464,7 @@ account, A and B:
 
 | Date | Server | Desktop | Android | CLI | Not run |
 |---|---|---|---|---|---|
+| 2026-11-20, finishing: the pass over design section 12 (interface step 10b) | None: signed out, a build with no server | Not run: the desktop's items were read in the code (design 12's table) | The `dirt-trial` emulator (Android 16), a debug build for x86_64, driven through the web view's debugging socket. A71: with TalkBack on (turned on by `settings put secure enabled_accessibility_services`, and off again after), "Archived" with **Undo** was still there 9 s after archiving, with ✕; with TalkBack off it went by itself. A72 in part: at a font scale of 1.3 the dock's words went from 16 px to 20.8 px; the scale was put back to 1.0. The app was uninstalled and the emulator shut down | Not run | D93, A72 at the largest size by eye, D35, A41, A62 and everything marked Person |
 | 2026-11-20, step 10a after review (#304) | None: signed out, a build with no server | Windows 11, a development build, off screen, as the run below. Again: the 1,200,045-character paste whole 1.8 s after it landed (pieces now at most 16 KiB of JSON), a key at its end heard in 80 ms, the note opened again whole with one more key kept (1,200,047). New: 299,999 characters of quotes, backslashes and control characters kept exactly; a paste with half of a pair of UTF-16 units alone kept as U+FFFD, and typing went on after it. The rest of the review is in `dirt-core`'s tests (typing at the end while words are made, words put in once, a deleted note's recording waiting for it, tries kept across a move) | Not run: the changes on Android are Kotlin's single lock and the listing's cards, linted for the Android target | Not run | D92 (WebKit), everything the run below did not run |
 | 2026-11-20, finishing: the page's mic, the pile widget, long text (interface step 10a) | None: signed out, builds with no server | Windows 11, a development build (`cargo build`), the window off the screen with every stand-in hook and a WebView2 data folder of its own, driven through the web view's debugging port. D91 by a paste dispatched in the page (Chromium's own insert command takes about a minute for 100 kB, with or without the app listening, so it was not the way in): 1,200,045 characters with accents and emoji in the store whole 1.1 s after, a key at its end heard in under 0.1 s, Esc and the next thought a note of its own, the note opened again whole and a key typed then saved (1,200,047). Notes of 50,000 to 1,300,000 characters made and opened again whole. Before the fix the page's field was found to send its whole text with every `input` even with no listener of its own (Dioxus's root listener) | The `dirt-trial` emulator (Android 16), a debug build for x86_64 (`dx build`), headless, `dirt/stand-in.wav` for the microphone, driven through the web view's debugging socket and `adb shell input`. A69 the same way: 1,200,045 characters made, opened again whole, a key at its end kept. A64: 🎙 in a note's bar listened under the bar with only ⌄ and the mic left in the bar; the words came at the note's end after a blank line 7.8 s after ✓ (the model copied out first), the recording a tile; a second recording's words merged after "- bread" typed meanwhile, both kept. A65: Back ended listening, kept what was said, and the page stayed (after an "System UI isn't responding" dialog of the emulator's, which had taken the first Backs, was waited out). A67: a blank page left with ⌄ while it listened became "Voice · 0:09", then its words. A68: "Dirt pile" placed from the launcher's picker: "3 thoughts", then a thought kept from the sheet was a note and a grain 1.1 s after ✓ with no network needed ("4 thoughts"), and 401 thoughts left waiting were taken in by one ✓ and drawn as a heap of sand, "405 thoughts". The first drawing stretched a few pixels into blurred blots; it is now drawn at the widget's own size. A70 in part: Back on Android's screen for a place ended the wait and the next export opened the screen again. The app was uninstalled afterwards and the emulator shut down | Not run | A66 (a second device), the activity finished for good while Android's screen is up (A70's second half), TalkBack, real phones (L16), a paste through a real clipboard (D91, A69), macOS and Linux |
 | 2026-11-19, voice on Android after review (#302) | None: signed out, a build with no server | Not run | The `dirt-trial` emulator, a debug build for x86_64, the stand-in WAV. The sheet's process killed while Talk listened left a WAV with its header whole and its lengths nought (its first tenth of a second is `crates/dirt-mobile/tests/sheet-unfinished.wav.part`); a spoken one cut off and aged twelve minutes was taken in when the app opened, with its words. The dock listening hands-free ended as Talk opened over it: its note stops where Talk began. The shell could not start the widget's way in to listening ("Permission Denial"), and the old extra on the sheet no longer listens. "Dirt Talk" is among the apps in a build with voice. Talk with the new ear still kept the thought by itself at 8.7 s | Not run | As the run below |

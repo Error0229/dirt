@@ -24,7 +24,6 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 serde_json.workspace = true
 dirs = "6"
-thiserror.workspace = true
 # The IDs of a note's files.
 uuid.workspace = true
 # Attaching files runs as a task of its own.
