@@ -104,6 +104,13 @@ pub fn without_the_web_views_own_keys(config: Config) -> Config {
         .with_custom_head(dirt_ui::webview::guard_head())
 }
 
+/// Whether the standard input stands in for the hotkey and the tray's
+/// menu (`use_actions_from_stdin`): a development build with
+/// `DIRT_ACTIONS_FROM_STDIN` set.
+pub fn stdin_stands_in() -> bool {
+    settings::test_hook("DIRT_ACTIONS_FROM_STDIN").is_some()
+}
+
 /// Stand-ins on the standard input for the hotkey and the tray's menu.
 ///
 /// In a development build with `DIRT_ACTIONS_FROM_STDIN` set, each line
@@ -116,7 +123,7 @@ pub fn without_the_web_views_own_keys(config: Config) -> Config {
 /// release build ignores it.
 pub fn use_actions_from_stdin(hotkey: Callback<HotKeyState>, choose: Callback<tray::Choice>) {
     use_future(move || async move {
-        if settings::test_hook("DIRT_ACTIONS_FROM_STDIN").is_none() {
+        if !stdin_stands_in() {
             return;
         }
         let (send, mut lines) = tokio::sync::mpsc::unbounded_channel();

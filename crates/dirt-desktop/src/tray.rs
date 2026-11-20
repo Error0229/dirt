@@ -41,8 +41,16 @@ pub fn use_tray(choose: Callback<Choice>) {
         Ok(Ok(())) => tracing::info!("System tray initialized"),
         Ok(Err(error)) => tracing::error!("Failed to initialize system tray: {error}"),
         // On Linux without an app indicator library, `tray-icon` panics
-        // rather than saying so.
-        Err(_) => tracing::error!("Failed to initialize system tray: no tray on this desktop"),
+        // rather than saying so. A release build on Windows has no
+        // console for the panic's own message, so it is logged here.
+        Err(panic) => {
+            let why = panic
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("no tray on this desktop");
+            tracing::error!("Failed to initialize system tray: {why}");
+        }
     });
     use_tray_menu_event_handler(move |event| {
         let choice = match event.id.0.as_str() {

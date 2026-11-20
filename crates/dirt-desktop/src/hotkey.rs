@@ -32,7 +32,7 @@ fn default_hotkey() -> HotKey {
 /// taken, the app runs on without them; the tray's New Note still opens
 /// quick capture.
 pub fn use_hotkey() -> Callback<HotKeyState> {
-    let mut hold = use_hook(|| CopyValue::new(Hold::new()));
+    let mut hold = use_hook(|| CopyValue::new(Hold::default()));
     let changed = use_callback(move |state| match state {
         HotKeyState::Pressed => {
             let Some(press) = hold.write().pressed() else {
@@ -57,7 +57,7 @@ pub fn use_hotkey() -> Callback<HotKeyState> {
         const ATTEMPTS: usize = 6;
         // With the standard input standing in for the keys, the real ones
         // are left to the person at the computer (`use_actions_from_stdin`).
-        if crate::settings::test_hook("DIRT_ACTIONS_FROM_STDIN").is_some() {
+        if crate::stdin_stands_in() {
             return;
         }
         for attempt in 1..=ATTEMPTS {
@@ -100,14 +100,6 @@ pub struct Hold {
 }
 
 impl Hold {
-    pub const fn new() -> Self {
-        Self {
-            down: false,
-            presses: 0,
-            talking: false,
-        }
-    }
-
     /// The keys went down. Gives the press's number, for its deadline, or
     /// `None` for the system repeating a key held down, which is not
     /// another press.
@@ -149,7 +141,7 @@ mod tests {
     /// letting go keeps what was said.
     #[test]
     fn a_tap_only_opens_and_a_hold_talks_until_let_go() {
-        let mut hold = Hold::new();
+        let mut hold = Hold::default();
         let tap = hold.pressed().expect("a press");
         assert!(!hold.released(), "a tap keeps nothing");
         assert!(
@@ -165,7 +157,7 @@ mod tests {
     /// The system's repeat of a key held down is not another press.
     #[test]
     fn a_repeat_is_not_a_press() {
-        let mut hold = Hold::new();
+        let mut hold = Hold::default();
         let press = hold.pressed().expect("a press");
         assert_eq!(hold.pressed(), None);
         assert!(hold.held(press));
@@ -177,7 +169,7 @@ mod tests {
     /// microphone is never left listening with the keys up (#303).
     #[test]
     fn a_deadline_after_the_letting_go_does_nothing() {
-        let mut hold = Hold::new();
+        let mut hold = Hold::default();
         let press = hold.pressed().expect("a press");
         assert!(!hold.released());
         assert!(!hold.held(press));
@@ -189,7 +181,7 @@ mod tests {
     /// press talk before its own deadline.
     #[test]
     fn an_old_deadline_does_not_count_for_a_new_press() {
-        let mut hold = Hold::new();
+        let mut hold = Hold::default();
         let first = hold.pressed().expect("a press");
         assert!(!hold.released());
         let second = hold.pressed().expect("a press");
