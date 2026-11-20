@@ -739,7 +739,7 @@ The most important component is the **page**: where a thought is written.
 | | Desktop | Android |
 |---|---|---|
 | Where | The right side of the window, always there. With no note open it is blank, with the cursor in it | The bar at the bottom, "What's on your mind?", grows into a full-screen page (glide) |
-| Blank | Only the placeholder "What's on your mind?", and 🎙 and 📎 in its gutter | The placeholder; the top bar has ⌄, 🎙 and 📎 |
+| Blank | Only the placeholder "What's on your mind?", and 🎙 and 📎 in its gutter | The placeholder; the top bar has ⌄ and 📎, and 🎙 from step 10 (8.9) |
 | The first word | Makes the note. From then on it saves itself, as any note does, and the list leaves (7.7) | The same |
 | <kbd>Enter</kbd> | A new line. No key ever saves | The same |
 | Done | <kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd> or ✓: the thought settles onto the pile (5.5) and the page is blank again, the cursor still in it | ⌄ or Back: the page closes into a grain that drops onto the list |
@@ -1276,7 +1276,7 @@ are made the next time it runs.
 |---|---|---|
 | In the app | 🎙 in the blank page's gutter. The page itself listens: the grains and the timer, ✕ and ✓ at the bottom | The mic in the dock. A sheet rises over the lower half of the screen |
 | From anywhere | **Hold** <kbd>Ctrl Alt N</kbd>: quick capture opens listening, and letting go keeps it. A tap still opens it for typing | The widget's mic (hands-free, ✓ to keep). Where the phone lets a hardware key open an app (double-press the side key on Samsung; Quick Tap on Pixel), Dirt's **Talk** opens straight into listening, over the lock screen too, and ends on a pause |
-| Into a note being written | Not offered: type, or use the system's own dictation | 🎙 in the note's top bar adds what is said at the end of the note, once its words are made, and the recording to the note's files |
+| Into a note being written | Not offered: type, or use the system's own dictation | 🎙 in the note's top bar adds what is said at the end of the note, once its words are made, and the recording to the note's files. Built with step 10 (8.9) |
 
 **Heard on the device, always.** Speech is turned into text on the device
 that heard it and is never sent anywhere: not to Dirt's server, not to a
@@ -1819,7 +1819,7 @@ with the tags chosen in Find as its words.
 | Pull to sync | The list holds at 58 px for as long as the sync runs, at least 600 ms and at most 15 s. Pulled while signed out, the arrow turns and settles and nothing syncs; the sync icon says why. A pull is told from a scroll by the finger's first move: down, with the list at its top. It is read from touch events, because Android's WebView takes a vertical drag of pointer events for its own scrolling |
 | The sync status | An icon with no words (6.6), so a long press gives them: its words and then its tooltip ("Offline · 1 waiting. Notes wait here and go when you're back"), or the tooltip alone for Synced. A tap syncs; with a problem it opens Settings at Sync, signed out at Account, and waiting to be let in at Devices (9.7) |
 | A card | Its tags have 40 dp targets around their small type. A long press anywhere else on it gives its edit time in full. Its thumbnail is shown only when the device already has the picture's thumbnail; the list fetches none, and opening the note fetches them as its files do |
-| The mic | The dock is the bar alone, and a page's bar has no 🎙, until voice (step 9): no icon is shown that does nothing |
+| The mic | The dock has the mic beside the bar since voice was built (8.9). A page's bar has no 🎙 yet: what is said into a note being written comes with step 10 (8.9) |
 | Appearance | Settings → Appearance (9.7): the theme, the accents and the text size |
 | A share | Saved at once, with the toast "Saved to Dirt" and **Undo** since step 8 (8.8). One that cannot be saved gives the error below, with the shared text to copy |
 | A write that fails | As on the desktop (7.9): not tried again; the error "A note could not be saved" ("2 notes could not be saved"), the store's reason in its tooltip (a long press), and **Copy text**, which puts the newest text of each page that could not be saved on Android's clipboard. A page whose note could not be made goes back to a thought not yet made, and its next key makes it with all of it; leaving it makes nothing. An archive, a delete or an undo that fails says so the same way ("The note could not be archived", "… deleted", "… brought back"), with nothing to copy |
@@ -1842,8 +1842,8 @@ the new page.
 
 What 8.1, 8.5 and 8.6 left open, settled when the capture sheet and its ways
 in were built (implementation plan, step 8b, after its second trial).
-Voice in the sheet, and the widget's mic, come with step 9; the pile widget
-with step 10.
+Voice in the sheet, and the widget's mic, came with step 9 (8.9); the pile
+widget comes with step 10.
 
 | | Settled |
 |---|---|
@@ -1864,7 +1864,7 @@ with step 10.
 | The old widget | Gone: it opened the app on a new page, which the sheet replaces |
 | Turning the phone | Turning it, or changing its theme, text size or keyboard, leaves the sheet as it is, with what was typed: the sheet takes those changes itself. Made again for any other change, it keeps its text and the draft it opened with |
 | ✓ over the lock screen | Leaves the draft as it was before the sheet opened, even if a pause meanwhile (an assistant over the sheet) had added the thought to it: what ✓ kept is not offered again |
-| When the thought cannot be written | The sheet stays with the words and says "The thought could not be kept. It is still here.", never the error's own words, which may name a path, over the lock screen too |
+| When the thought cannot be written | The sheet stays with the words and says "The thought could not be kept. It is still here.", never the error's own words, which may name a path, over the lock screen too: there on the line above the field, since Android shows no toast over the lock screen (8.9) |
 | One run at a time | ✓ asking for the job while it runs stops it on Android's side, while its thread carries on; the next run waits for it, then takes in what is left. The job and the app's own session syncing at the same moment is the case of the desktop app and the CLI, two programs of one device on one store, which the core is built for |
 | A restart of the phone | The job is kept across it (`setPersisted`), so a thought kept offline is still made a note and synced when the phone is next online |
 | When the session cannot be opened | The job, in a build with a server, takes nothing in if it cannot open the device's session (its secrets, or the session itself): which store a thought belongs in is the session's to say. The thoughts wait for the app, which says what is wrong |
@@ -1874,6 +1874,37 @@ with step 10.
 | A widget after a force-stop | From Android 15, stopping an app by force cancels what its widget's taps start, so the bar and the logo do nothing until the app is next opened; leaving the app draws the widget again. A phone does not stop an app this way by itself; the person does, in Settings (manual checklist L11) |
 | How quickly | On the emulator (Android 16, a debug build): the sheet on screen, by Android's own figure, in a median of 1.19 s with the app's process stopped (1.06 to 1.63 s) and 0.70 s with it running (0.48 to 0.82 s); drawn 0.82 s after its process started. A thought kept with ✓ reached the other device a few seconds later. Real phones are the checklist's (L9) |
 | Counting (section 2) | As section 2 gives: the widget, typing, ✓ is three; over the lock screen, pulling Quick Settings down, the tile, typing, ✓ is four; a share is two. The shortcut is three as the widget is, with a long press for the first |
+
+### 8.9 Settled when voice was built on Android
+
+What 6.18, 8.5 and 8.6 left open for voice on Android, settled when it was
+built (implementation plan, step 9b). What 7.11 settled for the desktop
+holds here where it is not said otherwise: the gesture's numbers, nothing
+heard, the note and its name, the words at the start of the note, three
+tries, no words found, Text only, the screen reader, the store a recording
+goes to.
+
+| | Settled |
+|---|---|
+| The dock's mic | A 52 dp round of the accent beside the bar, where the thumb is, as the mockup has it; it grows to 132% while held. With a slash, on the surface, when the microphone was refused. Shown only where the build has the speech model |
+| Listening in the app | A sheet rises over the lower half of the screen (at most 340 dp, glide), under the mic, which stays under the thumb: the grains, the timer from the first second, ✕ and ✓, as `dirt-ui`'s `Listening` draws them on the desktop. The bar dims meanwhile. Back keeps what was said, as leaving does |
+| Leaving while it listens | The app going behind another (Home, the recent apps, the screen going off), opening a note, a new page or Settings ends listening, keeping what was said: nothing said is lost (6.18). Android has no quitting to wait for: the recording is kept in the store it was said into, which is held until it is |
+| The microphone in the app | Android's `AudioRecord` at 16 kHz in Kotlin (`Microphone.kt`), which hands each tenth of a second to the app's Rust; `dirt-voice` writes the recording and listens for speech as on the desktop. No cpal |
+| The microphone's permission | Asked for at the first press of a mic, in Android's own dialog. That press records nothing, allowed or not: the next one listens. Refused, the mic shows a slash and a press says "Dirt may not use the microphone. Press to be asked again", and asks again. Refused for good ("Don't allow" twice, or "Don't ask again" on older Android), Android answers at once without asking; a press then says "Allow the microphone in Android's Settings: Apps, Dirt, Permissions" in a toast with **Settings**, which opens Android's page for Dirt. A toast, not the tooltip 6.18 names: on Android a long press of the mic is a hold, which talks. A press while Android's dialog is up asks again and makes nothing more: an answer Android gives with nothing in it is a request it cancelled for the next, and is not taken for a refusal (found on the emulator, where a second press had shown the slash) |
+| The capture sheet's 🎙 | Between the field and ✓, with the same gesture and numbers (in dp). While it listens the grains, the timer and ✕ take the field's place, ✓ keeps, the keyboard goes down, and the mic stays where the thumb is, in the accent. Kept, the sheet lifts away as for ✓; nothing heard, it shakes once (320 ms) and goes; thrown away, it is for typing again. Back, a tap above it, Home or the screen going off keeps what was said. What was typed stays a draft |
+| How the sheet records | In Kotlin, without the app's Rust, so that it opens as fast as before: the sound as it is heard, written to `dirt/waiting/<note ID>.wav.part` and renamed `.wav` when it ends, beside the typed thoughts (8.5). Its grains go by loudness (−42 dBFS is speech, the desktop's −55 to −15 for the level), since Silero is the app's. The app's Rust takes the WAV in as a typed thought is taken in: Silero listens to it, nothing is made of one with no speech, and the recording is written as Ogg Opus, as on every platform (`Store::take_in_voice_note`, dated at the time its ID carries) |
+| The words job | A second JobScheduler job, `WordsJob`, asked for by the sheet's keeping of a recording and by nothing else, expedited where Android allows it and needing no network: it takes the recordings in, makes their words with the model, and asks for the capture job, which syncs. The app takes in and makes words too, when it starts and each time the person returns to it. One reading at a time in the process, the app's or the job's, so that the model's 0.6 GiB is never held twice |
+| A recording left unfinished | One whose process ended while it listened (`.wav.part`) is taken in eleven minutes later, since the sheet stops at ten: nothing said is lost |
+| The widget's mic | The widget's bar has the mic at its end, in the accent, where the build has voice: the sheet opens listening, hands-free, until ✓ or ✕ |
+| Talk | An `activity-alias` of the sheet, "Dirt Talk" among the apps with the mic on a round of Clay, because a hardware key (Samsung's side key, Pixel's Quick Tap) can open an app and not a page of one; and **Talk** on a long press of Dirt's icon. It listens at once with the keyboard down and keeps the thought 1.6 s after speech stops, by loudness. With nothing said in eight seconds it ends as nothing heard, so a key pressed in a pocket keeps nothing |
+| Over the lock screen | As 8.6: the sheet's mic and Talk listen there and show nothing but the grains and the timer. Android's dialog for the microphone does not show over the lock screen, so a phone that has not allowed it says "Unlock the phone to let Dirt use the microphone". It says so on the line above the field, in "Adds a note. Your notes stay locked."'s place: Android shows no toast of an app's over the lock screen (found on the emulator: "Toast already killed"), which holds for every word the sheet has to say there, 8.8's "The thought could not be kept" among them. `docs/SECURITY.md` says what this lets in |
+| The voice folder | The model, the detector and their notice are the native module's assets (`android/native/src/main/assets/voice`), and the engine's two libraries its native libraries (`jniLibs/<ABI>`), put there by `dirt-mobile`'s build script from the build cache, not in git; the engine's Java bindings are left out. The engine opens its files by path, and an asset has none, so they are copied once into the app's storage that is never backed up (`noBackupFilesDir/voice`): the detector the first time the mic is pressed, the model the first time words are made. The copy doubles the model on the phone (130 MiB more); reading it in place would need the engine to open files from memory, which its C interface does not |
+| In the APK | Left compressed. Android's packaging compresses assets unless the app asks otherwise, and a library module cannot ask for the app (tried: `noCompress` in the native module's Gradle file left the model deflated). Uncompressed would not help: the model is copied out either way, and compressed it is 103 MiB in the APK instead of 131, so 234 MiB on the phone with its copy instead of 262. The engine's libraries add 12 MiB. A debug build for the x86_64 emulator went from 132 MB to 256 MB, most of it the debug build's own library (464 MB unpacked); a release build's size is the checklist's (A63) |
+| Settings → Voice | As on the desktop, with "Talk without opening Dirt" in the held keys' place: "Set your phone's side key, or Quick Tap, to open Dirt Talk: it listens at once, over the lock screen too where the phone allows, and keeps the thought at a pause" |
+| A build without voice | `DIRT_VOICE=off` or `DIRT_VOICE_MODEL=skip`: no mic in the dock, the sheet or the widget, and no Voice in Settings. Talk is still among the apps, and opens the sheet for typing: a development build's convenience, since a release build requires voice |
+| Trying it on an emulator | A debuggable build plays `dirt/stand-in.wav` from the app's own files instead of the microphone, if it is there: the emulator's microphone is the computer's |
+| Into a note being written | 🎙 in the page's top bar (6.18) is not built yet: it adds to a note that exists, at its end, which the core does not do for a recording (`Store::keep_voice_note` makes a note). It comes with step 10, the finishing step, with the pile widget |
+| How quickly | On the emulator (Android 16, a debug build, the stand-in playing the model archive's 7.4 s recording): held in the dock and let go, the words were on the card within 4 s. The first time the model is copied out of the APK first, which took 6.5 s for its encoder (125 MiB) on a freshly installed app. From the sheet, with the app running, the words job had made the note and its words 6.7 s after the sheet let go; with the app's process stopped, 3.6 s, and 4.5 s over the lock screen. Reading took the process from 60 MB to a peak of 385 MB (PSS, no web view in it) and back to 150 MB after: about 0.33 GB for the model, less than the 0.6 GiB the plan expected. Real phones are the checklist's (L15) |
 
 ---
 
