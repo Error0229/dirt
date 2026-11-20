@@ -152,7 +152,8 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn, notes_brought: EventHandl
                         bring_when_in.set(bring_now);
                         nav.open_at(Section::Devices);
                     }
-                    Ok(_) | Err(SessionError::Cancelled) => {}
+                    // Another press began one first; that one goes on.
+                    Ok(_) | Err(SessionError::Cancelled | SessionError::AlreadySigningIn) => {}
                     Err(error) => toasts
                         .show_error(Toast::new("Could not sign in").detail(as_sentence(&error))),
                 }

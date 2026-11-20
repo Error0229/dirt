@@ -26,7 +26,9 @@ use rusqlite::Connection;
 use tokio::sync::oneshot;
 
 pub use files::{AttachedFile, FileLink, FileProblem, FileStanding};
-pub use location::{close_data_folder, store_path, StoreName};
+pub use location::{
+    close_data_folder, remove_store_folder, store_path, StoreName, SIGNED_OUT_MARKER,
+};
 pub use notes::{LetGo, NoteCounts};
 pub use sync_state::{
     NoteProblem, ProblemKind, PurgeApplied, PurgeCandidate, SyncProgress, UnsentNote,
@@ -74,6 +76,11 @@ struct Inner {
     /// the same database exactly when these are equal, however each was
     /// opened.
     store_id: String,
+    /// Which file the database was when it was opened: on Linux and macOS
+    /// a file can be removed while it is open, and another made at its
+    /// path.
+    #[cfg(unix)]
+    file: Option<(u64, u64)>,
     // `Option` so that `drop` can close the channels before joining.
     writer: Option<mpsc::Sender<Job>>,
     readers: Option<mpsc::Sender<Job>>,
@@ -114,6 +121,16 @@ impl std::fmt::Debug for Store {
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+/// The device and the number of the file at `path`, which together name
+/// one file however it is reached.
+#[cfg(unix)]
+fn file_identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt as _;
+    std::fs::metadata(path)
+        .ok()
+        .map(|metadata| (metadata.dev(), metadata.ino()))
 }
 
 impl Store {
@@ -178,6 +195,8 @@ impl Store {
 
         Ok(Self {
             inner: Arc::new(Inner {
+                #[cfg(unix)]
+                file: file_identity(&path),
                 path,
                 store_id,
                 writer: Some(writer),
@@ -215,7 +234,30 @@ impl Store {
         T: Send + 'static,
         F: FnOnce(&mut Connection) -> Result<T> + Send + 'static,
     {
+        if self.signed_out() {
+            return Err(Error::SignedOut);
+        }
         Self::run(self.inner.writer.as_ref(), work).await
+    }
+
+    /// Whether this is an account's store that the device was signed out
+    /// of while the store was open: its folder is marked for removal, or
+    /// its file already removed (on Linux and macOS a file can be removed
+    /// under a program that has it open, and a new store made at its path).
+    /// The CLI and the desktop app share the store, and either may sign out
+    /// while the other runs. What the other wrote from then on would be
+    /// removed with the store without ever having synced, so nothing more
+    /// is written to it (issue #314).
+    fn signed_out(&self) -> bool {
+        let path = &self.inner.path;
+        let marked = path
+            .parent()
+            .is_some_and(|folder| folder.join(SIGNED_OUT_MARKER).exists());
+        #[cfg(unix)]
+        let gone = self.inner.file.is_some() && file_identity(path) != self.inner.file;
+        #[cfg(not(unix))]
+        let gone = !path.exists();
+        marked || gone
     }
 
     async fn read<T, F>(&self, work: F) -> Result<T>
@@ -1611,5 +1653,103 @@ mod tests {
         drop(source);
         let reopened = Store::open(folder.path().join("source.db")).unwrap();
         assert_eq!(reopened.inner.store_id, before);
+    }
+
+    // ---- A store signed out of while it is open (issue #314) ----
+
+    #[tokio::test]
+    async fn a_store_marked_signed_out_takes_no_more_writes_and_can_still_be_read() {
+        let folder = tempfile::tempdir().unwrap();
+        let store = Store::open(folder.path().join("notes.db")).unwrap();
+        let kept = store.create_note("before the sign-out").await.unwrap();
+        assert!(!store.signed_out());
+
+        // The other program signs out and marks the folder.
+        std::fs::write(folder.path().join(SIGNED_OUT_MARKER), b"").unwrap();
+
+        assert!(store.signed_out());
+        let refused = store.create_note("after the sign-out").await.unwrap_err();
+        assert!(matches!(refused, Error::SignedOut), "{refused}");
+        let refused = store
+            .update_note(&kept.id, "changed after")
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, Error::SignedOut), "{refused}");
+        let notes = store.list_notes(10, 0).await.unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].content, "before the sign-out");
+    }
+
+    #[tokio::test]
+    async fn a_store_folder_is_removed_whole_or_not_at_all() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("account-a");
+        let store = Store::open(folder.join("notes.db")).unwrap();
+        let note = store.create_note("with a file").await.unwrap();
+        let file = root.path().join("picture.txt");
+        std::fs::write(&file, b"not really a picture").unwrap();
+        store
+            .attach_file(&note.id, &file, "picture.txt", "text/plain")
+            .await
+            .unwrap();
+        std::fs::write(folder.join(SIGNED_OUT_MARKER), b"").unwrap();
+        let everything = |folder: &Path| {
+            walk(folder)
+                .into_iter()
+                .map(|path| path.strip_prefix(folder).unwrap().to_owned())
+                .collect::<Vec<_>>()
+        };
+        let before = everything(&folder);
+
+        let removed = remove_store_folder(&folder);
+
+        if cfg!(windows) {
+            // The store is open, so its database cannot be removed, and
+            // nothing else is: the files and the mark are all still there.
+            assert!(removed.is_err());
+            assert_eq!(everything(&folder), before);
+        } else {
+            // An open file can be removed here: the folder goes, and the
+            // store that had it open writes nothing more.
+            removed.unwrap();
+            assert!(!folder.exists());
+            assert!(store.signed_out());
+        }
+        // Once nothing holds it, it goes.
+        drop(store);
+        remove_store_folder(&folder).unwrap();
+        assert!(!folder.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_store_whose_file_was_replaced_takes_no_more_writes() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("notes.db");
+        let old = Store::open(&path).unwrap();
+        // The folder is removed under it, and a new store made in its place
+        // by a sign-in in the other program.
+        remove_store_folder(folder.path()).unwrap();
+        let new = Store::open(&path).unwrap();
+
+        assert!(old.signed_out());
+        assert!(matches!(
+            old.create_note("lost").await.unwrap_err(),
+            Error::SignedOut
+        ));
+        new.create_note("kept").await.unwrap();
+    }
+
+    fn walk(folder: &Path) -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(folder).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                found.extend(walk(&path));
+            }
+            found.push(path);
+        }
+        found.sort();
+        found
     }
 }

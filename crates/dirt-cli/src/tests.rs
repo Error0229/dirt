@@ -485,6 +485,30 @@ async fn the_account_status_says_when_notes_stay_on_this_device() {
     );
 }
 
+#[test]
+fn a_sign_out_says_whether_the_notes_went_or_wait_for_the_other_program() {
+    use crate::commands::account::signed_out_words;
+
+    let removed = signed_out_words(false);
+    assert!(removed.contains("notes and keys were removed"), "{removed}");
+    // Put off while the desktop app has them open: not said to be removed.
+    let put_off = signed_out_words(true);
+    assert!(
+        !put_off.contains("notes and keys were removed"),
+        "{put_off}"
+    );
+    assert!(put_off.contains("desktop app"), "{put_off}");
+    assert!(put_off.contains("nothing more is saved"), "{put_off}");
+}
+
+#[test]
+fn a_device_waiting_to_be_let_in_is_told_how() {
+    let words = crate::context::WAITING_TO_BE_LET_IN;
+    assert!(words.contains("waiting to be let in"), "{words}");
+    assert!(words.contains("`dirt auth join`"), "{words}");
+    assert!(words.contains("`dirt devices approve`"), "{words}");
+}
+
 /// `EDITOR` may be a program with arguments. The command here does nothing
 /// and succeeds, whatever file it is given.
 #[test]

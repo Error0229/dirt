@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use dirt_core::api::ErrorClass;
 use dirt_core::config::ServerAddress;
-use dirt_core::session::{Session, SessionError};
+use dirt_core::session::{Session, SessionError, SessionState};
 use dirt_core::sync::engine::SyncError;
 use dirt_core::Store;
 
@@ -78,11 +78,19 @@ impl Context {
             });
         };
         let session = Session::on_this_computer(&server.url, data_folder(), false)
-            .map_err(|error| CliError::Account(error.to_string()))?;
+            .map_err(|error| CliError::Account(dirt_core::util::as_sentence(&error)))?;
         Ok(Self {
             store: session.store(),
             session: Some(session),
             server: Some(server),
+        })
+    }
+
+    /// Whether this device is signed in and waiting to be let in, so that
+    /// it reads none of the account's notes yet.
+    pub fn waiting_to_be_let_in(&self) -> bool {
+        self.session.as_ref().is_some_and(|session| {
+            matches!(session.state(), SessionState::WaitingForApproval { .. })
         })
     }
 
@@ -130,6 +138,15 @@ impl Context {
         }
     }
 }
+
+/// What a device that is waiting to be let in says, in place of an empty
+/// list, and how it is let in.
+pub const WAITING_TO_BE_LET_IN: &str = concat!(
+    "This device is waiting to be let in to the account, so it cannot read the account's ",
+    "notes yet; until then, notes are kept on this device only. Run `dirt auth join` here ",
+    "and approve it on a device that is already signed in, with `dirt devices approve` or ",
+    "in the app's Settings, or run `dirt auth recover` with the recovery phrase."
+);
 
 /// Words for a failure, by what the person can do about it.
 pub fn describe(error: &SessionError) -> String {

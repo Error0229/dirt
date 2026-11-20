@@ -25,6 +25,7 @@ pub use devices::{Approval, ExchangeStep, Join, KeyChange, MyDevice, ResetOutcom
 pub use exchange::{Answer, Exchange, ExchangeView, Pace};
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use dirt_proto::api::{DeviceStatus, ErrorCode, RegisterDeviceRequest};
@@ -36,7 +37,7 @@ use crate::crypto::{AccountKey, DeviceKeyPair, KEY_VERSION};
 use crate::identity::{Attempt, IdentityClient, IdentityError, Loopback};
 use crate::key_change::KeyRing;
 use crate::secrets::{DeviceSecrets, SecretError, SecretStore};
-use crate::store::{store_path, StoreName};
+use crate::store::{remove_store_folder, store_path, StoreName, SIGNED_OUT_MARKER};
 use crate::sync::engine::{FileError, KeyKeeper, StoredKeys, SyncEngine, SyncError, SyncReport};
 use crate::sync::overview::{SyncIndicator, SyncOverview};
 use crate::sync::worker::{SyncStatus, SyncWorker, Timing, Trigger};
@@ -45,11 +46,6 @@ use crate::{Error, Store};
 /// The file a sign-in attempt is saved in while the browser is open, on
 /// platforms that may stop the app meanwhile.
 const ATTEMPT_FILE: &str = "sign-in-attempt.json";
-
-/// The file that marks an account's store folder for removal. Sign-out
-/// writes it; the folder goes then if nothing holds it open, and otherwise
-/// the next time a session opens.
-const SIGNED_OUT_MARKER: &str = "signed-out";
 
 /// What a session needs to know about the app it runs in.
 #[derive(Debug, Clone)]
@@ -104,6 +100,18 @@ pub enum SessionError {
     /// A redirect arrived but no sign-in was under way.
     #[error("no sign-in is in progress")]
     NoAttempt,
+    /// A sign-in was asked for while another was under way. One goes on;
+    /// the other is not begun.
+    #[error("a sign-in is already in progress")]
+    AlreadySigningIn,
+    /// The device signed in to an account whose notes from an earlier
+    /// sign-in on this computer are still open in another Dirt program,
+    /// which has not yet noticed that sign-out. They are to be removed,
+    /// and the new sign-in does not take them over.
+    #[error(
+        "this computer's notes from its last sign-in to the account are still open in another Dirt program, such as the desktop app; switch to it or close it, then try again"
+    )]
+    PreviousNotesOpen,
     /// The browser could not be opened.
     #[error("could not open the browser: {0}")]
     Browser(String),
@@ -217,6 +225,23 @@ impl SignedIn {
     }
 }
 
+/// Where this session's sign-in is. There is one at a time: another is
+/// refused from the moment one begins until it ends, fails or is
+/// cancelled (issue #310).
+#[derive(Default)]
+enum SignInStep {
+    #[default]
+    Idle,
+    /// Begun: the address of the sign-in page is being made. The number
+    /// tells this beginning from one made after it was cancelled.
+    Starting(u64),
+    /// The browser is open on the sign-in page.
+    Open(Attempt),
+    /// The browser came back and the device is being registered. It is
+    /// too late to cancel.
+    Finishing,
+}
+
 struct Inner {
     config: SessionConfig,
     transport: Arc<dyn Transport>,
@@ -226,7 +251,9 @@ struct Inner {
     state: watch::Sender<SessionState>,
     status: Arc<watch::Sender<SyncStatus>>,
     signed_in: Mutex<Option<SignedIn>>,
-    attempt: Mutex<Option<Attempt>>,
+    sign_in: Mutex<SignInStep>,
+    /// Numbers the beginnings of sign-ins.
+    sign_ins: AtomicU64,
     cancel: Notify,
 }
 
@@ -404,20 +431,37 @@ fn account_folder(data_folder: &Path, account_id: Uuid) -> Result<PathBuf, Error
         .map_or_else(|| database.clone(), Path::to_path_buf))
 }
 
+/// What became of the stores of accounts this device signed out of.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Swept {
+    /// Stores removed now.
+    pub removed: usize,
+    /// Stores another program still has open, left for when it lets go.
+    pub left: usize,
+}
+
 /// Removes the store folders of accounts that were signed out of while
-/// something still held their files open.
-fn sweep_signed_out(data_folder: &Path) {
+/// something still held their files open. One that is still held is left
+/// whole, and is not worth a word: it is what the other program is for
+/// until it notices, and the sign-out said so once.
+fn sweep_signed_out(data_folder: &Path) -> Swept {
+    let mut swept = Swept::default();
     let Ok(entries) = std::fs::read_dir(data_folder.join("stores")) else {
-        return;
+        return swept;
     };
     for entry in entries.flatten() {
         let folder = entry.path();
         if folder.join(SIGNED_OUT_MARKER).exists() {
-            if let Err(error) = std::fs::remove_dir_all(&folder) {
-                tracing::warn!("could not remove {}: {error}", folder.display());
+            match remove_store_folder(&folder) {
+                Ok(()) => swept.removed += 1,
+                Err(error) => {
+                    tracing::debug!("{} is still open: {error}", folder.display());
+                    swept.left += 1;
+                }
             }
         }
     }
+    swept
 }
 
 impl Session {
@@ -445,7 +489,8 @@ impl Session {
                 state,
                 status: Arc::new(status),
                 signed_in: Mutex::new(None),
-                attempt: Mutex::new(None),
+                sign_in: Mutex::new(SignInStep::Idle),
+                sign_ins: AtomicU64::new(0),
                 cancel: Notify::new(),
             }),
         };
@@ -539,7 +584,17 @@ impl Session {
         lock(&self.inner.signed_in).take();
 
         let account = match (secrets.keys(), secrets.approved) {
-            (Some(keys), true) => Some(self.open_account(&secrets, keys)?),
+            (Some(keys), true) => match self.open_account(&secrets, keys) {
+                Ok(account) => Some(account),
+                Err(error) => {
+                    // What is published says what this session holds now,
+                    // which is no sign-in. The secrets stay stored, and
+                    // the next reload tries them again.
+                    self.inner.status.send_replace(SyncStatus::default());
+                    self.inner.state.send_replace(SessionState::SignedOut);
+                    return Err(error);
+                }
+            },
             _ => None,
         };
         let signed_in = SignedIn { secrets, account };
@@ -563,12 +618,14 @@ impl Session {
     ) -> Result<Account, SessionError> {
         let config = &self.inner.config;
         let folder = account_folder(&config.data_folder, secrets.account_id)?;
-        let marker = folder.join(SIGNED_OUT_MARKER);
-        if marker.exists() {
-            // Left by a sign-out that could not remove the folder. Start
-            // clean if it can be removed now; otherwise keep using it.
-            if std::fs::remove_dir_all(&folder).is_err() {
-                let _ = std::fs::remove_file(&marker);
+        if folder.join(SIGNED_OUT_MARKER).exists() {
+            // Left by a sign-out while another program had the store open:
+            // the notes of a device that has left the account, some of
+            // them perhaps ones the person chose to lose. They are never
+            // this sign-in's. It starts clean once they are gone.
+            if let Err(error) = remove_store_folder(&folder) {
+                tracing::debug!("{} is still open: {error}", folder.display());
+                return Err(SessionError::PreviousNotesOpen);
             }
         }
         let name = StoreName::account(&secrets.account_id.to_string())?;
@@ -625,10 +682,57 @@ impl Session {
     /// Starts a sign-in and returns the address to open in the system
     /// browser. The provider will send the browser back to `redirect_uri`.
     ///
+    /// The session is [`SessionState::SigningIn`] from the moment this is
+    /// called, and another sign-in is refused with
+    /// [`SessionError::AlreadySigningIn`] until this one ends, fails or is
+    /// cancelled with [`cancel_sign_in`](Self::cancel_sign_in).
+    ///
     /// Android uses this and [`finish_sign_in`](Self::finish_sign_in)
     /// directly. Desktop and the CLI use
     /// [`sign_in_with_browser`](Self::sign_in_with_browser).
     pub async fn begin_sign_in(&self, redirect_uri: &str) -> Result<String, SessionError> {
+        let ticket = self.inner.sign_ins.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut step = lock(&self.inner.sign_in);
+            if !matches!(*step, SignInStep::Idle) {
+                return Err(SessionError::AlreadySigningIn);
+            }
+            *step = SignInStep::Starting(ticket);
+        }
+        self.inner.state.send_replace(SessionState::SigningIn);
+
+        let made = self.make_attempt(redirect_uri).await;
+        let mut step = lock(&self.inner.sign_in);
+        if !matches!(*step, SignInStep::Starting(begun) if begun == ticket) {
+            // Cancelled meanwhile, and the state was set back then.
+            return Err(SessionError::Cancelled);
+        }
+        let saved = made.and_then(|(attempt, address)| {
+            if self.inner.config.persist_attempts {
+                // Saved before the browser opens: the app may not be
+                // running when the browser returns.
+                let saved = serde_json::to_vec(&attempt).map_err(Error::Serialization)?;
+                std::fs::write(self.attempt_file(), saved).map_err(Error::Io)?;
+            }
+            Ok((attempt, address))
+        });
+        match saved {
+            Ok((attempt, address)) => {
+                *step = SignInStep::Open(attempt);
+                Ok(address)
+            }
+            Err(error) => {
+                *step = SignInStep::Idle;
+                drop(step);
+                self.restore_state();
+                Err(error)
+            }
+        }
+    }
+
+    /// What [`begin_sign_in`](Self::begin_sign_in) asks of the server and
+    /// the provider: the attempt, and the address of the sign-in page.
+    async fn make_attempt(&self, redirect_uri: &str) -> Result<(Attempt, String), SessionError> {
         // An unreadable record may hold the only copy of an account key.
         // Signing in would replace it, so it has to be dealt with first.
         DeviceSecrets::read(&*self.inner.secrets)?;
@@ -637,45 +741,86 @@ impl Session {
         let attempt = Attempt::new(&nonce, redirect_uri)?;
         let address = self.inner.identity.authorization_url(&attempt).await?;
         if self.inner.config.persist_attempts {
-            // Saved before the browser opens: the app may not be running
-            // when the browser returns.
             crate::store::close_data_folder(&self.inner.config.data_folder).map_err(Error::Io)?;
-            let saved = serde_json::to_vec(&attempt).map_err(Error::Serialization)?;
-            std::fs::write(self.attempt_file(), saved).map_err(Error::Io)?;
         }
-        *lock(&self.inner.attempt) = Some(attempt);
-        self.inner.state.send_replace(SessionState::SigningIn);
-        Ok(address)
+        Ok((attempt, address))
     }
 
-    /// Takes the attempt in progress, from memory or from its file. An
-    /// attempt is used once: it is gone before anything is done with it, so
-    /// a redirect delivered twice cannot be finished twice.
+    /// Takes the attempt in progress, from memory or from its file, and
+    /// marks the sign-in as finishing. An attempt is used once: it is gone
+    /// before anything is done with it, so a redirect delivered twice
+    /// cannot be finished twice.
     fn take_attempt(&self) -> Option<Attempt> {
-        let in_memory = lock(&self.inner.attempt).take();
+        let mut step = lock(&self.inner.sign_in);
         let file = self.attempt_file();
         let saved = std::fs::read(&file).ok();
         if saved.is_some() {
             let _ = std::fs::remove_file(&file);
         }
-        in_memory.or_else(|| saved.and_then(|bytes| serde_json::from_slice(&bytes).ok()))
+        let attempt = match std::mem::take(&mut *step) {
+            SignInStep::Open(attempt) => Some(attempt),
+            // Android may have stopped the app while the browser was open:
+            // the attempt is in its file alone.
+            SignInStep::Idle => saved.and_then(|bytes| serde_json::from_slice(&bytes).ok()),
+            other => {
+                *step = other;
+                return None;
+            }
+        };
+        if attempt.is_some() {
+            *step = SignInStep::Finishing;
+        }
+        attempt
+    }
+
+    /// Ends the sign-in if `attempt` is still the one under way: the
+    /// browser could not be opened, or did not come back.
+    fn give_up(&self, attempt: &Attempt) {
+        {
+            let mut step = lock(&self.inner.sign_in);
+            if !matches!(&*step, SignInStep::Open(open) if open.state == attempt.state) {
+                return;
+            }
+            *step = SignInStep::Idle;
+        }
+        let _ = std::fs::remove_file(self.attempt_file());
+        self.restore_state();
     }
 
     /// Finishes the sign-in with the address the provider sent the browser
     /// back to, and returns the new state.
     pub async fn finish_sign_in(&self, redirect: &str) -> Result<SessionState, SessionError> {
-        let attempt = self.take_attempt().ok_or(SessionError::NoAttempt)?;
-        let result = self.register(&attempt, redirect).await;
-        if result.is_err() {
-            self.restore_state();
+        /// Ends the sign-in however registering ends, also when the caller
+        /// stops waiting for it.
+        struct Finished<'a>(&'a Session);
+        impl Drop for Finished<'_> {
+            fn drop(&mut self) {
+                *lock(&self.0.inner.sign_in) = SignInStep::Idle;
+                if self.0.state() == SessionState::SigningIn {
+                    self.0.restore_state();
+                }
+            }
         }
-        result
+
+        let attempt = self.take_attempt().ok_or(SessionError::NoAttempt)?;
+        let _finished = Finished(self);
+        self.register(&attempt, redirect).await
     }
 
-    /// Stops a sign-in that is waiting for the browser.
+    /// Stops a sign-in that is waiting for the browser, or for the address
+    /// of the sign-in page. One that is already registering the device
+    /// goes on.
     pub fn cancel_sign_in(&self) {
+        {
+            let mut step = lock(&self.inner.sign_in);
+            if matches!(*step, SignInStep::Finishing) {
+                return;
+            }
+            *step = SignInStep::Idle;
+        }
         self.inner.cancel.notify_waiters();
-        if self.take_attempt().is_some() || self.state() == SessionState::SigningIn {
+        let _ = std::fs::remove_file(self.attempt_file());
+        if self.state() == SessionState::SigningIn {
             self.restore_state();
         }
     }
@@ -699,28 +844,28 @@ impl Session {
         tokio::pin!(cancelled);
         cancelled.as_mut().enable();
 
-        if let Err(reason) = open_browser(&address) {
-            self.take_attempt();
-            self.restore_state();
-            return Err(SessionError::Browser(reason));
-        }
-        let Some(attempt) = lock(&self.inner.attempt).clone() else {
-            self.restore_state();
+        let open = match &*lock(&self.inner.sign_in) {
+            SignInStep::Open(attempt) => Some(attempt.clone()),
+            _ => None,
+        };
+        let Some(attempt) = open else {
             return Err(SessionError::Cancelled);
         };
+        if let Err(reason) = open_browser(&address) {
+            self.give_up(&attempt);
+            return Err(SessionError::Browser(reason));
+        }
         let redirect = tokio::select! {
             redirect = loopback.wait_for_redirect(&attempt) => redirect,
             () = &mut cancelled => {
-                self.take_attempt();
-                self.restore_state();
+                self.give_up(&attempt);
                 return Err(SessionError::Cancelled);
             }
         };
         match redirect {
             Ok(redirect) => self.finish_sign_in(&redirect).await,
             Err(error) => {
-                self.take_attempt();
-                self.restore_state();
+                self.give_up(&attempt);
                 Err(error.into())
             }
         }
@@ -984,11 +1129,13 @@ impl Session {
     }
 
     /// Removes the notes of accounts this device has signed out of, if any
-    /// are still on disk. Sign-out cannot remove them while the interface
-    /// holds the store open; the interface calls this once it has let go.
-    /// Whatever is still held then goes the next time a session opens.
-    pub fn remove_signed_out_stores(&self) {
-        sweep_signed_out(&self.inner.config.data_folder);
+    /// are still on disk, and says how many went and how many are still
+    /// held. Sign-out cannot remove them while an interface holds the store
+    /// open, this program's or another's on the same computer; an interface
+    /// calls this once it has let go. Whatever is still held then goes the
+    /// next time this is called or a session opens.
+    pub fn remove_signed_out_stores(&self) -> Swept {
+        sweep_signed_out(&self.inner.config.data_folder)
     }
 
     // ---- Signing out ----
@@ -1066,11 +1213,11 @@ impl Session {
         if had_account {
             let folder = account_folder(&self.inner.config.data_folder, secrets.account_id)?;
             // The mark comes first: if the folder cannot be removed now,
-            // because the interface still holds the store, it goes the next
-            // time a session opens.
+            // because an interface still holds the store, nothing more is
+            // written to it, and it goes once nothing holds it.
             let _ = std::fs::write(folder.join(SIGNED_OUT_MARKER), b"");
-            if let Err(error) = std::fs::remove_dir_all(&folder) {
-                tracing::info!("the account's notes will be removed at next start: {error}");
+            if let Err(error) = remove_store_folder(&folder) {
+                tracing::debug!("{} is still open: {error}", folder.display());
             }
         }
         self.inner.status.send_replace(SyncStatus::default());

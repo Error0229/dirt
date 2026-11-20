@@ -1982,7 +1982,11 @@ screen reader.
 
 Settings → Account → **Sign in**. The system browser opens Clerk; when it
 returns, the button has shown "Waiting for browser" with a spinner the whole
-time, so nothing seems stuck. "Bring the 12 notes on this device into the
+time, from the press, so nothing seems stuck. Pressed again while it waits,
+it stops waiting; it never begins a second sign-in beside the first, which
+the core refuses (`SessionError::AlreadySigningIn`). Once the browser has
+come back and the device is being registered, it can no longer be stopped,
+and a press does nothing. "Bring the 12 notes on this device into the
 account" is checked by default. Back in the app, sync starts on its own.
 
 ### 9.2 Letting a new device in

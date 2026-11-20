@@ -23,7 +23,7 @@ use dirt_core::Store;
 use dirt_ui::{Appearance, UiRoot};
 
 use crate::bootstrap_config::load_bootstrap_config;
-use crate::screen::writing::Scribe;
+use crate::screen::writing::{Done, Scribe};
 use crate::screen::MainScreen;
 use crate::services::{data_folder, open_local_store};
 use crate::settings::SettingsPanel;
@@ -230,15 +230,28 @@ pub fn App() -> Element {
                         tracing::warn!("Took another store into use with work unfinished");
                     }
                 }
-                if state_now == SessionState::SignedOut {
-                    // The account's store has been let go of above, so its
-                    // files can go now. Something may still be reading it
-                    // for a moment, a list being loaded for one, so it is
-                    // tried again shortly. What is still there after that
-                    // goes when the app next starts.
-                    current.remove_signed_out_stores();
-                    tokio::time::sleep(Duration::from_secs(3)).await;
-                    current.remove_signed_out_stores();
+                if !same_store {
+                    // The store let go of above may be one this device was
+                    // signed out of, here or by the CLI, so its files can
+                    // go now. Something may still be reading it for a
+                    // moment, a list being loaded for one, so it is tried
+                    // again shortly. What is still there after that goes
+                    // when the app next starts.
+                    let current = current.clone();
+                    tokio::spawn(async move {
+                        let mut removed = current.remove_signed_out_stores().removed;
+                        tokio::time::sleep(Duration::from_secs(3)).await;
+                        removed += current.remove_signed_out_stores().removed;
+                        // A sign-in the CLI made to the same account could
+                        // not be taken into use while this app held the old
+                        // store (`SessionError::PreviousNotesOpen`). Now it
+                        // can.
+                        if removed > 0 && current.state() == SessionState::SignedOut {
+                            if let Err(error) = current.reload() {
+                                tracing::error!("Could not re-read the sign-in: {error}");
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -264,6 +277,29 @@ pub fn App() -> Element {
                 current.notify(Trigger::Returned);
             }
             state.reread();
+        }
+    });
+
+    // A write the store refused may have gone to a store this device was
+    // signed out of by the CLI, which refuses every write from then on
+    // (`dirt_core::Error::SignedOut`). The screen tells the person and
+    // gives them their words; here the app notices the sign-out, and takes
+    // the store now in use. Focus may never come, when the thought was
+    // written in quick capture.
+    use_future(move || async move {
+        let mut news = Scribe::global().listen();
+        loop {
+            match news.recv().await {
+                Ok(Done::Unsaved { .. } | Done::VoiceUnkept { .. }) => {
+                    if let Some(current) = session.peek().clone() {
+                        if let Err(error) = current.reload() {
+                            tracing::error!("Could not re-read the sign-in: {error}");
+                        }
+                    }
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
         }
     });
 
