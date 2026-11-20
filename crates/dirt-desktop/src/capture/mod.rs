@@ -81,11 +81,6 @@ const SAVE_AFTER: Duration = Duration::from_millis(400);
 /// over every window with nobody able to type into it.
 const KEYBOARD_BY: Duration = Duration::from_millis(300);
 
-/// How long handing over waits for a recording to be finished and handed
-/// to the queue: a moment, the microphone being closed and the last of
-/// the recording written.
-const KEEPING_AT_MOST: Duration = Duration::from_secs(3);
-
 /// How long the window waits for the page to say that it has finished
 /// leaving, before it hides all the same: a page that is not drawn runs
 /// no animation.
@@ -108,8 +103,8 @@ enum Asked {
     /// Open, for a key or a menu chosen at that moment.
     Open(Instant),
     /// Hand over what is written, now: the app is quitting, or taking
-    /// another store into use. Answered once it has, and only by this:
-    /// handling a later ask does not count as handing over.
+    /// another store into use. Answered once the text has been handed
+    /// over, and only by this: handling a later ask does not count.
     HandOver(oneshot::Sender<()>),
     /// The keys that opened it are still down: listen (6.18).
     Talk,
@@ -172,11 +167,17 @@ impl Link {
         self.ask(Asked::LetGo);
     }
 
-    /// Has quick capture hand what it holds to the store's queue, for the
-    /// store it was written in, and put itself away; and waits until it
-    /// has, for at most `at_most`. Says whether it did. Called as the app
-    /// quits, and before another store is taken into use, which waits for
-    /// the queue next.
+    /// Has quick capture hand what is typed in it to the store's queue, for
+    /// the store it was written in, and put itself away; and waits until
+    /// it has, for at most `at_most`. Says whether it did. Called as the
+    /// app quits, and before another store is taken into use, which waits
+    /// for the queue next.
+    ///
+    /// A recording being made is ended as it is put away, but kept after
+    /// the answer: a caller waits for that itself
+    /// (`crate::voice::keeping_settled`). Quick capture's window is made
+    /// once and only hidden after, so an ask is always heard; until the
+    /// window is made, it waits in the queue and this waits `at_most`.
     pub async fn hand_over(&self, at_most: Duration) -> bool {
         let (done, handed) = oneshot::channel();
         self.ask(Asked::HandOver(done));
@@ -600,11 +601,6 @@ fn QuickCapture() -> Element {
                 Asked::Open(at) => capture.open(at),
                 Asked::HandOver(done) => {
                     capture.put_away(Why::Closed);
-                    // What was being said is handed to the queue, in its
-                    // own store, before the hand-over is done.
-                    if !crate::voice::keeping_settled(KEEPING_AT_MOST).await {
-                        tracing::warn!("A recording was not kept in time");
-                    }
                     let _ = done.send(());
                 }
                 Asked::Talk => capture.talk(),
@@ -807,8 +803,8 @@ mod tests {
         assert!(handed);
     }
 
-    /// A hand-over the window never answers is not counted as done, however
-    /// many later asks it handles.
+    /// A hand-over that is not answered is not counted as done, however
+    /// many later asks are handled.
     #[tokio::test]
     async fn a_hand_over_not_answered_is_not_done() {
         let link = Link::new();
@@ -821,7 +817,7 @@ mod tests {
             };
             assert!(matches!(heard.recv().await, Some(Asked::Talk)));
             assert!(matches!(heard.recv().await, Some(Asked::LetGo)));
-            // The window went before it had handed over.
+            // Let go of without an answer.
             drop(done);
         };
         let (handed, ()) = tokio::join!(link.hand_over(Duration::from_secs(5)), window);
