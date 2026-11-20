@@ -105,6 +105,7 @@ async fn a_thought_said_on_one_device_gets_its_words_there_and_reaches_the_other
         &phone.session.store(),
         phones_ear.clone(),
         VoiceRecording::Keep,
+        |_| {},
     )
     .await
     .unwrap();
@@ -120,6 +121,7 @@ async fn a_thought_said_on_one_device_gets_its_words_there_and_reaches_the_other
         &laptop.session.store(),
         laptops_ear.clone(),
         VoiceRecording::Keep,
+        |_| {},
     )
     .await
     .unwrap();
@@ -161,9 +163,14 @@ async fn text_only_takes_the_recording_off_every_device(pool: PgPool) {
         words: "Water the plants",
         asked: AtomicUsize::new(0),
     });
-    make_words(&laptop.session.store(), ear, VoiceRecording::TextOnly)
-        .await
-        .unwrap();
+    make_words(
+        &laptop.session.store(),
+        ear,
+        VoiceRecording::TextOnly,
+        |_| {},
+    )
+    .await
+    .unwrap();
     laptop.session.sync_now().await.unwrap();
     phone.session.sync_now().await.unwrap();
     let there = phone.session.store().get_note(&id).await.unwrap().unwrap();

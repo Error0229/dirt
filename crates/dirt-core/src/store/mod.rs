@@ -754,6 +754,16 @@ impl Store {
             .await
     }
 
+    /// Of these notes, those whose words this device has stopped trying to
+    /// make, each with why the last try failed: what their rows say.
+    pub async fn voice_problems(
+        &self,
+        notes: Vec<NoteId>,
+    ) -> Result<std::collections::HashMap<NoteId, String>> {
+        self.read(move |c| voice::problems(c, &notes, crate::voice::MOST_TRIES))
+            .await
+    }
+
     /// Making a recording's words failed: it waits for the next try.
     pub async fn voice_not_read(&self, note: &NoteId, why: &str) -> Result<()> {
         let (note, why) = (*note, why.to_owned());
@@ -764,7 +774,18 @@ impl Store {
     /// an edit made on another device at the same time merges with this one.
     pub async fn update_note(&self, id: &NoteId, content: &str) -> Result<Note> {
         let (id, content) = (*id, content.to_owned());
-        self.write(move |c| notes::update(c, &id, &content, now_ms()))
+        self.write(move |c| notes::update(c, &id, None, &content, now_ms()))
+            .await
+    }
+
+    /// Saves a note's text as a page that showed `base` changed it to
+    /// `content`: the changes from `base` are made to the text the note has
+    /// now, so that what came meanwhile is kept (the words of what was
+    /// said, an edit from another device). With the note still at `base`
+    /// this is [`Self::update_note`].
+    pub async fn update_note_from(&self, id: &NoteId, base: &str, content: &str) -> Result<Note> {
+        let (id, base, content) = (*id, base.to_owned(), content.to_owned());
+        self.write(move |c| notes::update(c, &id, Some(&base), &content, now_ms()))
             .await
     }
 

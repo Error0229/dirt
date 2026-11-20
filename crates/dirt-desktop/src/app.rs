@@ -217,6 +217,11 @@ pub fn App() -> Element {
                     if !capture.hand_over(HANDING_OVER_AT_MOST).await {
                         tracing::warn!("Quick capture did not hand over what it held in time");
                     }
+                    // What was being said is kept, in the store it was
+                    // said into, before that store is let go.
+                    if !crate::voice::keeping_settled(QUEUE_WAITS_AT_MOST).await {
+                        tracing::warn!("A recording was not kept in time");
+                    }
                     let store = Arc::new(store);
                     capture.set_context(Some(Arc::clone(&store)), Some(current.clone()));
                     current_note_id.set(None);
@@ -316,6 +321,11 @@ pub fn App() -> Element {
                         tracing::warn!("Quick capture did not hand over what it held in time");
                     }
                     tokio::time::sleep(Duration::from_millis(100)).await;
+                    // A recording being said is kept before the queue is
+                    // waited for: it is only in memory until then.
+                    if !crate::voice::keeping_settled(QUEUE_WAITS_AT_MOST).await {
+                        tracing::warn!("Quitting with a recording not kept");
+                    }
                     if !Scribe::global().settle(QUEUE_WAITS_AT_MOST).await {
                         tracing::warn!("Quitting with the store's work unfinished");
                     }

@@ -50,21 +50,38 @@ impl MadeWords {
     }
 }
 
+/// How many times making a recording's words may fail before this device
+/// stops trying.
+///
+/// Each try loads the model; a recording it cannot read is
+/// not read again at every thought said. The recording stays on its note,
+/// and its row says that its words could not be made, and why
+/// ([`crate::Store::voice_problems`]).
+pub const MOST_TRIES: u32 = 3;
+
 /// Makes the words of every recording made on this device that waits for
-/// them, one at a time, the oldest first. Each is read once in a round: one
-/// that fails waits for the next round.
+/// them, one at a time, the oldest first.
+///
+/// Each is read once in a round: one
+/// that fails waits for the next round, until it has failed
+/// [`MOST_TRIES`] times.
 ///
 /// `kept` is what Settings → Voice says to keep. It is this device's
 /// setting, which an app keeps in its device's store, not in the store of
-/// the notes.
+/// the notes. `told` hears of each note as soon as its words are in, so
+/// that a page showing the note takes them before anything else is read.
 pub async fn make_words(
     store: &Store,
     transcriber: Arc<dyn Transcriber>,
     kept: VoiceRecording,
+    mut told: impl FnMut(&WordsPut),
 ) -> Result<MadeWords> {
     let text_only = kept == VoiceRecording::TextOnly;
     let mut made = MadeWords::default();
     for waiting in store.voice_waiting().await? {
+        if waiting.tries >= MOST_TRIES {
+            continue;
+        }
         let note = waiting.note;
         let Some(recording) = store.file_bytes(waiting.file_id).await? else {
             let why = "the recording is not on this device".to_owned();
@@ -74,8 +91,9 @@ pub async fn make_words(
         };
         match read_aside(Arc::clone(&transcriber), recording).await {
             Ok(words) => {
-                made.put
-                    .push(store.put_voice_words(&note, &words, text_only).await?);
+                let put = store.put_voice_words(&note, &words, text_only).await?;
+                told(&put);
+                made.put.push(put);
             }
             Err(why) => {
                 tracing::warn!("The words of note {note} could not be made: {why}");

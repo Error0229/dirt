@@ -1263,12 +1263,34 @@
     }
     return false;
   }
-  function prependText(selector, text) {
+  // Rust's changes to a field that held `expected` ([start, end, text],
+  // first to last), made to what it holds now: typed meanwhile, it differs
+  // in one stretch, and a change that falls there is left for Rust to try
+  // again. The caret keeps its place in the text around the changes.
+  function mergeInto(selector, expected, changes) {
     const element = document.querySelector(selector);
-    if (!element) return;
-    const keep = document.activeElement === element ? [element.selectionStart, element.selectionEnd] : null;
-    element.value = text + element.value;
-    if (keep) element.setSelectionRange(keep[0] + text.length, keep[1] + text.length);
+    if (!element) return null;
+    const actual = element.value;
+    let same = 0;
+    while (same < expected.length && same < actual.length && expected[same] === actual[same]) same += 1;
+    let tail = 0;
+    while (tail < expected.length - same && tail < actual.length - same
+      && expected[expected.length - 1 - tail] === actual[actual.length - 1 - tail]) tail += 1;
+    const typedEnd = expected.length - tail, shift = actual.length - expected.length;
+    const focused = document.activeElement === element;
+    let caret = focused ? [element.selectionStart, element.selectionEnd] : null;
+    let value = actual, all = true;
+    for (const [start, end, text] of changes.slice().reverse()) {
+      let from, to;
+      if (end <= same && !(start === same && same < typedEnd)) { from = start; to = end; }
+      else if (start >= typedEnd) { from = start + shift; to = end + shift; }
+      else { all = false; continue; }
+      value = value.slice(0, from) + text + value.slice(to);
+      if (caret) caret = caret.map(at => (at >= to ? at + text.length - (to - from) : at > from ? from + text.length : at));
+    }
+    element.value = value;
+    if (caret) element.setSelectionRange(caret[0], caret[1]);
+    return [value, all];
   }
   function setValue(selector, text) {
     const element = document.querySelector(selector);
@@ -2616,5 +2638,5 @@
     if (document.body) watchPage(); else document.addEventListener('DOMContentLoaded', watchPage);
   }
 
-  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, prependText, appendText, paste, back, jump, onPastedFiles };
+  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, mergeInto, appendText, paste, back, jump, onPastedFiles };
 })();

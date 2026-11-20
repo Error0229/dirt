@@ -103,6 +103,27 @@ pub(super) fn waiting(connection: &Connection) -> Result<Vec<VoiceWaiting>> {
     Ok(found)
 }
 
+/// Why the words of each of these notes could not be made, for those whose
+/// tries have run out ([`crate::voice::MOST_TRIES`]).
+pub(super) fn problems(
+    connection: &Connection,
+    notes: &[NoteId],
+    most_tries: u32,
+) -> Result<std::collections::HashMap<NoteId, String>> {
+    let mut found = std::collections::HashMap::new();
+    let mut statement = connection
+        .prepare("SELECT problem FROM voice_waiting WHERE note_id = ?1 AND tries >= ?2")?;
+    for note in notes {
+        let problem: Option<Option<String>> = statement
+            .query_row(params![note.as_str(), most_tries], |row| row.get(0))
+            .optional()?;
+        if let Some(problem) = problem {
+            found.insert(*note, problem.unwrap_or_default());
+        }
+    }
+    Ok(found)
+}
+
 /// Whether this device has a recording of this note waiting for words.
 pub(super) fn is_waiting(connection: &Connection, id: &NoteId) -> Result<bool> {
     Ok(connection

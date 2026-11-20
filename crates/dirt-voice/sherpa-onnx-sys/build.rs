@@ -11,7 +11,7 @@ mod fetch;
 
 use std::path::{Path, PathBuf};
 
-use fetch::{BuildError, Pinned};
+use fetch::{BuildError, Pinned, Wanted};
 
 const RELEASE: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1";
 
@@ -84,6 +84,11 @@ fn run() -> Result<(), BuildError> {
     if std::env::var_os("DOCS_RS").is_some() {
         return Ok(());
     }
+    let wanted = fetch::wanted()?;
+    if wanted == Wanted::Off {
+        println!("cargo:absent=1");
+        return Ok(());
+    }
     let os = std::env::var("CARGO_CFG_TARGET_OS")?;
     let arch = std::env::var("CARGO_CFG_TARGET_ARCH")?;
     let (pin, shared) = match (os.as_str(), arch.as_str()) {
@@ -93,22 +98,31 @@ fn run() -> Result<(), BuildError> {
         ("macos", "aarch64") => (MACOS_ARM64, false),
         ("macos", "x86_64") => (MACOS_X64, false),
         _ => {
-            return Err(format!(
-                "sherpa-onnx has no pinned libraries for {os} on {arch}: add the archive and its \
-                 hash from {RELEASE} to crates/dirt-voice/sherpa-onnx-sys/build.rs"
+            return absent(
+                wanted,
+                &format!(
+                    "sherpa-onnx has no pinned libraries for {os} on {arch}: add the archive \
+                     and its hash from {RELEASE} to crates/dirt-voice/sherpa-onnx-sys/build.rs"
+                ),
             )
-            .into())
         }
     };
-    let unpacked = fetch::unpacked(&pin)?;
-    let lib_dir = if os == "android" {
-        android_libs(&unpacked, &arch)?
-    } else {
-        unpacked.join("lib")
+    let found = fetch::unpacked(&pin).and_then(|unpacked| {
+        let lib_dir = if os == "android" {
+            android_libs(&unpacked, &arch)?
+        } else {
+            unpacked.join("lib")
+        };
+        if lib_dir.is_dir() {
+            Ok(lib_dir)
+        } else {
+            Err(format!("{} holds no libraries", lib_dir.display()).into())
+        }
+    });
+    let lib_dir = match found {
+        Ok(lib_dir) => lib_dir,
+        Err(error) => return absent(wanted, &error.to_string()),
     };
-    if !lib_dir.is_dir() {
-        return Err(format!("{} holds no libraries", lib_dir.display()).into());
-    }
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:lib_dir={}", lib_dir.display());
@@ -129,6 +143,22 @@ fn run() -> Result<(), BuildError> {
             println!("cargo:rustc-link-lib=framework=Foundation");
         }
     }
+    Ok(())
+}
+
+/// The engine cannot be had: offline, or on a target with nothing pinned.
+/// A build that requires it fails here; any other is built without voice,
+/// and says so, and `dirt-voice` offers none (`DEP_SHERPA_ONNX_ABSENT`).
+fn absent(wanted: Wanted, why: &str) -> Result<(), BuildError> {
+    if wanted == Wanted::Required {
+        return Err(format!(
+            "voice is required (DIRT_VOICE=required, or a release build) and the speech \
+             engine could not be had: {why}. Set DIRT_VOICE=off to build without voice"
+        )
+        .into());
+    }
+    println!("cargo:warning=Built without voice: {why}");
+    println!("cargo:absent=1");
     Ok(())
 }
 

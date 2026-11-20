@@ -21,6 +21,10 @@ use crate::time::{edited_full, edited_short, Clock};
 /// (6.18): not a note with nothing in it.
 pub const NO_WORDS_FOUND: &str = "No words found";
 
+/// What a note said on this device shows when its words could not be made,
+/// after the tries the device gives it (`dirt_core::voice::MOST_TRIES`).
+pub const WORDS_NOT_MADE: &str = "Its words could not be made";
+
 /// What the mic on a row says.
 pub const SAID: &str = "Said, not typed";
 
@@ -116,6 +120,22 @@ impl NoteSummary {
         self.has_files = has_files || self.said;
         if let Some(name) = first_name.filter(|_| !self.said) {
             name.clone_into(&mut self.untitled);
+        }
+        self
+    }
+
+    /// Why the words of a note said on this device could not be made, once
+    /// the device has stopped trying (6.18): its row says so, and the
+    /// recording stays.
+    #[must_use]
+    pub fn unread(mut self, why: Option<&str>) -> Self {
+        if let Some(why) = why {
+            let line = if why.is_empty() {
+                WORDS_NOT_MADE.to_owned()
+            } else {
+                format!("{WORDS_NOT_MADE}: {why}")
+            };
+            self.preview = pieces(&line, &[]);
         }
         self
     }

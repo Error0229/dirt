@@ -250,7 +250,7 @@ async fn words_are_made_in_the_background_and_a_failure_waits_for_the_next_try()
         words: Err("the engine could not start".to_owned()),
         asked: AtomicUsize::new(0),
     });
-    let made = make_words(&store, failing.clone(), VoiceRecording::Keep)
+    let made = make_words(&store, failing.clone(), VoiceRecording::Keep, |_| {})
         .await
         .unwrap();
     assert_eq!(failing.asked.load(Ordering::SeqCst), 2);
@@ -266,7 +266,7 @@ async fn words_are_made_in_the_background_and_a_failure_waits_for_the_next_try()
         words: Ok("Water the plants".to_owned()),
         asked: AtomicUsize::new(0),
     });
-    let made = make_words(&store, working.clone(), VoiceRecording::TextOnly)
+    let made = make_words(&store, working.clone(), VoiceRecording::TextOnly, |_| {})
         .await
         .unwrap();
     assert!(made.changed());
@@ -278,7 +278,7 @@ async fn words_are_made_in_the_background_and_a_failure_waits_for_the_next_try()
     assert!(store.note_attachments(&second).await.unwrap().is_empty());
 
     // Nothing waits: nothing is read.
-    make_words(&store, working.clone(), VoiceRecording::Keep)
+    make_words(&store, working.clone(), VoiceRecording::Keep, |_| {})
         .await
         .unwrap();
     assert_eq!(working.asked.load(Ordering::SeqCst), 2);
@@ -290,4 +290,66 @@ async fn a_store_written_before_voice_opens_and_has_no_voice_notes() {
     let typed = store.create_note("typed").await.unwrap();
     assert_eq!(typed.voice, None);
     assert!(store.voice_waiting().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_recording_whose_words_cannot_be_made_is_given_up_and_says_why() {
+    let (_folder, store) = temp_store();
+    let id = NoteId::new();
+    store.keep_voice_note(id, recording(), 1_000).await.unwrap();
+    let failing = Arc::new(Saying {
+        words: Err("the model could not read it".to_owned()),
+        asked: AtomicUsize::new(0),
+    });
+    for _ in 0..dirt_core::voice::MOST_TRIES + 2 {
+        make_words(&store, failing.clone(), VoiceRecording::Keep, |_| {})
+            .await
+            .unwrap();
+    }
+    // Tried no more than that, each try loading the model.
+    assert_eq!(
+        failing.asked.load(Ordering::SeqCst),
+        dirt_core::voice::MOST_TRIES as usize
+    );
+    let problems = store.voice_problems(vec![id]).await.unwrap();
+    assert_eq!(
+        problems.get(&id).map(String::as_str),
+        Some("the model could not read it")
+    );
+    // The recording stays, waiting, on the note.
+    assert_eq!(store.note_attachments(&id).await.unwrap().len(), 1);
+    let note = store.get_note(&id).await.unwrap().unwrap();
+    assert_eq!(note.voice.unwrap().words, Words::Waiting);
+}
+
+/// The words are told of as each note's are put in, not after the round.
+#[tokio::test]
+async fn each_note_is_told_of_as_its_words_are_put_in() {
+    let (_folder, store) = temp_store();
+    let first = NoteId::new();
+    let second = NoteId::new();
+    store
+        .keep_voice_note(first, recording(), 1_000)
+        .await
+        .unwrap();
+    store
+        .keep_voice_note(second, recording(), 1_000)
+        .await
+        .unwrap();
+    let ear = Arc::new(Saying {
+        words: Ok("Said".to_owned()),
+        asked: AtomicUsize::new(0),
+    });
+    let mut told = Vec::new();
+    let watched = Arc::clone(&ear);
+    make_words(&store, ear, VoiceRecording::Keep, |put| {
+        // Told before the next recording is read.
+        told.push((
+            watched.asked.load(Ordering::SeqCst),
+            matches!(put, WordsPut::Made(_)),
+        ));
+    })
+    .await
+    .unwrap();
+    assert_eq!(told, [(1, true), (2, true)]);
 }

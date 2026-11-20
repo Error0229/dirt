@@ -1956,6 +1956,15 @@ How it is built, where this differs from trial 1's recommendation:
   job, `voice`, fetches the model and runs `dirt-voice`'s tests that read
   speech with it (`--include-ignored`), on the two recordings that come in
   the model's archive. Linux needs ALSA's headers for the microphone.
+  Every job sets `DIRT_VOICE=required`, so a job that cannot fetch the
+  engine fails rather than building the app without its mic.
+- **A build that cannot have voice still builds.** `DIRT_VOICE=off`, a
+  development build offline, or a target with no pinned libraries builds
+  without the engine (`voice_engine` unset: `dirt-voice`'s code then says
+  voice is not in this build, and the app offers no mic), saying why in a
+  warning. A release build requires it. Downloads time out (20 s to
+  connect, 60 s between reads), and a build that stopped half way leaves
+  nothing behind in the cache for long.
 
 Run on Windows: `dx build`, the window off the screen, driven through its
 web view's debugging port, the hotkey from standard input, and the WAV
@@ -1972,7 +1981,21 @@ preview played the recording. `dirt-sim` has the recording reaching a
 second device encrypted, that device never making the words, and the
 words and Text only reaching it. The real microphone, a refused or missing
 one, Narrator, ten minutes, macOS, Linux and a release build are the manual
-checklist's (D75 to D88).
+checklist's (D75 to D90).
+
+**After review** (#301): a save of the page carries the text it was typed
+over and is merged into what the note holds, so words that arrive while it
+waits in the queue are not taken out (`notes::merge3`,
+`Store::update_note_from`); listening on the page ends, keeping what was
+said, when the window is closed to the tray; quitting and the hand-over
+before another store is taken into use wait for a recording to be kept, in
+the store it was said into; schema 7 derives `voice` for notes already
+stored; a recording whose words fail three times is given up, its row
+saying why; the engine is optional at build time; the microphone's thread
+waits on its channel and hands over what is still in it when stopped; a
+failed load of the engine is tried again; and a screen reader is told only
+of the words of thoughts said in this run. A model folder whose path is not
+ASCII was tried and works. Design 7.11 has the decisions.
 
 ### Step 10: finishing
 

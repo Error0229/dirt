@@ -8,7 +8,7 @@
 //! longer than [`crate::cut::WINDOW`] seconds is read in pieces, one at a
 //! time, so that what is held is that of one piece.
 
-use sherpa_onnx::{OfflineRecognizer, OfflineRecognizerConfig, OfflineTransducerModelConfig};
+use crate::engine::{OfflineRecognizer, OfflineRecognizerConfig, OfflineTransducerModelConfig};
 
 use crate::cut::Cutter;
 use crate::folder::VoiceFolder;
@@ -84,8 +84,7 @@ impl Reader {
 /// were found.
 pub fn words_of(folder: &VoiceFolder, file: &[u8]) -> Result<String> {
     let sound = recording::decode(file)?;
-    let mut reader = Reader::load(folder)?;
-    let words = reader.read(&sound);
-    drop(reader);
+    // The model goes at the end of this block, before the words are given.
+    let words = Reader::load(folder)?.read(&sound);
     Ok(words)
 }

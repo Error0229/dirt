@@ -24,8 +24,10 @@ fn main() {
     }
     // The engine's library is loaded when voice is first used, from the
     // voice folder, not as the program starts (`dirt_voice`): without
-    // this the app would not start where it is not beside the program.
-    if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+    // this the app would not start where it is not beside the program. A
+    // build without the engine (`DIRT_VOICE=off`, or offline) has none.
+    let engine = env::var("DEP_DIRT_VOICE_ENGINE").as_deref() == Ok("1");
+    if engine && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
         println!("cargo:rustc-link-arg=/DELAYLOAD:sherpa-onnx-c-api.dll");
     }
 }
@@ -35,18 +37,25 @@ fn main() {
 /// beside this manifest, where `asset!` takes it from to ship it with the
 /// app. The files are hard links to the build cache, so nothing is kept
 /// twice; the folder is not in git. A file the folder no longer has is
-/// taken away.
+/// taken away. A build without voice ships the folder empty, and the app
+/// offers no mic.
 fn put_voice_folder() -> io::Result<()> {
     println!("cargo:rerun-if-env-changed=DEP_DIRT_VOICE_FOLDER");
-    let Some(from) = env::var_os("DEP_DIRT_VOICE_FOLDER").map(PathBuf::from) else {
-        return Err(io::Error::other("dirt-voice said nothing of its folder"));
-    };
+    println!("cargo:rerun-if-env-changed=DEP_DIRT_VOICE_ENGINE");
+    // Builds of other kinds (another target folder, `DIRT_VOICE=off`) put
+    // their own folder here: whichever builds next puts its own back.
+    println!("cargo:rerun-if-changed=voice");
+    let from = env::var_os("DEP_DIRT_VOICE_FOLDER").map(PathBuf::from);
     let manifest_dir =
         env::var_os("CARGO_MANIFEST_DIR").map_or_else(|| PathBuf::from("."), PathBuf::from);
     let to = manifest_dir.join("voice");
     fs::create_dir_all(&to)?;
     let mut wanted = Vec::new();
-    for entry in fs::read_dir(&from)? {
+    let sources = match &from {
+        Some(from) => fs::read_dir(from)?.collect::<Vec<_>>(),
+        None => Vec::new(),
+    };
+    for entry in sources {
         let source = entry?.path();
         let Some(name) = source.file_name() else {
             continue;

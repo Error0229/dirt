@@ -22,6 +22,7 @@
 //! is not beside it.
 
 pub mod cut;
+mod engine;
 pub mod folder;
 pub mod hearing;
 #[cfg(feature = "microphone")]
@@ -32,6 +33,10 @@ pub mod stand_in;
 
 pub use folder::VoiceFolder;
 pub use hearing::{Heard, Listening, Recording};
+
+/// Whether this build has the speech engine: without it listening and
+/// reading say voice is not in this build, and an app offers no mic.
+pub const ENGINE: bool = engine::LINKED;
 
 /// The rate everything here works at: 16,000 samples a second, one
 /// channel. The microphone's sound is brought to it first.

@@ -27,7 +27,7 @@ Afterwards, delete the test account, the keychain entry and the app's data.
 
 ## Desktop app
 
-D2, D3, D4, D68 to D74 and D75 to D88 need a person at the keyboard: a global hotkey, the tray, the microphone and
+D2, D3, D4, D68 to D74 and D75 to D90 need a person at the keyboard: a global hotkey, the tray, the microphone and
 the system browser cannot be driven from a script without acting on whatever
 else is on the screen. So do D10, D18, D20, D21, D24, D25, D33 and D36, and
 D38's drop, D42 and D43, which move the window on the person's screen. A file dialog opens in the
@@ -146,6 +146,8 @@ still for a person in a release build.
 | D85 | A release build made with `dx bundle`, installed on a computer with no network; say a thought | It is kept and gets its words: the model is inside the app, and nothing is fetched |
 | D86 | macOS 15.4 or later, macOS before 15.4, and Linux: say a thought; preview its recording | Heard, kept and made into words. The recording plays; before macOS 15.4 it plays decoded (the log says "recordings are played decoded"). macOS asks for the microphone the first time, in its own dialog |
 | D87 | Narrator on: press the mic, let go; wait for the words | "Listening" is read as it starts and "Kept" as it ends; "Words arrived: …" when the words come |
+| D89 | Tap the mic and talk hands-free; close the window to the tray while it listens. Open Dirt again | Listening ended as the window closed: the note is there with what was said before closing, and the system's indicator went with it |
+| D90 | Signed in, hold Ctrl Alt N and talk; sign out in Settings (or have another device remove this one) before letting go | What was said is a note in the account's store, which reaches the account's other devices, and not in the signed-out store |
 | D88 | A second device signed into the account: say a thought on this one, sync both | The other device shows "Voice · 0:04" with the mic until this one has made the words, then the words. It never makes them itself |
 
 ## Android app

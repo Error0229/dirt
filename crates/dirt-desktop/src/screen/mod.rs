@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use dioxus::desktop::use_wry_event_handler;
 use dioxus::prelude::*;
 use dirt_core::models::{extract_tags, FocusStyle, Note, NoteId};
 use dirt_core::session::SessionState;
@@ -147,6 +148,9 @@ pub struct Listing {
     pub with_files: HashSet<NoteId>,
     /// The first file's name of each note that has files and no words.
     pub first_file: HashMap<NoteId, String>,
+    /// Notes said on this device whose words it has stopped trying to
+    /// make, with why (6.18).
+    pub unread: HashMap<NoteId, String>,
     pub counts: NoteCounts,
     /// Find holds words or tags.
     pub finding: bool,
@@ -233,8 +237,9 @@ pub struct Screen {
     pub clock: Signal<Clock>,
     /// The page listening (6.18).
     pub talking: Talking,
-    /// What a screen reader was last told of words that arrived.
-    pub words_heard: Signal<String>,
+    /// What a screen reader was last told of words that arrived, and how
+    /// many times it has been told.
+    pub words_heard: Signal<(u64, String)>,
 }
 
 impl Screen {
@@ -309,6 +314,17 @@ impl Screen {
     /// leaves it too, so nothing here assumes the screen's values are still
     /// there.
     pub fn leave(mut self) {
+        // Listening on the page ends, keeping what was said: the window
+        // closed to the tray, the app quitting, another store taken into
+        // use, a note opened (design 7.11).
+        let listening = self
+            .talking
+            .view
+            .try_peek()
+            .is_ok_and(|view| view.is_some_and(|view| view.ended.is_none()));
+        if listening {
+            self.talking.end(true);
+        }
         let left = match self.draft.try_write() {
             Ok(mut draft) => draft.leave(),
             Err(error) => {
@@ -432,6 +448,7 @@ impl Screen {
                 ref why,
                 making,
             } => self.unsaved(note, text, why, making),
+            Done::Reread(ref note) => self.took(note),
             Done::VoiceUnkept { ref why, .. } => {
                 self.toasts.show_error(
                     Toast::new("What was said could not be kept")
@@ -570,56 +587,108 @@ impl Screen {
         }
     }
 
-    /// The page listens: nothing is written while it does.
+    /// The page listens: nothing is written while it does. What is said
+    /// goes to the store in use as it starts, whatever is in use when it
+    /// ends: signing in or out meanwhile does not send it to the other
+    /// account.
     fn listen(self, hands_free: bool) {
         if !self.page_is_blank() || !crate::voice::offered() {
             return;
         }
         self.calm();
+        let store = self.store();
+        let session = self.app.session.peek().clone();
         let keep = Callback::new(move |recording: dirt_voice::Recording| {
-            self.keep_said(recording);
+            self.keep_said(recording, store.as_ref(), session.as_ref());
         });
         self.talking.listen(hands_free, keep);
     }
 
-    /// What was said is kept as a note at once, in the store in use, and
-    /// settles onto the pile as a typed thought does. Its words follow.
-    fn keep_said(self, recording: dirt_voice::Recording) {
+    /// What was said is kept as a note at once, and settles onto the pile
+    /// as a typed thought does. Its words follow.
+    fn keep_said(
+        self,
+        recording: dirt_voice::Recording,
+        store: Option<&Arc<Store>>,
+        session: Option<&dirt_core::session::Session>,
+    ) {
         let note = NoteId::new();
+        crate::voice::said_here(note);
         let work = [Work::KeepVoice {
             note,
             recording: recording.file,
             duration_ms: recording.duration_ms,
         }];
-        let session = self.app.session.peek().clone();
-        match self.store() {
-            Some(store) => Scribe::global().ask(&store, session.as_ref(), work),
+        match store {
+            Some(store) => Scribe::global().ask(store, session, work),
             None => Scribe::global().refuse(work),
         }
         self.settle_grain(note);
     }
 
-    /// The words of what was said were put in `note`. On the page, they
-    /// go at its start too, and the caret stays where it was in the text
-    /// (6.18); its files are read again, since Text only takes the
-    /// recording off.
+    /// The words of what was said were put in `note`. A screen reader is
+    /// told, for a thought said here in this run. On the page, the note is
+    /// read again once the page's own work for it is done, and what came
+    /// is brought into the page ([`Self::took`]).
     pub fn words_came(mut self, note: &Note) {
-        let first = note.outline().title;
-        self.words_heard.set(format!("Words arrived: {first}"));
+        if crate::voice::was_said_here(note.id) {
+            let first = note.outline().title;
+            let mut heard = self.words_heard.write();
+            heard.0 += 1;
+            // Told again even when it reads the same as the last.
+            let mark = if heard.0.is_multiple_of(2) {
+                ""
+            } else {
+                "\u{200b}"
+            };
+            heard.1 = format!("Words arrived: {first}{mark}");
+        }
+        if self.open_note() == Some(note.id) {
+            self.ask([Work::Reread { note: note.id }]);
+        }
+    }
+
+    /// The note on the page as the store has it, read after the page's work
+    /// for it was done: what came there that the page did not write is
+    /// brought into the page, which saves it as merged. Read again if the
+    /// page saved more meanwhile, or if what was typed in that moment fell
+    /// where the change goes.
+    fn took(mut self, note: &Note) {
         if self.open_note() != Some(note.id) {
             return;
         }
+        if Scribe::global().waiting_text(&note.id).is_some() {
+            self.ask([Work::Reread { note: note.id }]);
+            return;
+        }
         self.files.reread();
-        let came = self.draft.write().words_came(note);
-        if let Some((put, blank)) = came {
-            if blank {
-                dom::set_value(PAGE, &put);
-            } else {
-                dom::prepend_text(PAGE, &put);
+        let before = self.draft.peek().clone();
+        let Some(merged) = self.draft.write().took(note) else {
+            return;
+        };
+        let expected = before.text().to_owned();
+        let id = note.id;
+        spawn(async move {
+            let held = dom::merge_into(PAGE, &expected, &merged).await;
+            if self.open_note() != Some(id) {
+                return;
+            }
+            match held {
+                Some((now, true)) => self.draft.write().holds(now),
+                Some((now, false)) => {
+                    // Back to what the page had, with what it holds now:
+                    // the next save keeps what came, and it is tried again.
+                    let mut draft = self.draft.write();
+                    *draft = before;
+                    draft.holds(now);
+                    drop(draft);
+                    self.ask([Work::Reread { note: id }]);
+                }
+                None => return,
             }
             let work = self.draft.write().flush();
             self.ask(work);
-        }
+        });
     }
 
     /// The listening view has drawn how it ended: the page is the page
@@ -1320,6 +1389,22 @@ fn use_listing(screen: &Screen, app: &AppState) {
                     first_file.insert(note.id, file.name);
                 }
             }
+            let waiting_words: Vec<NoteId> = notes
+                .iter()
+                .filter(|note| {
+                    note.voice
+                        .is_some_and(|voice| voice.words == dirt_core::models::Words::Waiting)
+                })
+                .map(|note| note.id)
+                .collect();
+            let unread = if waiting_words.is_empty() {
+                HashMap::new()
+            } else {
+                store
+                    .voice_problems(waiting_words)
+                    .await
+                    .unwrap_or_default()
+            };
             let counts = store.note_counts().await.unwrap_or_default();
             let more = notes.len() >= limit;
             // The pile's notes are read only when the counts say they may
@@ -1368,6 +1453,7 @@ fn use_listing(screen: &Screen, app: &AppState) {
                 waiting,
                 with_files,
                 first_file,
+                unread,
                 counts,
                 finding,
                 archived_view,
@@ -1459,7 +1545,7 @@ pub fn MainScreen() -> Element {
         focus: Signal::new(Where::Elsewhere),
         clock,
         talking,
-        words_heard: Signal::new(String::new()),
+        words_heard: Signal::new((0, String::new())),
     });
     // What the store's work came to: Undo for a note put away, files
     // attached, the list to read again.
@@ -1496,6 +1582,19 @@ pub fn MainScreen() -> Element {
     });
     use_listing(&screen, &app);
     use_tag_offers(&screen, &app);
+    // Closed to the tray, the window is not seen: listening on the page
+    // ends there, keeping what was said, held or hands-free (7.11).
+    use_wry_event_handler(move |event, _| {
+        if let dioxus::desktop::tao::event::Event::WindowEvent {
+            event: dioxus::desktop::tao::event::WindowEvent::CloseRequested,
+            ..
+        } = event
+        {
+            if screen.talking.is_listening() {
+                screen.talking.end(true);
+            }
+        }
+    });
     // The words of what was said, for the note on the page.
     use_future(move || async move {
         let mut words = crate::voice::words_made().subscribe();
@@ -1588,7 +1687,7 @@ pub fn MainScreen() -> Element {
             // A screen reader is told when a voice note's words arrive
             // (section 12); nothing on the screen says so but the words.
             span { class: "dui-voice-said", role: "status", "aria-live": "polite",
-                "{screen.words_heard}"
+                "{screen.words_heard.read().1}"
             }
             div { class: "dui-drop-hint", "aria-hidden": "true",
                 span {

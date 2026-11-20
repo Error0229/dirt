@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use sherpa_onnx::LinearResampler;
+use crate::engine::LinearResampler;
 
 use crate::folder::VoiceFolder;
 use crate::{Result, VoiceError, RATE, RATE_USIZE};
@@ -24,15 +24,23 @@ use crate::{Result, VoiceError, RATE, RATE_USIZE};
 /// Sound being handed over, until it is stopped or dropped.
 pub struct Feed {
     stop: Arc<AtomicBool>,
+    /// Wakes the thread that hands the sound over, for it to see the stop.
+    wake: Option<Box<dyn Fn() + Send>>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl Feed {
-    pub(crate) const fn new(stop: Arc<AtomicBool>, thread: JoinHandle<()>) -> Self {
+    pub(crate) fn new(stop: Arc<AtomicBool>, thread: JoinHandle<()>) -> Self {
         Self {
             stop,
+            wake: None,
             thread: Some(thread),
         }
+    }
+
+    pub(crate) fn woken_by(mut self, wake: impl Fn() + Send + 'static) -> Self {
+        self.wake = Some(Box::new(wake));
+        self
     }
 
     /// Stops, and waits until nothing more is handed over.
@@ -42,6 +50,9 @@ impl Feed {
 
     fn halt(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
+        if let Some(wake) = &self.wake {
+            wake();
+        }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -97,6 +108,15 @@ impl To16k {
             None => mono,
         }
     }
+
+    /// What the resampler still holds, at the end of the sound.
+    #[must_use]
+    pub fn finish(&self) -> Vec<f32> {
+        self.resampler
+            .as_ref()
+            .map(|resampler| resampler.resample(&[], true))
+            .unwrap_or_default()
+    }
 }
 
 /// A room with nobody speaking: noise near -70 dBFS, the same every time.
@@ -138,9 +158,7 @@ pub fn read_wav(folder: &VoiceFolder, path: &Path) -> Result<Vec<f32>> {
     .map_err(bad)?;
     let to16k = To16k::new(folder, spec.sample_rate, spec.channels)?;
     let mut sound = to16k.convert(&samples);
-    if let Some(resampler) = &to16k.resampler {
-        sound.extend(resampler.resample(&[], true));
-    }
+    sound.extend(to16k.finish());
     Ok(sound)
 }
 

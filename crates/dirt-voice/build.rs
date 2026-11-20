@@ -18,6 +18,12 @@
 //! checked or tested and not shipped: CI's jobs but one (the model is
 //! 130 MiB). The folder then has the detector and the libraries, and
 //! [`crate::VoiceFolder::has_model`] says no.
+//!
+//! `DIRT_VOICE=off` builds without the engine, fetching nothing; so does a
+//! development build that cannot fetch it or its files, saying why in a
+//! warning. A release build, or `DIRT_VOICE=required`, fails instead
+//! (`build/fetch.rs`, `Wanted`). Without the engine `voice_engine` is not
+//! set and the crate's code says voice is not in this build.
 
 #[path = "build/fetch.rs"]
 mod fetch;
@@ -25,7 +31,7 @@ mod fetch;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use fetch::{BuildError, Pinned};
+use fetch::{BuildError, Pinned, Wanted};
 
 const MODEL: Pinned = Pinned {
     name: "sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8.tar.bz2",
@@ -61,6 +67,51 @@ fn run() -> Result<(), BuildError> {
     println!("cargo:rerun-if-changed=build/fetch.rs");
     println!("cargo:rerun-if-changed=NOTICE.txt");
     println!("cargo:rerun-if-env-changed=DIRT_VOICE_MODEL");
+    // `voice_engine` is set when the engine is linked: without it the
+    // crate builds, and listening and reading say voice is not in this
+    // build (`DIRT_VOICE=off`, offline, or a target with nothing pinned).
+    println!("cargo:rustc-check-cfg=cfg(voice_engine)");
+    // Always set, so that `env!` finds it; empty without the model.
+    let wanted = fetch::wanted()?;
+    let engine = std::env::var_os("DEP_SHERPA_ONNX_ABSENT").is_none();
+    let made = if wanted == Wanted::Off || !engine {
+        Err(None)
+    } else {
+        put_folder().map_err(Some)
+    };
+    match made {
+        Ok((folder, model)) => {
+            println!("cargo:rustc-cfg=voice_engine");
+            println!("cargo:engine=1");
+            println!("cargo:folder={}", folder.display());
+            println!(
+                "cargo:rustc-env=DIRT_VOICE_BUILT_FOLDER={}",
+                folder.display()
+            );
+            println!("cargo:rustc-env=DIRT_VOICE_BUILT_MODEL={model}");
+        }
+        Err(error) => {
+            if let (Some(error), Wanted::Required) = (&error, wanted) {
+                return Err(format!(
+                    "voice is required (DIRT_VOICE=required, or a release build) and its \
+                     files could not be had: {error}. Set DIRT_VOICE=off to build without voice"
+                )
+                .into());
+            }
+            if let Some(error) = error {
+                println!("cargo:warning=Built without voice: {error}");
+            }
+            println!("cargo:engine=0");
+            println!("cargo:rustc-env=DIRT_VOICE_BUILT_FOLDER=");
+            println!("cargo:rustc-env=DIRT_VOICE_BUILT_MODEL=");
+        }
+    }
+    Ok(())
+}
+
+/// Puts the voice folder together: where it is, and where the model was
+/// unpacked (empty without it).
+fn put_folder() -> Result<(PathBuf, String), BuildError> {
     let target = std::env::var("TARGET")?;
     let os = std::env::var("CARGO_CFG_TARGET_OS")?;
     let msvc = std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
@@ -101,19 +152,11 @@ fn run() -> Result<(), BuildError> {
         }
     }
 
-    println!("cargo:folder={}", folder.display());
-    println!(
-        "cargo:rustc-env=DIRT_VOICE_BUILT_FOLDER={}",
-        folder.display()
-    );
-    println!(
-        "cargo:rustc-env=DIRT_VOICE_BUILT_MODEL={}",
-        model
-            .as_deref()
-            .map(Path::display)
-            .map(|path| path.to_string())
-            .unwrap_or_default()
-    );
+    let model = model
+        .as_deref()
+        .map(Path::display)
+        .map(|path| path.to_string())
+        .unwrap_or_default();
 
     // On Windows the engine's libraries are loaded when they are first
     // used, from the voice folder, and not when the program starts: a
@@ -124,7 +167,7 @@ fn run() -> Result<(), BuildError> {
         println!("cargo:rustc-link-lib=delayimp");
         println!("cargo:rustc-link-arg=/DELAYLOAD:sherpa-onnx-c-api.dll");
     }
-    Ok(())
+    Ok((folder, model))
 }
 
 /// The shared libraries the program loads, beside the model.

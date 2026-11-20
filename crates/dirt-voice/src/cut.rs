@@ -10,7 +10,7 @@
 //! The trial's first cutter threw away the sound between pieces and lost
 //! words at the joins; this one is the cutter it ended with.
 
-use sherpa_onnx::{SileroVadModelConfig, VadModelConfig, VoiceActivityDetector};
+use crate::engine::{SileroVadModelConfig, VadModelConfig, VoiceActivityDetector};
 
 use crate::folder::{VoiceFolder, DETECTOR};
 use crate::{Result, VoiceError, RATE_USIZE};
@@ -109,11 +109,14 @@ fn quietest(samples: &[f32], from: usize, to: usize) -> usize {
 }
 
 fn take(detector: &VoiceActivityDetector, speech: &mut Vec<(usize, usize)>) {
-    while let Some(segment) = detector.front() {
-        let start = usize::try_from(segment.start()).unwrap_or(0);
-        let length = usize::try_from(segment.n()).unwrap_or(0);
+    // Each segment is let go of before the detector drops it from its queue.
+    while let Some((start, length)) = detector.front().map(|segment| {
+        (
+            usize::try_from(segment.start()).unwrap_or(0),
+            usize::try_from(segment.n()).unwrap_or(0),
+        )
+    }) {
         speech.push((start, start + length));
-        drop(segment);
         detector.pop();
     }
 }

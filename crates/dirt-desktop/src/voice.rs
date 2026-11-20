@@ -18,12 +18,13 @@
 //! microphone, at the pace it was recorded: for trying voice on a computer
 //! whose microphone is someone else's.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use dioxus::prelude::*;
-use dirt_core::models::Note;
+use dirt_core::models::{Note, NoteId};
 use dirt_core::store::WordsPut;
 use dirt_core::sync::worker::Trigger;
 use dirt_core::voice::{make_words, Transcriber};
@@ -39,8 +40,8 @@ use crate::state::AppState;
 /// the build cache, as hard links.
 static VOICE: Asset = asset!("/voice", AssetOptions::folder());
 
-/// How often the grains and the timer are told what was heard.
-const SHOWN_EVERY: Duration = Duration::from_millis(50);
+/// How much sound passes between two tellings of the grains and the timer.
+const SHOWN_EVERY_MS: u64 = 50;
 
 /// The voice folder, if this build has one that can listen.
 pub fn folder() -> Option<&'static VoiceFolder> {
@@ -65,7 +66,63 @@ pub fn folder() -> Option<&'static VoiceFolder> {
 /// Whether the mic is offered: the folder has the model, so what is said
 /// can become words.
 pub fn offered() -> bool {
-    folder().is_some_and(VoiceFolder::has_model)
+    dirt_voice::ENGINE && folder().is_some_and(VoiceFolder::has_model)
+}
+
+/// Notes said in this run, whose words a screen reader is told of when
+/// they come (section 12). Not those of a backlog made as the app starts.
+fn said() -> &'static Mutex<HashSet<NoteId>> {
+    static SAID: OnceLock<Mutex<HashSet<NoteId>>> = OnceLock::new();
+    SAID.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// `note` was said here, now.
+pub fn said_here(note: NoteId) {
+    said()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(note);
+}
+
+/// Whether `note` was said here in this run; asked once, when its words
+/// come.
+pub fn was_said_here(note: NoteId) -> bool {
+    said()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(&note)
+}
+
+/// Recordings being finished and handed to the store's queue. Quitting,
+/// and taking another store into use, wait for them before they wait for
+/// the queue, so that what was being said is kept, in the store it was
+/// said into.
+static KEEPING: AtomicUsize = AtomicUsize::new(0);
+
+fn keeping() -> &'static watch::Sender<usize> {
+    static NEWS: OnceLock<watch::Sender<usize>> = OnceLock::new();
+    NEWS.get_or_init(|| watch::Sender::new(0))
+}
+
+/// A recording begins to be finished.
+fn keeping_one() {
+    let now = KEEPING.fetch_add(1, Ordering::SeqCst) + 1;
+    keeping().send_replace(now);
+}
+
+/// A recording is kept, or found not to be wanted.
+fn kept_one() {
+    let now = KEEPING.fetch_sub(1, Ordering::SeqCst).saturating_sub(1);
+    keeping().send_replace(now);
+}
+
+/// Waits until every recording being finished has been handed to the
+/// store's queue, for at most `at_most`. Says whether it was.
+pub async fn keeping_settled(at_most: Duration) -> bool {
+    let mut news = keeping().subscribe();
+    tokio::time::timeout(at_most, news.wait_for(|count| *count == 0))
+        .await
+        .is_ok_and(|seen| seen.is_ok())
 }
 
 // ---- Words, made in the background ----------------------------------------
@@ -121,14 +178,16 @@ pub fn use_words_maker(app: &AppState) {
                 continue;
             };
             let kept = app.settings.peek().voice_recording;
-            match make_words(&store, Arc::clone(&model), kept).await {
+            // Each note is told of as soon as its words are in, so that a
+            // page showing it takes them before it saves again.
+            let told = |put: &WordsPut| {
+                if let WordsPut::Made(note) = put {
+                    let _ = words_made().send(note.clone());
+                }
+                app.reread();
+            };
+            match make_words(&store, Arc::clone(&model), kept, told).await {
                 Ok(made) if made.changed() => {
-                    for put in made.put {
-                        if let WordsPut::Made(note) = put {
-                            let _ = words_made().send(note);
-                        }
-                    }
-                    app.reread();
                     if let Some(session) = app.session.peek().as_ref() {
                         session.notify(Trigger::Changed);
                     }
@@ -232,13 +291,18 @@ impl Ear {
             full: false,
         });
         let fed = Arc::clone(&listening);
+        // The screen is told as the sound comes, once for each twentieth of
+        // a second of it: often enough for the grains, and no more.
+        let mut told_at = 0_u64;
         let sink = move |samples: &[f32]| {
             let mut held = fed.lock().unwrap_or_else(PoisonError::into_inner);
             if let Some(listening) = held.as_mut() {
                 match listening.take(samples) {
-                    Ok(now) => {
+                    Ok(now) if now.full || now.ms >= told_at + SHOWN_EVERY_MS => {
+                        told_at = now.ms;
                         tell.send_replace(now);
                     }
+                    Ok(_) => {}
                     Err(error) => tracing::error!("The recording could not be written: {error}"),
                 }
             }
@@ -361,6 +425,8 @@ impl Talking {
         };
         self.keeper.set(Some(keep));
         self.then.set(Then::Listen);
+        // Counted from now until it is kept or let go: quitting waits.
+        keeping_one();
         self.view.set(Some(TalkView {
             serial,
             ms: 0,
@@ -378,6 +444,7 @@ impl Talking {
                     tracing::warn!("Could not listen: {why:?}");
                     self.unheard.set(Some(why));
                     self.gone(serial);
+                    kept_one();
                     return;
                 }
             };
@@ -390,10 +457,10 @@ impl Talking {
                 Then::Throw => return self.end(false),
                 Then::Listen => {}
             }
-            // What is heard, to the grains and the timer, until it ends.
+            // What is heard, to the grains and the timer, as it is told,
+            // until it ends: the microphone closed lets go of the telling.
             loop {
-                tokio::time::sleep(SHOWN_EVERY).await;
-                if heard.has_changed().is_err() || self.ear.peek().is_none() {
+                if heard.changed().await.is_err() || self.ear.peek().is_none() {
                     break;
                 }
                 let now = *heard.borrow_and_update();
@@ -471,6 +538,7 @@ impl Talking {
                     keeper.call(recording);
                 }
             }
+            kept_one();
         });
     }
 

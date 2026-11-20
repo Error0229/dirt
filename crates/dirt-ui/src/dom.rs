@@ -67,15 +67,35 @@ pub fn set_value(selector: &str, text: &str) {
     ));
 }
 
-/// Puts `text` at the start of the field that matches `selector`, keeping
-/// the caret where it was in what follows: words that arrive for a note
-/// being written (6.18).
-pub fn prepend_text(selector: &str, text: &str) {
-    document::eval(&format!(
-        "window.DirtUi && DirtUi.prependText({}, {});",
+/// Makes the field that matches `selector`, which held `expected`, hold
+/// `new`.
+///
+/// It writes only what changed and keeping the caret where it was in
+/// the text around it: what reached a note being written that the page did
+/// not write (the words of what was said, 6.18).
+///
+/// What was typed in the field meanwhile stays. A change that falls where
+/// it was typed is not made; the second value says whether every change
+/// was. The first is what the field holds now. `None` when there is no
+/// such field.
+pub async fn merge_into(selector: &str, expected: &str, new: &str) -> Option<(String, bool)> {
+    // Positions in UTF-16 units, as the page counts them.
+    let units = |text: &str, at: usize| text[..at].encode_utf16().count();
+    let changes: Vec<(usize, usize, String)> = dirt_core::notes::text_changes(expected, new)
+        .into_iter()
+        .map(|(start, end, text)| (units(expected, start), units(expected, end), text))
+        .collect();
+    let script = format!(
+        "dioxus.send(window.DirtUi ? DirtUi.mergeInto({}, {}, {}) : null);",
         quoted(selector),
-        quoted(text)
-    ));
+        quoted(expected),
+        serde_json::to_string(&changes).unwrap_or_else(|_| "[]".to_owned())
+    );
+    document::eval(&script)
+        .recv::<Option<(String, bool)>>()
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Adds `text` at the end of the field that matches `selector`, leaving

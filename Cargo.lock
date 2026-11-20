@@ -2280,6 +2280,7 @@ dependencies = [
  "sherpa-onnx",
  "sherpa-onnx-sys",
  "tar",
+ "tempfile",
  "thiserror 2.0.21",
  "tracing",
  "ureq",

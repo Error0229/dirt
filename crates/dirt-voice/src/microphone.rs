@@ -4,12 +4,20 @@
 //!
 //! The system's sound thread only copies what it is given into a channel;
 //! the rest is done on a thread of this crate's, so that a slow moment
-//! here never makes the system drop sound.
+//! here never makes the system drop sound. That thread waits on the
+//! channel and nothing else: stopping sends it a message. It closes the
+//! microphone first and then hands over what was still in the channel, so
+//! the last moment before ✓ is kept.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+/// What the microphone's thread is told.
+enum Sound {
+    Heard(Vec<f32>),
+    Stop,
+}
+
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{ErrorKind, SampleFormat};
@@ -41,12 +49,12 @@ fn refused_or_failed(error: &cpal::Error) -> VoiceError {
 pub fn open(folder: &VoiceFolder, mut sink: impl FnMut(&[f32]) + Send + 'static) -> Result<Feed> {
     let folder = folder.clone();
     let stop = Arc::new(AtomicBool::new(false));
-    let stopped = Arc::clone(&stop);
     let (opened, started) = mpsc::channel::<Result<()>>();
+    let (chunks, heard) = mpsc::channel::<Sound>();
+    let stopper = chunks.clone();
     let thread = std::thread::Builder::new()
         .name("dirt-voice-microphone".to_owned())
         .spawn(move || {
-            let (chunks, heard) = mpsc::channel::<Vec<f32>>();
             let made = (|| {
                 let device = cpal::default_host()
                     .default_input_device()
@@ -62,7 +70,7 @@ pub fn open(folder: &VoiceFolder, mut sink: impl FnMut(&[f32]) + Send + 'static)
                     SampleFormat::F32 => device.build_input_stream::<f32, _, _>(
                         config,
                         move |data, _| {
-                            let _ = chunks.send(data.to_vec());
+                            let _ = chunks.send(Sound::Heard(data.to_vec()));
                         },
                         failed,
                         None,
@@ -70,8 +78,9 @@ pub fn open(folder: &VoiceFolder, mut sink: impl FnMut(&[f32]) + Send + 'static)
                     SampleFormat::I16 => device.build_input_stream::<i16, _, _>(
                         config,
                         move |data, _| {
-                            let _ =
-                                chunks.send(data.iter().map(|&s| f32::from(s) / 32768.0).collect());
+                            let _ = chunks.send(Sound::Heard(
+                                data.iter().map(|&s| f32::from(s) / 32768.0).collect(),
+                            ));
                         },
                         failed,
                         None,
@@ -79,11 +88,11 @@ pub fn open(folder: &VoiceFolder, mut sink: impl FnMut(&[f32]) + Send + 'static)
                     SampleFormat::U16 => device.build_input_stream::<u16, _, _>(
                         config,
                         move |data, _| {
-                            let _ = chunks.send(
+                            let _ = chunks.send(Sound::Heard(
                                 data.iter()
                                     .map(|&s| (f32::from(s) - 32768.0) / 32768.0)
                                     .collect(),
-                            );
+                            ));
                         },
                         failed,
                         None,
@@ -108,23 +117,33 @@ pub fn open(folder: &VoiceFolder, mut sink: impl FnMut(&[f32]) + Send + 'static)
                     return;
                 }
             };
-            while !stopped.load(Ordering::SeqCst) {
-                match heard.recv_timeout(Duration::from_millis(50)) {
-                    Ok(chunk) => {
-                        let sound = to16k.convert(&chunk);
-                        if !sound.is_empty() {
-                            sink(&sound);
-                        }
-                    }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            let mut hand_on = |chunk: &[f32]| {
+                let sound = to16k.convert(chunk);
+                if !sound.is_empty() {
+                    sink(&sound);
+                }
+            };
+            while let Ok(Sound::Heard(chunk)) = heard.recv() {
+                hand_on(&chunk);
+            }
+            // Closed, the microphone sends nothing more; what it sent
+            // before is still kept.
+            drop(stream);
+            while let Ok(sound) = heard.try_recv() {
+                if let Sound::Heard(chunk) = sound {
+                    hand_on(&chunk);
                 }
             }
-            drop(stream);
+            let last = to16k.finish();
+            if !last.is_empty() {
+                sink(&last);
+            }
         })
         .map_err(|error| VoiceError::Microphone(error.to_string()))?;
     match started.recv() {
-        Ok(Ok(())) => Ok(Feed::new(stop, thread)),
+        Ok(Ok(())) => Ok(Feed::new(stop, thread).woken_by(move || {
+            let _ = stopper.send(Sound::Stop);
+        })),
         Ok(Err(error)) => {
             let _ = thread.join();
             Err(error)

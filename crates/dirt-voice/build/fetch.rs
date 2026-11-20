@@ -22,6 +22,7 @@ use std::error::Error;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
 
@@ -40,6 +41,82 @@ impl Pinned {
     /// The name without `.tar.bz2`: the folder it unpacks into.
     pub fn stem(&self) -> &'static str {
         self.name.strip_suffix(".tar.bz2").unwrap_or(self.name)
+    }
+}
+
+/// What the build was asked for: `DIRT_VOICE=off` builds without voice,
+/// fetching nothing; `DIRT_VOICE=required` fails when the engine or its
+/// files cannot be had. Unset, a release build requires voice, since it is
+/// meant to ship with it, and any other build goes without it, saying why
+/// in a warning, when it cannot be had: offline, or on a target with no
+/// pinned libraries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Wanted {
+    Off,
+    IfItCanBeHad,
+    Required,
+}
+
+pub fn wanted() -> Result<Wanted, BuildError> {
+    println!("cargo:rerun-if-env-changed=DIRT_VOICE");
+    match std::env::var("DIRT_VOICE").unwrap_or_default().trim() {
+        "off" => Ok(Wanted::Off),
+        "required" => Ok(Wanted::Required),
+        "" | "auto" => Ok(if std::env::var("PROFILE").as_deref() == Ok("release") {
+            Wanted::Required
+        } else {
+            Wanted::IfItCanBeHad
+        }),
+        other => Err(format!("DIRT_VOICE={other}: it takes off, required or auto").into()),
+    }
+}
+
+/// How long a download may wait to connect, and for each read.
+const CONNECT_WITHIN: Duration = Duration::from_secs(20);
+const READ_WITHIN: Duration = Duration::from_secs(60);
+
+/// Something made by a build that stopped before it was done is taken away
+/// once it is this old: no build takes so long over one file.
+const LEFT_BEHIND_AFTER: Duration = Duration::from_secs(3600);
+
+/// Takes away what builds that stopped half way left in `folder`: files
+/// and folders named `….part-<process>`, older than an hour.
+fn clear_left_behind(folder: &Path) {
+    let Ok(entries) = fs::read_dir(folder) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let is_part = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.contains(".part-"));
+        let old = entry
+            .metadata()
+            .and_then(|found| found.modified())
+            .ok()
+            .and_then(|at| SystemTime::now().duration_since(at).ok())
+            .is_some_and(|age| age > LEFT_BEHIND_AFTER);
+        if is_part && old {
+            let _ = if path.is_dir() {
+                fs::remove_dir_all(&path)
+            } else {
+                fs::remove_file(&path)
+            };
+        }
+    }
+}
+
+/// Takes a part away if the work that made it does not finish.
+struct Part(PathBuf);
+
+impl Drop for Part {
+    fn drop(&mut self) {
+        if self.0.is_dir() {
+            let _ = fs::remove_dir_all(&self.0);
+        } else {
+            let _ = fs::remove_file(&self.0);
+        }
     }
 }
 
@@ -104,23 +181,26 @@ pub fn fetched(pin: &Pinned) -> Result<PathBuf, BuildError> {
     if path.is_file() && fs::read_to_string(&checked).is_ok_and(|seen| seen.trim() == pin.sha256) {
         return Ok(path);
     }
-    let part = ours(&path);
+    clear_left_behind(&folder);
+    let part = Part(ours(&path));
     eprintln!("Fetching {} from {}", pin.name, pin.url);
     let response = ureq::builder()
         .try_proxy_from_env(true)
+        .timeout_connect(CONNECT_WITHIN)
+        .timeout_read(READ_WITHIN)
         .build()
         .get(pin.url)
         .call()
         .map_err(|error| format!("could not fetch {}: {error}", pin.url))?;
     {
-        let mut out = File::create(&part)?;
-        io::copy(&mut response.into_reader(), &mut out)?;
+        let mut out = File::create(&part.0)?;
+        io::copy(&mut response.into_reader(), &mut out)
+            .map_err(|error| format!("could not fetch {}: {error}", pin.url))?;
         out.flush()?;
         out.sync_all()?;
     }
-    let found = sha256_of(&part)?;
+    let found = sha256_of(&part.0)?;
     if found != pin.sha256 {
-        let _ = fs::remove_file(&part);
         return Err(format!(
             "{} has SHA-256 {found}, not the pinned {}: it was not used. \
              If the file was replaced on purpose where it is published, \
@@ -130,9 +210,8 @@ pub fn fetched(pin: &Pinned) -> Result<PathBuf, BuildError> {
         .into());
     }
     // Another build may have put it there meanwhile: either copy will do.
-    if fs::rename(&part, &path).is_err() {
-        let _ = fs::remove_file(&part);
-    }
+    let _ = fs::rename(&part.0, &path);
+    drop(part);
     fs::write(&checked, pin.sha256)?;
     Ok(path)
 }
@@ -146,22 +225,26 @@ pub fn unpacked(pin: &Pinned) -> Result<PathBuf, BuildError> {
     if fs::read_to_string(&stamp).is_ok_and(|seen| seen.trim() == pin.sha256) {
         return Ok(folder);
     }
+    clear_left_behind(&root);
     let archive = fetched(pin)?;
-    let part = ours(&folder);
-    let _ = fs::remove_dir_all(&part);
-    fs::create_dir_all(&part)?;
+    let part = Part(ours(&folder));
+    let _ = fs::remove_dir_all(&part.0);
+    fs::create_dir_all(&part.0)?;
     let mut tar = tar::Archive::new(bzip2::read::BzDecoder::new(File::open(&archive)?));
-    tar.unpack(&part)
+    tar.unpack(&part.0)
         .map_err(|error| format!("could not unpack {}: {error}", archive.display()))?;
     // An archive holds one folder of its own name, or its files loose.
-    let inner = part.join(pin.stem());
-    let made = if inner.is_dir() { inner } else { part.clone() };
+    let inner = part.0.join(pin.stem());
+    let made = if inner.is_dir() {
+        inner
+    } else {
+        part.0.clone()
+    };
     fs::write(made.join(".dirt-sha256"), pin.sha256)?;
     if folder.exists() {
         // Left by a build that stopped half way, or made meanwhile by
         // another one: the stamp says which.
         if fs::read_to_string(&stamp).is_ok_and(|seen| seen.trim() == pin.sha256) {
-            let _ = fs::remove_dir_all(&part);
             return Ok(folder);
         }
         fs::remove_dir_all(&folder)?;
@@ -169,7 +252,7 @@ pub fn unpacked(pin: &Pinned) -> Result<PathBuf, BuildError> {
     if fs::rename(&made, &folder).is_err() && !stamp.is_file() {
         return Err(format!("could not put {} in place", folder.display()).into());
     }
-    let _ = fs::remove_dir_all(&part);
+    drop(part);
     let _ = fs::remove_file(&archive);
     let _ = fs::remove_file(archive.with_file_name(format!("{}.sha256", pin.name)));
     Ok(folder)

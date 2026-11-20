@@ -12,7 +12,7 @@
 //! quiet after speech ends the thought: the detector is asked, not the
 //! level, because a breath and a room are not quiet to a level meter.
 
-use sherpa_onnx::VoiceActivityDetector;
+use crate::engine::VoiceActivityDetector;
 
 use crate::cut;
 use crate::folder::VoiceFolder;

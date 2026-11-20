@@ -18,7 +18,7 @@ use super::sync_state::remove_row;
 use super::tags::{Chosen, TagRule};
 use crate::files::Attachment;
 use crate::models::{extract_tags, Note, NoteId, PileNote, Voice, VoiceMark};
-use crate::notes::NoteDoc;
+use crate::notes::{merge3, NoteDoc};
 use crate::{Error, Result};
 
 const NOTE_COLUMNS: &str = "n.id, n.text, n.edited_at, n.archived, n.voice";
@@ -286,6 +286,7 @@ pub(super) fn create_if_new(
 pub(super) fn update(
     connection: &mut Connection,
     id: &NoteId,
+    base: Option<&str>,
     text: &str,
     now_ms: i64,
 ) -> Result<Note> {
@@ -295,7 +296,10 @@ pub(super) fn update(
     if doc.is_deleted() {
         return Err(not_found(id));
     }
-    if !doc.set_text(text, now_ms) {
+    // Read inside the transaction that writes, so nothing comes between
+    // the text the changes are made to and the writing of them.
+    let text = base.map_or_else(|| text.to_owned(), |base| merge3(base, text, &doc.text()));
+    if !doc.set_text(&text, now_ms) {
         // Nothing changed: leave the row, and its revision, alone.
         drop(tx);
         return get(connection, id)?.ok_or_else(|| not_found(id));

@@ -94,7 +94,8 @@ impl VoiceFolder {
 mod windows {
     use std::os::windows::ffi::OsStrExt;
     use std::path::Path;
-    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
 
     use windows_sys::Win32::System::LibraryLoader::{
         LoadLibraryExW, LOAD_WITH_ALTERED_SEARCH_PATH,
@@ -108,35 +109,49 @@ mod windows {
     /// calls look for it only when first made, and they find it loaded.
     const LIBRARIES: [&str; 2] = ["onnxruntime.dll", "sherpa-onnx-c-api.dll"];
 
+    /// Loaded once, for the program. A load that failed is not
+    /// remembered: the next listening or reading tries again, so a file put
+    /// back, or a microphone plugged in later, needs no restart.
     pub fn load(folder: &Path) -> Result<()> {
-        static LOADED: OnceLock<std::result::Result<(), String>> = OnceLock::new();
-        LOADED
-            .get_or_init(|| {
-                for name in LIBRARIES {
-                    let path = folder.join(name);
-                    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
-                    // SAFETY: a path ending in a nul, and no handle to the
-                    // file asked for. The library stays loaded for as long
-                    // as the program runs, which is what is wanted.
-                    #[allow(unsafe_code)]
-                    let module = unsafe {
-                        LoadLibraryExW(
-                            wide.as_ptr(),
-                            std::ptr::null_mut(),
-                            LOAD_WITH_ALTERED_SEARCH_PATH,
-                        )
-                    };
-                    if module.is_null() {
-                        return Err(format!(
-                            "{} could not be loaded ({})",
-                            path.display(),
-                            std::io::Error::last_os_error()
-                        ));
-                    }
+        static LOADED: AtomicBool = AtomicBool::new(false);
+        static LOADING: Mutex<()> = Mutex::new(());
+        if LOADED.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let _one_at_a_time = LOADING
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if LOADED.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let loaded = (|| {
+            for name in LIBRARIES {
+                let path = folder.join(name);
+                let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+                // SAFETY: a path ending in a nul, and no handle to the
+                // file asked for. The library stays loaded for as long
+                // as the program runs, which is what is wanted.
+                #[allow(unsafe_code)]
+                let module = unsafe {
+                    LoadLibraryExW(
+                        wide.as_ptr(),
+                        std::ptr::null_mut(),
+                        LOAD_WITH_ALTERED_SEARCH_PATH,
+                    )
+                };
+                if module.is_null() {
+                    return Err(format!(
+                        "{} could not be loaded ({})",
+                        path.display(),
+                        std::io::Error::last_os_error()
+                    ));
                 }
-                Ok(())
-            })
-            .clone()
-            .map_err(VoiceError::NotInstalled)
+            }
+            Ok(())
+        })();
+        if loaded.is_ok() {
+            LOADED.store(true, Ordering::SeqCst);
+        }
+        loaded.map_err(VoiceError::NotInstalled)
     }
 }

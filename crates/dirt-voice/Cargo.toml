@@ -38,6 +38,10 @@ tracing.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
 
+[dev-dependencies]
+# A folder of its own for the test that moves the voice folder.
+tempfile = "3"
+
 [build-dependencies]
 bzip2 = "0.4"
 sha2 = "0.10"

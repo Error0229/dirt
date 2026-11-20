@@ -80,6 +80,11 @@ const SAVE_AFTER: Duration = Duration::from_millis(400);
 /// over every window with nobody able to type into it.
 const KEYBOARD_BY: Duration = Duration::from_millis(300);
 
+/// How long handing over waits for a recording to be finished and handed
+/// to the queue: a moment, the microphone being closed and the last of
+/// the recording written.
+const KEEPING_AT_MOST: Duration = Duration::from_secs(3);
+
 /// How long the window waits for the page to say that it has finished
 /// leaving, before it hides all the same: a page that is not drawn runs
 /// no animation.
@@ -393,14 +398,27 @@ impl Capture {
 
     /// The keys are held: the box listens, unless something has been typed
     /// in it already.
+    ///
+    /// The keys being held is a request to open too: an opening asked for
+    /// a moment before may not have been heard yet, since only the latest
+    /// thing asked is kept.
     fn talk(self) {
+        if self.view.peek().shown == Shown::Hidden {
+            self.open(Instant::now());
+        }
         if self.view.peek().shown != Shown::Open
             || !self.draft.peek().is_blank()
             || !crate::voice::offered()
         {
             return;
         }
-        let keep = Callback::new(move |recording: dirt_voice::Recording| self.keep_said(recording));
+        // Where what is said goes is the store in use now, as it starts:
+        // signing in or out before it ends does not send it to the other
+        // account (review of #301).
+        let context = link().context();
+        let keep = Callback::new(move |recording: dirt_voice::Recording| {
+            self.keep_said(recording, &context);
+        });
         self.talking.listen(false, keep);
     }
 
@@ -411,16 +429,21 @@ impl Capture {
         }
     }
 
-    /// What was said is a note at once, in the store in use.
-    fn keep_said(mut self, recording: dirt_voice::Recording) {
+    /// What was said is a note at once, in the store that was in use as
+    /// listening started.
+    fn keep_said(mut self, recording: dirt_voice::Recording, context: &Context) {
         let note = NoteId::new();
         self.said.set(Some(note));
-        self.target.set(Some(link().context()));
-        self.ask([Work::KeepVoice {
+        crate::voice::said_here(note);
+        let work = [Work::KeepVoice {
             note,
             recording: recording.file,
             duration_ms: recording.duration_ms,
-        }]);
+        }];
+        match &context.store {
+            Some(store) => Scribe::global().ask(store, context.session.as_ref(), work),
+            None => Scribe::global().refuse(work),
+        }
     }
 
     /// The box has drawn how listening ended: it is put away, flying to the
@@ -584,7 +607,14 @@ fn QuickCapture() -> Element {
             if serial > 0 {
                 match asked {
                     Asked::Open(at) => capture.open(at),
-                    Asked::HandOver => capture.put_away(Why::Closed),
+                    Asked::HandOver => {
+                        capture.put_away(Why::Closed);
+                        // What was being said is handed to the queue, in
+                        // its own store, before the hand-over is done.
+                        if !crate::voice::keeping_settled(KEEPING_AT_MOST).await {
+                            tracing::warn!("A recording was not kept in time");
+                        }
+                    }
                     Asked::Talk => capture.talk(),
                     Asked::LetGo => capture.let_go(),
                     Asked::Nothing => {}

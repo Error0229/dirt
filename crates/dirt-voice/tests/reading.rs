@@ -7,6 +7,8 @@
 //! `cargo test -p dirt-voice -- --include-ignored` on a computer that built
 //! with the model.
 
+#![cfg(voice_engine)]
+
 use std::path::PathBuf;
 
 use dirt_voice::reading::words_of;
@@ -128,4 +130,26 @@ fn quiet_alone_is_nothing_heard() {
     let recording = listening.finish().unwrap();
     assert!(!recording.speech);
     assert_eq!(recording.duration_ms, 3_000);
+}
+
+/// A user folder named in letters beyond ASCII (`C:\Users\José`) holds the
+/// app, and so the voice folder: the engine must open the model there.
+#[test]
+#[ignore = "needs the speech model: cargo test -p dirt-voice -- --include-ignored"]
+fn the_model_is_read_from_a_folder_whose_name_is_not_ascii() {
+    let built = folder();
+    let parent = tempfile::tempdir().unwrap();
+    let there = parent.path().join("Jos\u{e9} \u{65e5}\u{672c}");
+    std::fs::create_dir(&there).unwrap();
+    for entry in std::fs::read_dir(built.path()).unwrap() {
+        let source = entry.unwrap().path();
+        let target = there.join(source.file_name().unwrap());
+        if std::fs::hard_link(&source, &target).is_err() {
+            std::fs::copy(&source, &target).unwrap();
+        }
+    }
+    let moved = VoiceFolder::at(&there).unwrap();
+    let sound = stand_in::read_wav(&moved, &sample("0.wav")).unwrap();
+    let words = words_of(&moved, &recording::encode(&sound).unwrap()).unwrap();
+    assert!(plain(&words).contains("phoebe"), "{words}");
 }
