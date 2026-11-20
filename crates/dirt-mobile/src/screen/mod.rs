@@ -2,7 +2,8 @@
 //! 6.19 and 8): the title with 🔍, the sync status and Settings; Find,
 //! which slides down under it; the list of cards; and the dock, the bar a
 //! new page grows out of. A note opens as a page over all of it, grown out
-//! of its card.
+//! of its card. The dock's mic listens in a sheet over the lower half of
+//! the screen (6.18, 8.9).
 //!
 //! [`Screen`] holds what the screen's parts share: what Find holds, what
 //! the list shows, the page and what is written on it, and the last
@@ -34,7 +35,7 @@ use dirt_core::session::SessionState;
 use dirt_core::store::{LetGo, NoteCounts, TagCount, TagRule};
 use dirt_core::sync::overview::SyncIndicator;
 use dirt_core::sync::worker::Trigger;
-use dirt_ui::components::{card_element_id, use_toasts, GrowFrom, ListExit, Toast, Toasts};
+use dirt_ui::components::{card_element_id, use_toasts, GrowFrom, ListExit, Talk, Toast, Toasts};
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::files::{use_note_files, FilePreview, FileSource, NoteFiles};
 use dirt_ui::find;
@@ -50,6 +51,7 @@ use crate::files::{attach, choose_files as pick_files};
 use crate::incoming::{attach_incoming, discard_all, not_copied_in, note_text, worth_a_note};
 use crate::services::activity::{copy_text, take_capture};
 use crate::state::AppState;
+use crate::voice::{Said, Talking, Unheard};
 use list::Main;
 use page::Page;
 
@@ -109,6 +111,9 @@ pub struct Listing {
     pub with_files: HashSet<NoteId>,
     /// The first file's name of each note that has files and no words.
     pub first_file: HashMap<NoteId, String>,
+    /// Why the words of each listed note said here could not be made,
+    /// once the phone has stopped trying (6.18).
+    pub unread: HashMap<NoteId, String>,
     /// The thumbnail of a picture on each note that has one on the device.
     pub thumbnails: HashMap<NoteId, String>,
     pub counts: NoteCounts,
@@ -182,6 +187,11 @@ pub struct Screen {
     receiving: Signal<bool>,
     /// What time it is, for the times on cards and the sync status.
     pub clock: Signal<Clock>,
+    /// The dock's listening (6.18).
+    pub talking: Talking,
+    /// What a screen reader was last told of words that arrived, and how
+    /// many times: told again when it reads the same.
+    pub words_heard: Signal<(u64, String)>,
 }
 
 impl Screen {
@@ -271,6 +281,7 @@ impl Screen {
         if self.page.peek().open {
             return;
         }
+        self.stop_listening();
         let serial = self.next_serial();
         let draft = Rc::new(RefCell::new(Draft::blank(self.store())));
         dom::set_value(PAGE, "");
@@ -295,6 +306,7 @@ impl Screen {
         if self.page.peek().open {
             return;
         }
+        self.stop_listening();
         let being_left = self
             .leaving
             .peek()
@@ -456,13 +468,16 @@ impl Screen {
         }
         let store = draft.borrow().store();
         let mut changed = false;
+        let mut came = None;
         while let Some(store) = store.as_ref() {
             let next = draft.borrow().to_save();
-            let Some((id, text)) = next else { break };
-            match store.core().update_note(&id, &text).await {
-                Ok(_) => {
+            let Some((id, base, text)) = next else { break };
+            match store.core().update_note_from(&id, &base, &text).await {
+                Ok(note) => {
                     draft.borrow_mut().saved(&text);
                     changed = true;
+                    // The store kept what came meanwhile: the page takes it.
+                    came = (note.content != text).then_some(note);
                 }
                 Err(error) => {
                     // Not tried again; the next change, or leaving the
@@ -476,6 +491,65 @@ impl Screen {
         if changed {
             self.app.note_changed();
         }
+        if let Some(note) = came {
+            self.bring_in(draft, page, &note);
+        }
+    }
+
+    /// What reached the page's note that the page did not write (the words
+    /// of what was said) is brought into the page, keeping the caret and
+    /// what is typed meanwhile, and saved as merged. Tried again if a key
+    /// was typed where the change goes, in that moment.
+    fn bring_in(self, draft: &DraftCell, page: u64, note: &Note) {
+        let showing = {
+            let view = self.page.peek();
+            view.open && view.serial == page
+        };
+        if !showing {
+            return;
+        }
+        let before = draft.borrow().clone();
+        let expected = before.text().to_owned();
+        let Some(merged) = draft.borrow_mut().took(note.id, &note.content) else {
+            return;
+        };
+        let draft = Rc::clone(draft);
+        let id = note.id;
+        spawn(async move {
+            let held = dom::merge_into(PAGE, &expected, &merged).await;
+            match held {
+                Some((now, true)) => draft.borrow_mut().holds(now),
+                Some((now, false)) => {
+                    // Back to what the page had, with what it holds now:
+                    // the next save keeps what came, and it is tried again.
+                    let mut held = draft.borrow_mut();
+                    *held = before;
+                    held.holds(now);
+                    drop(held);
+                    self.read_again(&draft, page, id);
+                }
+                None => {
+                    *draft.borrow_mut() = before;
+                    return;
+                }
+            }
+            self.save(&draft, page).await;
+        });
+    }
+
+    /// Reads the page's note again, once its saves are written, and brings
+    /// in what came.
+    fn read_again(self, draft: &DraftCell, page: u64, id: NoteId) {
+        let draft = Rc::clone(draft);
+        spawn(async move {
+            wait_while(|| draft.borrow().is_saving()).await;
+            let Some(store) = draft.borrow().store() else {
+                return;
+            };
+            if let Ok(Some(note)) = store.core().get_note(&id).await {
+                self.bring_in(&draft, page, &note);
+            }
+        });
     }
 
     /// Saves a page that has been let go, from what it held, and lets its
@@ -929,7 +1003,126 @@ impl Screen {
 
     /// The gear: Settings, where it was.
     pub fn open_settings(self) {
+        self.stop_listening();
         self.app.nav.open();
+    }
+
+    // ---- Voice (6.18, 8.9) ------------------------------------------------------
+
+    /// What the dock's mic asked for.
+    pub fn talk(self, talk: Talk) {
+        match talk {
+            Talk::Listen => self.listen(false),
+            // A tap from a screen reader is the first the dock hears of it.
+            Talk::Lock if !self.talking.is_shown() => self.listen(true),
+            Talk::Lock => self.talking.lock(),
+            Talk::Keep => self.talking.end(true),
+            Talk::Throw => self.talking.end(false),
+        }
+    }
+
+    /// The dock listens, in a sheet over the lower half of the screen. What
+    /// is said goes to the store in use as it starts, whatever is in use
+    /// when it ends: signing in or out meanwhile does not send it to the
+    /// other account.
+    fn listen(self, hands_free: bool) {
+        if self.page.peek().open || !crate::voice::offered() {
+            return;
+        }
+        // The press that asks for the microphone, in Android's own dialog,
+        // records nothing: no sheet rises behind the dialog.
+        if !crate::services::activity::microphone_allowed() {
+            let mut unheard = self.talking.unheard;
+            spawn(async move {
+                let answer = tokio::task::spawn_blocking(crate::voice::ask)
+                    .await
+                    .unwrap_or_else(|error| Unheard::Failed(error.to_string()));
+                unheard.set((answer != Unheard::Asked).then_some(answer));
+            });
+            return;
+        }
+        let Some(store) = self.store() else { return };
+        // A toast would cover the listening sheet's ✕ and ✓.
+        self.toasts.clear();
+        let keep = Callback::new(move |said: Said| self.keep_said(&store, said));
+        self.talking.listen(hands_free, keep);
+    }
+
+    /// Listening ends, keeping what was said: the person leaves the app,
+    /// opens a note, a new page or Settings (as on the desktop, 7.11).
+    pub fn stop_listening(self) {
+        if self.talking.is_listening_still() {
+            self.talking.end(true);
+        }
+    }
+
+    /// What was said is kept as a note at once, and settles onto the pile
+    /// as a typed thought does. Its words follow.
+    fn keep_said(mut self, store: &Arc<MobileNoteStore>, said: Said) {
+        let note = NoteId::new();
+        crate::voice::said_here(note);
+        self.settle_grain(note);
+        let store = Arc::clone(store);
+        spawn(async move {
+            match store
+                .core()
+                .keep_voice_note(note, said.file, said.duration_ms)
+                .await
+            {
+                Ok(_) => {
+                    self.exit.set(ListExit::None);
+                    self.app.note_changed();
+                    crate::voice::make_words_soon();
+                }
+                Err(error) => self.not_done("What was said could not be kept", &error),
+            }
+        });
+    }
+
+    /// The words of what was said were put in `note`. A screen reader is
+    /// told, for a thought said here in this run; on its page, they are
+    /// brought in.
+    pub fn words_came(mut self, note: &Note) {
+        if crate::voice::was_said_here(note.id) {
+            let first = note.outline().title;
+            let mut heard = self.words_heard.write();
+            heard.0 += 1;
+            let mark = if heard.0.is_multiple_of(2) {
+                ""
+            } else {
+                "\u{200b}"
+            };
+            heard.1 = format!("Words arrived: {first}{mark}");
+        }
+        let view = self.page.peek().clone();
+        if view.open && view.note == Some(note.id) {
+            self.read_again(&view.draft, view.serial, note.id);
+        }
+    }
+
+    /// The listening sheet has drawn how it ended.
+    pub fn talked(self, serial: u64) {
+        self.talking.gone(serial);
+    }
+
+    /// The microphone could not be used: the press says why, with the way
+    /// to Android's page for the app once it was refused for good.
+    fn unheard(self, why: &Unheard) {
+        let toast = Toast::new(why.tip()).icon(Icon::MicOff);
+        let toast = if *why == Unheard::RefusedForGood {
+            toast.action(
+                "Settings",
+                Icon::Settings,
+                Callback::new(|()| {
+                    if !crate::services::activity::open_app_settings() {
+                        tracing::warn!("Android's page for the app could not be opened");
+                    }
+                }),
+            )
+        } else {
+            toast
+        };
+        self.toasts.show(toast);
     }
 
     // ---- What comes from outside the app (8.1) --------------------------------
@@ -1162,6 +1355,19 @@ fn use_listing(screen: &Screen, app: &AppState) {
             let shown = notes.iter().map(|note| note.id).collect();
             let (with_files, mut first_file, thumbnails) =
                 read_card_files(&store, shown, screen.card_files).await;
+            let waiting_words: Vec<NoteId> = notes
+                .iter()
+                .filter(|note| {
+                    note.voice
+                        .is_some_and(|voice| voice.words == dirt_core::models::Words::Waiting)
+                })
+                .map(|note| note.id)
+                .collect();
+            let unread = if waiting_words.is_empty() {
+                HashMap::new()
+            } else {
+                core.voice_problems(waiting_words).await.unwrap_or_default()
+            };
             // Only a note with no words goes by its first file's name.
             first_file.retain(|id, _| {
                 notes
@@ -1216,6 +1422,7 @@ fn use_listing(screen: &Screen, app: &AppState) {
                 waiting,
                 with_files,
                 first_file,
+                unread,
                 thumbnails,
                 counts,
                 finding,
@@ -1275,6 +1482,7 @@ pub fn MainScreen() -> Element {
         move || app.note_changed(),
     );
     crate::files::use_served_files();
+    let talking = Talking::use_new(crate::voice::open_ear);
     let screen = use_context_provider(|| Screen {
         app,
         toasts,
@@ -1301,6 +1509,8 @@ pub fn MainScreen() -> Element {
         card_files: Signal::new(CardFilesCache::default()),
         receiving: Signal::new(false),
         clock,
+        talking,
+        words_heard: Signal::new((0, String::new())),
     });
     use_listing(&screen, &app);
     use_tag_offers(&screen, &app);
@@ -1356,6 +1566,40 @@ pub fn MainScreen() -> Element {
         }
     });
 
+    // Leaving the app ends listening, keeping what was said: the person
+    // said it, and nothing said is lost (6.18). The web view says when its
+    // page is hidden, and the activity when it is paused, which it is under
+    // the capture sheet, while the page is still seen.
+    use_future(move || async move {
+        let mut hidden = document::eval(concat!(
+            "document.addEventListener('visibilitychange', () => {",
+            "  if (document.visibilityState === 'hidden') dioxus.send(true);",
+            "});",
+            "window.addEventListener('dirt-pause', () => dioxus.send(true));",
+            "await new Promise(() => {});",
+        ));
+        while hidden.recv::<bool>().await.is_ok() {
+            screen.stop_listening();
+        }
+    });
+    // The words of what was said, for a screen reader and the open page.
+    use_future(move || async move {
+        let mut words = crate::voice::words_made().subscribe();
+        loop {
+            match words.recv().await {
+                Ok(note) => screen.words_came(&note),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+    // The microphone could not be used: the press says why.
+    use_effect(move || {
+        if let Some(why) = screen.talking.unheard.read().as_ref() {
+            screen.unheard(why);
+        }
+    });
+
     // Something may have come from outside the app.
     use_effect(move || {
         let _ = app.capture_ready.read();
@@ -1375,6 +1619,11 @@ pub fn MainScreen() -> Element {
             "aria-hidden": covered.then_some("true"),
             Main {}
             Page {}
+            // A screen reader is told when a voice note's words arrive
+            // (section 12); nothing on the screen says so but the words.
+            span { class: "dui-voice-said", role: "status", "aria-live": "polite",
+                "{screen.words_heard.read().1}"
+            }
         }
         // Beside the screen, not inside it: the screen steps back behind a
         // sheet, and what is drawn over it must not step back with it.

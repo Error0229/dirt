@@ -34,6 +34,8 @@ mod services;
 mod settings;
 #[cfg(target_os = "android")]
 mod state;
+#[cfg(target_os = "android")]
+mod voice;
 
 // The folder `android/native` is a Gradle library module: the capture
 // sheet, its job, the tile, the widget, and their resources. This

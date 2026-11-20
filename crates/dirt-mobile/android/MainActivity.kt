@@ -1,10 +1,12 @@
 package dev.dioxus.main
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -30,6 +32,9 @@ private const val REQUEST_SAVE_FILE = 4401
 
 // Marks the answer to the request for files to attach.
 private const val REQUEST_PICK_FILES = 4402
+
+// Marks the answer to the request for the microphone.
+private const val REQUEST_MICROPHONE = 4403
 
 // The most bytes a file may have and still be attached. It is the server's
 // limit for a file (`dirt_proto::api::limits::MAX_FILE_BYTES`), which a
@@ -113,6 +118,111 @@ class MainActivity : WryActivity() {
 
         // The activity on screen, for opening other screens over it.
         private var current = WeakReference<MainActivity>(null)
+
+        // The app, for what needs no screen: the microphone, the voice
+        // folder.
+        private var app: Context? = null
+
+        // Android's answer to the request for the microphone, until the
+        // Rust side takes it: "granted", "refused" (it may ask again) or
+        // "refused_for_good" (it will not: "Don't allow" twice, or "Don't
+        // ask again").
+        private var microphoneAnswer: String? = null
+
+        // ---- Voice (design 6.18, 8.9) ----------------------------------
+
+        // Whether the app may use the microphone now.
+        @Keep
+        @JvmStatic
+        fun microphoneAllowed(): Boolean {
+            val context = app ?: return false
+            return context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        }
+
+        // Asks for the microphone in Android's own dialog. Its answer is
+        // collected with takeMicrophoneAnswer. Refused for good, Android
+        // answers at once without asking. Returns false when there is no
+        // screen to ask over.
+        @Keep
+        @JvmStatic
+        fun askForMicrophone(): Boolean {
+            val activity = current.get() ?: return false
+            setMicrophoneAnswer(null)
+            activity.runOnUiThread {
+                runCatching {
+                    activity.requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_MICROPHONE)
+                }.onFailure { setMicrophoneAnswer("refused") }
+            }
+            return true
+        }
+
+        @Synchronized
+        private fun setMicrophoneAnswer(answer: String?) {
+            microphoneAnswer = answer
+        }
+
+        @Keep
+        @JvmStatic
+        @Synchronized
+        fun takeMicrophoneAnswer(): String? {
+            val answer = microphoneAnswer
+            microphoneAnswer = null
+            return answer
+        }
+
+        // Opens the microphone for the app's Rust, which is handed the
+        // sound (`dev.dirt.capture.Microphone`): 0 listening, 1 not
+        // allowed, 2 it could not be opened.
+        @Keep
+        @JvmStatic
+        fun startMicrophone(): Int {
+            val context = app ?: return 2
+            return dev.dirt.capture.Microphone.startForApp(context)
+        }
+
+        // Closes it, once every piece heard has been handed over.
+        @Keep
+        @JvmStatic
+        fun stopMicrophone(): Boolean {
+            dev.dirt.capture.Microphone.stopForApp()
+            return true
+        }
+
+        // Whether this build has voice: the model is among its assets.
+        @Keep
+        @JvmStatic
+        fun voiceShipped(): Boolean {
+            val context = app ?: return false
+            return dev.dirt.capture.VoiceFiles.shipped(context)
+        }
+
+        // The voice folder, copied out of the APK as far as `what` needs:
+        // "listening" (the detector) or "words" (the model too, the first
+        // time a moment's work). Null in a build without voice.
+        @Keep
+        @JvmStatic
+        fun voiceFolder(what: String): String? {
+            val context = app ?: return null
+            return if (what == "words") {
+                dev.dirt.capture.VoiceFiles.forWords(context)
+            } else {
+                dev.dirt.capture.VoiceFiles.forListening(context)
+            }
+        }
+
+        // Opens Android's page for this app, where its permissions are:
+        // where the microphone is allowed once it was refused for good.
+        @Keep
+        @JvmStatic
+        fun openAppSettings(): Boolean {
+            val activity = current.get() ?: return false
+            return runCatching {
+                val page = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(Uri.fromParts("package", activity.packageName, null))
+                activity.startActivity(page)
+            }.isSuccess
+        }
 
         @Synchronized
         private fun keepSignInRedirect(address: String) {
@@ -343,6 +453,7 @@ class MainActivity : WryActivity() {
     // the browser was in front.
     override fun onCreate(savedInstanceState: Bundle?) {
         current = WeakReference(this)
+        app = applicationContext
         // Android hands a restored activity the intent it was first started
         // with. What that intent asked for was dealt with before the
         // activity went away: its sign-in code is spent, and what it shared
@@ -416,9 +527,14 @@ class MainActivity : WryActivity() {
     }
 
     // Leaving the app: the accent may have been changed in Settings, and the
-    // widget on the home screen is drawn again in it.
+    // widget on the home screen is drawn again in it. The page is told,
+    // because it may still be visible: the capture sheet and Android's own
+    // dialogs are drawn over it without hiding it, and the dock ends its
+    // listening then, so that the sheet's mic and the dock's never hear the
+    // same thought twice (design 8.9).
     override fun onPause() {
         super.onPause()
+        page?.evaluateJavascript("window.dispatchEvent(new Event('dirt-pause'))", null)
         runCatching { dev.dirt.capture.CaptureWidget.refresh(this) }
     }
 
@@ -564,6 +680,24 @@ class MainActivity : WryActivity() {
                 ?.use { row -> if (row.moveToFirst()) row.getString(0) else null }
         }.getOrNull()
         return named?.takeIf { it.isNotBlank() } ?: file.lastPathSegment.orEmpty()
+    }
+
+    // Android's answer to the request for the microphone. Refused, whether
+    // it may ask again is what it says it would explain next time.
+    @Deprecated("Deprecated in Java")
+    override fun onRequestPermissionsResult(code: Int, permissions: Array<String>, results: IntArray) {
+        @Suppress("DEPRECATION")
+        super.onRequestPermissionsResult(code, permissions, results)
+        // An empty answer is a request Android cancelled, for one asked
+        // after it: that one answers.
+        if (code != REQUEST_MICROPHONE || results.isEmpty()) return
+        setMicrophoneAnswer(
+            when {
+                results.firstOrNull() == PackageManager.PERMISSION_GRANTED -> "granted"
+                shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO) -> "refused"
+                else -> "refused_for_good"
+            },
+        )
     }
 
     // The person chose files to attach, or where to save a file, or backed

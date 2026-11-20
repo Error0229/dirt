@@ -2190,6 +2190,7 @@ dependencies = [
  "dirs",
  "dirt-core",
  "dirt-ui",
+ "dirt-voice",
  "dotenvy",
  "jni 0.21.1",
  "manganis",

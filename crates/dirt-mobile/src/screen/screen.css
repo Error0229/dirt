@@ -26,11 +26,28 @@
 .dm-arch-n{color:var(--text-3);font-weight:500;font-variant-numeric:tabular-nums}
 
 /* The dock, where the thumb is: the bar a new page grows out of. */
-.dm-dock{flex:none;padding:6px 12px calc(24px + env(safe-area-inset-bottom,0px))}
+.dm-dock{flex:none;display:flex;align-items:center;gap:10px;padding:6px 12px calc(24px + env(safe-area-inset-bottom,0px));position:relative;z-index:3}
 .dm-bar{display:block;width:100%;height:52px;border-radius:var(--r-bar);background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow-2);text-align:left;padding:0 20px;font-size:16px;color:var(--text-3);transition:transform 140ms var(--e-std)}
 .dm-bar:active{transform:scale(.98)}
 /* While Find has the keyboard, the dock goes, as the keyboard covers it. */
 .dm:has(.dm-find input:focus) .dm-dock{display:none}
+
+/* The dock's mic: hold to talk, or tap (6.18). A round of the accent, where
+   the thumb is; it grows while it is held. */
+.dm-dock .dm-mic{width:52px;height:52px;border-radius:50%;box-shadow:var(--shadow-2);flex:none}
+/* Over dui-icon-btn's grey under a finger: the mic stays the accent. */
+.dm-dock .dm-mic,.dm-dock .dm-mic:hover:not([aria-pressed="true"]),.dm-dock .dm-mic:active:not([aria-pressed="true"]){background:var(--accent);color:var(--on-accent)}
+.dm-dock .dm-mic.refused,.dm-dock .dm-mic.refused:hover:not([aria-pressed="true"]),.dm-dock .dm-mic.refused:active:not([aria-pressed="true"]){background:var(--surface-2);color:var(--text-3)}
+.dm-mic .dui-i{width:22px;height:22px}
+.dm-bar{flex:1;min-width:0}
+.dm.talking .dm-bar{opacity:.4;pointer-events:none}
+
+/* Listening: a sheet rises over the lower half of the screen, under the
+   mic, which stays under the thumb. The grains, the timer, ✕ and ✓. */
+.dm-talk{position:absolute;left:0;right:0;bottom:0;height:min(340px,50%);z-index:2;background:var(--surface);border-radius:var(--r-sheet) var(--r-sheet) 0 0;box-shadow:0 -14px 40px rgba(0,0,0,.2),0 0 0 1px var(--border);display:flex;flex-direction:column;justify-content:flex-end;padding:0 12px calc(92px + env(safe-area-inset-bottom,0px));animation:dm-talk-in var(--d-glide) var(--sp-glide) both}
+@keyframes dm-talk-in{from{transform:translateY(106%)}}
+.dm-talk .dui-voice{padding:0 0 12px 2px}
+.dm-talk .dui-voice-grains{height:72px}
 
 /* The page: a note, full screen. */
 .dm-page{padding-top:env(safe-area-inset-top,0px)}

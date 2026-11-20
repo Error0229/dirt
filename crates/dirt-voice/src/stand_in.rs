@@ -38,6 +38,9 @@ impl Feed {
         }
     }
 
+    // The microphone's feed is woken; a build without it (Android, whose
+    // microphone is Kotlin's) has only the stand-in.
+    #[cfg_attr(not(feature = "microphone"), allow(dead_code))]
     pub(crate) fn woken_by(mut self, wake: impl Fn() + Send + 'static) -> Self {
         self.wake = Some(Box::new(wake));
         self

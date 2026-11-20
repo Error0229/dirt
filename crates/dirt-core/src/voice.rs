@@ -83,6 +83,9 @@ pub async fn make_words(
             continue;
         }
         let note = waiting.note;
+        // Counted before the model is loaded: a phone that cannot hold it
+        // ends the process, and is not asked again at every start.
+        store.voice_reading(&note).await?;
         let Some(recording) = store.file_bytes(waiting.file_id).await? else {
             let why = "the recording is not on this device".to_owned();
             store.voice_not_read(&note, &why).await?;

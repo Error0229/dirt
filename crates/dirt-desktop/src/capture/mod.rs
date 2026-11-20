@@ -416,7 +416,7 @@ impl Capture {
         // signing in or out before it ends does not send it to the other
         // account (review of #301).
         let context = link().context();
-        let keep = Callback::new(move |recording: dirt_voice::Recording| {
+        let keep = Callback::new(move |recording: crate::voice::Said| {
             self.keep_said(recording, &context);
         });
         self.talking.listen(false, keep);
@@ -431,7 +431,7 @@ impl Capture {
 
     /// What was said is a note at once, in the store that was in use as
     /// listening started.
-    fn keep_said(mut self, recording: dirt_voice::Recording, context: &Context) {
+    fn keep_said(mut self, recording: crate::voice::Said, context: &Context) {
         let note = NoteId::new();
         self.said.set(Some(note));
         crate::voice::said_here(note);
@@ -578,7 +578,7 @@ fn QuickCapture() -> Element {
         ready: use_hook(|| CopyValue::new(false)),
         flight: use_hook(|| CopyValue::new(None)),
         before: use_hook(|| CopyValue::new(Foreground::default())),
-        talking: Talking::use_new(),
+        talking: Talking::use_new(crate::voice::open_ear),
         said: use_hook(|| CopyValue::new(None)),
         after_talk: use_hook(|| CopyValue::new(Why::Key)),
     };

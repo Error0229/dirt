@@ -1997,7 +1997,54 @@ failed load of the engine is tried again; and a screen reader is told only
 of the words of thoughts said in this run. A model folder whose path is not
 ASCII was tried and works. Design 7.11 has the decisions.
 
+**9b built.** Android has voice. The dock's mic listens in a sheet over the
+lower half of the screen with `dirt-ui`'s `Listening`; the shared listening
+(`Talking`, the recording counted until it is kept) moved from the desktop
+into `dirt_ui::voice`, so that both apps hand it their own microphone as an
+`Ear`. Android's microphone is `AudioRecord` in Kotlin
+(`android/native/.../Microphone.kt`), which hands its sound to the app's
+Rust over JNI; `dirt-voice` writes the recording and listens as on the
+desktop. The capture sheet's 🎙, the widget's mic and Talk (an
+`activity-alias`, "Dirt Talk", which a hardware key can open) record in
+Kotlin, without the app's Rust, to a WAV beside the typed thoughts; the
+app's Rust takes it in (`Store::take_in_voice_note`, dated at its ID's
+time), and a second job, `WordsJob`, needing no network, makes the note and
+its words and then asks for the capture job to sync. The microphone's
+permission is asked at the first press, with the slash, "Press to be asked
+again", and Android's page for the app once it is refused for good. A save
+of the page now carries the text it was typed over, as on the desktop, so
+words that arrive while a voice note is open are kept and brought into the
+page. Settings → Voice has a row for the side key. The model is copied out
+of the APK into `no_backup` on first use, since the engine opens files by
+path. Design 8.9 has what was settled, and `docs/SECURITY.md` what
+recording over the lock screen lets in.
+
+Run on the `dirt-trial` emulator with the stand-in WAV, signed out (the
+checklist's run of 2026-11-19 has the details): held in the dock, words on
+the card within 4 s; from the sheet and Talk, the words job made the note
+and its words 3.6 to 6.7 s after, over the lock screen too; 385 MB at most
+for the process while reading. Real phones, the real microphone, TalkBack
+and a release build are the checklist's.
+
+**After review** (#302): the sheet writes its WAV's header before the first
+sample, so a recording cut off is still read, and a waiting file that
+cannot be read is set aside after three tries instead of being read for
+ever; the dock ends its listening when the activity pauses under the sheet;
+the widget's way in to listening is an alias no other app can start; the
+sheet's ear judges speech against the room's noise and hands every kept
+recording to Silero; listening that starts after the sheet's pause ends on
+its stop; a try at the words is counted as it begins; the build script
+copies a pinned file again when its source changed; "Dirt Talk" is only in
+a build with voice; CI lints the Android code and keeps what `dirt-voice`
+fetches for it. The engine's pinned Android libraries were found aligned to
+16 KB. Design 8.9 has the decisions.
+
 ### Step 10: finishing
+
+**From step 9b:** 🎙 in the Android page's top bar, which adds what is said
+at the end of a note being written, its words once they are made and the
+recording among its files (design 6.18). It needs the core to add a
+recording to a note that exists, which `Store::keep_voice_note` does not.
 
 The pile widget. Long text in the page: past a few hundred kilobytes it
 does not reach the app from the web view on either app, so the note is

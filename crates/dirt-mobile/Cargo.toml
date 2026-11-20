@@ -44,6 +44,11 @@ webbrowser = "1"
 # Declares the Gradle module of native code (`android/native`) to `dx`,
 # with `#[manganis::ffi]` in main.rs. The version Dioxus brings.
 manganis = "0.7"
+# Speech turned into text on the phone (interface design 6.18, 8.9). Its
+# build puts the voice folder together, which `build.rs` puts in the APK.
+# The microphone is Android's `AudioRecord`, in Kotlin, which hands its
+# sound over (`voice`): no cpal.
+dirt-voice = { path = "../dirt-voice" }
 
 [build-dependencies]
 dotenvy = "0.15"

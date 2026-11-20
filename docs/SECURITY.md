@@ -332,8 +332,9 @@ writing without unlocking, and the reason the sheet shows nothing.
 A thought can be said instead of typed (interface design 6.18). Speech is
 turned into text on the device that heard it, by a model shipped inside
 the app, and is never sent anywhere to be turned into text: not to Dirt's
-server, not to a speech service. The desktop builds this in step 9a of the
-interface plan; Android follows in 9b and keeps to the same rules.
+server, not to a speech service. The desktop and Android keep to the same
+rules (steps 9a and 9b of the interface plan); what is Android's alone is
+below them.
 
 - **What is recorded.** Only while the person asks: from the press of the
   mic, or of the held hotkey, to ✓, Esc, ✕ or letting go, and ten minutes
@@ -371,7 +372,64 @@ interface plan; Android follows in 9b and keeps to the same rules.
   says where to allow it. The system shows that the microphone is in use
   while Dirt listens.
 - **A development build** can be told to listen to a WAV file instead of the
-  microphone (`DIRT_VOICE_FROM_WAV`); a release build ignores it.
+  microphone (`DIRT_VOICE_FROM_WAV` on the desktop; on Android a debuggable
+  build plays `dirt/stand-in.wav` from the app's own files if it is there);
+  a release build ignores both.
+
+**On Android** (interface design 8.9):
+
+- **The microphone's permission** is asked for at the first press of a mic,
+  in Android's own dialog, and that press records nothing. Refused, the mic
+  shows a slash and a press says where to allow it; refused for good, it
+  offers Android's page for the app. Android shows its own sign that the
+  microphone is in use while Dirt listens. No service records in the
+  background: the microphone is open only while a screen of Dirt's is in
+  front and listening, and leaving that screen ends it. Another app can
+  open the sheet listening only as the launcher opens Talk, on the screen:
+  the widget's way in to listening is an entry no other app can start.
+- **A thought said in the capture sheet waits as plain sound, briefly.** The
+  sheet has none of the app's code, so it writes what it hears to a file of
+  its own as it hears it, `dirt/waiting/<note ID>.wav.part`, renamed
+  `<note ID>.wav` when it ends, beside the typed thoughts and as protected
+  as they are: the app's private storage, not encrypted by Dirt, covered by
+  Android's file encryption, in no backup. A second job, or the app,
+  makes it a note (the recording as Ogg Opus, as anywhere else) and
+  removes the WAV, usually within seconds; one in which no speech is heard
+  is removed and nothing is made. A recording whose process ended while it
+  listened is still a WAV (its header is written before the first sample)
+  and is taken in eleven minutes later, so that nothing said is lost.
+  Thrown away (✕), its file is removed at once. A waiting file that cannot
+  be read three times over is set aside in `dirt/set-aside/`, kept on the
+  phone as the waiting files are, and never sent.
+- **The words job** runs the app's own code, as the capture job does: it
+  opens the device's secrets in Android's encrypted preferences, makes the
+  note and its words on the phone, and asks for the capture job, which
+  syncs. It needs no network, and sends nothing itself.
+- **The model is copied out of the app once.** The engine opens its files
+  by path, and a file inside the APK has none, so the voice folder (the
+  model, the detector, their notice) is copied on first use into the app's
+  storage that is never backed up. It is the model as it was built, and
+  holds nothing of the person's.
+
+**Over the lock screen, voice adds and shows nothing, as typing does.** The
+sheet's mic listens there, and so does **Talk**, which a hardware key can
+be set to open (the side key on Samsung, Quick Tap on Pixel), where the
+phone lets it open over the lock screen. What protects it:
+
+- Nothing said is played back or shown there: no words appear while the
+  person speaks, and the note's words are made afterwards, out of sight.
+- The microphone's permission cannot be given there: Android's dialog does
+  not show over the lock screen, so a phone that has never allowed it says
+  to unlock first.
+- Talk ends by itself: 1.6 s of quiet after speech keeps the thought, and
+  eight seconds with nothing said ends it with nothing made.
+
+So **whoever holds the locked phone can say a thought into the person's
+account**, which becomes a note, with its recording, on every device of it,
+and can hear and read nothing. From the sheet's mic, tapped for
+hands-free, that may be up to ten minutes of what the phone hears, with
+Android's sign of the microphone on the screen throughout. That is the
+price of talking without unlocking, as writing is.
 
 ## The keys
 

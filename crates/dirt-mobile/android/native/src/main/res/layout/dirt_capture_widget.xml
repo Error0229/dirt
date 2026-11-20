@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The widget (design 8.5): one bar. The logo opens the app at the list;
-     the rest of the bar opens the capture sheet. It shows no notes: anyone
-     who sees the home screen sees it. The mic comes with voice (step 9). -->
+     the rest of the bar opens the capture sheet; the mic opens it listening,
+     hands-free, in a build with voice (6.18). It shows no notes: anyone
+     who sees the home screen sees it. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/dirt_widget_bar"
     android:layout_width="match_parent"
@@ -11,7 +12,7 @@
     android:gravity="center_vertical"
     android:orientation="horizontal"
     android:paddingStart="6dp"
-    android:paddingEnd="20dp">
+    android:paddingEnd="6dp">
     <FrameLayout
         android:id="@+id/dirt_widget_logo"
         android:layout_width="44dp"
@@ -43,4 +44,13 @@
         android:text="@string/dirt_widget_bar"
         android:textColor="@color/dirt_text_3"
         android:textSize="16sp" />
+    <ImageView
+        android:id="@+id/dirt_widget_mic"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:contentDescription="@string/dirt_talk"
+        android:padding="11dp"
+        android:src="@drawable/dirt_mic"
+        android:tint="@color/dirt_accent_clay"
+        android:visibility="gone" />
 </LinearLayout>

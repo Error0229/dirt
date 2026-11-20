@@ -57,6 +57,24 @@ object Waiting {
         return id
     }
 
+    // A recording from the sheet's mic waits the same way, as a WAV beside
+    // the typed thoughts (design 8.9): written as it is heard to
+    // `<id>.wav.part`, and renamed `<id>.wav` once it is finished, so that
+    // a `.wav` is whole. The ID is made as listening starts: the note is
+    // dated when the thought began.
+    fun newRecording(context: Context): Pair<String, File> {
+        val folder = folder(context)
+        folder.mkdirs()
+        val id = newId()
+        return id to File(folder, "$id.wav.part")
+    }
+
+    // The recording is finished: it waits whole, for the job or the app.
+    fun keepRecording(part: File): Boolean {
+        val whole = File(part.parentFile, part.name.removeSuffix(".part"))
+        return part.renameTo(whole)
+    }
+
     // What was written in the sheet and not kept, for the next time it opens
     // on an unlocked phone.
     private fun draftFile(context: Context) = File(dataFolder(context), "capture-draft.txt")
