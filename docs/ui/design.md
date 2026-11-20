@@ -1635,7 +1635,7 @@ What 7.2 and 5.5 left open for quick capture, settled when it was built
 | Signing in or out | Before another store is taken into use, quick capture hands what it holds to the queue, for the store it was written in, and puts itself away; the app waits for that, then for the queue, and only then lets go of the old store. A device turned away, found by quick capture's own sync, is the same. The next thought goes to the new store |
 | Closing it otherwise | <kbd>Alt F4</kbd> puts it away, saved, and it hides at once. Quitting from the tray hands what it holds to the queue, which the app waits for (7.9) |
 | Counting (section 2) | Writing a thought from another app is the three actions section 2 gives: <kbd>Ctrl Alt N</kbd>, the typing, <kbd>Esc</kbd>. From the tray's menu it is four: the icon, **New Note**, the typing, <kbd>Esc</kbd> |
-| How quickly | From the hotkey reaching the app to the text field having the keyboard: 21 to 46 ms, median 25 ms over 24 opens, and 24 to 40 ms for the first open after the app starts (a development build on Windows 11, implementation plan step 8a). The hotkey is heard at once; the tray's menu is still looked for every 16 ms, which can add that much |
+| How quickly | From the hotkey reaching the app to the text field having the keyboard: 21 to 46 ms, median 25 ms over 24 opens, and 24 to 40 ms for the first open after the app starts (a development build on Windows 11, implementation plan step 8a). The hotkey and the tray's menu are both heard at once, as Dioxus's event loop is told of them |
 
 ### 7.11 Settled when voice was built on the desktop
 

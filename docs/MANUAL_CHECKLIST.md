@@ -46,9 +46,11 @@ A development build kept off the screen with `DIRT_WINDOW_AT` never takes
 the keyboard from the app in front, nor flashes in the taskbar: neither its
 main window nor quick capture's. With `DIRT_ACTIONS_FROM_STDIN` set, the
 lines `hotkey`, `new note`, `open dirt` and `quit` on its standard input
-stand in for the hotkey and the tray's menu, and `DIRT_TRAY_AT=x,y` (or
-`none`) for where the tray icon is, so that quick capture's flight can be
-tried off the screen. A release build ignores all three.
+stand in for the hotkey and the tray's menu (the real Ctrl Alt N is then
+not registered, so a test run leaves it to the person at the computer), and
+`DIRT_TRAY_AT=x,y` (or `none`) for where the tray icon is, so that quick
+capture's flight can be tried off the screen. A release build ignores all
+three.
 
 A development build listens to a WAV file instead of the microphone when
 `DIRT_VOICE_FROM_WAV=<file>` is set: at the pace it was recorded, from its

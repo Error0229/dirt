@@ -10,9 +10,8 @@
 //! window of its own (`capture`), made hidden beside this one as the app
 //! starts.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dioxus::desktop::tao::event::{Event, WindowEvent};
 use dioxus::desktop::{use_wry_event_handler, window, LogicalPosition};
@@ -29,8 +28,7 @@ use crate::screen::MainScreen;
 use crate::services::{data_folder, open_local_store};
 use crate::settings::SettingsPanel;
 use crate::state::AppState;
-use crate::tray::{process_tray_events, QUIT_REQUESTED, SHOW_MAIN_WINDOW};
-use crate::TRAY_ENABLED;
+use crate::tray::Choice;
 
 /// How long quitting, and taking another store into use, wait for the
 /// store's queue to finish.
@@ -40,9 +38,6 @@ const QUEUE_WAITS_AT_MOST: Duration = Duration::from_secs(5);
 /// capture to hand over what it holds: it is at once, unless its window
 /// has not been made yet, when it holds nothing.
 const HANDING_OVER_AT_MOST: Duration = Duration::from_secs(1);
-
-/// Set when the window gains focus: the person has come back to the app.
-static WINDOW_FOCUSED: AtomicBool = AtomicBool::new(false);
 
 /// The stores the app starts with, and the session if the build has a
 /// server to sync with.
@@ -275,14 +270,22 @@ pub fn App() -> Element {
         }
     });
 
-    // The window gaining focus is the person coming back to the app.
+    // The window gaining focus is the person coming back to the app. The
+    // CLI may have signed in or out, or written notes, in the meantime:
+    // notice both, and sync unless that just happened.
     use_wry_event_handler(move |event, _| {
         if let Event::WindowEvent {
             event: WindowEvent::Focused(true),
             ..
         } = event
         {
-            WINDOW_FOCUSED.store(true, Ordering::SeqCst);
+            if let Some(current) = session.peek().clone() {
+                if let Err(error) = current.reload() {
+                    tracing::error!("Could not re-read the sign-in: {error}");
+                }
+                current.notify(Trigger::Returned);
+            }
+            state.reread();
         }
     });
 
@@ -297,25 +300,20 @@ pub fn App() -> Element {
         crate::capture::link().set_appearance(Appearance::from_settings(&settings.read()));
     });
 
-    // Poll for the tray, a request to show the window and the window
-    // coming back into focus. The hotkey goes to quick capture directly.
-    use_future(move || async move {
-        let tray_enabled = TRAY_ENABLED.load(Ordering::SeqCst);
-        loop {
-            if tray_enabled {
-                process_tray_events();
-            }
-
-            if SHOW_MAIN_WINDOW.swap(false, Ordering::SeqCst) {
-                tracing::info!("Showing main window from tray");
+    // The tray's menu, and the hotkey, which goes to quick capture. Both
+    // are heard here, in the main window's root, which is there for as
+    // long as the app runs: the window is hidden, not closed.
+    let choose = use_callback(move |choice| {
+        tracing::info!("Tray: {choice:?} chosen");
+        match choice {
+            Choice::NewNote => crate::capture::link().open(Instant::now()),
+            Choice::OpenDirt => {
                 let win = window();
                 win.set_visible(true);
                 win.set_minimized(false);
                 win.set_focus();
             }
-
-            if QUIT_REQUESTED.swap(false, Ordering::SeqCst) {
-                tracing::info!("Quit requested from tray");
+            Choice::Quit => {
                 // The main screen and quick capture hand over what their
                 // pages hold as they hear of this; then the store's queue
                 // is given a few seconds to finish, so that nothing typed
@@ -337,23 +335,11 @@ pub fn App() -> Element {
                     std::process::exit(0);
                 });
             }
-
-            // The person came back to the app. The CLI may have signed in or
-            // out, or written notes, in the meantime: notice both, and sync
-            // unless that just happened.
-            if WINDOW_FOCUSED.swap(false, Ordering::SeqCst) {
-                if let Some(current) = session.peek().clone() {
-                    if let Err(error) = current.reload() {
-                        tracing::error!("Could not re-read the sign-in: {error}");
-                    }
-                    current.notify(Trigger::Returned);
-                }
-                state.reread();
-            }
-
-            tokio::time::sleep(Duration::from_millis(16)).await;
         }
     });
+    crate::tray::use_tray(choose);
+    let hotkey = crate::hotkey::use_hotkey();
+    crate::use_actions_from_stdin(hotkey, choose);
 
     // The words of what was said on this device, made in the background.
     crate::voice::use_words_maker(&state);

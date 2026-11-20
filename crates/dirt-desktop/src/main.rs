@@ -21,20 +21,12 @@ mod state;
 mod tray;
 mod voice;
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread;
-use std::time::{Duration, Instant};
 
-use dioxus::desktop::{Config, WindowCloseBehaviour};
-use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
-use hotkey::{Hold, HotkeyManager};
+use dioxus::desktop::{Config, HotKeyState, WindowCloseBehaviour};
+use dioxus::prelude::*;
 use single_instance::SingleInstance;
 
-/// Atomic flag indicating tray is enabled
-pub static TRAY_ENABLED: AtomicBool = AtomicBool::new(false);
-
-#[allow(clippy::cognitive_complexity)]
 fn main() {
     // Initialize logging
     tracing_subscriber::fmt()
@@ -66,40 +58,17 @@ fn main() {
         }
     };
 
-    // Initialize system tray BEFORE Dioxus (must be on main thread)
-    match tray::start() {
-        Ok(()) => {
-            tracing::info!("System tray initialized");
-            TRAY_ENABLED.store(true, Ordering::SeqCst);
-        }
-        Err(e) => {
-            tracing::error!("Failed to initialize system tray: {}", e);
-        }
-    }
-
-    // Initialize global hotkey BEFORE launching Dioxus.
-    // The manager must be kept alive and stay on the main thread.
-    // Retry briefly to tolerate OS-level release delay from a previous instance.
-    let _hotkey_manager = match initialize_hotkey_manager() {
-        Ok(manager) => Some(manager),
-        Err(e) => {
-            tracing::warn!("Failed to register hotkey after retries: {}", e);
-            tracing::warn!("Continuing desktop startup without global hotkey support.");
-            None
-        }
-    };
-
-    take_actions_from_stdin();
-
     // Copies of files handed to other programs in earlier runs.
     services::clear_opened_copies(&services::data_folder());
 
-    // Configure Dioxus to hide window on close instead of exiting
-    // Hide window instead of exiting when closed - keeps app running in tray
+    // Closing the window hides it, and Dirt stays in the tray (`tray`).
+    // A click on the tray icon does nothing: Dioxus would show every
+    // window, quick capture's too. A double click opens Dirt.
     let config = without_the_web_views_own_keys(
         Config::new()
             .with_window(screen::window::builder())
-            .with_close_behaviour(WindowCloseBehaviour::WindowHides),
+            .with_close_behaviour(WindowCloseBehaviour::WindowHides)
+            .with_tray_icon_show_window_on_click(false),
     );
 
     // Launch the app
@@ -135,103 +104,43 @@ pub fn without_the_web_views_own_keys(config: Config) -> Config {
         .with_custom_head(dirt_ui::webview::guard_head())
 }
 
-/// How long Ctrl Alt N is held before quick capture listens instead of
-/// waiting for typing (6.18, 7.2): the mic's line between a tap and a hold.
-const HELD_AFTER: Duration = Duration::from_millis(280);
-
-/// The hotkey's press, from the press until it is let go. What each
-/// change asks of quick capture is asked while this is held, so that the
-/// asks go in the order the changes were made (`hotkey::Hold`).
-static HOLD: Mutex<Hold> = Mutex::new(Hold::new());
-
-fn hold() -> MutexGuard<'static, Hold> {
-    HOLD.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// Ctrl Alt N was pressed: quick capture opens, for typing. Held past
-/// [`HELD_AFTER`], it listens instead. The system repeats a key held down;
-/// a repeat is not another press.
-fn hotkey_pressed() {
-    let Some(press) = hold().pressed() else {
-        return;
-    };
-    tracing::info!("Hotkey pressed (Ctrl+Alt+N)");
-    capture::link().open(Instant::now());
-    thread::spawn(move || {
-        thread::sleep(HELD_AFTER);
-        let mut hold = hold();
-        if hold.held(press) {
-            capture::link().talk();
-        }
-    });
-}
-
-/// Ctrl Alt N was let go: what was said while it was held is kept.
-fn hotkey_released() {
-    let mut hold = hold();
-    if hold.released() {
-        capture::link().let_go();
-    }
-}
-
+/// Stand-ins on the standard input for the hotkey and the tray's menu.
+///
 /// In a development build with `DIRT_ACTIONS_FROM_STDIN` set, each line
 /// read from the standard input does what a hand would do outside the
 /// window: `hotkey` presses Ctrl Alt N and lets it go, `hotkey down` and
 /// `hotkey up` press it and let it go apart (a hold talks), and
-/// `new note`, `open dirt` and `quit` choose that in the tray's menu. They go the same way as the real
-/// key and menu from there. That is for trying the app on a computer whose
-/// keyboard and tray belong to someone else. A release build ignores it.
-fn take_actions_from_stdin() {
-    if settings::test_hook("DIRT_ACTIONS_FROM_STDIN").is_none() {
-        return;
-    }
-    thread::spawn(|| {
-        for line in std::io::stdin().lines() {
-            let Ok(line) = line else { break };
+/// `new note`, `open dirt` and `quit` choose that in the tray's menu. They
+/// go the same way as the real key and menu from there. That is for trying
+/// the app on a computer whose keyboard and tray belong to someone else. A
+/// release build ignores it.
+pub fn use_actions_from_stdin(hotkey: Callback<HotKeyState>, choose: Callback<tray::Choice>) {
+    use_future(move || async move {
+        if settings::test_hook("DIRT_ACTIONS_FROM_STDIN").is_none() {
+            return;
+        }
+        let (send, mut lines) = tokio::sync::mpsc::unbounded_channel();
+        thread::spawn(move || {
+            for line in std::io::stdin().lines() {
+                let Ok(line) = line else { break };
+                if send.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        while let Some(line) = lines.recv().await {
             match line.trim() {
                 "hotkey" => {
-                    hotkey_pressed();
-                    hotkey_released();
+                    hotkey.call(HotKeyState::Pressed);
+                    hotkey.call(HotKeyState::Released);
                 }
-                "hotkey down" => hotkey_pressed(),
-                "hotkey up" => hotkey_released(),
-                "new note" => tray::chosen(tray::Choice::NewNote),
-                "open dirt" => tray::chosen(tray::Choice::OpenDirt),
-                "quit" => tray::chosen(tray::Choice::Quit),
+                "hotkey down" => hotkey.call(HotKeyState::Pressed),
+                "hotkey up" => hotkey.call(HotKeyState::Released),
+                "new note" => choose.call(tray::Choice::NewNote),
+                "open dirt" => choose.call(tray::Choice::OpenDirt),
+                "quit" => choose.call(tray::Choice::Quit),
                 other => tracing::warn!("Not an action: {other:?}"),
             }
         }
     });
-}
-
-fn initialize_hotkey_manager() -> Result<HotkeyManager, String> {
-    const HOTKEY_RETRY_ATTEMPTS: usize = 6;
-    const HOTKEY_RETRY_DELAY_MS: u64 = 300;
-
-    for attempt in 1..=HOTKEY_RETRY_ATTEMPTS {
-        match HotkeyManager::new() {
-            Ok(manager) => {
-                GlobalHotKeyEvent::set_event_handler(Some(|event: GlobalHotKeyEvent| {
-                    tracing::debug!("GlobalHotKeyEvent received: state={:?}", event.state);
-                    match event.state {
-                        HotKeyState::Pressed => hotkey_pressed(),
-                        HotKeyState::Released => hotkey_released(),
-                    }
-                }));
-                return Ok(manager);
-            }
-            Err(error) => {
-                if attempt == HOTKEY_RETRY_ATTEMPTS {
-                    return Err(error.to_string());
-                }
-                tracing::warn!(
-                    "Hotkey registration attempt {attempt}/{HOTKEY_RETRY_ATTEMPTS} failed: {}. Retrying...",
-                    error
-                );
-                thread::sleep(Duration::from_millis(HOTKEY_RETRY_DELAY_MS));
-            }
-        }
-    }
-
-    Err("Hotkey registration failed".to_string())
 }

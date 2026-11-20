@@ -1,13 +1,19 @@
-//! Global hotkey registration and handling
+//! Ctrl Alt N, registered with Dioxus's own shortcuts: a tap opens quick
+//! capture for typing, and a hold talks (interface design 6.18, 7.2).
 
-use global_hotkey::{
-    hotkey::{Code, HotKey, Modifiers},
-    GlobalHotKeyManager,
-};
+use std::time::{Duration, Instant};
+
+use dioxus::desktop::{window, HotKeyState};
+use dioxus::prelude::*;
+use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+
+/// How long Ctrl Alt N is held before quick capture listens instead of
+/// waiting for typing (6.18, 7.2): the mic's line between a tap and a hold.
+const HELD_AFTER: Duration = Duration::from_millis(280);
 
 /// Default hotkey: Ctrl+Alt+N (Windows/Linux) or Cmd+Option+N (macOS)
 /// N for "Note" - a quick way to capture a thought
-pub fn default_hotkey() -> HotKey {
+fn default_hotkey() -> HotKey {
     #[cfg(target_os = "macos")]
     let modifiers = Modifiers::META | Modifiers::ALT;
     #[cfg(not(target_os = "macos"))]
@@ -16,32 +22,75 @@ pub fn default_hotkey() -> HotKey {
     HotKey::new(Some(modifiers), Code::KeyN)
 }
 
-/// Manages global hotkey registration
-pub struct HotkeyManager {
-    _manager: GlobalHotKeyManager,
-}
-
-impl HotkeyManager {
-    /// Create and register the global hotkey
-    pub fn new() -> Result<Self, global_hotkey::Error> {
-        let manager = GlobalHotKeyManager::new()?;
-        let hotkey = default_hotkey();
-
-        manager.register(hotkey)?;
-        tracing::info!("Registered global hotkey: Ctrl+Alt+N");
-
-        Ok(Self { _manager: manager })
-    }
+/// Registers Ctrl Alt N for as long as the app runs, and gives what its
+/// press and its letting go do, for the standard input's stand-ins too.
+/// Call from the main window's root, which is there for as long as the app
+/// runs.
+///
+/// Another program may hold the keys as Dirt starts, a Dirt that has just
+/// quit among them, so registering is tried a few times. If the keys stay
+/// taken, the app runs on without them; the tray's New Note still opens
+/// quick capture.
+pub fn use_hotkey() -> Callback<HotKeyState> {
+    let mut hold = use_hook(|| CopyValue::new(Hold::new()));
+    let changed = use_callback(move |state| match state {
+        HotKeyState::Pressed => {
+            let Some(press) = hold.write().pressed() else {
+                return;
+            };
+            tracing::info!("Hotkey pressed (Ctrl+Alt+N)");
+            crate::capture::link().open(Instant::now());
+            spawn(async move {
+                tokio::time::sleep(HELD_AFTER).await;
+                if hold.write().held(press) {
+                    crate::capture::link().talk();
+                }
+            });
+        }
+        HotKeyState::Released => {
+            if hold.write().released() {
+                crate::capture::link().let_go();
+            }
+        }
+    });
+    use_future(move || async move {
+        const ATTEMPTS: usize = 6;
+        // With the standard input standing in for the keys, the real ones
+        // are left to the person at the computer (`use_actions_from_stdin`).
+        if crate::settings::test_hook("DIRT_ACTIONS_FROM_STDIN").is_some() {
+            return;
+        }
+        for attempt in 1..=ATTEMPTS {
+            match window().create_shortcut(default_hotkey(), move |state| changed.call(state)) {
+                Ok(_) => {
+                    tracing::info!("Registered global hotkey: Ctrl+Alt+N");
+                    return;
+                }
+                Err(error) if attempt < ATTEMPTS => {
+                    tracing::warn!(
+                        "Hotkey registration attempt {attempt}/{ATTEMPTS} failed: {error:?}. Retrying..."
+                    );
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                }
+                Err(error) => {
+                    tracing::warn!("Failed to register hotkey after retries: {error:?}");
+                    tracing::warn!("Continuing desktop startup without global hotkey support.");
+                }
+            }
+        }
+    });
+    changed
 }
 
 /// One press of the hotkey at a time, from the press to its letting go:
 /// whether it is held long enough to talk (interface design 6.18).
 ///
-/// The press, the letting go and the press's deadline each change it under
-/// one lock, and say what to ask of quick capture while they hold it. So a
-/// deadline that comes as the keys are let go either talks before the
-/// letting go is heard, which then ends the talking, or finds the keys up
-/// and does nothing: it can never start talking after the letting go.
+/// The press, the letting go and the press's deadline each change it on
+/// the app's event loop, one at a time, and say what to ask of quick
+/// capture as they do. So a deadline that comes as the keys are let go
+/// either talks before the letting go is heard, which then ends the
+/// talking, or finds the keys up and does nothing: it can never start
+/// talking after the letting go.
 #[derive(Debug, Default)]
 pub struct Hold {
     down: bool,
