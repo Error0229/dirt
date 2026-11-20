@@ -209,11 +209,18 @@ pub fn App() -> Element {
                     // there; and the queue's work for the old one is done
                     // before anything lets go of it (on signing out it is
                     // removed below).
+                    //
+                    // Quick capture is given the new store first. What it
+                    // hands over still goes to the old one: a note keeps
+                    // the store in use when its first character was typed,
+                    // and a recording the one in use as it began.
+                    let store = Arc::new(store);
+                    let capture = crate::capture::link();
+                    capture.set_context(Some(Arc::clone(&store)), Some(current.clone()));
                     let leave = *page_leaver.peek();
                     if let Some(leave) = leave {
                         leave.call(());
                     }
-                    let capture = crate::capture::link();
                     if !capture.hand_over(HANDING_OVER_AT_MOST).await {
                         tracing::warn!("Quick capture did not hand over what it held in time");
                     }
@@ -222,8 +229,6 @@ pub fn App() -> Element {
                     if !crate::voice::keeping_settled(QUEUE_WAITS_AT_MOST).await {
                         tracing::warn!("A recording was not kept in time");
                     }
-                    let store = Arc::new(store);
-                    capture.set_context(Some(Arc::clone(&store)), Some(current.clone()));
                     current_note_id.set(None);
                     db_service.set(Some(store));
                     if !Scribe::global().settle(QUEUE_WAITS_AT_MOST).await {

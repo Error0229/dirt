@@ -99,6 +99,21 @@ fn arrived(current: bool, loaded: Loaded) -> Option<Showing> {
     })
 }
 
+/// The files of `listed` that the preview can show.
+fn previewable_of(listed: Option<&(NoteId, Vec<AttachedFile>)>) -> Vec<AttachedFile> {
+    listed
+        .map(|(_, found)| {
+            found
+                .iter()
+                .filter(|file| {
+                    preview_kind(&file.attachment.name, &file.attachment.media_type).is_some()
+                })
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The open note's files, and the preview of them. Copy it freely; see the
 /// module.
 #[derive(Clone, Copy)]
@@ -204,10 +219,10 @@ pub fn use_note_files(
     // everything else about the file works without it. A fetch is tried
     // once for as long as the note is open.
     use_effect(move || {
-        let Some((note, found)) = files.listed.read().clone() else {
+        let Some((listed, found)) = files.listed.read().clone() else {
             return;
         };
-        spawn(async move { files.read_thumbnails(note, found).await });
+        spawn(async move { files.read_thumbnails(note, listed, found).await });
     });
 
     files
@@ -222,19 +237,13 @@ impl NoteFiles {
 
     /// The files the preview steps through: those it can show.
     pub fn previewable(self) -> Vec<AttachedFile> {
-        self.listed
-            .read()
-            .as_ref()
-            .map(|(_, found)| {
-                found
-                    .iter()
-                    .filter(|file| {
-                        preview_kind(&file.attachment.name, &file.attachment.media_type).is_some()
-                    })
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
+        previewable_of(self.listed.read().as_ref())
+    }
+
+    /// The same, read without following the list: for code that has just
+    /// written it, which must not be run again by its own writing.
+    fn previewable_now(self) -> Vec<AttachedFile> {
+        previewable_of(self.listed.peek().as_ref())
     }
 
     /// A picture's thumbnail, as something an `img` shows.
@@ -290,7 +299,20 @@ impl NoteFiles {
         *self.loads.peek()
     }
 
-    async fn read_thumbnails(mut self, note: NoteId, found: Vec<AttachedFile>) {
+    /// Reads the thumbnails of `note`'s files, while it is the note `open`
+    /// names.
+    ///
+    /// Each step looks first: a note put away, or another opened, stops it,
+    /// and what it has read for a note no longer open is dropped. The apps
+    /// put the note away in the same moment as they take another store into
+    /// use, so it never looks in a new store for an old note's thumbnail.
+    async fn read_thumbnails(
+        mut self,
+        open: ReadSignal<Option<NoteId>>,
+        note: NoteId,
+        found: Vec<AttachedFile>,
+    ) {
+        let still_open = move || *open.peek() == Some(note);
         let wanted: Vec<(Uuid, Uuid, bool)> = found
             .iter()
             .filter_map(|file| {
@@ -304,12 +326,15 @@ impl NoteFiles {
             .filter(|(file, _, _)| !self.thumbnails.peek().contains_key(file))
             .collect();
         let read = |thumbnail: Uuid| async move {
+            if !still_open() {
+                return None;
+            }
             let store = self.source.call(()).store?;
             let picture = store
                 .small_file(thumbnail, MOST_THUMBNAIL_BYTES)
                 .await
                 .ok()??;
-            Some(as_data_uri(&picture))
+            still_open().then(|| as_data_uri(&picture))
         };
         for (file, thumbnail, _) in wanted.iter().filter(|(_, _, here)| *here) {
             if let Some(picture) = read(*thumbnail).await {
@@ -317,6 +342,9 @@ impl NoteFiles {
             }
         }
         for (file, thumbnail, _) in wanted.iter().filter(|(_, _, here)| !*here) {
+            if !still_open() {
+                return;
+            }
             if !self.asked.write().insert(*thumbnail) {
                 continue;
             }
@@ -481,11 +509,13 @@ impl NoteFiles {
 
     /// The preview still shows a file the note has: one removed, here or
     /// on another device, gives way to the next, or the preview closes.
+    /// Called by the reader of the list, which follows none of what it
+    /// reads here.
     fn keep_preview_in_step(self) {
         let Some(at) = self.previewing_now() else {
             return;
         };
-        let all = self.previewable();
+        let all = self.previewable_now();
         if all.iter().any(|file| file.attachment.file_id == at) {
             return;
         }
