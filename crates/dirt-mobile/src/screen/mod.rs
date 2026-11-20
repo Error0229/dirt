@@ -33,14 +33,15 @@ use dioxus::prelude::*;
 use dirt_core::files::thumbnail::as_data_uri;
 use dirt_core::models::{extract_tags, Note, NoteId};
 use dirt_core::session::SessionState;
-use dirt_core::store::{LetGo, NoteCounts, TagCount, TagRule};
+use dirt_core::store::{LetGo, TagCount, TagRule};
 use dirt_core::sync::overview::SyncIndicator;
 use dirt_core::sync::worker::Trigger;
+use dirt_core::Store;
 use dirt_ui::components::{card_element_id, use_toasts, GrowFrom, ListExit, Talk, Toast, Toasts};
 use dirt_ui::dom::{self, Caret};
 use dirt_ui::files::{use_note_files, FilePreview, FileSource, NoteFiles};
 use dirt_ui::find;
-use dirt_ui::pile::PileView;
+use dirt_ui::listing::{use_clock, Find, ListedFiles, Listing, LISTED_NOTES};
 use dirt_ui::settings::Section;
 use dirt_ui::time::Clock;
 use dirt_ui::Icon;
@@ -65,13 +66,6 @@ pub const BAR_ID: &str = "dm-bar";
 
 /// How long typing pauses before what was typed is saved.
 const SAVE_AFTER: Duration = Duration::from_millis(400);
-
-/// How many notes the list holds at first, and how many more it takes
-/// each time scrolling nears its end.
-pub const LISTED_NOTES: usize = 100;
-
-/// How many tags the strip offers besides those picked (6.3).
-const TAGS_OFFERED: usize = 6;
 
 /// How long a page takes to shrink back into its card (5.5). A note put
 /// away from its page is put away once it has.
@@ -99,38 +93,6 @@ pub struct PageView {
     draft: DraftCell,
 }
 
-/// What the list shows, read from the store at once.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Listing {
-    /// The notes, in the order shown: when finding, the archived ones
-    /// after the rest.
-    pub notes: Vec<Note>,
-    /// Notes that have not reached the server as they are now. Empty while
-    /// signed out, when no note is meant to.
-    pub waiting: HashSet<NoteId>,
-    /// Notes with files.
-    pub with_files: HashSet<NoteId>,
-    /// The first file's name of each note that has files and no words.
-    pub first_file: HashMap<NoteId, String>,
-    /// Why the words of each listed note said here could not be made,
-    /// once the phone has stopped trying (6.18).
-    pub unread: HashMap<NoteId, String>,
-    /// The thumbnail of a picture on each note that has one on the device.
-    pub thumbnails: HashMap<NoteId, String>,
-    pub counts: NoteCounts,
-    /// Find holds words or tags.
-    pub finding: bool,
-    /// The list shows every archived note ("3 archived" was pressed).
-    pub archived_view: bool,
-    /// There may be more than the list holds.
-    pub more: bool,
-    /// What Find's words ask for, to mark in the cards.
-    pub words: Vec<String>,
-    /// The pile under the last card (6.17): read while the list is not
-    /// finding, and kept as it was while it is.
-    pub pile: PileView,
-}
-
 /// What was last archived or deleted, for Undo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Undo {
@@ -146,19 +108,11 @@ pub struct Screen {
     toasts: Toasts,
     /// Find is down under the title.
     pub find_open: Signal<bool>,
-    /// Find's text: words, and perhaps the start of a tag at its end.
-    pub find_text: Signal<String>,
-    /// The tags chosen, in lower case and without their `#`.
-    pub tags: Signal<Vec<String>>,
-    pub rule: Signal<TagRule>,
-    /// The `#` is pressed: the strip offers the tags that can be picked.
-    pub tags_open: Signal<bool>,
+    /// What the list is read for. Its tags are offered in the strip while
+    /// the `#` is pressed.
+    pub find: Find,
     /// What the strip offers now.
-    pub tag_offers: Signal<Vec<TagCount>>,
-    /// The list shows the archived notes alone.
-    pub archived_view: Signal<bool>,
-    /// How many notes the list holds.
-    pub limit: Signal<usize>,
+    pub tag_offers: Resource<Vec<TagCount>>,
     /// How a card that leaves the list is drawn leaving.
     pub exit: Signal<ListExit>,
     /// A note just brought back by Undo: its card drops in with a bounce.
@@ -181,9 +135,6 @@ pub struct Screen {
     /// The newest text of each page (by its number) whose write failed,
     /// while the error says so: what **Copy text** gives.
     unsaved: Signal<Vec<(u64, String)>>,
-    /// What the cards show of their notes' files, read once for each change
-    /// of a note.
-    card_files: Signal<CardFilesCache>,
     /// The activity is being asked what came from outside the app.
     receiving: Signal<bool>,
     /// What time it is, for the times on cards and the sync status.
@@ -303,7 +254,7 @@ impl Screen {
             draft,
         });
         self.app.current_note_id.set(None);
-        focus_soon(PAGE, Caret::End);
+        self.focus_soon(PAGE, Caret::End);
     }
 
     /// Tapping a card: the note grows out of it, with the cursor at the end
@@ -345,7 +296,7 @@ impl Screen {
             draft: Rc::clone(&draft),
         });
         self.app.current_note_id.set(Some(id));
-        focus_soon(PAGE, Caret::End);
+        self.focus_soon(PAGE, Caret::End);
         spawn(async move {
             self.settled().await;
             let Some(store) = draft.borrow().store() else {
@@ -402,6 +353,7 @@ impl Screen {
             // if they had been typed, and that saves them.
             let written = extract_tags(&text);
             let missing: Vec<String> = self
+                .find
                 .tags
                 .peek()
                 .iter()
@@ -802,32 +754,45 @@ impl Screen {
         });
     }
 
+    /// Gives the keyboard's focus to a field once the page has drawn it,
+    /// unless the page has opened, closed or changed meanwhile.
+    fn focus_soon(self, selector: &'static str, caret: Caret) {
+        let page = |screen: Self| (screen.page.peek().serial, screen.page.peek().open);
+        let before = page(self);
+        spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            if page(self) == before {
+                dom::focus(&[selector], caret);
+            }
+        });
+    }
+
     // ---- Find and tags (6.1, 6.3) -------------------------------------------
 
     /// 🔍: Find slides down under the title, with the keyboard up.
     pub fn open_find(mut self) {
-        self.archived_view.set(false);
+        self.find.archived_view.set(false);
         self.find_open.set(true);
-        focus_soon(FIND, Caret::End);
+        self.focus_soon(FIND, Caret::End);
     }
 
     /// Find's cross: Find goes back up, and the list is whole again.
     pub fn close_find(mut self) {
         dom::blur();
         self.exit.set(ListExit::None);
-        self.limit.set(LISTED_NOTES);
+        self.find.limit.set(LISTED_NOTES);
         self.find_open.set(false);
-        self.tags_open.set(false);
+        self.find.tags_open.set(false);
         self.set_find("");
-        self.tags.set(Vec::new());
-        self.rule.set(TagRule::All);
+        self.find.tags.set(Vec::new());
+        self.find.rule.set(TagRule::All);
     }
 
     /// Back while Find is down: the offers in the strip go first, then
     /// Find.
     pub fn find_back(mut self) {
-        if *self.tags_open.peek() {
-            self.tags_open.set(false);
+        if *self.find.tags_open.peek() {
+            self.find.tags_open.set(false);
         } else {
             self.close_find();
         }
@@ -836,34 +801,34 @@ impl Screen {
     /// Find's text changed.
     pub fn find_typed(mut self, text: String) {
         if find::tag_word(&text).is_some() {
-            self.tags_open.set(true);
+            self.find.tags_open.set(true);
         }
         self.exit.set(ListExit::None);
-        self.limit.set(LISTED_NOTES);
-        self.find_text.set(text);
+        self.find.limit.set(LISTED_NOTES);
+        self.find.text.set(text);
     }
 
     /// Sets Find's text from here, not from the field.
     fn set_find(mut self, text: &str) {
         dom::set_value(FIND, text);
-        self.find_text.set(text.to_owned());
+        self.find.text.set(text.to_owned());
     }
 
     /// Picks a tag, or takes it back if it is picked. What was typed after
     /// a `#` goes, since it was the tag's name.
     pub fn toggle_tag(mut self, tag: &str) {
         self.exit.set(ListExit::None);
-        self.limit.set(LISTED_NOTES);
-        let picked = self.tags.peek().iter().any(|chosen| chosen == tag);
+        self.find.limit.set(LISTED_NOTES);
+        let picked = self.find.tags.peek().iter().any(|chosen| chosen == tag);
         if picked {
-            self.tags.write().retain(|chosen| chosen != tag);
-            if self.tags.peek().len() < 2 {
-                self.rule.set(TagRule::All);
+            self.find.tags.write().retain(|chosen| chosen != tag);
+            if self.find.tags.peek().len() < 2 {
+                self.find.rule.set(TagRule::All);
             }
             return;
         }
-        self.tags.write().push(tag.to_owned());
-        let text = self.find_text.peek().clone();
+        self.find.tags.write().push(tag.to_owned());
+        let text = self.find.text.peek().clone();
         if find::tag_word(&text).is_some() {
             self.set_find(find::words(&text));
         }
@@ -872,20 +837,21 @@ impl Screen {
     /// A tag tapped on a card: the list narrows to it, and Find comes down
     /// to show it, as a pill that can be taken back.
     pub fn narrow_to(mut self, tag: &str) {
-        self.archived_view.set(false);
+        self.find.archived_view.set(false);
         self.find_open.set(true);
-        if !self.tags.peek().iter().any(|chosen| chosen == tag) {
+        if !self.find.tags.peek().iter().any(|chosen| chosen == tag) {
             self.toggle_tag(tag);
         }
     }
 
     /// The first tag the strip offers, picked: Enter on a lone `#tag`.
     pub fn pick_first_tag(self) -> bool {
-        let picked = self.tags.peek().clone();
+        let picked = self.find.tags.peek().clone();
         let first = self
             .tag_offers
             .peek()
             .iter()
+            .flatten()
             .find(|offer| !picked.contains(&offer.tag))
             .map(|offer| offer.tag.clone());
         first.is_some_and(|tag| {
@@ -897,14 +863,14 @@ impl Screen {
     /// Takes back the last tag picked: Backspace in an empty Find.
     pub fn untag_last(mut self) {
         self.exit.set(ListExit::None);
-        self.tags.write().pop();
+        self.find.tags.write().pop();
     }
 
     /// Shows every archived note, or goes back to the list.
     pub fn show_archived(mut self, shown: bool) {
         self.exit.set(ListExit::None);
-        self.limit.set(LISTED_NOTES);
-        self.archived_view.set(shown);
+        self.find.limit.set(LISTED_NOTES);
+        self.find.archived_view.set(shown);
     }
 
     // ---- Files ----------------------------------------------------------------
@@ -921,6 +887,7 @@ impl Screen {
         }
         let draft = view.draft;
         let tags: Vec<String> = self
+            .find
             .tags
             .peek()
             .iter()
@@ -1428,56 +1395,21 @@ async fn wait_while(busy: impl Fn() -> bool) {
     }
 }
 
-/// Gives the keyboard's focus to a field once the page has drawn it.
-fn focus_soon(selector: &'static str, caret: Caret) {
-    spawn(async move {
-        tokio::time::sleep(Duration::from_millis(30)).await;
-        dom::focus(&[selector], caret);
-    });
-}
-
-/// Keeps the clock: every half minute, for the times on cards, and soon
-/// after sync changes, for "Just synced" giving way.
-fn use_clock(app: &AppState) -> Signal<Clock> {
-    let app = *app;
-    let mut clock = use_signal(Clock::now);
-    use_future(move || async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(30)).await;
-            clock.set(Clock::now());
-        }
-    });
-    use_effect(move || {
-        let _ = app.sync_status.read();
-        clock.set(Clock::now());
-        spawn(async move {
-            tokio::time::sleep(Duration::from_millis(1500)).await;
-            clock.set(Clock::now());
-        });
-    });
-    clock
-}
-
 /// What the cards show of the files of the notes `shown`: which have
 /// files, the first file's name, and a picture's thumbnail if the device
 /// has it. A note's files are read only when it has changed since they
 /// were last read; a thumbnail is read until the device has it, and then
 /// kept while a card shows it.
 async fn read_card_files(
-    store: &MobileNoteStore,
+    store: Store,
     shown: Vec<NoteId>,
     mut cache: Signal<CardFilesCache>,
-) -> (
-    HashSet<NoteId>,
-    HashMap<NoteId, String>,
-    HashMap<NoteId, String>,
-) {
-    let core = store.core();
+) -> ListedFiles {
     cache.write().reading_from(store.path());
-    let revisions = core.file_revisions(shown).await.unwrap_or_default();
+    let revisions = store.file_revisions(shown).await.unwrap_or_default();
     let wanted = cache.peek().to_read(&revisions);
     for note in wanted {
-        let Ok(files) = core.note_attachments(&note).await else {
+        let Ok(files) = store.note_attachments(&note).await else {
             continue;
         };
         let read = CardFiles {
@@ -1504,7 +1436,7 @@ async fn read_card_files(
         let known = cache.peek().thumb(&thumbnail).cloned();
         let shown = match known {
             Some(shown) => Some(shown),
-            None => match core.small_file(thumbnail, MOST_THUMBNAIL_BYTES).await {
+            None => match store.small_file(thumbnail, MOST_THUMBNAIL_BYTES).await {
                 Ok(Some(bytes)) => {
                     let shown = as_data_uri(&bytes);
                     cache.write().keep_thumb(thumbnail, shown.clone());
@@ -1518,172 +1450,11 @@ async fn read_card_files(
             thumbnails.insert(*note, shown);
         }
     }
-    (with_files, first_file, thumbnails)
-}
-
-/// Reads what the list shows from the store, again whenever what it
-/// depends on changes, and marks the notes a sync has just brought.
-fn use_listing(screen: &Screen, app: &AppState) {
-    let (screen, app) = (*screen, *app);
-    let mut seen = use_signal(HashMap::<NoteId, i64>::new);
-    let mut pulls_seen = use_signal(|| 0_u64);
-    let _reader = use_resource(move || {
-        let store = app.store.read().clone();
-        let _ = app.notes_read.read();
-        let pulled = *app.pulled.read();
-        let signed_in = app.session_state.read().is_ready();
-        let text = screen.find_text.read().clone();
-        let tags = screen.tags.read().clone();
-        let rule = *screen.rule.read();
-        let limit = *screen.limit.read();
-        let archived_view = *screen.archived_view.read();
-        let mut listing_signal = screen.listing;
-        let mut flashing = screen.flashing;
-        async move {
-            let store = store?;
-            let core = store.core();
-            let words = find::words(&text).trim().to_owned();
-            let finding = !archived_view && (!words.is_empty() || !tags.is_empty());
-            let notes = if archived_view {
-                core.list_archived_notes(limit, 0).await
-            } else if finding {
-                core.find_notes_by_tags(&words, &tags, rule, limit).await
-            } else {
-                core.list_notes(limit, 0).await
-            };
-            let notes = match notes {
-                Ok(notes) => notes,
-                Err(error) => {
-                    tracing::error!("Could not read the list: {error}");
-                    return None;
-                }
-            };
-            let waiting = if signed_in {
-                let shown = notes.iter().map(|note| note.id).collect();
-                core.unsynced_note_ids(shown).await.unwrap_or_default()
-            } else {
-                HashSet::new()
-            };
-            let shown = notes.iter().map(|note| note.id).collect();
-            let (with_files, mut first_file, thumbnails) =
-                read_card_files(&store, shown, screen.card_files).await;
-            let waiting_words: Vec<NoteId> = notes
-                .iter()
-                // A note said waiting for its words, or one with files: a
-                // recording added to a note (8.10) is one of its files, and
-                // leaves the note unmarked.
-                .filter(|note| {
-                    with_files.contains(&note.id)
-                        || note
-                            .voice
-                            .is_some_and(|voice| voice.words == dirt_core::models::Words::Waiting)
-                })
-                .map(|note| note.id)
-                .collect();
-            let unread = if waiting_words.is_empty() {
-                HashMap::new()
-            } else {
-                core.voice_problems(waiting_words).await.unwrap_or_default()
-            };
-            // Only a note with no words goes by its first file's name.
-            first_file.retain(|id, _| {
-                notes
-                    .iter()
-                    .any(|note| note.id == *id && note.outline().title.is_empty())
-            });
-            let counts = core.note_counts().await.unwrap_or_default();
-            let more = notes.len() >= limit;
-            // The pile's notes are read only when the counts say they may
-            // have changed: not at every pause in typing (6.17).
-            let before = listing_signal
-                .peek()
-                .as_ref()
-                .map(|listing| listing.pile.clone());
-            let offset = Clock::now().utc_offset_secs;
-            let pile = PileView::read(before, counts, offset, || core.pile()).await;
-            // The pile widget on the home screen is drawn from the same
-            // heap, when it is a new one (8.5).
-            crate::pile_widget::show(&crate::config::default_mobile_data_directory(), &pile);
-
-            // What a sync has just brought: new to the list, or edited
-            // since it was last read, and not the note being written.
-            if pulled != *pulls_seen.peek() && !finding && !archived_view {
-                let open = *app.current_note_id.peek();
-                let before = seen.peek();
-                let arrived: HashSet<NoteId> = notes
-                    .iter()
-                    .filter(|note| Some(note.id) != open)
-                    .filter(|note| before.get(&note.id).is_none_or(|&at| note.updated_at > at))
-                    .map(|note| note.id)
-                    .collect();
-                drop(before);
-                if !arrived.is_empty() && !seen.peek().is_empty() {
-                    flashing.set(arrived.clone());
-                    spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(1700)).await;
-                        if *flashing.peek() == arrived {
-                            flashing.set(HashSet::new());
-                        }
-                    });
-                }
-            }
-            pulls_seen.set(pulled);
-            if !finding && !archived_view {
-                seen.set(
-                    notes
-                        .iter()
-                        .map(|note| (note.id, note.updated_at))
-                        .collect(),
-                );
-            }
-
-            listing_signal.set(Some(Listing {
-                notes,
-                waiting,
-                with_files,
-                first_file,
-                unread,
-                thumbnails,
-                counts,
-                finding,
-                archived_view,
-                more,
-                words: dirt_ui::text::find_words(&words),
-                pile,
-            }));
-            Some(())
-        }
-    });
-}
-
-/// Reads what the strip of tags offers, while the `#` is pressed.
-fn use_tag_offers(screen: &Screen, app: &AppState) {
-    let (screen, app) = (*screen, *app);
-    let _reader = use_resource(move || {
-        let store = app.store.read().clone();
-        let _ = app.notes_read.read();
-        let open = *screen.tags_open.read();
-        let text = screen.find_text.read().clone();
-        let tags = screen.tags.read().clone();
-        let rule = *screen.rule.read();
-        let mut offers = screen.tag_offers;
-        async move {
-            if !open {
-                return;
-            }
-            let Some(store) = store else { return };
-            let words = find::words(&text).trim().to_owned();
-            let starting = find::tag_word(&text);
-            match store
-                .core()
-                .tags_to_narrow(&words, &tags, rule, starting, TAGS_OFFERED)
-                .await
-            {
-                Ok(found) => offers.set(found),
-                Err(error) => tracing::error!("Could not read the tags: {error}"),
-            }
-        }
-    });
+    ListedFiles {
+        with_files,
+        first_file,
+        thumbnails,
+    }
 }
 
 /// The main screen.
@@ -1691,7 +1462,7 @@ fn use_tag_offers(screen: &Screen, app: &AppState) {
 pub fn MainScreen() -> Element {
     let app = use_context::<AppState>();
     let toasts = use_toasts();
-    let clock = use_clock(&app);
+    let clock = use_clock(app.sync_status);
     let note_files = use_note_files(
         app.current_note_id.into(),
         app.sync_status.into(),
@@ -1703,22 +1474,43 @@ pub fn MainScreen() -> Element {
     );
     crate::files::use_served_files();
     let talking = Talking::use_new(crate::voice::open_ear);
+    let find = Find::use_new();
+    let store = move || app.store.read().as_ref().map(|store| store.core().clone());
+    let tag_offers = find.use_tag_offers(store, app.notes_read);
+    let card_files = use_signal(CardFilesCache::default);
+    let (listing, flashing) = find.use_listing(
+        store,
+        app.notes_read,
+        app.pulled,
+        app.session_state,
+        app.current_note_id,
+        move |store, notes: &[Note]| {
+            read_card_files(
+                store,
+                notes.iter().map(|note| note.id).collect(),
+                card_files,
+            )
+        },
+    );
+    // The pile widget on the home screen is drawn from the same heap, when
+    // it is a new one (8.5).
+    use_effect(move || {
+        if let Some(listing) = &*listing.read() {
+            let folder = crate::config::default_mobile_data_directory();
+            crate::pile_widget::show(&folder, &listing.pile);
+        }
+    });
     let screen = use_context_provider(|| Screen {
         app,
         toasts,
         find_open: Signal::new(false),
-        find_text: Signal::new(String::new()),
-        tags: Signal::new(Vec::new()),
-        rule: Signal::new(TagRule::All),
-        tags_open: Signal::new(false),
-        tag_offers: Signal::new(Vec::new()),
-        archived_view: Signal::new(false),
-        limit: Signal::new(LISTED_NOTES),
+        find,
+        tag_offers,
         exit: Signal::new(ListExit::None),
         returned: Signal::new(None),
-        flashing: Signal::new(HashSet::new()),
+        flashing,
         settling: Signal::new(None),
-        listing: Signal::new(None),
+        listing,
         page: Signal::new(PageView::default()),
         leaving: Signal::new(Vec::new()),
         typing: Signal::new(false),
@@ -1726,7 +1518,6 @@ pub fn MainScreen() -> Element {
         last_undo: Signal::new(None),
         serial: Signal::new(0),
         unsaved: Signal::new(Vec::new()),
-        card_files: Signal::new(CardFilesCache::default()),
         receiving: Signal::new(false),
         clock,
         talking,
@@ -1734,8 +1525,6 @@ pub fn MainScreen() -> Element {
         said_into: Signal::new(HashMap::new()),
         words_heard: Signal::new((0, String::new())),
     });
-    use_listing(&screen, &app);
-    use_tag_offers(&screen, &app);
 
     // Another store taken into use (signing in or out) closes the page; it
     // is saved to the store it was opened on.

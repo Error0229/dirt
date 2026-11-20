@@ -12,6 +12,8 @@
 //!   that animates lists, follows fingers and honours reduced motion.
 //! - [`components`]: the small components of section 6.
 //! - [`pile`]: grains and the pile drawn as a heap of sand (6.17).
+//! - [`listing`]: what the two lists are read for and from, how they are
+//!   grouped, the tags offered, and the clock and sync they follow.
 //! - [`files`]: the file tile and the file preview (6.5, 6.16), with the
 //!   bundled PDF renderer.
 //! - [`UiRoot`]: the component an app puts around its screens. It brings
@@ -75,6 +77,7 @@ pub mod fonts;
 #[cfg(feature = "gallery")]
 pub mod gallery;
 pub mod icons;
+pub mod listing;
 pub mod motion;
 pub mod pile;
 mod root;

@@ -24,8 +24,14 @@ pub fn JoinBanner(
     let nav = settings_nav();
     let mut waiting = use_signal(|| None::<DeviceInfo>);
     let mut dismissed = use_signal(HashSet::<uuid::Uuid>::new);
+    // Of how sync goes, only the devices waiting, and each finished
+    // cycle: which one waits is asked again then, and after a failure.
+    let pending = use_memo(move || {
+        let status = linked.status.read();
+        (status.pending_devices, status.last_synced_ms)
+    });
     let _ask = use_resource(move || {
-        let pending = linked.status.read().pending_devices;
+        let (pending, _) = pending();
         let ready = linked.state.read().is_ready();
         let session = linked.session.read().clone();
         // Asked again as Settings closes: a device may have been let in

@@ -9,58 +9,17 @@
 //! and listens in a sheet over the lower half of the screen (6.18, 8.9).
 
 use dioxus::prelude::*;
-use dirt_core::models::Layer;
 use dirt_core::store::TagRule;
 use dirt_ui::components::{
-    EmptyList, FindField, IconButton, LayerLine, Listening, LoadMore, MicButton, NoteCard,
-    NoteSummary, Pile, PullToSync, ScrollArea, SyncStatus, TagOption, TagStrip,
+    EmptyList, FindField, IconButton, LayerLine, Listening, LoadMore, MicButton, NoteCard, Pile,
+    PullToSync, ScrollArea, SyncStatus, TagOption, TagStrip,
 };
 use dirt_ui::events::{use_outcome, Outcome};
+use dirt_ui::listing::{ListItem, Listing, LISTED_NOTES};
 use dirt_ui::{find, Icon};
 
-use super::{Listing, Screen, BAR_ID, LISTED_NOTES};
+use super::{Screen, BAR_ID};
 use crate::state::AppState;
-
-/// One thing in the list: a note's card, or the line a group starts with.
-enum Item {
-    Line(String),
-    Note(Box<NoteSummary>),
-}
-
-/// The list's cards and lines, in order: grouped in layers by when each
-/// note was last edited (6.17), or, while finding, the archived notes after
-/// the rest under a line of their own (6.19).
-fn items(listing: &Listing, clock: dirt_ui::time::Clock) -> Vec<Item> {
-    let mut items = Vec::with_capacity(listing.notes.len() + 8);
-    let mut layer = None;
-    let mut archived_line = false;
-    for note in &listing.notes {
-        if listing.finding {
-            if note.archived && !archived_line {
-                archived_line = true;
-                items.push(Item::Line("Archived".to_owned()));
-            }
-        } else if !listing.archived_view {
-            let here = Layer::of(note.updated_at, clock.now_ms, clock.utc_offset_secs);
-            if layer != Some(here) {
-                layer = Some(here);
-                if let Some(name) = here.name() {
-                    items.push(Item::Line(name));
-                }
-            }
-        }
-        let summary = NoteSummary::of(note, &listing.words, clock)
-            .files(
-                listing.with_files.contains(&note.id),
-                listing.first_file.get(&note.id).map(String::as_str),
-            )
-            .waiting(listing.waiting.contains(&note.id))
-            .unread(listing.unread.get(&note.id).map(String::as_str))
-            .thumbnail(listing.thumbnails.get(&note.id).cloned());
-        items.push(Item::Note(Box::new(summary)));
-    }
-    items
-}
 
 /// Keys in Find. On a phone's keyboard that is Enter (the keyboard's
 /// search key) and Backspace.
@@ -68,7 +27,7 @@ fn find_key(screen: &Screen, event: &KeyboardEvent) {
     if event.is_composing() {
         return;
     }
-    let text = screen.find_text.peek().clone();
+    let text = screen.find.text.peek().clone();
     let taken = match event.key() {
         Key::Enter => {
             if find::is_lone_tag(&text) {
@@ -83,7 +42,7 @@ fn find_key(screen: &Screen, event: &KeyboardEvent) {
             }
             true
         }
-        Key::Backspace if text.is_empty() && !screen.tags.peek().is_empty() => {
+        Key::Backspace if text.is_empty() && !screen.find.tags.peek().is_empty() => {
             screen.untag_last();
             true
         }
@@ -103,10 +62,10 @@ pub fn Main() -> Element {
     let app = use_context::<AppState>();
 
     let find_open = *screen.find_open.read();
-    let tags = screen.tags.read().clone();
-    let text = screen.find_text.read().clone();
-    let tags_open = *screen.tags_open.read();
-    let rule = *screen.rule.read();
+    let tags = screen.find.tags.read().clone();
+    let text = screen.find.text.read().clone();
+    let tags_open = *screen.find.tags_open.read();
+    let rule = *screen.find.rule.read();
     let mut options: Vec<TagOption> = tags
         .iter()
         .map(|tag| TagOption {
@@ -122,6 +81,7 @@ pub fn Main() -> Element {
             .tag_offers
             .read()
             .iter()
+            .flatten()
             .filter(|offer| !tags.contains(&offer.tag))
             .map(|offer| TagOption {
                 tag: offer.tag.clone(),
@@ -130,14 +90,16 @@ pub fn Main() -> Element {
             }),
     );
 
+    let none = Listing::default();
+    let listed = screen.listing.read();
     // Nothing is said to be empty before the store has answered.
-    let read = screen.listing.read().is_some();
-    let listing = screen.listing.read().clone().unwrap_or_default();
+    let read = listed.is_some();
+    let listing = listed.as_ref().unwrap_or(&none);
     let clock = *screen.clock.read();
     let exit = screen.exit.read().name();
     let returned = *screen.returned.read();
     let flashing = screen.flashing.read().clone();
-    let limit = *screen.limit.read();
+    let limit = *screen.find.limit.read();
     let settling = *screen.settling.read();
     let pile = listing.pile.clone();
     // The pile lies under the last card, when nothing is being found and
@@ -151,7 +113,7 @@ pub fn Main() -> Element {
         && !show_pile;
     let archived_count = listing.counts.archived;
     let archived_view = listing.archived_view;
-    let items = items(&listing, clock);
+    let items = listing.items(clock);
     let indicator = screen.sync_indicator();
     let syncing = matches!(indicator, dirt_core::sync::overview::SyncIndicator::Syncing);
     let issue = app.startup_issue.read().clone();
@@ -224,8 +186,8 @@ pub fn Main() -> Element {
                     onkeydown: move |event: KeyboardEvent| find_key(&screen, &event),
                     on_remove_tag: move |tag: String| screen.toggle_tag(&tag),
                     on_tags: move |()| {
-                        let now = *screen.tags_open.peek();
-                        screen.tags_open.set(!now);
+                        let now = *screen.find.tags_open.peek();
+                        screen.find.tags_open.set(!now);
                     },
                     on_close: move |()| screen.close_find(),
                 }
@@ -236,7 +198,7 @@ pub fn Main() -> Element {
                 any: rule == TagRule::Any,
                 on_pick: move |tag: String| screen.toggle_tag(&tag),
                 on_rule: move |any: bool| {
-                    screen.rule.set(if any { TagRule::Any } else { TagRule::All });
+                    screen.find.rule.set(if any { TagRule::Any } else { TagRule::All });
                 },
             }
             if let Some(message) = issue {
@@ -276,10 +238,10 @@ pub fn Main() -> Element {
                         }
                         for item in items {
                             match item {
-                                Item::Line(name) => rsx! {
+                                ListItem::Line(name) => rsx! {
                                     LayerLine { key: "line {name}", name }
                                 },
-                                Item::Note(summary) => {
+                                ListItem::Note(summary) => {
                                     let id = summary.id;
                                     rsx! {
                                         NoteCard {
@@ -300,8 +262,8 @@ pub fn Main() -> Element {
                             LoadMore {
                                 key: "{limit}",
                                 on_more: move |()| {
-                                    let now = *screen.limit.peek();
-                                    screen.limit.set(now + LISTED_NOTES);
+                                    let now = *screen.find.limit.peek();
+                                    screen.find.limit.set(now + LISTED_NOTES);
                                 },
                             }
                         }
