@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The pile widget (design 8.5): the heap of the person's thoughts as sand,
+     and one line under it, "1,254 thoughts". Tapping it opens Dirt. It
+     shows no note's words: anyone who sees the home screen sees it. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/dirt_pile"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/dirt_pile_bg"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="12dp">
+    <ImageView
+        android:id="@+id/dirt_pile_heap"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:adjustViewBounds="true"
+        android:importantForAccessibility="no"
+        android:scaleType="fitCenter"
+        android:visibility="gone" />
+    <TextView
+        android:id="@+id/dirt_pile_line"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:ellipsize="end"
+        android:importantForAccessibility="no"
+        android:maxLines="1"
+        android:textColor="@color/dirt_text_2"
+        android:textSize="13sp" />
+</LinearLayout>

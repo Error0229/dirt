@@ -398,6 +398,12 @@ pub(super) fn detach(
         return Ok(false);
     }
     save(&tx, id, &doc, Some(row), Origin::Local)?;
+    // A recording added to the note and taken off before its words were
+    // made: they are not made.
+    tx.execute(
+        "DELETE FROM voice_added WHERE file_id = ?1 AND note_id = ?2",
+        params![file_id.to_string(), id.as_str()],
+    )?;
     tx.commit()?;
     Ok(true)
 }

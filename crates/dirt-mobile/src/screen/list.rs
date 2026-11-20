@@ -173,7 +173,11 @@ pub fn Main() -> Element {
             screen.talking.end(true);
         }
     });
-    let talking = *screen.talking.view.read();
+    let talking = screen
+        .talking
+        .view
+        .read()
+        .filter(|_| !*screen.talking_on_page.read());
     let unheard = screen.talking.unheard.read().clone();
     let mic_tip = unheard
         .as_ref()

@@ -61,7 +61,7 @@ fn wait_for_the_file(looks: i32) -> bool {
 }
 
 /// The version of the tables below, kept in SQLite's `user_version`.
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE meta (
@@ -288,6 +288,27 @@ CREATE TABLE voice_waiting (
 ) WITHOUT ROWID;
 ";
 
+/// Version 8: recordings added to a note that was already there
+/// (interface design 6.18, 8.9: 🎙 in Android's page).
+///
+/// A row of `voice_added` is a recording made on this device and attached
+/// to a note being written, whose words are still to be made and put at
+/// the note's end. Such a recording is one of the note's files and nothing
+/// more: the note is not named by it and carries no voice mark, so the
+/// work is this device's alone, kept here as `voice_waiting`'s is. A note
+/// may have several. `tries` and `problem` are `voice_waiting`'s. A note's
+/// rows go with the note.
+const SCHEMA_V8: &str = "
+CREATE TABLE voice_added (
+    file_id TEXT PRIMARY KEY,
+    note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    since   INTEGER NOT NULL,
+    tries   INTEGER NOT NULL DEFAULT 0,
+    problem TEXT
+) WITHOUT ROWID;
+CREATE INDEX voice_added_by_note ON voice_added (note_id);
+";
+
 /// Sets `voice` on the notes whose documents mark a voice recording. Run
 /// once, when the column is added. A document that cannot be read says
 /// nothing, and its note stays typed.
@@ -373,6 +394,9 @@ pub(super) fn set_up(connection: &mut Connection) -> Result<String> {
     if version < 7 {
         tx.execute_batch(SCHEMA_V7)?;
         derive_voice(&tx)?;
+    }
+    if version < 8 {
+        tx.execute_batch(SCHEMA_V8)?;
     }
     if version < SCHEMA_VERSION {
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;

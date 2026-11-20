@@ -55,6 +55,13 @@
 .dm-page-bar{display:flex;align-items:center;gap:2px;padding:4px 8px;flex:none;transition:opacity .5s var(--e-std)}
 /* While typing the bar fades; touching the page brings it back. */
 .dm-page-bar.typing{opacity:0;pointer-events:none}
+/* The page listens under its bar, the mic in the accent above it, and the
+   note dims: nothing is written while it listens (6.18, 8.9). */
+.dm-page-bar.talking .dm-page-mic{color:var(--accent)}
+.dm-page-talk{flex:none;margin:0 12px 6px;padding:4px 6px 4px 12px;background:var(--surface);border-radius:var(--r-sheet);box-shadow:var(--shadow-2),0 0 0 1px var(--border);animation:dm-page-talk-in var(--d-glide) var(--sp-glide) both}
+@keyframes dm-page-talk-in{from{opacity:0;transform:translateY(-14px)}}
+.dm-page-talk .dui-voice-grains{height:56px}
+.dm-page-in.talking .dm-page-wrap{opacity:.45;transition:opacity var(--d-2) var(--e-std)}
 .dm-page-wrap{flex:1;min-height:0}
 .dm-page-scroll{padding:0 20px 30px}
 .dm-page-body{display:flex;flex-direction:column;min-height:100%}

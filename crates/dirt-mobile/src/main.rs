@@ -26,6 +26,8 @@ mod files;
 mod gallery;
 #[cfg(any(target_os = "android", test))]
 mod incoming;
+#[cfg(any(target_os = "android", test))]
+mod pile_widget;
 #[cfg(target_os = "android")]
 mod screen;
 #[cfg(target_os = "android")]

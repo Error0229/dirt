@@ -51,6 +51,10 @@ pub struct Draft {
     saving: bool,
     /// The page has been let go: nothing more is typed into it.
     left: bool,
+    /// Once the page's mic has listened (🎙 in its bar), how many of the
+    /// recordings said into the page are being put into its note: leaving
+    /// waits for them. `None` while it has not listened.
+    hearing: Option<u32>,
 }
 
 impl Draft {
@@ -217,6 +221,38 @@ impl Draft {
 
     pub const fn end_save(&mut self) {
         self.saving = false;
+    }
+
+    /// A recording said into the page is being put into its note: leaving
+    /// waits for it before the note is let go for having no words.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn hearing(&mut self) {
+        *self.hearing.get_or_insert(0) += 1;
+    }
+
+    /// A recording said into the page is in its note, or could not be put
+    /// there.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub const fn heard(&mut self) {
+        if let Some(hearing) = self.hearing.as_mut() {
+            *hearing = hearing.saturating_sub(1);
+        }
+    }
+
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn is_hearing(&self) -> bool {
+        self.hearing.is_some_and(|hearing| hearing > 0)
+    }
+
+    /// The page's mic began to listen.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn listens(&mut self) {
+        self.hearing.get_or_insert(0);
+    }
+
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub const fn has_listened(&self) -> bool {
+        self.hearing.is_some()
     }
 
     /// The page has been let go.

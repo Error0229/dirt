@@ -739,7 +739,7 @@ The most important component is the **page**: where a thought is written.
 | | Desktop | Android |
 |---|---|---|
 | Where | The right side of the window, always there. With no note open it is blank, with the cursor in it | The bar at the bottom, "What's on your mind?", grows into a full-screen page (glide) |
-| Blank | Only the placeholder "What's on your mind?", and 🎙 and 📎 in its gutter | The placeholder; the top bar has ⌄ and 📎, and 🎙 from step 10 (8.9) |
+| Blank | Only the placeholder "What's on your mind?", and 🎙 and 📎 in its gutter | The placeholder; the top bar has ⌄, 🎙 (8.10) and 📎 |
 | The first word | Makes the note. From then on it saves itself, as any note does, and the list leaves (7.7) | The same |
 | <kbd>Enter</kbd> | A new line. No key ever saves | The same |
 | Done | <kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd> or ✓: the thought settles onto the pile (5.5) and the page is blank again, the cursor still in it | ⌄ or Back: the page closes into a grain that drops onto the list |
@@ -861,6 +861,34 @@ No title field, no formatting, no Save, no "Saved", no "Edited 4 minutes
 ago" (the row in the list has the time, and its tooltip the full date).
 On Android the note already fills the screen, and its top bar fades while
 the keyboard is up.
+
+**A note of any length.** The page takes a note as long as the person
+writes or pastes, on both apps, and the note is made and saved whole. What
+stopped it before (found in the plan's step 5, settled in step 10): Dioxus
+hands each event to Rust as one synchronous request with all it carries
+base64-encoded into a request header, and listens for each kind of event
+once, on the app's root, so an `input`, `change` or `click` from any text
+field went with the field's whole text, whoever listened. Past a few
+hundred kilobytes the script that encodes it failed
+(`String.fromCharCode.apply` is handed one argument per byte), the request
+was never made, and the app never heard the text. So a note's field
+(`data-dui-typed`) has no `oninput`, and the script stops its `input` and
+`change` at the field. It tells Rust what changed instead (where, how much
+went, what came, a long paste in pieces of 16,384 characters) through a
+hidden field beside it, by the same synchronous road as every key and
+press, so the app has heard every character before it hears the Esc or ⌄
+that leaves the page (`dirt_ui::typing`). A change the app makes itself (a
+note opened, words merged in, the desktop's page emptied by Esc) is told
+too, so Rust's copy stays the field's, and each change says the field's
+length, which a copy that disagrees asks for whole again. Text the app
+gives the page goes as it did, in one script: 1.3 million characters were
+shown whole. A note's text has no limit of its own on the device. One
+larger than the server takes (an encrypted note of 1 MiB, about a million
+characters, `docs/LIMITS.md`) is kept here whole and is "a note that can't
+sync" (9.4): the sync status says so, and Settings → Sync names it and
+says why. A click inside a field still goes with its text, and past a few
+hundred kilobytes the click's own request fails as before; no part of
+either app listens for clicks there, so nothing is lost by it.
 
 ### 6.5 File tile
 
@@ -1231,7 +1259,7 @@ the row or card a new thought lands on asks for with `data-dui-settle`.
 | An archive | Its grain sinks from the row's left edge while the row folds shut (5.5), from the box, <kbd>Del</kbd>, or the box on the note's page. A card swiped away has flown off already: its gap folds shut with no grain |
 | Where the pile is | Under the last note, while nothing is being found and the list holds every note (once loading more has reached the end), as "3 archived" was before it. A list whose notes are all archived shows the pile, not the empty drawing (6.14): there are still grains |
 | Its words | "1,254 thoughts since Nov 2025": a comma between thousands, and the month's first three letters with the year, whatever the pile's age. "3 archived" under it, a button that lists them. Pointing at the heap says "1,254 thoughts", and a screen reader reads the same |
-| Its size | No wider than 250 px under the list; above about 3,700 grains they get smaller to fit. The pile widget is the plan's step 10 |
+| Its size | No wider than 250 px under the list; above about 3,700 grains they get smaller to fit. The pile widget on Android's home screen draws the same heap, smaller if it has less room (8.10) |
 | Reduced motion | The settled row fades in; no words gather, no grain flies, no dust, and the heap does not drop a grain. An Android page fades. An archived row fades with no grain |
 | What it costs | Measured on this laptop, a debug build: 1,000 grains 2.4 ms, 5,000 grains 16 ms, 20,000 grains 92 ms, the picture 34 KB, 101 KB and 271 KB. Worked out on a thread for blocking work, only when the notes it is made of change. The notes themselves are read (`Store::pile`) only when the store's counts say they may have changed, a note made, deleted or brought back, and not at every reading of the list: at 20,000 notes that keeps a reading at 5–6 ms instead of 75–113 ms (`docs/LIMITS.md`) |
 
@@ -1276,7 +1304,7 @@ are made the next time it runs.
 |---|---|---|
 | In the app | 🎙 in the blank page's gutter. The page itself listens: the grains and the timer, ✕ and ✓ at the bottom | The mic in the dock. A sheet rises over the lower half of the screen |
 | From anywhere | **Hold** <kbd>Ctrl Alt N</kbd>: quick capture opens listening, and letting go keeps it. A tap still opens it for typing | The widget's mic (hands-free, ✓ to keep). Where the phone lets a hardware key open an app (double-press the side key on Samsung; Quick Tap on Pixel), Dirt's **Talk** opens straight into listening, over the lock screen too, and ends on a pause |
-| Into a note being written | Not offered: type, or use the system's own dictation | 🎙 in the note's top bar adds what is said at the end of the note, once its words are made, and the recording to the note's files. Built with step 10 (8.9) |
+| Into a note being written | Not offered: type, or use the system's own dictation | 🎙 in the note's top bar adds what is said at the end of the note, once its words are made, and the recording to the note's files (8.10) |
 
 **Heard on the device, always.** Speech is turned into text on the device
 that heard it and is never sent anywhere: not to Dirt's server, not to a
@@ -1819,7 +1847,7 @@ with the tags chosen in Find as its words.
 | Pull to sync | The list holds at 58 px for as long as the sync runs, at least 600 ms and at most 15 s. Pulled while signed out, the arrow turns and settles and nothing syncs; the sync icon says why. A pull is told from a scroll by the finger's first move: down, with the list at its top. It is read from touch events, because Android's WebView takes a vertical drag of pointer events for its own scrolling |
 | The sync status | An icon with no words (6.6), so a long press gives them: its words and then its tooltip ("Offline · 1 waiting. Notes wait here and go when you're back"), or the tooltip alone for Synced. A tap syncs; with a problem it opens Settings at Sync, signed out at Account, and waiting to be let in at Devices (9.7) |
 | A card | Its tags have 40 dp targets around their small type. A long press anywhere else on it gives its edit time in full. Its thumbnail is shown only when the device already has the picture's thumbnail; the list fetches none, and opening the note fetches them as its files do |
-| The mic | The dock has the mic beside the bar since voice was built (8.9). A page's bar has no 🎙 yet: what is said into a note being written comes with step 10 (8.9) |
+| The mic | The dock has the mic beside the bar since voice was built (8.9), and a page's bar has 🎙 since step 10 (8.10) |
 | Appearance | Settings → Appearance (9.7): the theme, the accents and the text size |
 | A share | Saved at once, with the toast "Saved to Dirt" and **Undo** since step 8 (8.8). One that cannot be saved gives the error below, with the shared text to copy |
 | A write that fails | As on the desktop (7.9): not tried again; the error "A note could not be saved" ("2 notes could not be saved"), the store's reason in its tooltip (a long press), and **Copy text**, which puts the newest text of each page that could not be saved on Android's clipboard. A page whose note could not be made goes back to a thought not yet made, and its next key makes it with all of it; leaving it makes nothing. An archive, a delete or an undo that fails says so the same way ("The note could not be archived", "… deleted", "… brought back"), with nothing to copy |
@@ -1843,7 +1871,7 @@ the new page.
 What 8.1, 8.5 and 8.6 left open, settled when the capture sheet and its ways
 in were built (implementation plan, step 8b, after its second trial).
 Voice in the sheet, and the widget's mic, came with step 9 (8.9); the pile
-widget comes with step 10.
+widget with step 10 (8.10).
 
 | | Settled |
 |---|---|
@@ -1906,8 +1934,36 @@ goes to.
 | A build without voice | `DIRT_VOICE=off` or `DIRT_VOICE_MODEL=skip`: no mic in the dock, the sheet or the widget, no Voice in Settings, and no Talk among the apps or on the icon's long press |
 | Pages of 16 KB | Android 15 and later may run with 16 KB memory pages, where a library aligned to 4 KB loads only by a slower path, and Play refuses it. The app's own library is linked for 16 KB (`max-page-size=16384`), and the pinned engine's libraries are aligned to 16 KB too (sherpa-onnx 2.0.1, arm64-v8a and x86_64: every LOAD segment aligned to 0x4000, by `llvm-readelf -l`). A pin changed later is checked the same way before it is taken |
 | Trying it on an emulator | A debuggable build plays `dirt/stand-in.wav` from the app's own files instead of the microphone, if it is there: the emulator's microphone is the computer's |
-| Into a note being written | 🎙 in the page's top bar (6.18) is not built yet: it adds to a note that exists, at its end, which the core does not do for a recording (`Store::keep_voice_note` makes a note). It comes with step 10, the finishing step, with the pile widget |
+| Into a note being written | 🎙 in the page's top bar (6.18), built with step 10: 8.10 |
 | How quickly | On the emulator (Android 16, a debug build, the stand-in playing the model archive's 7.4 s recording): held in the dock and let go, the words were on the card within 4 s. The first time the model is copied out of the APK first, which took 6.5 s for its encoder (125 MiB) on a freshly installed app. From the sheet, with the app running, the words job had made the note and its words 6.7 s after the sheet let go; with the app's process stopped, 3.6 s, and 4.5 s over the lock screen. Reading took the process from 60 MB to a peak of 385 MB (PSS, no web view in it) and back to 150 MB after: about 0.33 GB for the model, less than the 0.6 GiB the plan expected. Real phones are the checklist's (L15) |
+
+### 8.10 Settled when the page's mic and the pile widget were built
+
+What 6.18, 8.3, 8.5 and 8.9 left open for the mic in a note being written
+and for the pile on the home screen, settled when they were built
+(implementation plan, step 10a). What 7.11 and 8.9 settled for voice holds
+here where it is not said otherwise: the gesture, nothing heard, three
+tries, Text only, only the device that heard it making the words, the
+screen reader.
+
+| | Settled |
+|---|---|
+| The page's mic | In the page's top bar, after the space and before 📎, on a new page and on a note, where the build has voice. Its press, its slash when the microphone was refused, and Android's dialog at the first press are the dock's (8.9) |
+| While it listens | A band under the bar, as the dock's sheet draws it: the grains, the timer, ✕ and ✓. The keyboard goes down; the note dims and takes no touch, since nothing is written while it listens (6.18). The bar stays, with ‹ or ⌄ and the mic only: 📎 and the box go, as the desktop's gutter's do (7.11) |
+| What is said goes | To the end of the note, after a blank line, once its words are made (`Store::add_voice_to_note`): the recording is one of the note's files at once, "Voice recording.opus", and its words follow. The words come into the page by the three-way merge, as a note said's do (7.11, 8.9): never written over what is typed meanwhile, and typed on the end at the same moment, the page's words and the said ones are both kept. A note may be said into more than once; each recording's words come in the order they were said |
+| Not a note said | The note is not marked as said and is not named by the recording: it has no mic on its card and keeps its title. The recording is its file like any other (6.5); with **Text only** it is taken off once its words are in, and with no words found it stays, so that nothing said is lost |
+| A page with no note yet | What is said makes the page's note, as the dock's mic does: a note said, named "Voice · 0:08" until its words come, at its start. What is typed on the page then follows them. One note for the page: a first character typed in the same moment, and files chosen, go to it |
+| Back, ⌄, leaving | Back while it listens keeps what was said and the page stays. ⌄, ‹, the box, opening Settings, the app going behind another, or another store taken into use end listening, keeping what was said, and it still goes to the page's note, in the store the page was opened on. The page is left only once what was being said is in its note, so that a note with no words and a recording coming is not let go |
+| A note that cannot take it | Deleted on another device meanwhile, or with no room for another file (20): what was said becomes a note of its own, and a toast says "What was said is a note of its own", with why. Nothing said is lost |
+| Words that cannot be made | Tried three times, as for a note said; then its card says "Its words could not be made" with why, while the note still has the recording |
+| Taken off before its words | A recording taken off the note before its words were made is not read, and its words are never put in: the person took it off |
+| Another device | Sees one more file on the note, then the words as an edit. Only this phone makes them. A note moved into the account as the phone signs in keeps its recordings' words to be made here |
+| The screen reader | Told "Words arrived: …" with the last line of the note, which is the words', when they come for a recording said in this run |
+| The pile widget | Optional, two cells by two, resizable. The surface with a hairline and corners of 24 dp, as the bar's; light and dark as the system is. The heap fills the room above one line, "1,254 thoughts" ("No thoughts yet" for an empty pile, and "Open Dirt to see your pile" before the app has ever drawn it). Tapping it anywhere opens Dirt. Among the widgets it is "Dirt pile" |
+| What it draws | The heap the list draws (6.17), the same grains in the same places and shades, with the shadow under it: as large as under the list, in dp, and smaller if the widget has less room, so four thoughts are a pinch in the middle of the widget. The picture is the widget's whole room, with the heap in its middle, so the home screen never enlarges it (a picture of the heap alone was stretched into blots). Drawn at the screen's density, or at less and scaled up past about 180,000 pixels, since a widget's picture is handed to the home screen whole |
+| Where it comes from | A small file the app writes, `dirt/pile`: the line, the heap's box, and the grains of each shade as `#rrggbb` and their places (`Heap::widget`). Written from the store in use each time the heap is worked out again: as the list is read after a note is made, deleted or brought back, and when the capture sheet's work takes thoughts in. It holds no note's words |
+| When it is drawn again | As the person leaves the app, and when the sheet's work has taken thoughts in. A thought kept from the sheet is a grain on the widget at once, online or not: ✓ now asks first for the phone's own job, `WordsJob`, which needs no network, makes the waiting thoughts notes and draws the widget again, and then asks for the capture job, which syncs. The speech model is copied out of the APK for that job only when a recording waits. Nothing on a timer |
+
 
 ---
 
@@ -1962,6 +2018,16 @@ Settings → Export: choose JSON or Markdown, **Export**, choose where. The
 button fills as it works; a toast says how many notes went where. Files that
 couldn't be had are listed under the button, as a short list with reasons,
 since a toast is too small and too short-lived for them (9.7).
+
+On Android, the app waits for Android's screen for choosing a place, and
+for the file to be written there, by asking the activity every 300 ms. It
+stops waiting when the activity says that nothing is under way any more
+for it and no answer came: the activity was finished for good while that
+screen was up, and its answer would have gone to an activity that is gone.
+The export then says "The file could not be saved: the app's screen
+closed before the place was chosen", and the next export is not refused
+as one already under way. Choosing files to attach and saving a copy of a
+file wait the same way (step 10).
 
 ### 9.7 Settled when Settings was built
 

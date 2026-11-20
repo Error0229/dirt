@@ -734,6 +734,45 @@ impl Store {
         duration_ms: u64,
         now: i64,
     ) -> Result<Option<Note>> {
+        let attachment = self.shelve_recording(recording, now).await?;
+        let file_id = attachment.file_id;
+        let kept = self
+            .write(move |c| voice::keep(c, id, &attachment, duration_ms, now))
+            .await;
+        if !matches!(kept, Ok(Some(_))) {
+            let _ = self.shelf().remove(file_id);
+        }
+        kept
+    }
+
+    /// Adds a recording to a note that is there: what was said into a note
+    /// being written (🎙 in Android's page, interface design 8.9). The
+    /// recording becomes one of the note's files, at once, and waits on
+    /// this device for its words, which go at the end of the note
+    /// ([`crate::voice::make_words`]). Unlike [`Self::keep_voice_note`]'s,
+    /// the note is not marked as said, nor named by the recording, whose
+    /// length its file's player shows. The recording is an Ogg Opus file.
+    ///
+    /// A note that is not here, or is deleted, is [`Error::NotFound`]. A
+    /// recording larger than a file may be, or a note with no room for
+    /// another file, is [`Error::InvalidInput`].
+    pub async fn add_voice_to_note(&self, note: &NoteId, recording: Vec<u8>) -> Result<Note> {
+        let now = now_ms();
+        let attachment = self.shelve_recording(recording, now).await?;
+        let file_id = attachment.file_id;
+        let note = *note;
+        let added = self
+            .write(move |c| voice::add(c, &note, &attachment, now))
+            .await;
+        if added.is_err() {
+            let _ = self.shelf().remove(file_id);
+        }
+        added
+    }
+
+    /// Puts a recording on the shelf, away from the thread that writes, as
+    /// any file attached is, and gives the attachment that names it.
+    async fn shelve_recording(&self, recording: Vec<u8>, now: i64) -> Result<Attachment> {
         let size = recording.len() as u64;
         let most = u64::try_from(limits::MAX_FILE_BYTES).unwrap_or(u64::MAX);
         if seal::sealed_size(size) > most {
@@ -750,20 +789,11 @@ impl Store {
             added_at_ms: now,
             thumbnail: None,
         };
-        let shelf = self.shelf();
+        let put = self.shelf();
         let file_id = attachment.file_id;
-        // The file first, away from the thread that writes, as any file
-        // attached is.
-        let put = shelf.clone();
         self.read(move |_| Ok(put.put(file_id, &recording)?))
             .await?;
-        let kept = self
-            .write(move |c| voice::keep(c, id, &attachment, duration_ms, now))
-            .await;
-        if !matches!(kept, Ok(Some(_))) {
-            let _ = shelf.remove(file_id);
-        }
-        kept
+        Ok(attachment)
     }
 
     /// The recordings made on this device whose words are still to be
@@ -798,18 +828,40 @@ impl Store {
             .await
     }
 
+    /// Puts the words of a recording that waits for them where they go:
+    /// at the start of a note said ([`Self::put_voice_words`]), or at the
+    /// end of the note a recording was added to
+    /// ([`Self::add_voice_to_note`]), after a blank line. There, with
+    /// `text_only` the recording is then taken off the note; with no words
+    /// the note is left as it is; and a note that no longer has the
+    /// recording, the person having taken it off, is not written.
+    pub async fn put_words_of(
+        &self,
+        waiting: &VoiceWaiting,
+        words: &str,
+        text_only: bool,
+    ) -> Result<WordsPut> {
+        if !waiting.added {
+            return self.put_voice_words(&waiting.note, words, text_only).await;
+        }
+        let (note, file_id, words) = (waiting.note, waiting.file_id, words.to_owned());
+        self.write(move |c| voice::put_added_words(c, &note, file_id, &words, text_only, now_ms()))
+            .await
+    }
+
     /// A try at a recording's words begins. It is counted now, so that one
     /// the process does not survive counts too (`dirt_core::voice::MOST_TRIES`).
-    pub async fn voice_reading(&self, note: &NoteId) -> Result<()> {
-        let note = *note;
-        self.write(move |c| voice::reading(c, &note)).await
+    pub async fn voice_reading(&self, waiting: &VoiceWaiting) -> Result<()> {
+        let waiting = waiting.clone();
+        self.write(move |c| voice::reading(c, &waiting)).await
     }
 
     /// Making a recording's words failed: it waits for the next try, and
-    /// its row says why once the tries have run out.
-    pub async fn voice_not_read(&self, note: &NoteId, why: &str) -> Result<()> {
-        let (note, why) = (*note, why.to_owned());
-        self.write(move |c| voice::not_read(c, &note, &why)).await
+    /// its note's row says why once the tries have run out.
+    pub async fn voice_not_read(&self, waiting: &VoiceWaiting, why: &str) -> Result<()> {
+        let (waiting, why) = (waiting.clone(), why.to_owned());
+        self.write(move |c| voice::not_read(c, &waiting, &why))
+            .await
     }
 
     /// Replaces a note's text. Only the parts that changed are recorded, so
@@ -1216,6 +1268,12 @@ impl Store {
             let id = snapshot.id;
             if self.read(move |c| voice::is_waiting(c, &id)).await? {
                 target.write(move |c| voice::wait(c, &id, now_ms())).await?;
+            }
+            let added = self.read(move |c| voice::added_waiting(c, &id)).await?;
+            if !added.is_empty() {
+                target
+                    .write(move |c| voice::wait_added(c, &id, &added))
+                    .await?;
             }
             copied.push((snapshot.id, snapshot.document));
         }

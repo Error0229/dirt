@@ -244,6 +244,36 @@ pub fn save_copy(request: &str, name: &str, mime_type: &str, path: &str) -> bool
 /// A name for one asking of the activity, under which its answer is kept
 /// until it is collected. Two askings can overlap, a save still writing
 /// when the next is started, and each gets its own answer.
+/// Whether the choosing of files or the save asked for as `request` is
+/// still under way: Android's screen is up for it, its files are being
+/// copied or its file written, or its outcome waits to be taken. Once it
+/// is not, no outcome will come.
+pub fn underway(request: &str) -> bool {
+    ask("underway", &[request])
+}
+
+/// Waits for what `take` gives for `request`: the outcome of a choosing of
+/// files or a save. Asked every `every` while it is under way; `None` once
+/// it is not and gave nothing, which happens when the activity that asked
+/// was finished while Android's screen was up, so that no outcome will
+/// ever come. Never waits for ever.
+pub async fn outcome_of<T>(
+    request: &str,
+    every: std::time::Duration,
+    take: impl Fn(&str) -> Option<T>,
+) -> Option<T> {
+    loop {
+        if let Some(outcome) = take(request) {
+            return Some(outcome);
+        }
+        if !underway(request) {
+            // Set in the moment between the two questions, perhaps.
+            return take(request);
+        }
+        tokio::time::sleep(every).await;
+    }
+}
+
 pub fn new_request() -> String {
     static ASKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     format!(

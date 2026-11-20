@@ -2053,6 +2053,39 @@ apps. `docs/MANUAL_CHECKLIST.md` rewritten for the new interface. What is
 left of the old interface and its dependencies removed. `README.md` and
 `CLAUDE.md` brought up to date.
 
+**Split in two.** 10a is the code: the page's 🎙 on Android, the pile
+widget, long text, and the end of Android's waits for its own screens. 10b
+is the pass over section 12, the checklist rewritten, the clean-up and the
+documents.
+
+**10a built.** The core adds a recording to a note that is there
+(`Store::add_voice_to_note`): one more of its files at once, unmarked, and
+this device's row in `voice_added` (schema version 8), whose words
+`dirt_core::voice::make_words` puts at the note's end after a blank line,
+three tries as for a note said, a recording taken off the note never read.
+Android's page has 🎙 in its bar: it listens under the bar, and what is
+said goes to the page's note in the store the page was opened on, its words
+merged into the page as a note said's are; on a page with no note it makes
+a note said, as the dock does, and a note that cannot take it (deleted, or
+full) does not lose it: it becomes a note of its own. The page is left only
+once what was being said is in its note. The pile widget is a Kotlin
+`AppWidgetProvider` that draws the heap from a file the app writes
+(`dirt/pile`, `Heap::widget`) whenever the heap is worked out again, by the
+app's list or by the sheet's work; ✓ in the sheet now asks first for the
+job that needs no network, so a thought kept offline is a note and a grain
+at once. Long text: Dioxus sends each event as one synchronous request with
+everything in one header, and sends every `input` from a text field with
+the field's whole text, whoever listens; past a few hundred kilobytes the
+request is never made. A note's field now tells Rust its changes through a
+hidden carrier beside it, by the same road and in order, a long paste in
+pieces (`dirt_ui::typing`), and its own `input` and `change` are stopped at
+the field; no limit of the app's own is set, and a note past the server's
+1 MiB is the existing "can't sync" (`docs/LIMITS.md`). The app's waits for
+Android's screens for choosing a place and choosing files end when the
+activity says nothing is under way any more, and an activity finished for
+good while one is up gives its asking an answer. What it settled is in
+design 6.4, 8.10 and 9.6.
+
 ## What runs alongside what
 
 ```

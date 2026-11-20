@@ -123,13 +123,17 @@ async fn save_through_android(name: &str, mime_type: &str, path: &Path) -> SaveO
         );
     }
     // The person is choosing where to save. The activity says when they
-    // have, or have backed out.
-    loop {
-        if let Some(outcome) = activity::take_save_outcome(&request) {
-            return outcome;
-        }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
+    // have, or have backed out; and if it is gone before they did, that no
+    // answer will come.
+    activity::outcome_of(
+        &request,
+        Duration::from_millis(300),
+        activity::take_save_outcome,
+    )
+    .await
+    .unwrap_or_else(|| {
+        SaveOutcome::Failed("the app's screen closed before the place was chosen".to_owned())
+    })
 }
 
 /// Saves the recovery phrase as a text file where the person chooses. The

@@ -116,6 +116,11 @@ class MainActivity : WryActivity() {
         // The request the chooser on screen is for, if it is on screen.
         private var pickingFor: String? = null
 
+        // Requests whose files are being copied in, or whose file is being
+        // written where the person chose, after Android's screen went: still
+        // under way, with no outcome yet.
+        private val finishing = HashSet<String>()
+
         // The activity on screen, for opening other screens over it.
         private var current = WeakReference<MainActivity>(null)
 
@@ -253,7 +258,32 @@ class MainActivity : WryActivity() {
         @Synchronized
         private fun setPicked(request: String, files: String) {
             picked[request] = files
+            finishing.remove(request)
         }
+
+        // The request's files are being copied in, or its file written: it
+        // is under way until its outcome is set.
+        @Synchronized
+        private fun beginFinishing(request: String) {
+            finishing.add(request)
+        }
+
+        // Whether a choosing of files or a save asked for as `request` is
+        // still under way: Android's screen is up for it, its files are
+        // being copied or its file written, or its outcome waits to be
+        // taken. The Rust side asks while it waits, and stops waiting when
+        // nothing is under way and no outcome came: the activity that
+        // asked was finished while Android's screen was up, and no answer
+        // will ever come (design 9.6).
+        @Keep
+        @JvmStatic
+        @Synchronized
+        fun underway(request: String): Boolean =
+            pickingFor == request ||
+                saving?.request == request ||
+                finishing.contains(request) ||
+                picked.containsKey(request) ||
+                saveOutcomes.containsKey(request)
 
         // Says the chooser is on screen for `request`, unless it is already
         // on screen for another.
@@ -415,6 +445,7 @@ class MainActivity : WryActivity() {
         @Synchronized
         private fun setSaveOutcome(request: String, outcome: String) {
             saveOutcomes[request] = outcome
+            finishing.remove(request)
         }
 
         // Says the screen for choosing a place is up for this save, unless
@@ -536,6 +567,21 @@ class MainActivity : WryActivity() {
         super.onPause()
         page?.evaluateJavascript("window.dispatchEvent(new Event('dirt-pause'))", null)
         runCatching { dev.dirt.capture.CaptureWidget.refresh(this) }
+        // And the pile, with whatever changed in it here (design 8.5).
+        runCatching { dev.dirt.capture.PileWidget.refresh(this) }
+    }
+
+    // Finished for good (not made again for a turn of the phone) while
+    // Android's screen for choosing files or a place was up: its answer
+    // would come to this activity, which is gone, so it never comes. Each
+    // asking is given its outcome now, so that the app does not wait for
+    // ever and the next asking is not refused as one already up.
+    override fun onDestroy() {
+        if (isFinishing && !isChangingConfigurations) {
+            endPicking()?.let { request -> setPicked(request, "cancelled") }
+            endSaving()?.let { save -> setSaveOutcome(save.request, "failed:the app's screen closed before the place was chosen") }
+        }
+        super.onDestroy()
     }
 
     // The web view the interface runs in, once the runtime has made it.
@@ -729,6 +775,7 @@ class MainActivity : WryActivity() {
             setPicked(request, "cancelled")
             return
         }
+        beginFinishing(request)
         Thread {
             setPicked(request, copyAllIn(chosen).toString())
             runOnUiThread { tellThePage() }
@@ -746,6 +793,7 @@ class MainActivity : WryActivity() {
             setSaveOutcome(request, "cancelled")
             return
         }
+        beginFinishing(request)
         // Off the main thread: a file may be ten megabytes and an export
         // of the notes many times that, and the place may be slow.
         Thread {
