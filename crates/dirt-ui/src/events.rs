@@ -98,8 +98,8 @@ impl Bus {
     }
 
     fn listen(mut self, listener: Callback<Outcome>) -> String {
-        // Never used twice in the process, so that a message the script
-        // kept for a root that has gone reaches nobody in the next.
+        // Never used twice in the process: the desktop's two windows each
+        // have a root, and an ID names one element in one of them.
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let id = format!("dui-{}", NEXT.fetch_add(1, Ordering::Relaxed) + 1);
         self.listeners.write().insert(id.clone(), listener);
@@ -149,7 +149,8 @@ pub fn use_outcome(mut on_outcome: impl FnMut(Outcome) + 'static) -> String {
     id
 }
 
-/// The channel's Rust end: the script's messages, one at a time, until
-/// the root sends anything to hang up.
+/// The channel's Rust end, the end of the eval that installs the script:
+/// its messages, one at a time, for as long as the page lives. A root
+/// lives as long as its page.
 pub(crate) const CONNECT: &str =
-    "const hangUp = DirtUi.connect(message => dioxus.send(message)); await dioxus.recv(); hangUp();";
+    "DirtUi.connect(message => dioxus.send(message)); await new Promise(() => {});";

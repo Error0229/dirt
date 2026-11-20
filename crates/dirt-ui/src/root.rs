@@ -60,19 +60,19 @@ pub fn UiRoot(
     use_context_provider(Toasts::new);
 
     // The script, once, and the looks with it, so that the first thing
-    // drawn is already in the theme chosen.
-    let channel = use_hook(|| {
+    // drawn is already in the theme chosen. The same eval is then the
+    // channel the script tells Rust on, open before anything can be told.
+    use_hook(|| {
         let options = serde_json::json!({
             "tokens": motion::script_tokens(),
             "platform": platform.name(),
             "pdfjs": crate::files::pdf::FOLDER.to_string(),
         });
         let first = looks(appearance, platform, reduced_motion);
-        document::eval(&format!(
-            "{}\nDirtUi.install({options});\nDirtUi.apply({first});",
+        let mut channel = document::eval(&format!(
+            "{}\nDirtUi.install({options});\nDirtUi.apply({first});\n{CONNECT}",
             motion::SCRIPT
         ));
-        let mut channel = document::eval(CONNECT);
         spawn(async move {
             loop {
                 match channel.recv::<Message>().await {
@@ -91,12 +91,6 @@ pub fn UiRoot(
                 }
             }
         });
-        channel
-    });
-    // Gone, the root hangs up: the script keeps what it tells until a
-    // root connects again.
-    use_drop(move || {
-        let _ = channel.send(());
     });
 
     use_effect(use_reactive!(|(appearance, platform, reduced_motion)| {

@@ -293,13 +293,17 @@ pub fn AppShell() -> Element {
         while became_visible.recv::<bool>().await.is_ok() {
             // The browser may be what brought the person back, from
             // signing in: `MainActivity` keeps the redirect and says so.
-            // One kept before the session opened waits for the start.
+            // One kept before the session opened waits for the start. It is
+            // taken here, once, and finished beside this loop, which goes
+            // on to what the capture sheet left.
             let current = session.peek().clone();
             if let Some(current) = current {
                 if let Some(redirect) = take_redirect() {
-                    if let Some(problem) = finish_sign_in(&current, &redirect).await {
-                        startup_issue.set(Some(problem));
-                    }
+                    spawn(async move {
+                        if let Some(problem) = finish_sign_in(&current, &redirect).await {
+                            startup_issue.set(Some(problem));
+                        }
+                    });
                 }
             }
             // The capture sheet, or its job, may have written while the app
