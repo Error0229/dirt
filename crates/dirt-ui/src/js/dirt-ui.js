@@ -66,10 +66,12 @@
   }
 
   // ---- Telling Rust ---------------------------------------------------
-  // One channel, opened once by the root component. A message is how
-  // something ended, never how it is going.
+  // One channel, opened by the root component for as long as it lives. A
+  // message is how something ended, never how it is going. Told while no
+  // channel is open, the last few wait for the next one.
   let post = null;
   const waiting = [];
+  const WAITING_MOST = 32;
   const stats = { moves: 0, told: 0 };
   function showStats() {
     $$('[data-dui-stat]').forEach(element => { element.textContent = String(stats[element.dataset.duiStat]); });
@@ -80,11 +82,14 @@
     const message = Object.assign({ id, kind }, more || {});
     stats.told += 1;
     showStats();
-    if (post) post(message); else waiting.push(message);
+    if (post) post(message);
+    else if (waiting.push(message) > WAITING_MOST) waiting.shift();
   }
+  // Returns what closes this channel again.
   function connect(send) {
     post = send;
     waiting.splice(0).forEach(send);
+    return () => { if (post === send) post = null; };
   }
 
   // ---- Where the last press was ---------------------------------------

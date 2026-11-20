@@ -74,7 +74,8 @@
              person opens a note's file. It is not open to other apps: each
              is given the one address it was sent, and nothing else. The
              only folder it can lend from is the one the app copies a file
-             into to be opened (res/xml/dirt_file_paths.xml). -->
+             into to be opened (res/xml/dirt_file_paths.xml, in the native
+             module). -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"

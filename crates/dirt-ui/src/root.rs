@@ -2,6 +2,7 @@
 
 use std::sync::OnceLock;
 
+use dioxus::document::EvalError;
 use dioxus::prelude::*;
 
 use crate::appearance::{theme_name, Appearance, Platform};
@@ -60,7 +61,7 @@ pub fn UiRoot(
 
     // The script, once, and the looks with it, so that the first thing
     // drawn is already in the theme chosen.
-    use_hook(|| {
+    let channel = use_hook(|| {
         let options = serde_json::json!({
             "tokens": motion::script_tokens(),
             "platform": platform.name(),
@@ -71,11 +72,18 @@ pub fn UiRoot(
             "{}\nDirtUi.install({options});\nDirtUi.apply({first});",
             motion::SCRIPT
         ));
+        let mut channel = document::eval(CONNECT);
         spawn(async move {
-            let mut channel = document::eval(CONNECT);
             loop {
                 match channel.recv::<Message>().await {
                     Ok(message) => bus.deliver(&message),
+                    // One that cannot be read is passed over; the channel
+                    // is still open.
+                    Err(EvalError::Serialization(error)) => {
+                        tracing::warn!(
+                            "A message from the interface's script was not read: {error}"
+                        );
+                    }
                     Err(error) => {
                         tracing::warn!("The interface's script stopped answering: {error}");
                         break;
@@ -83,6 +91,12 @@ pub fn UiRoot(
                 }
             }
         });
+        channel
+    });
+    // Gone, the root hangs up: the script keeps what it tells until a
+    // root connects again.
+    use_drop(move || {
+        let _ = channel.send(());
     });
 
     use_effect(use_reactive!(|(appearance, platform, reduced_motion)| {

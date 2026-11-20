@@ -7,6 +7,7 @@
 //! that wants to hear gives its element an ID with [`use_outcome`].
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use dioxus::prelude::*;
 use serde::Deserialize;
@@ -85,7 +86,6 @@ pub struct Message {
 #[derive(Clone, Copy)]
 pub struct Bus {
     listeners: CopyValue<HashMap<String, Callback<Outcome>>>,
-    next: CopyValue<u64>,
     received: Signal<u64>,
 }
 
@@ -93,18 +93,15 @@ impl Bus {
     pub(crate) fn new() -> Self {
         Self {
             listeners: CopyValue::new(HashMap::new()),
-            next: CopyValue::new(0),
             received: Signal::new(0),
         }
     }
 
     fn listen(mut self, listener: Callback<Outcome>) -> String {
-        let serial = {
-            let mut next = self.next.write();
-            *next += 1;
-            *next
-        };
-        let id = format!("dui-{serial}");
+        // Never used twice in the process, so that a message the script
+        // kept for a root that has gone reaches nobody in the next.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let id = format!("dui-{}", NEXT.fetch_add(1, Ordering::Relaxed) + 1);
         self.listeners.write().insert(id.clone(), listener);
         id
     }
@@ -152,7 +149,7 @@ pub fn use_outcome(mut on_outcome: impl FnMut(Outcome) + 'static) -> String {
     id
 }
 
-/// The channel's Rust end: the script's messages, one at a time, for as
-/// long as the page lives.
+/// The channel's Rust end: the script's messages, one at a time, until
+/// the root sends anything to hang up.
 pub(crate) const CONNECT: &str =
-    "DirtUi.connect(message => dioxus.send(message)); await new Promise(() => {});";
+    "const hangUp = DirtUi.connect(message => dioxus.send(message)); await dioxus.recv(); hangUp();";

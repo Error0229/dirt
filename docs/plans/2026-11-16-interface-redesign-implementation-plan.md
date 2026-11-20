@@ -2112,11 +2112,12 @@ The interface redesign is built, on both apps. What is left:
 - The items of `docs/MANUAL_CHECKLIST.md` marked "Person": the real
   microphone, real phones, TalkBack and Narrator, WebKit on macOS and
   Linux, release builds.
-- Issue #303, an audit of how the apps use Dioxus 0.7, made after step 9:
-  three bugs (quick capture's hand-over, which a newer command can replace;
-  a held hotkey that can leave the microphone on; thumbnail work that
-  outlives its note) and some simplifications. Each is to be checked
-  before it is fixed.
+
+Issue #303, an audit of how the apps use Dioxus 0.7 made after step 9, was
+checked item by item and done after it: three bugs (quick capture's
+hand-over, which a newer command could replace; a held hotkey that could
+leave the microphone on; thumbnail work that outlived its note) and the
+simplifications, in four pull requests from #306 to the one that closed it.
 
 ## What runs alongside what
 
