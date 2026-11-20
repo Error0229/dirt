@@ -7,6 +7,7 @@
 //! that wants to hear gives its element an ID with [`use_outcome`].
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use dioxus::prelude::*;
 use serde::Deserialize;
@@ -85,7 +86,6 @@ pub struct Message {
 #[derive(Clone, Copy)]
 pub struct Bus {
     listeners: CopyValue<HashMap<String, Callback<Outcome>>>,
-    next: CopyValue<u64>,
     received: Signal<u64>,
 }
 
@@ -93,18 +93,15 @@ impl Bus {
     pub(crate) fn new() -> Self {
         Self {
             listeners: CopyValue::new(HashMap::new()),
-            next: CopyValue::new(0),
             received: Signal::new(0),
         }
     }
 
     fn listen(mut self, listener: Callback<Outcome>) -> String {
-        let serial = {
-            let mut next = self.next.write();
-            *next += 1;
-            *next
-        };
-        let id = format!("dui-{serial}");
+        // Never used twice in the process: the desktop's two windows each
+        // have a root, and an ID names one element in one of them.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let id = format!("dui-{}", NEXT.fetch_add(1, Ordering::Relaxed) + 1);
         self.listeners.write().insert(id.clone(), listener);
         id
     }
@@ -152,7 +149,8 @@ pub fn use_outcome(mut on_outcome: impl FnMut(Outcome) + 'static) -> String {
     id
 }
 
-/// The channel's Rust end: the script's messages, one at a time, for as
-/// long as the page lives.
+/// The channel's Rust end, the end of the eval that installs the script:
+/// its messages, one at a time, for as long as the page lives. A root
+/// lives as long as its page.
 pub(crate) const CONNECT: &str =
     "DirtUi.connect(message => dioxus.send(message)); await new Promise(() => {});";

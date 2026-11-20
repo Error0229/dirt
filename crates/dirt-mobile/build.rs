@@ -6,16 +6,6 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-/// The one folder the app's file provider may lend a file from: where a
-/// note's file is copied to be opened by another app. `files-path` is the
-/// app's own files folder, and `dirt/opened/` is the folder of copies
-/// under the app's data folder (`services::files::opened_folder`).
-const FILE_PATHS_XML: &str = r#"<?xml version="1.0" encoding="utf-8"?>
-<paths>
-    <files-path name="opened" path="dirt/opened/" />
-</paths>
-"#;
-
 #[derive(Debug, Default, Serialize)]
 struct MobileBootstrapConfig {
     dirt_api_base_url: Option<String>,
@@ -31,7 +21,6 @@ fn main() {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
         println!("cargo:rustc-link-arg=-Wl,-z,max-page-size=16384");
     }
-    println!("cargo:rerun-if-env-changed=WRY_ANDROID_KOTLIN_FILES_OUT_DIR");
     println!("cargo:rerun-if-env-changed=DIRT_MOBILE_API_BASE_URL");
     println!("cargo:rerun-if-env-changed=DIRT_API_BASE_URL");
     println!("cargo:rerun-if-changed=../../.env.client");
@@ -45,10 +34,6 @@ fn main() {
 
     if let Err(error) = write_mobile_bootstrap_config() {
         println!("cargo:warning=failed to generate mobile bootstrap config: {error}");
-    }
-
-    if let Err(error) = write_android_resources() {
-        println!("cargo:warning=failed to generate Android resources: {error}");
     }
 }
 
@@ -187,35 +172,6 @@ fn put_voice_files() -> io::Result<()> {
         fs::write(file, xml)?;
     }
     Ok(())
-}
-
-fn write_android_resources() -> io::Result<()> {
-    let Some(kotlin_out_dir) = env::var_os("WRY_ANDROID_KOTLIN_FILES_OUT_DIR") else {
-        return Ok(());
-    };
-
-    let Some(main_dir) = find_android_main_dir(Path::new(&kotlin_out_dir)) else {
-        return Ok(());
-    };
-
-    let xml_dir = main_dir.join("res").join("xml");
-    fs::create_dir_all(&xml_dir)?;
-    fs::write(xml_dir.join("dirt_file_paths.xml"), FILE_PATHS_XML)?;
-
-    Ok(())
-}
-
-fn find_android_main_dir(path: &Path) -> Option<PathBuf> {
-    path.ancestors().find_map(|ancestor| {
-        let parent = ancestor.parent()?;
-        if ancestor.file_name() == Some(OsStr::new("main"))
-            && parent.file_name() == Some(OsStr::new("src"))
-        {
-            Some(ancestor.to_path_buf())
-        } else {
-            None
-        }
-    })
 }
 
 fn write_mobile_bootstrap_config() -> io::Result<()> {

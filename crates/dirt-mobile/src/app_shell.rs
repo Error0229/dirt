@@ -12,10 +12,11 @@
 //!
 //! Signing in leaves the app for the browser. Android brings the person
 //! back through the custom address `dev.dirt.app://callback`, which
-//! `MainActivity` keeps until this code asks for it (`services::sign_in`).
-//! Android may stop the app while the browser is in front, so the redirect
-//! is also asked for at start-up; the session saved the attempt before the
-//! browser opened.
+//! `MainActivity` keeps until this code asks for it
+//! (`services::activity::take_redirect`), and tells the page it came, as
+//! it does for a share. Android may stop the app while the browser is in
+//! front, so the redirect is also asked for at start-up; the session saved
+//! the attempt before the browser opened.
 //!
 //! The activity is asked in the same way for what another app shared,
 //! text or pictures, which become a note at once. The main screen does the
@@ -29,7 +30,6 @@
 //! taken in the same way, and its words are made then (`voice`).
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use dioxus::prelude::*;
 use dirt_core::api::HttpTransport;
@@ -270,28 +270,6 @@ pub fn AppShell() -> Element {
     // has brought notes from another device or sent some.
     dirt_ui::listing::use_sync_watch(session, sync_status, pulled, notes_read);
 
-    // While a sign-in is under way, watch for the redirect the browser
-    // sends the person back with.
-    let _redirect_watch = use_resource(move || {
-        let state_now = session_state();
-        let current = session();
-        async move {
-            let Some(current) = current else { return };
-            if state_now != SessionState::SigningIn {
-                return;
-            }
-            loop {
-                if let Some(redirect) = take_redirect() {
-                    if let Some(problem) = finish_sign_in(&current, &redirect).await {
-                        startup_issue.set(Some(problem));
-                    }
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(300)).await;
-            }
-        }
-    });
-
     // Coming back to the app is a reason to sync: notes may have been
     // written elsewhere while it was in the background. The web view says
     // when that happens, because its page becomes visible again. The worker
@@ -313,6 +291,21 @@ pub fn AppShell() -> Element {
             "#,
         );
         while became_visible.recv::<bool>().await.is_ok() {
+            // The browser may be what brought the person back, from
+            // signing in: `MainActivity` keeps the redirect and says so.
+            // One kept before the session opened waits for the start. It is
+            // taken here, once, and finished beside this loop, which goes
+            // on to what the capture sheet left.
+            let current = session.peek().clone();
+            if let Some(current) = current {
+                if let Some(redirect) = take_redirect() {
+                    spawn(async move {
+                        if let Some(problem) = finish_sign_in(&current, &redirect).await {
+                            startup_issue.set(Some(problem));
+                        }
+                    });
+                }
+            }
             // The capture sheet, or its job, may have written while the app
             // was away. What still waits is taken in, and the list is read
             // again either way.

@@ -21,7 +21,6 @@ What is left:
 
 - The items of `docs/MANUAL_CHECKLIST.md` marked "Person": a real microphone, real phones, TalkBack and Narrator, WebKit on macOS and Linux, release builds, and whatever acts on somebody's screen.
 - The short list at the end of `docs/OWNER_DECISIONS.md`.
-- Issue #303, an audit of how the apps use Dioxus 0.7: three bugs (a quick-capture hand-over a newer command can replace, a held hotkey that can leave the microphone on, thumbnail work that outlives its note) and some simplifications. Check each before fixing it.
 
 ## The system: standing rules
 

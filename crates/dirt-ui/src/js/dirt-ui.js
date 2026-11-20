@@ -66,10 +66,10 @@
   }
 
   // ---- Telling Rust ---------------------------------------------------
-  // One channel, opened once by the root component. A message is how
+  // One channel, opened by the root component in the same eval that
+  // installs this script, so nothing is told before it. A message is how
   // something ended, never how it is going.
   let post = null;
-  const waiting = [];
   const stats = { moves: 0, told: 0 };
   function showStats() {
     $$('[data-dui-stat]').forEach(element => { element.textContent = String(stats[element.dataset.duiStat]); });
@@ -80,11 +80,10 @@
     const message = Object.assign({ id, kind }, more || {});
     stats.told += 1;
     showStats();
-    if (post) post(message); else waiting.push(message);
+    if (post) post(message);
   }
   function connect(send) {
     post = send;
-    waiting.splice(0).forEach(send);
   }
 
   // ---- Where the last press was ---------------------------------------
