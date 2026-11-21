@@ -209,6 +209,10 @@ impl SyncOverview {
 /// Settings → Sync on a device that is signed out.
 pub const NOT_SYNCING_SIGNED_OUT: &str = "Not syncing. Notes are on this device only.";
 
+/// What every client says after a sign-out the server could not be told
+/// of (`SignedOut::StillListed`).
+pub const SIGNED_OUT_STILL_LISTED: &str = "The server could not be reached, so this device is still in the account's list of devices until it is removed from another device";
+
 /// Settings → Account on a device whose sync stopped until it signs in
 /// again.
 pub const SIGN_IN_AGAIN_TO_SYNC: &str = "This device has to sign in again before it can sync";

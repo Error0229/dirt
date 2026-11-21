@@ -241,23 +241,25 @@ impl Store {
     }
 
     /// Whether this is an account's store that the device was signed out
-    /// of while the store was open: its folder is marked for removal, or
-    /// its file already removed (on Linux and macOS a file can be removed
-    /// under a program that has it open, and a new store made at its path).
-    /// The CLI and the desktop app share the store, and either may sign out
-    /// while the other runs. What the other wrote from then on would be
-    /// removed with the store without ever having synced, so nothing more
-    /// is written to it (issue #314).
-    fn signed_out(&self) -> bool {
+    /// of while the store was open: its folder is marked for removal, or,
+    /// on Linux and macOS, where a file can be removed under a program that
+    /// has it open and a new store made at its path, its file is no longer
+    /// the one opened. (On Windows the file of an open store cannot be
+    /// removed, so the mark stays until it is.) The CLI and the desktop app
+    /// share the store, and either may sign out while the other runs. What
+    /// the other wrote from then on would be removed with the store without
+    /// ever having synced, so nothing more is written to it (issue #314).
+    #[must_use]
+    pub fn signed_out(&self) -> bool {
         let path = &self.inner.path;
         let marked = path
             .parent()
             .is_some_and(|folder| folder.join(SIGNED_OUT_MARKER).exists());
         #[cfg(unix)]
-        let gone = self.inner.file.is_some() && file_identity(path) != self.inner.file;
-        #[cfg(not(unix))]
-        let gone = !path.exists();
-        marked || gone
+        if !marked {
+            return self.inner.file.is_some() && file_identity(path) != self.inner.file;
+        }
+        marked
     }
 
     async fn read<T, F>(&self, work: F) -> Result<T>
@@ -1717,6 +1719,41 @@ mod tests {
         }
         // Once nothing holds it, it goes.
         drop(store);
+        remove_store_folder(&folder).unwrap();
+        assert!(!folder.exists());
+    }
+
+    /// A file another program holds open, wherever it is in the folder,
+    /// leaves the mark: the folder is tried again, and nothing more is
+    /// written to the store meanwhile.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_file_held_anywhere_in_the_folder_keeps_the_mark() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        /// Others may read the file, and may neither change nor remove it.
+        const FILE_SHARE_READ: u32 = 1;
+
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("account-a");
+        drop(Store::open(folder.join("notes.db")).unwrap());
+        std::fs::write(folder.join(SIGNED_OUT_MARKER), b"").unwrap();
+        for held in ["files/a-picture", "zz-after-the-mark"] {
+            let path = folder.join(held);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"shown elsewhere").unwrap();
+            let open = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(FILE_SHARE_READ)
+                .open(&path)
+                .unwrap();
+
+            assert!(remove_store_folder(&folder).is_err(), "{held}");
+            assert!(folder.join(SIGNED_OUT_MARKER).exists(), "{held}");
+
+            drop(open);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join(SIGNED_OUT_MARKER), b"").unwrap();
+        }
         remove_store_folder(&folder).unwrap();
         assert!(!folder.exists());
     }

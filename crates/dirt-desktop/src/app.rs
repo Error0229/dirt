@@ -17,6 +17,7 @@ use dioxus::desktop::tao::event::{Event, WindowEvent};
 use dioxus::desktop::{use_wry_event_handler, window, LogicalPosition};
 use dioxus::prelude::*;
 use dirt_core::config::ServerAddress;
+use dirt_core::models::NoteId;
 use dirt_core::session::{Session, SessionState};
 use dirt_core::sync::worker::{SyncStatus, Trigger};
 use dirt_core::Store;
@@ -38,6 +39,52 @@ const QUEUE_WAITS_AT_MOST: Duration = Duration::from_secs(5);
 /// capture to hand over what it holds: it is at once, unless its window
 /// has not been made yet, when it holds nothing.
 const HANDING_OVER_AT_MOST: Duration = Duration::from_secs(1);
+
+/// Hands what the page, quick capture and a recording being kept hold to
+/// the store in use, and waits for the store's queue: before signing out,
+/// so that the sign-out's sync takes it to the server (checklist D74 and
+/// D90). Signing out syncs and then removes the store; what reached the
+/// store only afterwards was refused (`dirt_core::Error::SignedOut`). The
+/// page is left, as it is when another store is taken into use.
+pub async fn hand_everything_over(
+    page_leaver: CopyValue<Option<Callback<()>>>,
+    mut current_note_id: Signal<Option<NoteId>>,
+) {
+    let leave = *page_leaver.peek();
+    if let Some(leave) = leave {
+        leave.call(());
+    }
+    current_note_id.set(None);
+    if !crate::capture::link().hand_over(HANDING_OVER_AT_MOST).await {
+        tracing::warn!("Quick capture did not hand over what it held in time");
+    }
+    if !crate::voice::keeping_settled(QUEUE_WAITS_AT_MOST).await {
+        tracing::warn!("A recording was not kept in time");
+    }
+    if !Scribe::global().settle(QUEUE_WAITS_AT_MOST).await {
+        tracing::warn!("Signing out with the store's work unfinished");
+    }
+}
+
+/// Removes the stores this device was signed out of, here or by the CLI,
+/// once nothing holds them: at once, and again while something does, a
+/// list being loaded for a moment or the CLI waiting on an editor. Then,
+/// if the session could not take the stored sign-in into use because an
+/// old store was in the way (`Session::held_back`), it tries again.
+fn remove_signed_out_stores_soon(session: Session) {
+    tokio::spawn(async move {
+        let mut wait = Duration::from_secs(3);
+        while session.remove_signed_out_stores() {
+            tokio::time::sleep(wait).await;
+            wait = (wait * 2).min(Duration::from_secs(60));
+        }
+        if session.held_back().is_some() {
+            if let Err(error) = session.reload() {
+                tracing::error!("Could not take the sign-in into use: {error}");
+            }
+        }
+    });
+}
 
 /// The stores the app starts with, and the session if the build has a
 /// server to sync with.
@@ -177,6 +224,9 @@ pub fn App() -> Element {
             if let Some(opened_session) = &opened.session {
                 session_state.set(opened_session.state());
                 sync_status.set(opened_session.sync_status());
+                // The CLI may hold the notes of a sign-in it ended, which
+                // kept this one from taking the new sign-in into use.
+                remove_signed_out_stores_soon(opened_session.clone());
             }
             session.set(opened.session);
         }
@@ -233,25 +283,9 @@ pub fn App() -> Element {
                 if !same_store {
                     // The store let go of above may be one this device was
                     // signed out of, here or by the CLI, so its files can
-                    // go now. Something may still be reading it for a
-                    // moment, a list being loaded for one, so it is tried
-                    // again shortly. What is still there after that goes
-                    // when the app next starts.
-                    let current = current.clone();
-                    tokio::spawn(async move {
-                        let mut removed = current.remove_signed_out_stores().removed;
-                        tokio::time::sleep(Duration::from_secs(3)).await;
-                        removed += current.remove_signed_out_stores().removed;
-                        // A sign-in the CLI made to the same account could
-                        // not be taken into use while this app held the old
-                        // store (`SessionError::PreviousNotesOpen`). Now it
-                        // can.
-                        if removed > 0 && current.state() == SessionState::SignedOut {
-                            if let Err(error) = current.reload() {
-                                tracing::error!("Could not re-read the sign-in: {error}");
-                            }
-                        }
-                    });
+                    // go now, and a sign-in it kept from being taken into
+                    // use can be.
+                    remove_signed_out_stores_soon(current.clone());
                 }
             }
         }
@@ -291,6 +325,13 @@ pub fn App() -> Element {
         loop {
             match news.recv().await {
                 Ok(Done::Unsaved { .. } | Done::VoiceUnkept { .. }) => {
+                    let signed_out = db_service
+                        .peek()
+                        .as_ref()
+                        .is_some_and(|store| store.signed_out());
+                    if !signed_out {
+                        continue;
+                    }
                     if let Some(current) = session.peek().clone() {
                         if let Err(error) = current.reload() {
                             tracing::error!("Could not re-read the sign-in: {error}");

@@ -12,7 +12,7 @@ mod tests;
 use clap::{CommandFactory, Parser};
 
 use crate::cli::{Cli, Commands};
-use crate::context::{Context, WAITING_TO_BE_LET_IN};
+use crate::context::{held_back_words, Context, WAITING_TO_BE_LET_IN};
 use crate::error::CliError;
 
 #[tokio::main]
@@ -26,14 +26,14 @@ async fn main() {
 async fn run() -> Result<(), CliError> {
     // The log goes where errors go. What a command prints on standard
     // output is its answer, which a script may be reading: the ID of a new
-    // note, a list as JSON. Only errors are logged unless `RUST_LOG` asks
-    // for more: what a person needs to know, the CLI says in words, once
-    // (issue #314).
+    // note, a list as JSON. Warnings and errors are logged unless
+    // `RUST_LOG` asks for more: what is routine is said in words, once, or
+    // not at all (issue #314).
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("error")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
         )
         .init();
 
@@ -68,6 +68,11 @@ async fn run() -> Result<(), CliError> {
     );
     if !about_the_account && context.waiting_to_be_let_in() {
         eprintln!("{WAITING_TO_BE_LET_IN}");
+    }
+    // Signed in, with the notes of the last sign-in still open elsewhere:
+    // the command works on this device's own notes, and says so.
+    if let Some(session) = context.session.as_ref().filter(|s| s.held_back().is_some()) {
+        eprintln!("{}", held_back_words(session));
     }
     match command {
         Some(Commands::Add { content }) => commands::add::run_add(&content, &context).await?,

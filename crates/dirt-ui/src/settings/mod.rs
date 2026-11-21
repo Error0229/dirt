@@ -289,6 +289,14 @@ pub struct Exported {
 /// sign-in page, and end when the session has an answer.
 pub type SignIn = Callback<Session, Task<Result<SessionState, SessionError>>>;
 
+/// What an app does just before the person's sign-out syncs.
+///
+/// It hands what it holds that is not in the store yet, the page's last
+/// words and those of quick capture, to the store, so that the sync takes
+/// them to the server and they are not left behind in the store that
+/// sign-out removes.
+pub type BeforeSignOut = Callback<(), Task<()>>;
+
 /// What an app does when the person exports: ask where, and write it
 /// there. Nothing when the person chose nowhere; the reason when it
 /// failed.
@@ -320,6 +328,10 @@ pub fn SettingsPage(
     voice: Option<VoiceRecording>,
     #[props(default)] on_voice: EventHandler<VoiceRecording>,
     sign_in: SignIn,
+    /// See [`BeforeSignOut`]. An app that holds nothing outside the store
+    /// leaves it out.
+    #[props(default)]
+    before_sign_out: Option<BeforeSignOut>,
     export: ExportTo,
     /// Puts the recovery phrase on the clipboard, kept out of the
     /// system's clipboard history where the system allows it.
@@ -361,7 +373,9 @@ pub fn SettingsPage(
                     "aria-labelledby": "dui-set-h-{part.name()}",
                     h3 { id: "dui-set-h-{part.name()}", "{part.label()}" }
                     match part {
-                        Section::Account => rsx! { account::Account { linked, sign_in, notes_brought } },
+                        Section::Account => rsx! {
+                            account::Account { linked, sign_in, before_sign_out, notes_brought }
+                        },
                         Section::Devices => rsx! { devices::Devices { linked, copy, save_phrase } },
                         Section::Sync => rsx! { sync::Sync { linked, open_note, platform } },
                         Section::Appearance => rsx! {

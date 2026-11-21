@@ -651,8 +651,13 @@ computer the CLI and the desktop app are one device: when one signs out
 while the other has the notes open, the keys go at once and the notes as
 soon as nothing holds them, and until then nothing more is written to them.
 The CLI says so when it signs out. A later sign-in to the same account on
-that computer never takes those notes over; it starts with an empty store
-and fetches the account's notes again.
+that computer never takes those notes over: until they have gone, it is
+kept but not taken into use, both programs work on the computer's own
+notes and the CLI says why, and then it starts with an empty store and
+fetches the account's notes again. A sign-out the server could not be told
+of leaves the device in the account's list, with a token that works until
+it expires unused; nothing on the device holds the token any more, and
+every client says to remove the device from another one.
 
 **Resetting** an account deletes its notes on the server, its recovery copy
 and every other device, and makes the device that asked the first device of

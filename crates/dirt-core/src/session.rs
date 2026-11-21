@@ -109,7 +109,7 @@ pub enum SessionError {
     /// which has not yet noticed that sign-out. They are to be removed,
     /// and the new sign-in does not take them over.
     #[error(
-        "this computer's notes from its last sign-in to the account are still open in another Dirt program, such as the desktop app; switch to it or close it, then try again"
+        "the notes of this computer's last sign-in to the account are still open in a Dirt program here; the sign-in is taken into use once they have been let go"
     )]
     PreviousNotesOpen,
     /// The browser could not be opened.
@@ -185,6 +185,18 @@ pub enum SignOutError {
     Store(#[from] Error),
 }
 
+/// How a sign-out went, once the device is signed out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignedOut {
+    /// The server removed the device from the account.
+    Complete,
+    /// The server could not be told, so the device is still in the
+    /// account's list until it is removed from another device. Its token
+    /// works until then or until it expires unused; nothing on this device
+    /// holds it any more.
+    StillListed,
+}
+
 /// What to do at sign-out about notes that never reached the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unsynced {
@@ -251,6 +263,9 @@ struct Inner {
     state: watch::Sender<SessionState>,
     status: Arc<watch::Sender<SyncStatus>>,
     signed_in: Mutex<Option<SignedIn>>,
+    /// Why the stored sign-in is not in use, when it could not be taken
+    /// into use: see [`Session::held_back`].
+    held_back: Mutex<Option<String>>,
     sign_in: Mutex<SignInStep>,
     /// Numbers the beginnings of sign-ins.
     sign_ins: AtomicU64,
@@ -431,37 +446,26 @@ fn account_folder(data_folder: &Path, account_id: Uuid) -> Result<PathBuf, Error
         .map_or_else(|| database.clone(), Path::to_path_buf))
 }
 
-/// What became of the stores of accounts this device signed out of.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Swept {
-    /// Stores removed now.
-    pub removed: usize,
-    /// Stores another program still has open, left for when it lets go.
-    pub left: usize,
-}
-
 /// Removes the store folders of accounts that were signed out of while
 /// something still held their files open. One that is still held is left
 /// whole, and is not worth a word: it is what the other program is for
-/// until it notices, and the sign-out said so once.
-fn sweep_signed_out(data_folder: &Path) -> Swept {
-    let mut swept = Swept::default();
+/// until it notices, and the sign-out said so once. Says whether any is
+/// left.
+fn sweep_signed_out(data_folder: &Path) -> bool {
+    let mut left = false;
     let Ok(entries) = std::fs::read_dir(data_folder.join("stores")) else {
-        return swept;
+        return left;
     };
     for entry in entries.flatten() {
         let folder = entry.path();
         if folder.join(SIGNED_OUT_MARKER).exists() {
-            match remove_store_folder(&folder) {
-                Ok(()) => swept.removed += 1,
-                Err(error) => {
-                    tracing::debug!("{} is still open: {error}", folder.display());
-                    swept.left += 1;
-                }
+            if let Err(error) = remove_store_folder(&folder) {
+                tracing::debug!("{} is still open: {error}", folder.display());
+                left = true;
             }
         }
     }
-    swept
+    left
 }
 
 impl Session {
@@ -489,6 +493,7 @@ impl Session {
                 state,
                 status: Arc::new(status),
                 signed_in: Mutex::new(None),
+                held_back: Mutex::new(None),
                 sign_in: Mutex::new(SignInStep::Idle),
                 sign_ins: AtomicU64::new(0),
                 cancel: Notify::new(),
@@ -496,12 +501,33 @@ impl Session {
         };
         // A sign-in record that cannot be read leaves the device signed out
         // for now. It is not removed: signing in refuses to replace it.
+        //
+        // So does one that cannot be taken into use: the notes of the last
+        // sign-in may still be open in the other program on this computer
+        // (`SessionError::PreviousNotesOpen`). The CLI opens a session for
+        // each command, and the desktop app at each start; neither may
+        // fail for that. The session opens on the local store, says why
+        // (`held_back`), and the next session or reload takes the sign-in
+        // into use.
         match DeviceSecrets::read(&*session.inner.secrets) {
-            Ok(Some(saved)) => session.activate(saved)?,
+            Ok(Some(saved)) => {
+                if let Err(error) = session.activate(saved) {
+                    tracing::debug!("the saved sign-in is not in use yet: {error}");
+                }
+            }
             Ok(None) => {}
             Err(error) => tracing::error!("the saved sign-in was not used: {error}"),
         }
         Ok(session)
+    }
+
+    /// Why this device's stored sign-in is not in use, if it is not: it
+    /// could not be taken into use when the session opened or last read
+    /// it, and the session is signed out on the local store meanwhile. The
+    /// next session that opens, or the next [`Self::reload`], tries again.
+    #[must_use]
+    pub fn held_back(&self) -> Option<String> {
+        lock(&self.inner.held_back).clone()
     }
 
     /// Who is signed in.
@@ -573,6 +599,14 @@ impl Session {
             .map(|signed_in| signed_in.secrets.clone())
     }
 
+    /// This device's sign-in: as the session holds it, or as it is stored
+    /// when the session does not hold it, as when it could not be taken
+    /// into use or the other program signed in since this one looked.
+    fn sign_in_record(&self) -> Option<DeviceSecrets> {
+        self.saved_secrets()
+            .or_else(|| DeviceSecrets::read(&*self.inner.secrets).ok().flatten())
+    }
+
     fn api(&self) -> ApiClient {
         ApiClient::new(Arc::clone(&self.inner.transport))
     }
@@ -590,6 +624,7 @@ impl Session {
                     // What is published says what this session holds now,
                     // which is no sign-in. The secrets stay stored, and
                     // the next reload tries them again.
+                    *lock(&self.inner.held_back) = Some(error.to_string());
                     self.inner.status.send_replace(SyncStatus::default());
                     self.inner.state.send_replace(SessionState::SignedOut);
                     return Err(error);
@@ -597,6 +632,7 @@ impl Session {
             },
             _ => None,
         };
+        lock(&self.inner.held_back).take();
         let signed_in = SignedIn { secrets, account };
         let state = signed_in.state();
         if let Some(worker) = signed_in
@@ -883,7 +919,7 @@ impl Session {
         // its token expired or it was removed. It keeps its key pair and
         // shows the server its old token, so that it can stay the device
         // it was.
-        let before = self.saved_secrets();
+        let before = self.sign_in_record();
         let device_key = before
             .as_ref()
             .map_or_else(DeviceKeyPair::generate, |saved| saved.device_key.clone());
@@ -987,6 +1023,7 @@ impl Session {
                 self.activate(secrets)?;
             } else {
                 lock(&self.inner.signed_in).take();
+                lock(&self.inner.held_back).take();
                 self.inner.status.send_replace(SyncStatus::default());
                 self.inner.state.send_replace(SessionState::SignedOut);
             }
@@ -1129,12 +1166,13 @@ impl Session {
     }
 
     /// Removes the notes of accounts this device has signed out of, if any
-    /// are still on disk, and says how many went and how many are still
-    /// held. Sign-out cannot remove them while an interface holds the store
-    /// open, this program's or another's on the same computer; an interface
-    /// calls this once it has let go. Whatever is still held then goes the
-    /// next time this is called or a session opens.
-    pub fn remove_signed_out_stores(&self) -> Swept {
+    /// are still on disk, and says whether any are left because something
+    /// still holds them. Sign-out cannot remove them while an interface
+    /// holds the store open, this program's or another's on the same
+    /// computer; an interface calls this once it has let go. Whatever is
+    /// still held then goes the next time this is called or a session
+    /// opens.
+    pub fn remove_signed_out_stores(&self) -> bool {
         sweep_signed_out(&self.inner.config.data_folder)
     }
 
@@ -1147,13 +1185,17 @@ impl Session {
     /// a recovery phrase: that device's key is otherwise the only thing that
     /// can read the account's notes. Refused, unless `unsynced` says to
     /// discard them, while notes or files have not reached the server.
-    pub async fn sign_out(&self, unsynced: Unsynced) -> Result<(), SignOutError> {
-        let Some(secrets) = self.saved_secrets() else {
-            return Ok(());
+    ///
+    /// A device whose sign-in could not be taken into use
+    /// ([`Self::held_back`]) signs out as one that is in use, with no notes
+    /// of its own to sync.
+    pub async fn sign_out(&self, unsynced: Unsynced) -> Result<SignedOut, SignOutError> {
+        let Some(secrets) = self.sign_in_record() else {
+            return Ok(SignedOut::Complete);
         };
         let api = self.api().with_token(secrets.token.clone());
 
-        if let Some(engine) = self.engine() {
+        if secrets.approved && secrets.keys().is_some() {
             match api.me().await {
                 // The key survives this device leaving if another approved
                 // device holds it, or a recovery phrase can open it.
@@ -1172,7 +1214,8 @@ impl Session {
                     ) => {}
                 Err(error) => return Err(SignOutError::CannotCheck(error)),
             }
-
+        }
+        if let Some(engine) = self.engine() {
             let cause = engine.run_once().await.err().map(|error| error.to_string());
             // Neither the engine nor a store handle may outlive this block:
             // the store's files are deleted below.
@@ -1190,16 +1233,23 @@ impl Session {
 
         // Removing the device makes its token useless at once. If the
         // server cannot be reached the token stays valid until it expires
-        // unused, but it leaves this device now either way.
-        if let Err(error) = api.revoke(secrets.device_id).await {
-            tracing::warn!("the server was not told about the sign-out: {error}");
-        }
+        // unused, but it leaves this device now either way, and the caller
+        // says so.
+        let outcome = match api.revoke(secrets.device_id).await {
+            Ok(()) => SignedOut::Complete,
+            Err(error) if error.code() == Some(ErrorCode::DeviceRevoked) => SignedOut::Complete,
+            Err(error) => {
+                tracing::debug!("the server was not told about the sign-out: {error}");
+                SignedOut::StillListed
+            }
+        };
 
         self.forget_account(&secrets).map_err(|error| match error {
             SessionError::Secrets(error) => SignOutError::Secrets(error),
             SessionError::Store(error) => SignOutError::Store(error),
             other => SignOutError::Store(Error::Database(other.to_string())),
-        })
+        })?;
+        Ok(outcome)
     }
 
     /// Removes the account from this device: its keys, and its store with
@@ -1210,6 +1260,7 @@ impl Session {
             .take()
             .is_some_and(|signed_in| signed_in.account.is_some());
         self.clear_secrets()?;
+        lock(&self.inner.held_back).take();
         if had_account {
             let folder = account_folder(&self.inner.config.data_folder, secrets.account_id)?;
             // The mark comes first: if the folder cannot be removed now,

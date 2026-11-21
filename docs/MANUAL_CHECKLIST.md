@@ -141,6 +141,7 @@ The page is always there; the first character makes the note (design 6.1, 7.9).
 | D73 | Person | Release build, Windows: close the window to the tray, make writing fail (D47), write a thought in quick capture and press Esc, then type in another app for a minute | Nothing typed reaches Dirt. When the write fails, the main window comes back behind the app being typed in, with "A note could not be saved", and its taskbar button flashes |
 | D74 | Person | With quick capture open and a thought in it, sign out in Settings (or have another device remove this one) | Quick capture puts itself away, its thought handed to the account's store first. Once signed out, the account's folder under `stores` goes: nothing holds it open |
 | D94 |  | Desktop app open and signed in, with a note on the page; `dirt auth logout` in a terminal on the same data folder; type in the note, or write a thought in quick capture | "A note could not be saved", its reason that the computer was signed out, and **Copy text** with the words. The app shows itself signed out and writes to the local store from then on. The account's folder under `stores` goes within seconds |
+| D96 |  | With a thought typed on the page and not yet saved, and another in quick capture, sign out in Settings; look at another device after a sync | Both thoughts reached the other device. No "could not be saved" appears |
 | D95 |  | Press Sign in, and press it again before the browser opens; close the browser tab without signing in and press it again; then sign in | One browser tab opens, not two. The second press stops waiting, and the button says Sign in again. The sign-in after it completes |
 
 ### Voice
@@ -382,7 +383,8 @@ Run with the real microphone; an agent can run the same on the emulator with `di
 | C25 |  | `dirt delete <ID>`, `dirt sync` on another device, then `dirt restore <the start of the ID>` on either | The note is gone from both, and back on both after the restore and a sync, with the text it had |
 | C26 |  | With the desktop app open on the same data folder: `dirt auth logout`, then `dirt list` and `dirt auth status` | The sign-out says the notes are open in another Dirt program and go when it lets go of them; no log lines, then or after |
 | C27 |  | `dirt auth login` as a new device that waits; `dirt list`, `dirt sync` | Each says the device is waiting to be let in, and how: `dirt auth join` here and `dirt devices approve` on a device already in |
-| C28 |  | After C26, with the desktop app still open and not looked at: `dirt auth login`, then `dirt auth recover` with the phrase | Refused, saying the last sign-in's notes are still open in another Dirt program. Once the desktop app has been looked at or closed, the next command works, on a new store that fetches the account's notes |
+| C28 |  | After C26, with the desktop app still open and not looked at: `dirt auth login`, then `dirt auth recover` with the phrase; then `dirt "a thought"` and `dirt list` | The recover says the sign-in is not in use yet, because the last sign-in's notes are still open; so does each command after it, which still works, on this computer's own notes. Once the desktop app has been looked at or closed, the next command works on a new store that fetches the account's notes |
+| C29 |  | `dirt auth logout` with the server out of reach after the sync it begins with (stop the server then) | Signed out, and a second line: the device is still in the account's list until it is removed from another device |
 
 ## Capture from outside the app, on real phones
 

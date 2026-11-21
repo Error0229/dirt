@@ -15,8 +15,8 @@ use dirt_core::session::Session;
 use dirt_core::Store;
 use dirt_ui::components::Panel;
 use dirt_ui::settings::{
-    settings_nav, ExportTo, Exported, JoinBanner, Linked, SavePhrase, SettingsPage, SettingsRail,
-    SignIn, PHRASE_FILE_NAME,
+    settings_nav, BeforeSignOut, ExportTo, Exported, JoinBanner, Linked, SavePhrase, SettingsPage,
+    SettingsRail, SignIn, PHRASE_FILE_NAME,
 };
 use dirt_ui::Appearance;
 use rfd::AsyncFileDialog;
@@ -161,6 +161,12 @@ pub fn SettingsPanel() -> Element {
         Box::pin(async move { session.sign_in_with_browser(open_browser).await })
             as dirt_ui::settings::Task<_>
     });
+    let before_sign_out: BeforeSignOut = use_callback(move |()| {
+        Box::pin(crate::app::hand_everything_over(
+            app.page_leaver,
+            app.current_note_id,
+        )) as dirt_ui::settings::Task<_>
+    });
     let save_phrase: SavePhrase = use_callback(move |text: String| {
         Box::pin(save_phrase_file(text)) as dirt_ui::settings::Task<_>
     });
@@ -222,6 +228,7 @@ pub fn SettingsPanel() -> Element {
                     voice,
                     on_voice: change_voice,
                     sign_in,
+                    before_sign_out: Some(before_sign_out),
                     export,
                     copy,
                     save_phrase,

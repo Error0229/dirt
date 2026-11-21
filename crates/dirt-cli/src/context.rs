@@ -148,6 +148,18 @@ pub const WAITING_TO_BE_LET_IN: &str = concat!(
     "in the app's Settings, or run `dirt auth recover` with the recovery phrase."
 );
 
+/// What a command says when this computer is signed in but the sign-in is
+/// not in use yet ([`Session::held_back`]): the notes of the last sign-in
+/// are still open, most likely in the desktop app.
+pub fn held_back_words(session: &Session) -> String {
+    let why = session.held_back().unwrap_or_default();
+    format!(
+        "This computer is signed in, but the sign-in is not in use yet: {} Until then, notes \
+         are kept on this device only. If the desktop app is open, switch to it or close it.",
+        dirt_core::util::as_sentence(&why)
+    )
+}
+
 /// Words for a failure, by what the person can do about it.
 pub fn describe(error: &SessionError) -> String {
     match error {
