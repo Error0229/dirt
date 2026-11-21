@@ -62,8 +62,9 @@ fn main() {
     services::clear_opened_copies(&services::data_folder());
 
     // Closing the window hides it, and Dirt stays in the tray (`tray`).
-    // A click on the tray icon does nothing: Dioxus would show every
-    // window, quick capture's too. A double click opens Dirt.
+    // Dioxus does not show its windows for a click on the tray icon: it
+    // would show every window, quick capture's too. `tray` opens Dirt's
+    // main window for it instead.
     let config = without_the_web_views_own_keys(
         Config::new()
             .with_window(screen::window::builder())

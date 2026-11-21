@@ -72,10 +72,10 @@ answer with 20,000 notes in it.
 
 | | Desktop | Android | CLI |
 |---|---|---|---|
-| Quick capture | Global hotkey, Ctrl+Alt+N, and "New Note" in the tray menu: a small window of its own over any app, kept ready, which saves as it is typed and is put away by Esc, Ctrl Enter or a click outside | The capture sheet, a small screen of its own over any app, from the home-screen widget, a long press on the icon (New note), the Quick Settings tile, or the phone's note-taking role; also over the lock screen, where it adds and shows nothing. ✓ keeps the thought, which becomes a note and syncs without the app being opened | The command itself |
+| Quick capture | Global hotkey, Ctrl+Alt+N, and "New note" in the tray menu: a small window of its own over any app, kept ready, which saves as it is typed and is put away by Esc, Ctrl Enter or a click outside | The capture sheet, a small screen of its own over any app, from the home-screen widget (a bar, or at one or two cells only a pencil and the mic), a long press on the icon (New note), the Quick Settings tile, or the phone's note-taking role; also over the lock screen, where it adds and shows nothing. ✓ keeps the thought, which becomes a note and syncs without the app being opened | The command itself |
 | Take text from another app | No | "Share" to Dirt saves the text as a note at once, with a toast and Undo | A pipe: `some-command \| dirt add` |
 | Take a picture from another app | No | "Share" a picture, or several, to Dirt: a note at once, with the pictures attached, called after them if no text came along | No |
-| Run in the background | Tray icon, with Open and Quit | After the capture sheet's ✓, a job on the phone that needs no network makes the thought a note (and the words of what was said), then one that syncs once; never on a timer | No |
+| Run in the background | The tray icon, the logo in the chosen accent: a click opens Dirt on Windows (on a Mac and Linux a click shows the menu); its menu has Open Dirt, New note with the hotkey, and Quit Dirt | After the capture sheet's ✓, a job on the phone that needs no network makes the thought a note (and the words of what was said), then one that syncs once; never on a timer | No |
 | The pile on the home screen | No | The pile widget, two cells by two: the heap of every thought as sand, as under the list, and "1,254 thoughts". A thought kept from the capture sheet is one more grain at once. Tapping it opens Dirt | No |
 
 The hotkey is shown in Settings and cannot be changed there.

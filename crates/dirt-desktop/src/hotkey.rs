@@ -12,8 +12,9 @@ use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 const HELD_AFTER: Duration = Duration::from_millis(280);
 
 /// Default hotkey: Ctrl+Alt+N (Windows/Linux) or Cmd+Option+N (macOS)
-/// N for "Note" - a quick way to capture a thought
-fn default_hotkey() -> HotKey {
+/// N for "Note" - a quick way to capture a thought. The tray's menu shows
+/// it beside New note.
+pub fn default_hotkey() -> HotKey {
     #[cfg(target_os = "macos")]
     let modifiers = Modifiers::META | Modifiers::ALT;
     #[cfg(not(target_os = "macos"))]
@@ -29,7 +30,7 @@ fn default_hotkey() -> HotKey {
 ///
 /// Another program may hold the keys as Dirt starts, a Dirt that has just
 /// quit among them, so registering is tried a few times. If the keys stay
-/// taken, the app runs on without them; the tray's New Note still opens
+/// taken, the app runs on without them; the tray's New note still opens
 /// quick capture.
 pub fn use_hotkey() -> Callback<HotKeyState> {
     let mut hold = use_hook(|| CopyValue::new(Hold::default()));

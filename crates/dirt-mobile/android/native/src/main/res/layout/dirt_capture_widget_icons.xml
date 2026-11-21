@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The bar widget at one or two cells, side by side (design 8.11): the
+     same pill, with only its two icons. The pencil opens the capture sheet,
+     as the bar's words do; the mic opens it listening, as the bar's mic
+     does, in a build with voice. Without voice the pencil is alone. Each
+     icon's target is its whole half of the pill, edge to edge and the
+     pill's full height, so that a narrow cell leaves it as large as it can
+     be; the icon is drawn at its own size in the middle. A cell taller than
+     it is wide has the two stacked instead (dirt_capture_widget_stack). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="56dp"
+    android:layout_gravity="center_vertical"
+    android:background="@drawable/dirt_widget_bg"
+    android:orientation="horizontal">
+    <ImageView
+        android:id="@+id/dirt_widget_write"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:contentDescription="@string/dirt_widget_bar"
+        android:scaleType="center"
+        android:src="@drawable/dirt_pencil"
+        android:tint="@color/dirt_accent_clay" />
+    <ImageView
+        android:id="@+id/dirt_widget_mic"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:contentDescription="@string/dirt_talk"
+        android:scaleType="center"
+        android:src="@drawable/dirt_mic"
+        android:tint="@color/dirt_accent_clay"
+        android:visibility="gone" />
+</LinearLayout>
