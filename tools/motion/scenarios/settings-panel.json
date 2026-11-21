@@ -3,7 +3,7 @@
   "title": "Settings: opening, its side menu between sections, closing (#321)",
   "issue": 321,
   "platforms": ["desktop", "android", "mockup-desktop", "mockup-android"],
-  "description": "Design 5.5 and 6.9: on the desktop the panel grows out of the gear (480 ms, snap), the rail's entries slide in from the left 30 ms apart and the sections rise 14 px 40 ms apart; it shrinks back into the gear (240 ms, exit). On Android the sheet rises (glide) while the screen behind steps back. The rail's highlight follows the scroll.",
+  "description": "Design 5.5 and 6.9: on the desktop the panel grows out of the gear (480 ms, snap), the rail's entries slide in from the left 30 ms apart and the sections rise 14 px 40 ms apart; it shrinks back into the gear (240 ms, exit). On Android the sheet rises (glide) while the screen behind steps back. The rail's highlight follows the scroll; pressed on the rail, it goes straight to the section pressed (6.9).",
   "setup": [{ "wait": 1500 }],
   "parts": {
     "panel": {
@@ -66,6 +66,7 @@
       "crop": { "desktop": ".dui-panel[aria-label='Settings']", "mockup-desktop": "#d-settings" },
       "description": "The side menu's Appearance is pressed: the page scrolls to it and the highlight follows.",
       "platforms": ["desktop", "mockup-desktop"],
+      "straight": ["railHighlight"],
       "steps": [{ "click": { "desktop": ".dui-rail button[data-dui-jump='appearance']", "mockup-desktop": "#d-settings .rail button[data-sec='look']" } }],
       "ms": 1600
     },
@@ -75,6 +76,7 @@
       "crop": { "desktop": ".dui-panel[aria-label='Settings']", "mockup-desktop": "#d-settings" },
       "description": "The side menu's Account is pressed: back to the top.",
       "platforms": ["desktop", "mockup-desktop"],
+      "straight": ["railHighlight"],
       "steps": [{ "click": { "desktop": ".dui-rail button[data-dui-jump='account']", "mockup-desktop": "#d-settings .rail button[data-sec='account']" } }],
       "ms": 1600
     },
