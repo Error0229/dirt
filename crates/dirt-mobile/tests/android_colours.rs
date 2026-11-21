@@ -31,3 +31,26 @@ fn colours_are_the_tokens() {
         );
     }
 }
+
+/// The widgets, the sheet and the tile name their colours only through
+/// those files: no layout or drawable writes a colour of its own, except
+/// white in an icon tinted where it is used.
+#[test]
+fn layouts_and_drawables_name_only_the_tokens() {
+    let res = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("android/native/src/main/res");
+    for folder in ["layout", "drawable"] {
+        let entries = std::fs::read_dir(res.join(folder)).unwrap();
+        for entry in entries {
+            let path = entry.unwrap().path();
+            let text = std::fs::read_to_string(&path).unwrap();
+            for after in text.split("=\"#").skip(1) {
+                let colour = after.split('"').next().unwrap_or_default();
+                assert!(
+                    colour == "FFFFFFFF",
+                    "{} writes the colour #{colour}: name one of dirt_colours.xml",
+                    path.display()
+                );
+            }
+        }
+    }
+}

@@ -1,6 +1,6 @@
 //! Quick capture (interface design, sections 5.5 and 7.2): a small window
 //! of its own, over whatever app is in front, for a thought written from
-//! anywhere. <kbd>Ctrl Alt N</kbd>, or **New Note** in the tray's menu,
+//! anywhere. <kbd>Ctrl Alt N</kbd>, or **New note** in the tray's menu,
 //! opens it; <kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd> or a click outside puts
 //! it away, saved, and the keyboard goes back to the app that was in front.
 //!
@@ -151,7 +151,7 @@ impl Link {
         let _ = self.asks.send(asked);
     }
 
-    /// Opens quick capture: the hotkey was pressed, or New Note chosen, at
+    /// Opens quick capture: the hotkey was pressed, or New note chosen, at
     /// `at`. From any thread.
     pub fn open(&self, at: Instant) {
         self.ask(Asked::Open(at));

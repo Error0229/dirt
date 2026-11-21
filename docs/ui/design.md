@@ -245,7 +245,7 @@ How the counts were brought down, compared with the current apps:
 | List notes, show older | The list loads more as it nears the end. No button | The same |
 | Search | Find, at the top of the list: <kbd>Ctrl F</kbd>, <kbd>Ctrl K</kbd> or <kbd>/</kbd> | 🔍 at the top |
 | Narrow to a tag, tag counts | `#` in Find: the six most used tags, with counts, narrowing as you type. Chosen tags are tokens in Find | `#` in Find: a strip of tags under it |
-| Quick capture | <kbd>Ctrl Alt N</kbd>; New Note in the tray menu | The capture sheet, from the home-screen widget, long-press the icon → New note, the Quick Settings tile, or the lock screen where the phone allows it (8.5, 8.6) |
+| Quick capture | <kbd>Ctrl Alt N</kbd>; New note in the tray menu | The capture sheet, from the home-screen widget, long-press the icon → New note, the Quick Settings tile, or the lock screen where the phone allows it (8.5, 8.6) |
 | Take text or pictures from another app | Drop on the window | Share → Dirt, saved at once with a toast |
 | Run in the background | Tray icon | n/a |
 | Sign in, sign out, move local notes in | Settings → Account | The same |
@@ -1421,7 +1421,7 @@ screen.
 
 ### 7.2 Quick capture
 
-<kbd>Ctrl Alt N</kbd> from any app (or **New Note** in the tray menu) opens a
+<kbd>Ctrl Alt N</kbd> from any app (or **New note** in the tray menu) opens a
 small floating page in the middle of the screen, over whatever is there.
 It grows with the thought, up to about twelve lines. <kbd>Enter</kbd> is a
 new line. <kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd> or a click outside puts it
@@ -1493,8 +1493,11 @@ app's own (Copy, Paste, Select all), not the browser's.
 
 ### 7.5 Tray
 
-The tray icon's menu has **New Note**, **Open Dirt** and **Quit**. Closing
-the window keeps Dirt in the tray so the hotkey still works.
+The tray icon is the logo. A click on it opens Dirt on Windows; its menu
+has **Open Dirt**, **New note** with the hotkey beside it, and **Quit
+Dirt**. Closing the window keeps Dirt in the tray so the hotkey still
+works. How a click differs on a Mac and on Linux, and why the menu is the
+system's own, is settled in 7.12.
 
 ### 7.6 The window: no title bar
 
@@ -1653,7 +1656,7 @@ What 7.2 and 5.5 left open for quick capture, settled when it was built
 | The keys | <kbd>Esc</kbd> with no modifier, and the command key with <kbd>Enter</kbd>, put it away; <kbd>Enter</kbd> alone is a new line. A key pressed while an input method composes is the input method's (7.4). <kbd>Ctrl N</kbd> does nothing here |
 | Where the keyboard goes | Back to the window that had it before quick capture opened, as soon as it is put away by a key, not when the grain lands: what is typed meanwhile is for that app. Put away by a click outside, the keyboard is where the click put it |
 | When Dirt takes the keyboard | Only when the person asks for Dirt: the hotkey, the tray's menu, starting the app, a click on its window. Anything else that shows a window shows it without the keyboard, since keys typed in another app would land in Dirt and could become a note. Both windows are made to be shown without it, and taking it is always a separate step. If quick capture has not got the keyboard 300 ms after it opens (the system can refuse), it is put away rather than left over every window with nobody able to type into it |
-| Opened again | While it is open, the keys or **New Note** give it the keyboard again. While its grain is in flight, the flight stops and a new box opens |
+| Opened again | While it is open, the keys or **New note** give it the keyboard again. While its grain is in flight, the flight stops and a new box opens |
 | The grain | The note's own grain, in its shade (6.17): the box's words fade, and the box closes into a round of that shade as it shrinks. The mockup's box shrank to a white oval at 35%; a grain of the note's colour says better what it became |
 | The flight | It is the window that moves: Rust carries it along the two curves of 5.5 so that the grain, in the middle of the box, lands on the middle of the tray icon, where the ring pulses. The box is not in the middle of its window (it has more room for its shadow below than above), so it is the box's middle that is aimed. The page says when the box begins to shrink, and Rust moves the window from then; with reduced motion the page only fades and says nothing, so the window does not move. The tray icon's place is asked of the system each time |
 | Where the tray's place is not known | The plan's fallback: the grain falls 140 px on gravity's curve (5.4), as an archived note's grain sinks, and fades, where the window was. That is Linux, where the tray does not say where it is, and a tray on a screen of another scale than quick capture's, where the window would be drawn again in mid-air |
@@ -1662,7 +1665,7 @@ What 7.2 and 5.5 left open for quick capture, settled when it was built
 | No store open | A thought written before the stores have opened (the hotkey at login), or after they could not be, is not dropped: what it carried comes back as the same error with **Copy text**, and nothing is made from it later. The main screen's page does the same |
 | Signing in or out | Before another store is taken into use, quick capture hands what it holds to the queue, for the store it was written in, and puts itself away; the app waits for that, then for the queue, and only then lets go of the old store. A device turned away, found by quick capture's own sync, is the same. The next thought goes to the new store |
 | Closing it otherwise | <kbd>Alt F4</kbd> puts it away, saved, and it hides at once. Quitting from the tray hands what it holds to the queue, which the app waits for (7.9) |
-| Counting (section 2) | Writing a thought from another app is the three actions section 2 gives: <kbd>Ctrl Alt N</kbd>, the typing, <kbd>Esc</kbd>. From the tray's menu it is four: the icon, **New Note**, the typing, <kbd>Esc</kbd> |
+| Counting (section 2) | Writing a thought from another app is the three actions section 2 gives: <kbd>Ctrl Alt N</kbd>, the typing, <kbd>Esc</kbd>. From the tray's menu it is four: the icon (a right click on Windows), **New note**, the typing, <kbd>Esc</kbd> |
 | How quickly | From the hotkey reaching the app to the text field having the keyboard: 21 to 46 ms, median 25 ms over 24 opens, and 24 to 40 ms for the first open after the app starts (a development build on Windows 11, implementation plan step 8a). The hotkey and the tray's menu are both heard at once, as Dioxus's event loop is told of them. The figure holds for Windows, and for macOS, where the hotkey was heard on the main thread then too. On Linux (X11) the hotkey used to open quick capture straight from `global-hotkey`'s own thread and now waits for the main thread; that has not been measured |
 
 ### 7.11 Settled when voice was built on the desktop
@@ -1697,8 +1700,9 @@ note, Settings → Voice) holds there too.
 
 ### 7.12 Settled after the first hands-on test
 
-The owner's notes from trying both apps (issue #315), settled in one pull
-request. Each can be undone on its own.
+The owner's notes from trying both apps (issue #315), settled in two pull
+requests: the first five in #318, the tray with Android's bar widget at
+one cell (8.11) in the next. Each can be undone on its own.
 
 | | Settled |
 |---|---|
@@ -1707,6 +1711,10 @@ request. Each can be undone on its own.
 | Done on the desktop | Done on an old note had nothing to see: the words went, the page was blank. Now the words fade where they were (140 ms, exit), the row's highlight fades (150 ms, standard), and the blank page's placeholder fades back in from 140 ms (300 ms, enter). The last two are the mockup's: its blank page fades in over that time on that curve, and its highlight fades as the selection goes. The mockup's old words simply go; their fade was decided here, so that they do not vanish in the 140 ms before the page comes back, and it fills that wait (rule 6 of 5.2: about 60% of the entrance, on the exit curve). A new thought keeps its settling (5.5), with the same placeholder. With reduced motion nothing moves: the page is simply blank, as in the mockup. Android's ⌄ already had its own (the page back into its card, or to a grain) |
 | A new note while scrolling | The desktop: + ("New note", <kbd>Ctrl N</kbd>) at the foot of the list, between the sync status and the gear, on every width. The foot does not scroll, so it is in reach wherever the list is. It does what <kbd>Ctrl N</kbd> does: what is on the page is let go as Done lets it go, and the page is blank with the cursor in it; on a blank page it only puts the cursor there. A + was chosen over keeping the blank page beside an open note, which would take a second column, and over a button that floats over the list, which would lie over rows. Android: the dock at the bottom (the bar and the mic) does not scroll with the list either, so it already was the way in; nothing changes there. Capture stays one action: the + is the press that Done was, with a name that says what it is for |
 | The desktop's microphone | Settings → Voice → **Microphone**, the first row after the line about where speech becomes text, shown where the mic is offered. It names the one in use: "The system's default", the one chosen, or "Not connected: the system's default is used". Pressed, it opens a short list in place under it (the system's default, then each input connected, the chosen ticked in the accent) and a choice closes it. The list is asked of the system when the section is drawn and each time it opens, so that one plugged in meanwhile is there. What is kept is the system's ID for the input, in the device's settings as `microphone` (empty for the default). The ID usually outlasts a restart and a replug, but not always: a USB headset in another port on Windows can be a new input, and on Linux the cards' numbers can change places. Then the row says the chosen one is not connected and it is chosen again; matching by name as well was left out, for one value kept and no guessing between two inputs of one name. Recording asks for the chosen one at each press, the page's mic and quick capture's alike, and takes the default once in its place when it is not connected, or when it cannot be set up or started; then the row says "Could not record from it: the system's default is used" until it records again. On Linux, ALSA lists every PCM it knows, most with no direction and many unable to record, `null` (silence) among them, so there the list holds only what ALSA marks as an input and each card's own device that cpal found able to capture (`plughw:CARD=0,DEV=0`); `null` is never offered, and the default comes first as everywhere. Android records from the system's microphone and has no such row. "The recording" now has the note's icon, so that the two rows do not share the mic |
+| The tray: a click | A left click on the icon opens Dirt on Windows, as **Open Dirt** does: the window shown, brought back if minimised, with the keyboard. Windows' own apps and most others open on a click on their tray icon, and a click that did nothing (only a double click opened Dirt, #307) read as broken. It opens and never hides: the click takes the keyboard to the taskbar first, so whether Dirt's window was in front cannot be told, and a click that hid it would be a guess; ✕ and <kbd>Alt F4</kbd> close it. A double click is two clicks, and opens it once. The right click shows the menu. On a Mac a click, left or right, shows the menu, as every icon in the menu bar does; Linux's trays (app indicators) send no clicks, only the menu. So the menu keeps **Open Dirt**, first. Quick capture, open when the icon is clicked, loses the keyboard and is put away, saved, as at any click outside (7.10), and its flight to the tray is unchanged |
+| The tray's menu | The system's own, shorter and clearer, not drawn by Dirt: **Open Dirt**, **New note** with the hotkey beside it, a line, **Quit Dirt**. Open Dirt first, since it is the click's on Windows and what is looked for first. The hotkey is given to the menu as a shortcut, so each system shows it its own way: "Ctrl+Alt+N" on Windows, "⌥⌘N" on a Mac, where the words said Ctrl+Alt+N before, which are not its keys there. A Linux tray's menu shows no shortcut it is given, so there it is in the words. Sentence case, as the + at the foot of the list. No icons: `muda` can put a picture beside an item on all three systems, but tray menus there carry none (Windows' notification area, a Mac's menu bar, GNOME's indicators), and three words need no pictures. The menu itself cannot be styled: the system draws it |
+| No window of its own for the tray | A small window styled from the tokens was weighed and not made. It would be a third web view kept ready, as quick capture's is, with the memory that costs; placed beside the icon, whose place Linux does not give (7.10); closed when a click or the keyboard goes elsewhere, the focus handling that took most of quick capture's work (7.10); and made reachable by the keyboard and screen readers, which the system's menu already is. For three choices that is the most complexity for the least gain. The menu stays the system's, and fits by being short; the icon and the tooltip carry the look |
+| The tray's icon | The logo, the sprout on its rounded square, in the accent chosen in Settings, drawn again when it changes. It was an indigo square from before the design. Its light-scheme colours, the deeper accent with a white sprout, which read on a light taskbar and a dark one alike. On a Mac it is the sprout alone, as a template image, which the system colours as the menu bar's other icons, light or dark. Drawn in code from the logo's own shapes (`tray::logo_pixels`), 32 px and smoothed, so no picture file is added; the system scales it to the tray. Its tooltip says what a click does, on Windows: "Dirt", then "Click to open. Ctrl+Alt+N for a new note"; elsewhere "Dirt" |
 
 ---
 
@@ -1769,7 +1777,7 @@ saves as you type; there is no Save button and no "Saved".
 ### 8.5 The widget and the capture sheet
 
 **The widget** is one bar, four cells wide by default and resizable
-sideways:
+sideways, down to one cell:
 
 ```
 ╭──────────────────────────────────────────────╮
@@ -1782,6 +1790,8 @@ sideways:
   follows the system's light and dark themes.
 - Three targets: the logo opens the app at the list; the bar opens the
   capture sheet; the clay mic opens it listening, hands-free (6.18).
+- Narrowed to one cell or two, it is only its icons: a pencil, which opens
+  the capture sheet, and the mic (8.11).
 - It shows no notes. A widget is seen by anyone who sees the home screen,
   and Dirt's notes are private.
 
@@ -2014,6 +2024,17 @@ screen reader.
 | Where it comes from | A small file the app writes, `dirt/pile`: the line, the heap's box, and the grains of each shade as `#rrggbb` and their places (`Heap::widget`). Written from the store in use each time the heap is worked out again: as the list is read after a note is made, deleted or brought back, and when the capture sheet's work takes thoughts in. It holds no note's words |
 | When it is drawn again | As the person leaves the app, and when the sheet's work has taken thoughts in. A thought kept from the sheet is a grain on the widget at once, online or not: ✓ now asks first for the phone's own job, `WordsJob`, which needs no network, makes the waiting thoughts notes and draws the widget again, and then asks for the capture job, which syncs. The speech model is copied out of the APK for that job only when a recording waits. Nothing on a timer |
 
+### 8.11 Settled after the first hands-on test
+
+The owner's note on the bar widget from trying the app on a phone (issue
+#315), settled with the desktop's tray (7.12).
+
+| | Settled |
+|---|---|
+| The bar at one cell | The bar widget resizes sideways down to one cell, where it was two. Narrower than 180 dp, one cell or two, it is only its icons, in the same pill: a pencil, which opens the capture sheet as the bar's words do, and the mic, which opens it listening hands-free as the bar's mic does (6.18). Each takes half the pill and is drawn in the accent at the bar's size, in the middle of its half. Without voice the pencil is alone. No logo there: the app's own icon on the home screen opens the app. Below 180 dp "Write a thought" had no room between the logo and the mic |
+| One widget, two layouts | Not a second widget: one entry among the widgets, one receiver, and the same bar comes back as it is widened. From Android 12 the home screen picks the layout as the widget is resized (`RemoteViews` by size); before 12 the widget picks it by the width the home screen gives for portrait, and is drawn again when resized |
+| The pencil | Lucide's, as every icon is (4.4), and the widget's alone: "write" beside the mic's "talk". Its name for TalkBack is the bar's, "Write a thought" |
+| Its colours | The layout names only the colours made from the tokens, as every layout and drawable of the native module does; a test now holds them to that (`layouts_and_drawables_name_only_the_tokens`), besides the test that the colours are the tokens |
 
 ---
 
