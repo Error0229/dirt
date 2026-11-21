@@ -153,6 +153,32 @@ pub fn play_recordings_where_the_web_view_cannot() {
 /// The one microphone is in use.
 static IN_USE: AtomicBool = AtomicBool::new(false);
 
+/// The microphone chosen in Settings → Voice, by its ID; nothing for the
+/// system's default. The main window keeps it as its settings say
+/// ([`choose_microphone`]), and quick capture, in the same app, records
+/// from it too.
+static CHOSEN: Mutex<Option<String>> = Mutex::new(None);
+
+/// Records from now on from the microphone `id` names, or the default.
+pub fn choose_microphone(id: Option<String>) {
+    *CHOSEN.lock().unwrap_or_else(PoisonError::into_inner) = id;
+}
+
+/// The microphones connected now, for Settings → Voice. It asks the system
+/// beside the window's thread.
+pub async fn microphones() -> Vec<dirt_ui::settings::Microphone> {
+    let listed = tokio::task::spawn_blocking(dirt_voice::microphone::inputs)
+        .await
+        .unwrap_or_default();
+    listed
+        .into_iter()
+        .map(|input| dirt_ui::settings::Microphone {
+            id: input.id,
+            name: input.name,
+        })
+        .collect()
+}
+
 /// The microphone while it is open, and the recording being written.
 struct DesktopEar {
     listening: Arc<Mutex<Option<Listening>>>,
@@ -210,9 +236,13 @@ impl DesktopEar {
                 }
             }
         };
+        let chosen = CHOSEN
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         let feed = match crate::settings::test_hook("DIRT_VOICE_FROM_WAV") {
             Some(wav) => dirt_voice::stand_in::play_wav(folder, &wav, sink),
-            None => dirt_voice::microphone::open(folder, sink),
+            None => dirt_voice::microphone::open(folder, chosen, sink),
         }
         .map_err(failed)?;
         Ok(Self {

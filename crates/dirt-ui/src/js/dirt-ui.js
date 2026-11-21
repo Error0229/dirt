@@ -1211,10 +1211,12 @@
       hideTimer = setTimeout(() => { if (!drag && !bar.matches(':hover')) bar.classList.remove('on'); }, 900);
     }
     area.addEventListener('scroll', show, { passive: true });
-    // Coming within 28 px of the edge shows it, so that it can be taken.
+    // The pointer on the bar's own strip shows it, so that it can be taken.
+    // Only there: a row's box and the time sit a few pixels further in,
+    // and the bar is not to come and go while the pointer works on them.
     area.addEventListener('pointermove', event => {
       if (event.pointerType === 'touch') return;
-      if (area.getBoundingClientRect().right - event.clientX < 28) show();
+      if (area.getBoundingClientRect().right - event.clientX < bar.offsetWidth) show();
     }, { passive: true });
     bar.addEventListener('pointerleave', () => { if (!drag) show(); });
     thumb.addEventListener('pointerdown', event => {
@@ -1762,6 +1764,45 @@
     if (event.key === 'Escape' || (command && (event.key === 'Enter' || event.key.toLowerCase() === 'n'))) shootPage();
   }, true);
   document.addEventListener('pointerdown', shootPage, true);
+  // The page's words as they were when the key or press came, drawn over
+  // where they were: what gathers into a grain, or simply goes.
+  function ghostOf(shot) {
+    const ghost = document.createElement('div');
+    ghost.className = 'dui-settle-ghost';
+    ghost.textContent = shot.text;
+    Object.assign(ghost.style, {
+      left: shot.left + 'px', top: shot.top + 'px', width: shot.width + 'px', height: shot.height + 'px',
+      fontSize: shot.size + 'px', lineHeight: shot.line + 'px', fontFamily: shot.font,
+      transformOrigin: `0px ${shot.line / 2}px`,
+    });
+    document.body.append(ghost);
+    return ghost;
+  }
+
+  // ---- The page after a note is let go (section 5.5) ----------------------
+  // Rust marks the page's field `data-dui-let-go` when Done leaves a note:
+  // "settle N" for a new thought, whose words gather into its grain
+  // (`toss`), and "go N" for an old note, whose words fade where they were
+  // (140 ms, exit). Either way the blank page's placeholder fades back in
+  // (300 ms from 140 ms, enter), as the mockup's blank page does. N counts
+  // the times, so each is drawn once, whether the field is the one that
+  // was emptied as the key went down or a new one. Nothing moves with
+  // reduced motion: the page is simply blank.
+  let letGoSeen = '';
+  function letGo(field) {
+    const mark = field.dataset.duiLetGo || '';
+    if (!mark || mark === letGoSeen) return;
+    letGoSeen = mark;
+    if (reduced() || document.hidden) return;
+    if (mark.startsWith('go ') && pageShot && performance.now() - pageShot.at < 1500) {
+      const ghost = ghostOf(pageShot);
+      pageShot = null;
+      after(ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: tokens.exit, fill: 'forwards' }),
+        140, () => ghost.remove());
+    }
+    field.animate([{ '--dui-placeholder': 0 }, { '--dui-placeholder': 1 }],
+      { duration: 300, delay: 140, easing: tokens.enter, fill: 'backwards' });
+  }
 
   function dust(x, y, colour) {
     for (let index = 0; index < 7; index++) {
@@ -1837,15 +1878,7 @@
     let x, y, wait;
     if (from.text !== undefined) {
       // The words shrink toward where they began, fading as they go.
-      const ghost = document.createElement('div');
-      ghost.className = 'dui-settle-ghost';
-      ghost.textContent = from.text;
-      Object.assign(ghost.style, {
-        left: from.left + 'px', top: from.top + 'px', width: from.width + 'px', height: from.height + 'px',
-        fontSize: from.size + 'px', lineHeight: from.line + 'px', fontFamily: from.font,
-        transformOrigin: `0px ${from.line / 2}px`,
-      });
-      document.body.append(ghost);
+      const ghost = ghostOf(from);
       after(ghost.animate([{ transform: 'none', opacity: 1 }, { opacity: 0.8, offset: 0.5 }, { transform: 'scale(.04)', opacity: 0 }],
         { duration: 280, easing: 'cubic-bezier(.5,0,.75,.3)', fill: 'forwards' }), 280, () => ghost.remove());
       x = from.left + 4;
@@ -2743,7 +2776,7 @@
   }
 
   // ---- Finding what Rust renders -----------------------------------------
-  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],[data-dui-grow],[data-dui-bars],[data-dui-audio],[data-dui-pdf],[data-dui-capture],[data-dui-voice],.dui-confirm';
+  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],[data-dui-grow],[data-dui-bars],[data-dui-audio],[data-dui-pdf],[data-dui-capture],[data-dui-voice],[data-dui-let-go],.dui-confirm';
   function arrived(element) {
     if (element.matches('[data-dui-list]')) watchList(element);
     if (element.matches('[data-dui-modal]')) watchModal(element);
@@ -2758,6 +2791,7 @@
     if (element.matches('[data-dui-pdf]')) watchPdf(element);
     if (element.matches('[data-dui-capture]')) watchCapture(element);
     if (element.matches('[data-dui-voice]')) watchVoice(element);
+    if (element.matches('[data-dui-let-go]')) letGo(element);
   }
   function left(element, parent) {
     if (element.matches('[data-dui-list]')) forgetList(element);
@@ -2793,6 +2827,10 @@
     })).observe(document.body, { childList: true, subtree: true });
     new MutationObserver(wordsArrived)
       .observe(document.body, { attributes: true, attributeFilter: ['data-dui-words'], attributeOldValue: true, subtree: true });
+    // The page's field stays when the key that let its note go emptied
+    // it: the mark changes on it.
+    new MutationObserver(records => records.forEach(record => letGo(record.target)))
+      .observe(document.body, { attributes: true, attributeFilter: ['data-dui-let-go'], subtree: true });
     $$(WATCHED).forEach(element => arrived(element));
   }
 

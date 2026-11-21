@@ -46,6 +46,10 @@ pub(super) fn load(connection: &Connection) -> Result<Settings> {
     if let Some(value) = get(connection, "voice_recording")? {
         settings.voice_recording = VoiceRecording::from_name(&value).unwrap_or_default();
     }
+    // Kept empty for the system's default.
+    if let Some(value) = get(connection, "microphone")? {
+        settings.microphone = Some(value).filter(|id| !id.is_empty());
+    }
     Ok(settings)
 }
 
@@ -65,6 +69,10 @@ pub(super) fn save(connection: &mut Connection, settings: &Settings) -> Result<(
         (
             "voice_recording",
             settings.voice_recording.name().to_owned(),
+        ),
+        (
+            "microphone",
+            settings.microphone.clone().unwrap_or_default(),
         ),
     ] {
         tx.execute(

@@ -312,9 +312,18 @@ async fn settings_default_until_saved_and_then_round_trip() {
         capture_hotkey: "Ctrl+Alt+N".to_owned(),
         focus_style: FocusStyle::Rail,
         voice_recording: VoiceRecording::TextOnly,
+        microphone: Some("{0.0.1.00000000}.{a-microphone}".to_owned()),
     };
     store.save_settings(&chosen).await.unwrap();
     assert_eq!(store.load_settings().await.unwrap(), chosen);
+
+    // Back to the system's default.
+    let default_mic = Settings {
+        microphone: None,
+        ..chosen
+    };
+    store.save_settings(&default_mic).await.unwrap();
+    assert_eq!(store.load_settings().await.unwrap(), default_mic);
 }
 
 #[tokio::test]

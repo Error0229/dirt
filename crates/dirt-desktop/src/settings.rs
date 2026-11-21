@@ -15,8 +15,8 @@ use dirt_core::session::Session;
 use dirt_core::Store;
 use dirt_ui::components::Panel;
 use dirt_ui::settings::{
-    settings_nav, BeforeSignOut, ExportTo, Exported, JoinBanner, Linked, SavePhrase, SettingsPage,
-    SettingsRail, SignIn, PHRASE_FILE_NAME,
+    settings_nav, BeforeSignOut, ExportTo, Exported, JoinBanner, Linked, Microphones, SavePhrase,
+    SettingsPage, SettingsRail, SignIn, PHRASE_FILE_NAME,
 };
 use dirt_ui::Appearance;
 use rfd::AsyncFileDialog;
@@ -193,6 +193,20 @@ pub fn SettingsPanel() -> Element {
         settings.write().voice_recording = kept;
         app.save_settings();
     };
+    // The microphone, where the mic is offered (6.18, 7.12).
+    let list_microphones =
+        use_callback(move |()| Box::pin(crate::voice::microphones()) as dirt_ui::settings::Task<_>);
+    let microphones = voice.is_some().then(|| Microphones {
+        unusable: settings.microphone.is_some()
+            && dirt_voice::microphone::unusable() == settings.microphone,
+        chosen: settings.microphone.clone(),
+        list: list_microphones,
+    });
+    let change_microphone = move |chosen: Option<String>| {
+        let mut settings = app.settings;
+        settings.write().microphone = chosen;
+        app.save_settings();
+    };
     let copy = move |text: String| {
         if let Err(error) = copy_secret(text) {
             tracing::error!("Could not copy: {error}");
@@ -228,6 +242,8 @@ pub fn SettingsPanel() -> Element {
                     on_focus_style: change_focus,
                     voice,
                     on_voice: change_voice,
+                    microphones,
+                    on_microphone: change_microphone,
                     sign_in,
                     before_sign_out: Some(before_sign_out),
                     export,

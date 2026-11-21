@@ -43,7 +43,7 @@ use crate::icons::{Icon, IconSize, IconSvg};
 pub use code::CodeComparison;
 pub use devices::RecoveryWords;
 pub use join_banner::JoinBanner;
-pub use voice::{HEARD_HERE, MODEL_CREDIT, SIDE_KEY};
+pub use voice::{Microphone, Microphones, HEARD_HERE, MODEL_CREDIT, SIDE_KEY};
 
 /// Work an app does for Settings that takes a while: signing in in the
 /// browser, writing an export.
@@ -327,6 +327,15 @@ pub fn SettingsPage(
     #[props(default)]
     voice: Option<VoiceRecording>,
     #[props(default)] on_voice: EventHandler<VoiceRecording>,
+    /// The desktop's microphones, in Settings → Voice: the one chosen, and
+    /// how to list them. Nothing on Android, which records from the
+    /// system's.
+    #[props(default)]
+    microphones: Option<Microphones>,
+    /// A microphone was chosen: its ID, or nothing for the system's
+    /// default.
+    #[props(default)]
+    on_microphone: EventHandler<Option<String>>,
     sign_in: SignIn,
     /// See [`BeforeSignOut`]. An app that holds nothing outside the store
     /// leaves it out.
@@ -382,7 +391,13 @@ pub fn SettingsPage(
                             look::Look { appearance, on_appearance, focus_style, on_focus_style, platform }
                         },
                         Section::Voice => rsx! {
-                            voice::Voice { recording: voice.unwrap_or_default(), on_recording: on_voice, platform }
+                            voice::Voice {
+                                recording: voice.unwrap_or_default(),
+                                on_recording: on_voice,
+                                microphones: microphones.clone(),
+                                on_microphone,
+                                platform,
+                            }
                         },
                         Section::Export => rsx! { export::ExportSection { export, platform } },
                     }

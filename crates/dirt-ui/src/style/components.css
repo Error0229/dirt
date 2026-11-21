@@ -186,9 +186,12 @@
 
 /* ---- Scrollbars (6.15): drawn by the app, over the content ------------- */
 :root{--sb:color-mix(in srgb,var(--text) 24%,transparent);--sb-hover:color-mix(in srgb,var(--text) 42%,transparent)}
+/* The system's own bar is drawn nowhere in the app, the window itself
+   among it: what scrolls and needs a bar has the drawn one (7.12). */
+:root,.dui-root,.dui-root *{scrollbar-width:none}
+:root::-webkit-scrollbar,.dui-root ::-webkit-scrollbar{display:none}
 .dui-scroll-wrap{position:relative;min-height:0;display:flex;flex-direction:column}
-.dui-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
-.dui-scroll::-webkit-scrollbar{display:none}
+.dui-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
 .dui-sb{position:absolute;top:4px;bottom:4px;right:0;width:10px;z-index:15;opacity:0;pointer-events:none;transition:opacity var(--d-3) var(--e-std)}
 .dui-sb.on{opacity:1;pointer-events:auto}
 .dui-sb-thumb{position:absolute;right:2px;top:0;width:5px;border-radius:99px;background:var(--sb);transition:width var(--d-2) var(--e-std),background var(--d-1)}
@@ -303,6 +306,9 @@
 /* A new thought settling (5.5): its words shrinking where they began, its
    grain in flight, and the dust where it lands. Drawn over everything, and
    never in the way of a press. */
+/* A page's placeholder, faded back in by the script when a note is let go
+   (5.5): a number its ::placeholder multiplies its opacity by. */
+@property --dui-placeholder{syntax:'<number>';inherits:true;initial-value:1}
 .dui-settle-ghost{position:fixed;z-index:1300;pointer-events:none;overflow:hidden;white-space:pre-wrap;word-break:break-word;color:var(--text)}
 .dui-grain{position:fixed;z-index:1301;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:46% 54% 52% 48%;pointer-events:none;box-shadow:0 1px 2px rgba(0,0,0,.25)}
 .dui-dust{position:fixed;z-index:1299;width:3px;height:3px;margin:-1.5px 0 0 -1.5px;border-radius:50%;pointer-events:none}
@@ -368,8 +374,7 @@
 .dui-find .dui-find-close{color:var(--text-3)}
 /* The strip of pills under Find. The picked ones are filled; the rest pop
    in left to right while the # is pressed. */
-.dui-strip{display:flex;align-items:center;gap:6px;padding:0 12px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;height:0;opacity:0;transition:height var(--d-snap) var(--sp-snap),opacity var(--d-2) var(--e-std),padding var(--d-snap) var(--sp-snap);flex:none}
-.dui-strip::-webkit-scrollbar{display:none}
+.dui-strip{display:flex;align-items:center;gap:6px;padding:0 12px;overflow-x:auto;overflow-y:hidden;height:0;opacity:0;transition:height var(--d-snap) var(--sp-snap),opacity var(--d-2) var(--e-std),padding var(--d-snap) var(--sp-snap);flex:none}
 .dui-strip.on{height:44px;opacity:1;padding-bottom:4px}
 .dui-pill{display:inline-flex;align-items:center;gap:2px;height:36px;padding:0 14px;border-radius:var(--r-full);border:1px solid var(--border);background:var(--surface);color:var(--text-2);font-size:13.5px;white-space:nowrap;flex:none;transition:background var(--d-1),color var(--d-1),border-color var(--d-1),transform var(--d-1) var(--e-std)}
 .dui-pill:active{transform:scale(.94)}
@@ -425,6 +430,13 @@
 .dui-set-press{transition:background var(--d-1)}
 .dui-set-press:hover{background:var(--surface-2)}
 .dui-set-go{color:var(--text-3);flex:none}
+/* A row that opens a list in place under it: its chevron turns down. */
+.dui-set-go .dui-i{transition:transform var(--d-3) var(--e-std)}
+.dui-set-go.on .dui-i{transform:rotate(90deg)}
+/* One of the choices it opens: under the row's title, the chosen ticked in the accent. */
+.dui-set-pick{min-height:44px;padding-left:58px}
+.dui-set-pick .dui-set-t{flex:1;min-width:0;font-weight:400}
+.dui-set-pick>.dui-i{color:var(--accent);flex:none}
 .dui-set-add{color:var(--accent);font-weight:550;font-size:14px;min-height:46px}
 .dui-set-add .dui-set-ic{background:var(--accent-soft);color:var(--accent)}
 .dui-set-note{font-size:13px;color:var(--text-3)}
@@ -535,8 +547,7 @@
 /* Zoomed, the picture is twice the size it fitted at, and its item
    scrolls to every part of it; auto margins centre it on a side where it
    still fits and keep its start in reach where it does not. */
-.dui-pv-item.zoomed{overflow:auto;place-items:start;scrollbar-width:none;touch-action:pan-x pan-y}
-.dui-pv-item.zoomed::-webkit-scrollbar{display:none}
+.dui-pv-item.zoomed{overflow:auto;place-items:start;touch-action:pan-x pan-y}
 .dui-pv-picture.zoom{width:var(--w);height:var(--h);max-width:none;max-height:none;margin:auto;cursor:grab}
 .dui-pv-picture.zoom.held{cursor:grabbing}
 .dui-pv-video{cursor:default}

@@ -364,6 +364,10 @@ pub fn App() -> Element {
     use_effect(move || {
         crate::capture::link().set_appearance(Appearance::from_settings(&settings.read()));
     });
+    // The microphone chosen in Settings, for the page and quick capture.
+    use_effect(move || {
+        crate::voice::choose_microphone(settings.read().microphone.clone());
+    });
 
     // The tray's menu, and the hotkey, which goes to quick capture. Both
     // are heard here, in the main window's root, which is there for as

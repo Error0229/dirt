@@ -725,23 +725,29 @@ fn CaptureBox(serial: u64) -> Element {
                     }
                 }
             }
-            textarea {
-                id: TEXT_ID,
-                class: "dk-capture-text",
-                hidden: listening.is_some(),
-                "aria-label": "Quick capture",
-                placeholder: "What\u{2019}s on your mind?",
-                spellcheck: "false",
-                readonly: view.shown != Shown::Open,
-                "data-dui-typed": typing.id(),
-                onkeydown: move |event: KeyboardEvent| {
-                    if puts_away(&event) {
-                        event.prevent_default();
-                        capture.put_away(Why::Key);
-                    }
-                },
-                onfocus: move |_| capture.focused(),
-                onmounted: move |_| dom::focus(&[TEXT], Caret::End),
+            div { class: "dk-capture-field", hidden: listening.is_some(),
+                textarea {
+                    id: TEXT_ID,
+                    class: "dk-capture-text",
+                    "aria-label": "Quick capture",
+                    placeholder: "What\u{2019}s on your mind?",
+                    spellcheck: "false",
+                    readonly: view.shown != Shown::Open,
+                    "data-dui-typed": typing.id(),
+                    // The drawn scrollbar, the next element (6.15).
+                    "data-dui-scroll": "",
+                    onkeydown: move |event: KeyboardEvent| {
+                        if puts_away(&event) {
+                            event.prevent_default();
+                            capture.put_away(Why::Key);
+                        }
+                    },
+                    onfocus: move |_| capture.focused(),
+                    onmounted: move |_| dom::focus(&[TEXT], Caret::End),
+                }
+                div { class: "dui-sb", "aria-hidden": "true",
+                    div { class: "dui-sb-thumb" }
+                }
             }
             {typing.carrier()}
         }

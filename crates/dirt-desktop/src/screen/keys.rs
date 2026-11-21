@@ -6,7 +6,7 @@
 //! on the screen passes through.
 
 use dioxus::prelude::*;
-use dirt_ui::components::Panel;
+use dirt_ui::components::{Panel, ScrollArea};
 use dirt_ui::dom::Caret;
 
 use super::{Screen, Where};
@@ -181,7 +181,7 @@ const KEYS: &[(&str, &str)] = &[
     ("Esc", "While listening: throw it away"),
     ("Esc", "Done with the note: a blank page"),
     ("Ctrl Enter", "Done, from the note"),
-    ("Ctrl N", "Done, from anywhere"),
+    ("Ctrl N", "New note, from anywhere: the + under the list"),
     ("Ctrl F", "Find"),
     ("Ctrl K", "Find"),
     ("/", "Find"),
@@ -229,7 +229,7 @@ pub fn KeysPanel() -> Element {
     };
     rsx! {
         Panel { open: open(), label: "Keys", on_close: close,
-            div { class: "dk-keys dui-scroll", "data-dui-scroll": "",
+            ScrollArea { class: "dk-keys-wrap", inner_class: "dk-keys",
                 h2 { "data-dui-rise": "", "Keys" }
                 table { "data-dui-rise": "",
                     tbody {
