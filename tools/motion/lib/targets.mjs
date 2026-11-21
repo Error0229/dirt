@@ -282,8 +282,9 @@ export async function pickDevice(serial, realPhone) {
 }
 
 /**
- * Reaches the Android app's web view: starts the app if it is not running,
- * finds its DevTools socket and forwards a local port to it.
+ * Reaches the Android app's web view: brings the app's main screen up by
+ * name (started, or brought to the front), finds its DevTools socket and
+ * forwards a local port to it.
  */
 export async function launchAndroid({ serial, realPhone = false, port, packageName = ANDROID_PACKAGE, log = () => {} }) {
   serial = await pickDevice(serial, realPhone);

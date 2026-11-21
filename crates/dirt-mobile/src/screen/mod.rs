@@ -70,9 +70,6 @@ const SAVE_AFTER: Duration = Duration::from_millis(400);
 /// How long a page takes to shrink back into its card (5.5). A note put
 /// away from its page is put away once it has.
 const CLOSE: Duration = Duration::from_millis(340);
-/// How long a note takes to grow out of its card (5.5): its field takes
-/// the keyboard then.
-const GROWN: Duration = Duration::from_millis(440);
 
 /// A thumbnail larger than this is not shown on a card.
 const MOST_THUMBNAIL_BYTES: u64 = 512 * 1024;
@@ -299,10 +296,11 @@ impl Screen {
             draft: Rc::clone(&draft),
         });
         self.app.current_note_id.set(Some(id));
-        // The keyboard rises once the note has grown out of its card
-        // (440 ms): rising, it resizes the web view, which held the
-        // movement's frames back (#322). A new page takes it at once.
-        self.focus_after(PAGE, Caret::End, GROWN);
+        // The keyboard rises once the note has grown out of its card, and
+        // only if the person has not put it somewhere meanwhile: the script
+        // gives it (`GrowPage`'s `focus`). Rising, it resizes the web view,
+        // which held the movement's frames back (#322). A new page takes it
+        // at once.
         spawn(async move {
             self.settled().await;
             let Some(store) = draft.borrow().store() else {
@@ -764,15 +762,10 @@ impl Screen {
     /// Gives the keyboard's focus to a field once the page has drawn it,
     /// unless the page has opened, closed or changed meanwhile.
     fn focus_soon(self, selector: &'static str, caret: Caret) {
-        self.focus_after(selector, caret, Duration::from_millis(30));
-    }
-
-    /// As [`Self::focus_soon`], after `wait`.
-    fn focus_after(self, selector: &'static str, caret: Caret, wait: Duration) {
         let page = |screen: Self| (screen.page.peek().serial, screen.page.peek().open);
         let before = page(self);
         spawn(async move {
-            tokio::time::sleep(wait).await;
+            tokio::time::sleep(Duration::from_millis(30)).await;
             if page(self) == before {
                 dom::focus(&[selector], caret);
             }

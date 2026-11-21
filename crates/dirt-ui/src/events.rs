@@ -60,7 +60,9 @@ pub enum Outcome {
     /// window carries it from here to where it goes (sections 5.5, 7.2).
     Away,
     /// Quick capture has finished leaving, or fading: its window can hide.
-    /// Listening has finished drawing how it ended: it can go.
+    /// Listening has finished drawing how it ended: it can go. A page that
+    /// grows ([`crate::components::GrowPage`]) has shrunk away after it
+    /// closed, and its field has let the keyboard go: it can be inert.
     Gone,
     /// A press on the mic began: listen now (section 6.18).
     Listen,

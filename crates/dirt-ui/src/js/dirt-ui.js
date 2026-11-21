@@ -714,6 +714,14 @@
   // (340 ms, or 320 ms into the bar, standard). Where that element is not
   // on screen it fades. The movement is a clip-path from the element's
   // rectangle to the screen.
+  //
+  // The keyboard (#322): a page with `data-dui-grow-focus` gives its field
+  // the keyboard once it has grown, unless the person has put it somewhere
+  // meanwhile (a word tapped, a file opened). Closing, its field keeps the
+  // keyboard until the page has gone; then the script blurs it and tells
+  // Rust (`gone`), which makes the page inert. Rising or going, the
+  // keyboard resizes the web view, which must not happen under the
+  // movement.
   const grows = new Map();
   // The right and bottom edges are measured from the page's own size as it
   // is at each frame (`100%`), not from the window's as it was when the
@@ -729,24 +737,57 @@
     const box = element.getBoundingClientRect();
     return box.bottom > 0 && box.top < innerHeight && box.width > 0 && box.height > 0;
   }
+  // Once it has grown: its field takes the keyboard, unless the person has
+  // given it to something on the page or in a dialog over it meanwhile.
+  function focusWhenGrown(page, run, ms) {
+    const selector = page.dataset.duiGrowFocus;
+    if (!selector) return;
+    after(run, ms, () => {
+      if (!page.classList.contains('on')) return;
+      const at = document.activeElement;
+      const taken = at && at !== document.body && at !== page
+        && (page.contains(at) || at.closest('[data-dui-modal].on'));
+      if (!taken) focus([selector], 'end');
+    });
+  }
   function growOpened(page, state) {
+    // Opened again on its way out (the bar tapped while a page closes): it
+    // grows on from the clip it has got to, not from the bar at once (rule
+    // 7 of 5.2). A circle, a page closing to its grain, cannot become an
+    // inset, so that one starts afresh. Known from the script's own state:
+    // Rust writes the whole class as it opens the page, `leaving` with it.
+    // Its bar and its text go on from where their own fade had got to.
+    const body = page.querySelector('[data-dui-grow-body]'), bar = page.querySelector('[data-dui-grow-bar]');
+    const was = state.leaving ? getComputedStyle(page).clipPath : '';
+    const fromNow = was.startsWith('inset(') ? was : null;
+    const opacityOf = element => (element ? parseFloat(getComputedStyle(element).opacity) : 1);
+    const barNow = fromNow ? opacityOf(bar) : 0, bodyNow = fromNow ? opacityOf(body) : 0;
+    state.leaving = false;
     state.runs.forEach(run => run.cancel());
     state.runs = [];
     page.classList.remove('leaving');
     const from = document.getElementById(page.dataset.duiFrom || '');
-    const body = page.querySelector('[data-dui-grow-body]'), bar = page.querySelector('[data-dui-grow-bar]');
+    const again = (element, now) => (element && now < 1
+      ? state.runs.push(element.animate([{ opacity: now }, { opacity: 1 }], { duration: 200, easing: tokens.standard })) : 0);
     if (reduced() || !onScreen(from)) {
-      state.runs.push(page.animate([{ opacity: 0 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 200, easing: tokens.standard }));
+      const ms = reduced() ? tokens.reducedMs : 200;
+      const run = page.animate([{ opacity: 0 }, { opacity: 1 }], { duration: ms, easing: tokens.standard });
+      state.runs.push(run);
+      focusWhenGrown(page, run, ms);
       return;
     }
     const whole = 'inset(0px 0px 0px 0px round 0px)';
     if (page.dataset.duiFromKind === 'bar') {
       const glide = spring('glide');
-      state.runs.push(page.animate([{ clipPath: clipOf(from) }, { clipPath: whole }], { duration: 560, easing: glide.easing }));
+      state.runs.push(page.animate([{ clipPath: fromNow || clipOf(from) }, { clipPath: whole }], { duration: 560, easing: glide.easing }));
+      if (fromNow) { again(bar, barNow); again(body, bodyNow); return; }
       if (bar) state.runs.push(bar.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, delay: 180, fill: 'backwards' }));
       return;
     }
-    state.runs.push(page.animate([{ clipPath: clipOf(from) }, { clipPath: whole }], { duration: 440, easing: tokens.enter }));
+    const run = page.animate([{ clipPath: fromNow || clipOf(from) }, { clipPath: whole }], { duration: 440, easing: tokens.enter });
+    state.runs.push(run);
+    focusWhenGrown(page, run, 440);
+    if (fromNow) { again(bar, barNow); again(body, bodyNow); return; }
     if (body) state.runs.push(body.animate([{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }],
       { duration: 380, delay: 60, easing: tokens.enter, fill: 'backwards' }));
     if (bar) state.runs.push(bar.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, delay: 120, fill: 'backwards' }));
@@ -756,6 +797,11 @@
     state.runs = [];
     // Drawn until it has gone; the style sheet hides a page without `on`.
     page.classList.add('leaving');
+    state.leaving = true;
+    // What its field held as it was let go: a key typed while it leaves is
+    // undone (below).
+    const field = page.querySelector('[data-dui-typed]');
+    if (field) field.duiLeftAs = field.value;
     const to = document.getElementById(page.dataset.duiFrom || '');
     const body = page.querySelector('[data-dui-grow-body]');
     let going, ms;
@@ -785,16 +831,31 @@
     after(going, ms, () => {
       if (page.classList.contains('on')) return;
       page.classList.remove('leaving');
+      state.leaving = false;
       state.runs.forEach(run => run.cancel());
       state.runs = [];
-      // Its field kept the keyboard while it shrank (`GrowPage` keeps it
-      // live a moment); now the keyboard goes.
+      // Its field kept the keyboard while it shrank; now the keyboard goes,
+      // and Rust makes the page inert and hidden from a screen reader.
       if (page.contains(document.activeElement)) document.activeElement.blur();
+      tell(page, 'gone');
     });
   }
-  // A page on its way out takes no more typing.
+  // A page on its way out takes no typing, though its field still has the
+  // keyboard: the page has been let go (Rust takes nothing more into it),
+  // so a key typed then is undone in the field, and not left there to be
+  // lost unseen. Typed text is stopped before it is inserted; a keyboard's
+  // composition (Gboard) cannot be stopped, so what it inserted is taken
+  // out again, before the page's own listener tells Rust of it.
+  const leavingField = target => (target && target.closest && target.closest('[data-dui-grow].leaving')
+    && target.matches && target.matches('[data-dui-typed]') ? target : null);
   document.addEventListener('beforeinput', event => {
-    if (event.target.closest && event.target.closest('[data-dui-grow].leaving')) event.preventDefault();
+    if (leavingField(event.target) && event.cancelable) event.preventDefault();
+  }, true);
+  document.addEventListener('input', event => {
+    const field = leavingField(event.target);
+    if (!field || typeof field.duiLeftAs !== 'string') return;
+    event.stopImmediatePropagation();
+    if (field.value !== field.duiLeftAs) field.value = field.duiLeftAs;
   }, true);
   function watchGrow(page) {
     if (grows.has(page)) return;
@@ -2164,6 +2225,9 @@
   // and one sideways goes to the next file. A picture zooms to twice its
   // size on a double click or a pinch.
   let previewStep = 1;
+  // An animation that has begun and not ended: running, or held (the motion
+  // check's stepped clock holds every animation it steps).
+  const unfinished = run => !!run && (run.playState === 'running' || run.playState === 'paused');
   const stageOf = modal => modal.querySelector('[data-dui-pv-stage]');
   const tileOf = modal => {
     const tile = document.getElementById(modal.dataset.duiFrom || '');
@@ -2198,6 +2262,14 @@
   // controls Android has hidden (`bare`) or a name not hovered stay
   // unseen.
   function fadeAround(modal, state, opening) {
+    // Each fades from what is on screen: where a fade is still running (a
+    // close straight after opening), from where it has got to; the
+    // backdrop of a preview swiped down, from where the finger left it.
+    const now = new Map();
+    for (const run of state.fades || []) {
+      const element = run.effect && run.effect.target;
+      if (element && unfinished(run)) now.set(element, parseFloat(getComputedStyle(element).opacity) || 0);
+    }
     (state.fades || []).forEach(run => run.cancel());
     const ms = reduced() ? tokens.reducedMs : 280;
     const bare = modal.classList.contains('bare');
@@ -2211,11 +2283,17 @@
     for (const [selector, shownAt] of parts) {
       const element = modal.querySelector(selector);
       if (!element) continue;
-      const at = shownAt === null ? parseFloat(getComputedStyle(element).opacity) || 0 : shownAt;
-      if (!at) continue;
-      const frames = opening ? [{ opacity: 0 }, { opacity: at }] : [{ opacity: at }, { opacity: 0 }];
+      const shownNow = shownAt === null ? parseFloat(getComputedStyle(element).opacity) || 0 : shownAt;
+      if (!shownNow) continue;
+      let from = opening ? 0 : shownNow;
+      if (now.has(element)) from = now.get(element);
+      else if (!opening && selector === '.dui-pv-scrim' && typeof modal.duiScrimAt === 'number') from = modal.duiScrimAt;
+      if (selector === '.dui-pv-scrim') element.style.opacity = '';
+      const frames = [{ opacity: from }, { opacity: opening ? shownNow : 0 }];
       state.fades.push(element.animate(frames, { duration: ms, easing: tokens.standard, fill: opening ? 'none' : 'forwards' }));
     }
+    delete modal.duiScrimAt;
+    return ms;
   }
   function previewOpened(modal, state) {
     modal.classList.remove('leaving', 'bare');
@@ -2260,10 +2338,18 @@
     // that, mostly scrolled away; and opens again unzoomed.
     const zoomed = modal.querySelector('img[data-dui-zoom].zoom');
     if (zoomed) zoom(zoomed, 0, 0, false, true);
+    // Closed while it still grows: it shrinks from where it has got to, its
+    // size and its opacity, not from the whole file at once (rule 7 of 5.2;
+    // the mockup starts from the item's transform too). Measured before the
+    // growing is let go, and the tile after it, from the stage at rest.
+    const growing = !!stage && unfinished(state.run);
+    const style = growing ? getComputedStyle(stage) : null;
+    const fromTransform = growing && style.transform !== 'none' ? style.transform : 'none';
+    const fromOpacity = growing ? parseFloat(style.opacity) : 1;
     if (state.run) state.run.cancel();
     modal.classList.add('leaving');
     if (!stage) { modal.classList.remove('leaving'); return; }
-    fadeAround(modal, state, false);
+    const fadeMs = fadeAround(modal, state, false);
     const finish = () => {
       if (modal.classList.contains('on')) return;
       modal.classList.remove('leaving');
@@ -2273,15 +2359,19 @@
     let run, ms;
     if (reduced() || !tile) {
       ms = reduced() ? tokens.reducedMs : 160;
-      run = stage.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.exit, fill: 'forwards' });
+      run = stage.animate([{ transform: fromTransform, opacity: fromOpacity }, { transform: fromTransform, opacity: 0 }], { duration: ms, easing: tokens.exit, fill: 'forwards' });
     } else {
       // It shrinks back into the tile (320 ms, standard).
       ms = 320;
-      run = stage.animate([{ transform: 'none', opacity: 1 }, { transform: towardsTile(stage, tile), opacity: 0.4 }],
+      run = stage.animate([{ transform: fromTransform, opacity: fromOpacity }, { transform: towardsTile(stage, tile), opacity: 0.4 }],
         { duration: ms, easing: tokens.standard, fill: 'forwards' });
     }
     state.run = run;
-    after(run, ms, () => { finish(); if (state.run === run) run.cancel(); });
+    // It is let go once both the file and what is around it have gone: with
+    // no tile in sight the file fades in 160 ms, and the backdrop was cut at
+    // a fifth of its fade.
+    const last = fadeMs > ms && state.fades.length ? state.fades[0] : run;
+    after(last, Math.max(ms, fadeMs), () => { finish(); if (state.run === run) run.cancel(); });
   }
   // A new file on the stage comes in from the side it was stepped to
   // (280 ms, enter); the same file, read, fades in where it was.
@@ -2493,10 +2583,18 @@
     const item = stageItem(swipe);
     previewGestured = !!mode;
     const scrim = modal.querySelector('.dui-pv-scrim');
+    const scrimAt = scrim && scrim.style.opacity !== '' ? parseFloat(scrim.style.opacity) : null;
+    const cancelled = event.type === 'touchcancel';
+    if (mode && item && !cancelled && mode === 'y' && d > 110) {
+      // It fades on from where the finger left the backdrop, which stays
+      // there until the closing takes it (or comes back, if it does not).
+      if (scrimAt !== null) modal.duiScrimAt = scrimAt;
+      tell(modal, 'dismiss');
+      setTimeout(() => { item.style.transform = ''; if (scrim) scrim.style.opacity = ''; }, 400);
+      return;
+    }
     if (scrim) scrim.style.opacity = '';
     if (!mode || !item) return;
-    const cancelled = event.type === 'touchcancel';
-    if (!cancelled && mode === 'y' && d > 110) { tell(modal, 'dismiss'); setTimeout(() => { item.style.transform = ''; }, 400); return; }
     const several = modal.querySelectorAll('.dui-pv-dots i').length > 1;
     if (!cancelled && mode === 'x' && Math.abs(d) > 70 && several) {
       item.style.transform = '';

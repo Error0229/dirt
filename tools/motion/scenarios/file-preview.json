@@ -50,6 +50,18 @@
         "curve": false,
         "because": "design 5.5: the file grows out of its tile (420 ms, enter) and shrinks back into it (320 ms, standard), the backdrop fading with it"
       }
+    },
+    {
+      "name": "close-at-once",
+      "description": "Opened and closed again straight away: the backdrop fades back from where it had got to, and never turns dark first (design 5.8).",
+      "platforms": ["desktop", "android"],
+      "steps": [
+        { "click": { "desktop": ".dk-files .dui-file-main", "android": ".dm-page .dui-file-main" }, "then": 120 },
+        { "platforms": ["desktop"], "key": "Escape" },
+        { "platforms": ["android"], "tap": ".dui-preview button[aria-label='Close']" }
+      ],
+      "leaves": ["preview", "backdrop", "file", "picture", "bar"],
+      "ms": 1400
     }
   ]
 }

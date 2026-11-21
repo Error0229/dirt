@@ -19,7 +19,7 @@
 
 use dioxus::prelude::*;
 use dirt_core::sync::overview::SyncIndicator;
-use dirt_ui::components::{GrowPage, IconButton, Listening, MicButton, ScrollArea};
+use dirt_ui::components::{GrowFrom, GrowPage, IconButton, Listening, MicButton, ScrollArea};
 use dirt_ui::events::{use_outcome, Outcome};
 use dirt_ui::files::FileTiles;
 use dirt_ui::typing::use_typing;
@@ -73,6 +73,9 @@ pub fn Page() -> Element {
             from: view.from.clone(),
             label: if view.new_page { "New note" } else { "Note" },
             on_back: move |()| screen.done(),
+            // A note opened from its card takes the keyboard once it has
+            // grown (5.8); a new page takes it at once, from Rust.
+            focus: matches!(view.from, GrowFrom::Card(_)).then(|| "#dm-text".to_owned()),
             class: "dm-page",
             div {
                 class: if talking.is_some() { "dm-page-in talking" } else { "dm-page-in" },

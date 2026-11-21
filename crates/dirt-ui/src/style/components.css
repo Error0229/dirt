@@ -367,6 +367,10 @@
    visibility not worked out afresh once the clip had run. */
 .dui-grow{position:fixed;inset:0;z-index:500;background:var(--surface);display:none;flex-direction:column}
 .dui-grow.on,.dui-grow.leaving{display:flex}
+/* On its way out it is still drawn, and live, so that its field keeps the
+   keyboard until it has gone; a tap goes through it to what it is closing
+   onto: the bar, for the next thought, or a card (#322). */
+.dui-grow.leaving{pointer-events:none}
 
 /* ---- Pulling a list down to sync (Android, 5.5) --------------------------- */
 .dui-pull{position:relative;min-height:100%;will-change:transform}

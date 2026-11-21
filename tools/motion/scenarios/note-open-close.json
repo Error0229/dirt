@@ -84,6 +84,22 @@
         "curve": false,
         "because": "design 5.5: on Android the note grows out of its card (440 ms, enter) and shrinks back into it (340 ms, standard); on the desktop a note let go only fades, by design, so nothing there is meant to mirror"
       }
+    },
+    {
+      "name": "open-again",
+      "description": "The second note is opened again, for the next movement.",
+      "platforms": ["android"],
+      "steps": [{ "tap": ".dm-list .dui-card-in", "index": 1 }],
+      "ms": 1200
+    },
+    {
+      "name": "done-then-bar",
+      "description": "Done, and at once the bar, for the next thought (design 5.8, checklist A31): the page on its way out lets the tap through, and a new page opens out of the bar. It is then let go empty.",
+      "platforms": ["android"],
+      "steps": [{ "tap": ".dm-page-bar button[aria-label='Done']", "then": 120 }, { "tap": ".dm-bar" }],
+      "arrives": ["page"],
+      "after": [{ "tap": ".dm-page-bar button[aria-label='Done']", "then": 1200 }],
+      "ms": 1400
     }
   ]
 }
