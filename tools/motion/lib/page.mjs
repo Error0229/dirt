@@ -42,11 +42,33 @@ function install(version) {
   }
   // A clip-path of inset() or circle() cuts what is seen of a box; Android's
   // note page grows by nothing else. The box returned is what is left.
+  // A length may be `calc()` of pixels and percentages, as the app's clip
+  // is (its far edges are `calc(100% - Npx)`, which follow the page's size).
+  function length(text, whole) {
+    if (text.startsWith('calc(')) {
+      const sum = text.slice(5, -1).replace(/(-?[\d.]+(?:e[+-]?\d+)?)%/g, (_, n) => String((parseFloat(n) / 100) * whole)).replace(/px/g, '');
+      let total = 0;
+      for (const [, sign, n] of sum.matchAll(/([+-])?\s*(-?[\d.]+(?:e[+-]?\d+)?)/g)) total += (sign === '-' ? -1 : 1) * parseFloat(n);
+      return total;
+    }
+    return text.endsWith('%') ? (parseFloat(text) / 100) * whole : parseFloat(text) || 0;
+  }
+  // The words of a shape's arguments, keeping `calc(...)` whole.
+  function words(text) {
+    const out = [];
+    let depth = 0, word = '';
+    for (const c of text.trim()) {
+      if (c === '(') depth++;
+      if (c === ')') depth--;
+      if (/\s/.test(c) && depth === 0) { if (word) out.push(word); word = ''; } else word += c;
+    }
+    if (word) out.push(word);
+    return out;
+  }
   function clipped(box, clip) {
-    const length = (text, whole) => (text.endsWith('%') ? (parseFloat(text) / 100) * whole : parseFloat(text) || 0);
-    let found = clip.match(/^inset\(([^)]*?)(?:\s+round\s+[^)]*)?\)$/);
+    let found = clip.startsWith('inset(') && clip.endsWith(')') ? [null, clip.slice(6, -1).split(/\s+round\s+/)[0]] : null;
     if (found) {
-      const v = found[1].trim().split(/\s+/);
+      const v = words(found[1]);
       const [t, r, b, l] = [v[0], v[1] ?? v[0], v[2] ?? v[0], v[3] ?? v[1] ?? v[0]];
       const top = length(t, box.height), right = length(r, box.width), bottom = length(b, box.height), left = length(l, box.width);
       return { left: box.left + left, top: box.top + top, width: Math.max(0, box.width - left - right), height: Math.max(0, box.height - top - bottom) };
@@ -370,5 +392,5 @@ function install(version) {
 
 // Changed whenever what runs in the page changes, so that a page that kept
 // an older one takes this one.
-const VERSION = 4;
+const VERSION = 5;
 export const installSource = `(${install.toString()})(${VERSION})`;

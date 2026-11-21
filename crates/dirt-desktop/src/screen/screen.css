@@ -34,10 +34,20 @@
 .dk-col[data-from="below"] .dk-files{animation:dk-from-below var(--d-snap) var(--sp-snap) 50ms backwards}
 .dk-col[data-from="above"] .dk-text{animation:dk-from-above var(--d-snap) var(--sp-snap)}
 .dk-col[data-from="above"] .dk-files{animation:dk-from-above var(--d-snap) var(--sp-snap) 50ms backwards}
+/* With no way to come from (the blank page before it, or a note not in
+   the list), it fades in where it is, as the mockup's does (#322). */
+.dk-col:is([data-from="blank"],[data-from="here"]) .dk-text{animation:dk-fade-in var(--d-snap) var(--sp-snap)}
+.dk-col:is([data-from="blank"],[data-from="here"]) .dk-files{animation:dk-fade-in var(--d-snap) var(--sp-snap) 50ms backwards}
 @keyframes dk-from-below{from{transform:translateY(18px);opacity:.4}}
 @keyframes dk-from-above{from{transform:translateY(-18px);opacity:.4}}
-:root[data-motion="reduced"] .dk-col .dk-text,:root[data-motion="reduced"] .dk-col .dk-files{animation:none}
-@media (prefers-reduced-motion:reduce){.dk-col .dk-text,.dk-col .dk-files{animation:none}}
+@keyframes dk-fade-in{from{opacity:0}}
+/* Between the blank page and a note, the gutter's icons that come (✓ and
+   the box, or the mic) pop in from 60%; the paperclip, on both, stays. The
+   mockup's do the same. From one note to another nothing changes there. */
+.dk-col[data-from="blank"] .dk-gutter>:not(.dk-stays),.dk-col.blank .dk-gutter>:not(.dk-stays){animation:dk-act-in var(--d-snap) var(--sp-snap) backwards}
+@keyframes dk-act-in{from{opacity:0;transform:scale(.6)}}
+:root[data-motion="reduced"] .dk-col .dk-text,:root[data-motion="reduced"] .dk-col .dk-files,:root[data-motion="reduced"] .dk-col .dk-gutter>*{animation:none}
+@media (prefers-reduced-motion:reduce){.dk-col .dk-text,.dk-col .dk-files,.dk-col .dk-gutter>*{animation:none}}
 
 /* ---- Listening (6.18): the page itself listens. Nothing is written; the
    grains, the timer, ✕ and ✓ are at its bottom. The mic stays in the

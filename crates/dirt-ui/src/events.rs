@@ -60,7 +60,9 @@ pub enum Outcome {
     /// window carries it from here to where it goes (sections 5.5, 7.2).
     Away,
     /// Quick capture has finished leaving, or fading: its window can hide.
-    /// Listening has finished drawing how it ended: it can go.
+    /// Listening has finished drawing how it ended: it can go. A page that
+    /// grows ([`crate::components::GrowPage`]) has shrunk away after it
+    /// closed, and its field has let the keyboard go: it can be inert.
     Gone,
     /// A press on the mic began: listen now (section 6.18).
     Listen,
@@ -80,12 +82,17 @@ pub struct Message {
     pub id: String,
     /// How it ended.
     pub kind: Outcome,
+    /// Which closing of a page that grows has gone ([`Outcome::Gone`]), as
+    /// the page named it (`data-dui-closing`): one from an earlier closing
+    /// must not end a later one.
+    #[serde(default)]
+    pub closing: Option<u64>,
 }
 
 /// Who is listening for which element. [`crate::UiRoot`] provides one.
 #[derive(Clone, Copy)]
 pub struct Bus {
-    listeners: CopyValue<HashMap<String, Callback<Outcome>>>,
+    listeners: CopyValue<HashMap<String, Callback<Message>>>,
     received: Signal<u64>,
 }
 
@@ -97,7 +104,7 @@ impl Bus {
         }
     }
 
-    fn listen(mut self, listener: Callback<Outcome>) -> String {
+    fn listen(mut self, listener: Callback<Message>) -> String {
         // Never used twice in the process: the desktop's two windows each
         // have a root, and an ID names one element in one of them.
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -118,7 +125,7 @@ impl Bus {
         *self.received.write() += 1;
         let listener = self.listeners.read().get(&message.id).copied();
         if let Some(listener) = listener {
-            listener.call(message.kind);
+            listener.call(message.clone());
         }
     }
 
@@ -135,7 +142,13 @@ impl Bus {
 ///
 /// Outside a [`crate::UiRoot`] nothing is heard, and the ID is empty.
 pub fn use_outcome(mut on_outcome: impl FnMut(Outcome) + 'static) -> String {
-    let listener = use_callback(move |outcome: Outcome| on_outcome(outcome));
+    use_message(move |message| on_outcome(message.kind))
+}
+
+/// As [`use_outcome`], with the whole message: what it says besides how it
+/// ended ([`Message::closing`]).
+pub fn use_message(mut on_message: impl FnMut(Message) + 'static) -> String {
+    let listener = use_callback(move |message: Message| on_message(message));
     let bus = try_use_context::<Bus>();
     let id = use_hook(|| bus.map(|bus| bus.listen(listener)).unwrap_or_default());
     use_drop({
@@ -154,3 +167,19 @@ pub fn use_outcome(mut on_outcome: impl FnMut(Outcome) + 'static) -> String {
 /// lives as long as its page.
 pub(crate) const CONNECT: &str =
     "DirtUi.connect(message => dioxus.send(message)); await new Promise(() => {});";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_message_names_its_closing_only_when_it_has_one() {
+        let plain: Message = serde_json::from_str(r#"{"id":"dui-1","kind":"back"}"#).unwrap();
+        assert_eq!(plain.kind, Outcome::Back);
+        assert_eq!(plain.closing, None);
+        let gone: Message =
+            serde_json::from_str(r#"{"id":"dui-1","kind":"gone","closing":3}"#).unwrap();
+        assert_eq!(gone.kind, Outcome::Gone);
+        assert_eq!(gone.closing, Some(3));
+    }
+}

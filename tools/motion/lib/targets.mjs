@@ -255,6 +255,8 @@ export async function dirtIsRunning() {
 // ---- Android -------------------------------------------------------------
 
 export const ANDROID_PACKAGE = 'com.example.DirtMobile';
+/** The app's main screen (Dioxus's activity); `--package` names another app with the same. */
+export const ANDROID_ACTIVITY = 'dev.dioxus.main.MainActivity';
 
 export function adb(serial, ...args) {
   return run('adb', ['-s', serial, ...args], { maxBuffer: 64 * 1024 * 1024, windowsHide: true }).then(result => result.stdout);
@@ -280,18 +282,21 @@ export async function pickDevice(serial, realPhone) {
 }
 
 /**
- * Reaches the Android app's web view: starts the app if it is not running,
- * finds its DevTools socket and forwards a local port to it.
+ * Reaches the Android app's web view: brings the app's main screen up by
+ * name (started, or brought to the front), finds its DevTools socket and
+ * forwards a local port to it.
  */
 export async function launchAndroid({ serial, realPhone = false, port, packageName = ANDROID_PACKAGE, log = () => {} }) {
   serial = await pickDevice(serial, realPhone);
-  let pid = (await adb(serial, 'shell', 'pidof', packageName).catch(() => '')).trim();
-  if (!pid) {
-    log(`starting ${packageName} on ${serial}`);
-    await adb(serial, 'shell', 'monkey', '-p', packageName, '-c', 'android.intent.category.LAUNCHER', '1');
-    for (let i = 0; i < 40 && !pid; i++) { await sleep(500); pid = (await adb(serial, 'shell', 'pidof', packageName).catch(() => '')).trim(); }
-    if (!pid) throw new Error(`${packageName} did not start on ${serial}`);
-  }
+  // The main screen, by name, whether or not the process runs: the app has
+  // two launcher entries (Talk is the other), of which `monkey` picked
+  // either, and its process also runs without the screen (a capture job),
+  // when it has no web view to find.
+  log(`bringing ${packageName}'s main screen up on ${serial}`);
+  await adb(serial, 'shell', 'am', 'start', '-W', '-n', `${packageName}/${ANDROID_ACTIVITY}`);
+  let pid = '';
+  for (let i = 0; i < 40 && !pid; i++) { pid = (await adb(serial, 'shell', 'pidof', packageName).catch(() => '')).trim(); if (!pid) await sleep(500); }
+  if (!pid) throw new Error(`${packageName} did not start on ${serial}`);
   pid = pid.split(/\s+/)[0];
   let socket = null;
   for (let i = 0; i < 40 && !socket; i++) {

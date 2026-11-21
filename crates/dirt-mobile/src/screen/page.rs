@@ -19,7 +19,7 @@
 
 use dioxus::prelude::*;
 use dirt_core::sync::overview::SyncIndicator;
-use dirt_ui::components::{GrowPage, IconButton, Listening, MicButton, ScrollArea};
+use dirt_ui::components::{GrowFrom, GrowPage, IconButton, Listening, MicButton, ScrollArea};
 use dirt_ui::events::{use_outcome, Outcome};
 use dirt_ui::files::FileTiles;
 use dirt_ui::typing::use_typing;
@@ -73,6 +73,9 @@ pub fn Page() -> Element {
             from: view.from.clone(),
             label: if view.new_page { "New note" } else { "Note" },
             on_back: move |()| screen.done(),
+            // A note opened from its card takes the keyboard once it has
+            // grown (5.8); a new page takes it at once, from Rust.
+            focus: matches!(view.from, GrowFrom::Card(_)).then(|| "#dm-text".to_owned()),
             class: "dm-page",
             div {
                 class: if talking.is_some() { "dm-page-in talking" } else { "dm-page-in" },
@@ -88,10 +91,15 @@ pub fn Page() -> Element {
                     role: "toolbar",
                     "aria-label": "The note",
                     "data-dui-grow-bar": "",
-                    IconButton {
-                        icon: if view.new_page { Icon::ChevronDown } else { Icon::ChevronLeft },
-                        label: "Done",
-                        onclick: move |_| screen.done(),
+                    // Pressed, Done leaves the keyboard with the field
+                    // until the page has closed (`GrowPage`), so that the
+                    // web view is not resized under the movement (#322).
+                    span { class: "dm-done", "data-dui-keep-focus": "",
+                        IconButton {
+                            icon: if view.new_page { Icon::ChevronDown } else { Icon::ChevronLeft },
+                            label: "Done",
+                            onclick: move |_| screen.done(),
+                        }
                     }
                     span { class: "dm-grow" }
                     if crate::voice::offered() {

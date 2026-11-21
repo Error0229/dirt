@@ -20,6 +20,8 @@ const PAGE = `<!doctype html><meta charset="utf-8"><style>
   #inner{position:absolute;left:150px;top:0;width:40px;height:40px;background:green}
   #shape{position:absolute;left:0;top:400px;width:200px;height:100px;clip-path:inset(0px 100px 0px 0px)}
   #shaped{width:200px;height:100px;background:teal}
+  #calc{position:absolute;left:250px;top:400px;width:200px;height:100px;clip-path:inset(0px calc(100% - 50px) 0px 0px round 8px)}
+  #calced{width:200px;height:100px;background:olive}
   .box{position:absolute;width:100px;height:100px}
   #a{left:500px;top:0;background:#aaa}#b{left:550px;top:50px;background:#bbb}
   #c{left:500px;top:300px;background:#ccc}#d{left:550px;top:350px;background:#ddd}
@@ -28,6 +30,7 @@ const PAGE = `<!doctype html><meta charset="utf-8"><style>
 <div id="running"></div>
 <div id="scroller"><div id="fixed"></div><div id="inner"></div></div>
 <div id="shape"><div id="shaped"></div></div>
+<div id="calc"><div id="calced"></div></div>
 <div class="box" id="a"></div><div class="box" id="b"></div>
 <div class="box" id="c"></div><div class="box" id="d"></div><div id="cover"></div>
 <script>window.started = document.getElementById('running').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 1000 });</script>`;
@@ -73,6 +76,11 @@ test('the clock and the probe in a real page', { skip: !browserFound && 'no Edge
     await t.test('an ancestor\'s clip-path cuts what is seen', async () => {
       const { parts } = await cdp.evaluate(`__motion.probe({ shaped: '#shaped' })`);
       assert.equal(parts.shaped[0].seen, 0.5);
+    });
+
+    await t.test('a clip whose edges are calc() of the box and pixels cuts too', async () => {
+      const { parts } = await cdp.evaluate(`__motion.probe({ calced: '#calced' })`);
+      assert.equal(parts.calced[0].seen, 0.25);
     });
 
     await t.test('two parts are seen over one another unless something covers both', async () => {

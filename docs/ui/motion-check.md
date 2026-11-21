@@ -115,6 +115,13 @@ From that, `tools/motion/lib/analyse.mjs` finds:
 - **a part that should have left** (`leaves`): still drawn at the end, or
   gone from sight but still taking the pointer. With it, when each part was
   last drawn. Also **a part that should have arrived** (`arrives`);
+- **a part that stops on the way** (`straight`): on x, y, w or h it
+  slows down away from both its ends and then picks up speed again. One
+  movement, on a curve or a spring, only slows once it has reached its top
+  speed; one that speeds up again was sent somewhere else on the way. It
+  is judged on the stepped frames and in real time, since a smooth
+  scroll, which a part may follow, runs only on the real clock. Settings'
+  rail highlight walked through every section the scroll passed (#321);
 - **a closing against the opening it is meant to mirror** (`mirrors`),
   only where the scenario declares it from the design, for the parts and
   channels it names. For each, it gives how long each took, and where the
@@ -198,7 +205,10 @@ how often the page drew while idle and says in the report whether real time
 can be judged. Off the screen, with the flags above, WebView2 drew at
 56–57 frames a second on a 60 Hz laptop.
 
-**Android: the emulator.** The tool starts the app if it is not running.
+**Android: the emulator.** The tool brings the app's main screen up by
+name (`dev.dioxus.main.MainActivity`), running or not: the app has a second
+launcher entry, Talk, and its process also runs without its screen, for a
+capture job.
 It finds the web view's DevTools socket (`webview_devtools_remote_<pid>`)
 and forwards a local port to it from 9591. A debug build is debuggable,
 because wry calls `WebView.setWebContentsDebuggingEnabled` when
@@ -281,6 +291,7 @@ mockups) and `default`.
   - `steps`: its input;
   - `ms`: the longest it may take;
   - `leaves` and `arrives`, as above;
+  - `straight`: the parts that should go straight to where they end, as above;
   - `mirrors`: `of` (the opening), `parts` (part → channels, or per platform),
     `curve` (whether the curve too is meant to be the opening's reversed, or
     only where it goes) and `because` (the design's words, with the section);
@@ -314,6 +325,20 @@ mockups) and `default`.
 All pointer and key input goes through DevTools' `Input` domain into the
 test app's own web view, as a hand would give it. Nothing reaches the
 person's screen, keyboard or mouse.
+
+**A picture on the emulator.** `pastePicture` is the desktop's paste;
+Android has none. `file-preview` on Android needs its newest note to hold a
+picture, made by sharing one to the app. A debug build lets `run-as` put
+the file where the app's own `FileProvider` lends from, which the app can
+read without a grant (a picture in the emulator's media store it cannot):
+
+```bash
+adb -s emulator-5554 push garden.png /data/local/tmp/garden.png
+adb -s emulator-5554 shell "run-as com.example.DirtMobile sh -c 'mkdir -p files/dirt/opened && cat /data/local/tmp/garden.png > files/dirt/opened/garden.png'"
+adb -s emulator-5554 shell am start -W -a android.intent.action.SEND -t image/png   --eu android.intent.extra.STREAM content://com.example.DirtMobile.files/opened/garden.png   -n com.example.DirtMobile/dev.dioxus.main.MainActivity
+```
+
+(In Git Bash, set `MSYS_NO_PATHCONV=1` and give `push` a Windows path.)
 
 **Never press a file tile's buttons.** The first opens the file in another
 app, on the person's screen. Open the preview by `.dui-file-main`.
@@ -409,4 +434,5 @@ be seen.
 | Real-time stamps | WebView2 counted `requestAnimationFrame`'s timestamps from another origin than `performance.now()`, 12.7 s apart. The recorder moves them onto `performance.now()` once, at the first frame |
 | A page that outlives a run | Android's web view keeps what an earlier run installed. The page script carries a version and replaces an older one |
 | What mirrors what | A first version compared every closing with its opening reversed. Where the design means them to differ (Settings shrinks into the gear on the exit curve; the desktop's note only fades) that was noise, so a scenario declares what is meant to mirror, from the design, and the rest is compared with the mockup alone |
+| Waiting for the page | The desktop's web view is found as soon as it exists. Twice a run read the window's size before the app had placed it and installed the page script into a document the app then replaced (`__motion is not defined`), so a run now waits until the page has loaded, the app has drawn into its root and the size has held for 600 ms |
 | A cut at the input | The frame before the input is kept and compared with the first, so a part the input itself switches on or off (the preview's backdrop) is a pop, and a part drawn only before the input "went at once" |

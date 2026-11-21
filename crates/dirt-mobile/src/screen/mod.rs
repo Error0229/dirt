@@ -296,7 +296,11 @@ impl Screen {
             draft: Rc::clone(&draft),
         });
         self.app.current_note_id.set(Some(id));
-        self.focus_soon(PAGE, Caret::End);
+        // The keyboard rises once the note has grown out of its card, and
+        // only if the person has not put it somewhere meanwhile: the script
+        // gives it (`GrowPage`'s `focus`). Rising, it resizes the web view,
+        // which held the movement's frames back (#322). A new page takes it
+        // at once.
         spawn(async move {
             self.settled().await;
             let Some(store) = draft.borrow().store() else {
@@ -558,13 +562,14 @@ impl Screen {
         Some(id)
     }
 
-    /// Closes the page into `into`, and puts the keyboard away.
+    /// Closes the page into `into`. The keyboard goes once it has closed:
+    /// the page keeps its focus until then (`GrowPage`), so that the web
+    /// view is not resized under the movement (#322).
     fn close_page(mut self, into: GrowFrom) {
         if let GrowFrom::Card(card) | GrowFrom::Grain(card) = &into {
             // Into its card wherever it is now, which is in sight.
             dom::reveal(card);
         }
-        dom::blur();
         {
             let mut page = self.page.write();
             page.open = false;

@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { launchDesktop, launchAndroid, launchMockup, launchHeadless, runCleanups, onCleanup, dirtIsRunning } from './lib/targets.mjs';
 import { prepare, sendSteps, partsFor, cropFor, scaleFor, captureStepped, captureRealtime, measureFrameRate, pick, writes } from './lib/capture.mjs';
 import {
-  findPops, findOutside, findOverlaps, findLingering, findMissing, compareMirror, compareWithMockup,
+  findPops, findOutside, findOverlaps, findLingering, findMissing, findStops, compareMirror, compareWithMockup,
   frameIntervals, activeSpans, traceTiming, tracksOf, movingWindow, CHANNELS, round, when, contradictedInRealTime,
 } from './lib/analyse.mjs';
 import { contactSheets, sideBySide, video, nearest, removeFrames } from './lib/sheets.mjs';
@@ -197,6 +197,8 @@ function summarise(movements, { platform, trust }) {
       for (const o of f.overlaps) add(o.stacking ? 2 : 3, `**${m.name}**: \`${o.a}\` and \`${o.b}\` are ${o.stacking ? 'seen over one another' : 'boxed over one another (what is on top could not be told)'} from ${when(o.from)} to ${when(o.until)} (${sheetAt(o.from)})`);
       for (const o of f.outside) add(2, `**${m.name}**: \`${o.part}\` reaches ${o.worst} px past \`${o.container}\` from ${when(o.from)} to ${when(o.until)} (${sheetAt(o.from)})`);
       for (const a of f.missing) add(1, `**${m.name}**: \`${a.part}\` is ${a.detail}`);
+      for (const s of f.stops || []) add(2, `**${m.name}**: \`${s.key}\` should go straight to where it ends, but ${s.detail} (${sheetAt(s.t)})`);
+      for (const s of f.realtimeStops || []) add(2, `**${m.name}** in real time: \`${s.key}\` should go straight to where it ends, but ${s.detail}`);
     }
     for (const r of m.mirror || []) {
       if (r.note) add(2, `**${m.name}** against **${m.mirrorOf}**: \`${r.key}\` ${r.channel} ${r.note} (meant to mirror: ${m.mirrorBecause})`);
@@ -304,11 +306,13 @@ async function runScenario(args) {
           overlaps: findOverlaps(frames, checks.apart || []),
           lingering: findLingering(frames, listFor(movement.leaves, platform)),
           missing: findMissing(frames, listFor(movement.arrives, platform)),
+          stops: findStops(frames, listFor(movement.straight, platform)),
         };
         for (const p of findings.pops) flag(frames, p.t, `pop: ${p.key} ${p.channel || p.kind}${p.atInput ? ' at the input' : ''}`);
         for (const o of findings.outside) flag(frames, o.from, `${o.part} outside ${o.container} by ${o.worst}px until ${o.until}`);
         for (const o of findings.overlaps) flag(frames, o.from, `${o.a} over ${o.b} until ${o.until}${o.stacking ? '' : ' (boxes)'}`);
         for (const l of findings.lingering) if (!l.ok) flag(frames, l.t, `${l.part}: ${l.kind}`);
+        for (const s of findings.stops) flag(frames, s.t, `${s.key} stops on the way`);
         for (const a of stepped.seen || []) if (a.born > 0) flag(frames, a.born, `starts: ${a.what.replace('CSSTransition ', '').replace('Animation', 'anim')} on ${a.on.split('.').slice(0, 2).join('.')}`, 'notes');
         out.findings = findings;
         const scrolled = [...tracksOf(frames).values()].some(track => movingWindow(track, 'scroll'));
@@ -373,6 +377,9 @@ async function runScenario(args) {
         }
         if (out.findings) {
           out.findings.realtimePops = findPops(samples.filter(s => s.t <= until), { ...checks.pops, px: (checks.pops?.px || 24) * 2 });
+          // A smooth scroll runs only on the real clock: what follows it is
+          // judged here too.
+          out.findings.realtimeStops = findStops(samples.filter(s => s.t <= until), listFor(movement.straight, platform));
           // A part the stepped frames saw vanish that real time still draws
           // went early because a timer on the app's real clock took it.
           for (const pop of out.findings.pops) {

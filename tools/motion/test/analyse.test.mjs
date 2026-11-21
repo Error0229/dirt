@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   tracksOf, valueOf, findPops, findOutside, findOverlaps, findLingering, findMissing, beyond,
   movingWindow, progressCurve, sampleCurve, curveDistance, compareMirror, compareWithMockup,
-  frameIntervals, activeSpans, traceTiming, parseFramestats, parseShowinfo, indexedParts, when, contradictedInRealTime,
+  frameIntervals, activeSpans, traceTiming, parseFramestats, parseShowinfo, indexedParts, when, contradictedInRealTime, findStops,
 } from '../lib/analyse.mjs';
 import { mergeRows, trustOf } from '../lib/report.mjs';
 import { columnsFor } from '../lib/sheets.mjs';
@@ -323,4 +323,23 @@ test('writes: the steps refused on a real phone without --allow-writes', () => {
   assert.equal(writes({ tap: '.archive', writes: true }), true);
   assert.equal(writes({ tap: "button[aria-label='Settings']" }), false);
   assert.equal(writes({ key: 'Escape' }), false);
+});
+
+test('stops: a part that halts on the way and sets off again, not one that eases in or swings past its end', () => {
+  const y = v => box(0, v, 10, 10);
+  // Two steps of a walk: 0 to 34, a halt, then on to 68.
+  const walk = along([0, 10, 22, 30, 33, 34, 34, 34, 34, 44, 56, 64, 67, 68, 68], y);
+  const [found] = findStops(walk, ['a']);
+  assert.equal(found.channel, 'y');
+  assert.equal(found.stops.length, 1);
+  assert.equal(found.stops[0].v, 34);
+  // The rail's highlight as measured in real time (#321), at uneven times.
+  const rail = [[72, 141.8], [90, 193.8], [108, 158.9], [125, 150.8], [142, 146.8], [160, 161.4], [179, 186.5], [196, 194.5], [213, 198.8], [231, 201.8], [249, 203.8], [266, 224.1], [284, 230.8], [302, 234.7], [338, 238.9], [391, 241.8], [462, 243.4], [533, 243.8]]
+    .map(([t, v]) => frame(t, { a: [y(v)] }));
+  assert.equal(findStops(rail, ['a'])[0].stops[0].v, 203.8);
+  // Straight there on an ease-out, and a spring that swings 2% past its end.
+  assert.deepEqual(findStops(along([0, 30, 52, 66, 75, 80, 83, 84.5, 85], y), ['a']), []);
+  assert.deepEqual(findStops(along([0, 40, 80, 96, 102, 101, 100, 100], y), ['a']), []);
+  // Only the parts named.
+  assert.deepEqual(findStops(walk, ['b']), []);
 });

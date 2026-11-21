@@ -226,6 +226,66 @@ export function contradictedInRealTime(pop, steppedFrames, samples, { slack = 10
   return lastDrawn !== null && lastDrawn - answeredAt > pop.t + slack;
 }
 
+/**
+ * Stops on the way: a part that should go straight to where it ends
+ * (`straight`), on each of x, y, w and h, slows down somewhere away from
+ * both its ends and then picks up speed again. A single movement, on a
+ * curve or a spring, only slows once it has reached its top speed; one
+ * that speeds up again was sent somewhere else on the way. A spring that
+ * swings past its end and back is not one: the slow point must be away
+ * from both ends. Settings' rail highlight walked through every section
+ * the scroll passed (#321), halting on each. Frames may come at uneven
+ * times (real time), so speed is change per ms.
+ */
+export function findStops(frames, parts, { slow = 0.3, again = 0.25, rise = 3, margin = 0.15 } = {}) {
+  const out = [];
+  const tracks = tracksOf(frames);
+  for (const [key, track] of tracks) {
+    if (!parts.includes(key.replace(/\[\d+\]$/, ''))) continue;
+    for (const channel of ['x', 'y', 'w', 'h']) {
+      const window = movingWindow(track, channel);
+      if (!window) continue;
+      const travel = window.end - window.start;
+      if (Math.abs(travel) < LEAST[channel]) continue;
+      const points = [];
+      for (let i = window.fromIndex; i <= window.toIndex; i++) {
+        const v = valueOf(track[i].s, channel);
+        if (v !== null) points.push({ t: track[i].t, v });
+      }
+      const speeds = [];
+      for (let i = 1; i < points.length; i++) {
+        const dt = points[i].t - points[i - 1].t;
+        if (dt > 0) speeds.push({ t: points[i].t, v: points[i].v, speed: Math.abs(points[i].v - points[i - 1].v) / dt });
+      }
+      const top = Math.max(0, ...speeds.map(s => s.speed));
+      if (!top) continue;
+      // Away from both ends, as a share of the whole way.
+      const away = v => {
+        const share = (v - window.start) / travel;
+        return share > margin && share < 1 - margin;
+      };
+      const stops = [];
+      let peaked = false, low = null;
+      for (const s of speeds) {
+        if (!peaked) {
+          if (s.speed >= again * top) peaked = true;
+          continue;
+        }
+        if (s.speed <= slow * top && away(s.v) && (!low || s.speed <= low.speed)) {
+          low = { t: s.t, v: s.v, speed: s.speed };
+        } else if (low && s.speed >= again * top && s.speed >= rise * low.speed) {
+          stops.push(low);
+          low = null;
+        }
+      }
+      if (!stops.length) continue;
+      const where = stops.map(s => `${round(s.v, 1)} (${when(s.t)})`).join(', ');
+      out.push({ key, channel, t: stops[0].t, stops, detail: `${channel} slows ${stops.length === 1 ? 'once' : `${stops.length} times`} on its way from ${round(window.start, 1)} to ${round(window.end, 1)} and sets off again: at ${where}` });
+    }
+  }
+  return out.sort((p, q) => p.t - q.t);
+}
+
 /** Parts that should be there, drawn and live, at the end of a movement. */
 export function findMissing(frames, parts) {
   const last = frames[frames.length - 1];

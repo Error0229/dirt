@@ -29,6 +29,35 @@ export function partsFor(scenario, platform) {
   return parts;
 }
 
+/**
+ * Waits until the page has loaded, the app has drawn into its root, and the
+ * window's size has held for a moment. The desktop's web view is found as
+ * soon as it exists: once, the page script was installed into the first
+ * document, which the app then replaced, and the size read was the
+ * window's before the app placed it (961 × 1032 for 1100 × 720).
+ */
+async function settled(cdp, timeoutMs = 20000) {
+  const ask = `(() => { const root = document.getElementById('main');
+    return { ready: document.readyState === 'complete' && !!document.body && (!root || root.children.length > 0),
+             size: innerWidth + 'x' + innerHeight }; })()`;
+  const end = Date.now() + timeoutMs;
+  let last = null, since = 0;
+  while (Date.now() < end) {
+    const now = await cdp.evaluate(ask).catch(() => null);
+    if (now && now.ready) {
+      if (last === now.size) {
+        if (Date.now() - since >= 600) return;
+      } else {
+        last = now.size;
+        since = Date.now();
+      }
+    } else {
+      last = null;
+    }
+    await sleep(100);
+  }
+}
+
 export async function prepare(cdp) {
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
@@ -37,6 +66,7 @@ export async function prepare(cdp) {
   // The page behaves as if it had the keyboard, without the window taking
   // it from the person at the computer.
   await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
+  await settled(cdp);
   await cdp.evaluate(installSource);
   return cdp.evaluate(`({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, reduced: matchMedia('(prefers-reduced-motion: reduce)').matches, agent: navigator.userAgent })`);
 }

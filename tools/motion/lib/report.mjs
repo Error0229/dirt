@@ -120,6 +120,8 @@ export function writeReport({ scenario, platform, describe, viewport, trust, mov
       for (const l of f.lingering) if (l.ok) lines.push(`- ${l.cut ? '**Cut at the input**' : 'Left as it should'}: \`${l.part}\`, ${l.detail}.`);
       for (const a of f.missing) lines.push(`- **Not there at the end**: \`${a.part}\` is ${a.detail}.`);
       for (const p of f.realtimePops || []) lines.push(`- In real time, a **pop** of \`${p.key}\` at ${ms(p.t)}: ${p.detail}.`);
+      for (const s of f.stops || []) lines.push(`- **Stops on the way**, \`${s.key}\`: ${s.detail}.`);
+      for (const s of f.realtimeStops || []) lines.push(`- In real time, **stops on the way**, \`${s.key}\`: ${s.detail}.`);
       out += lines.length ? `${lines.join('\n')}\n\n` : 'Nothing the checks look for.\n\n';
     }
     if (m.mirror) {
