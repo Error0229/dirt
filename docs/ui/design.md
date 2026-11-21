@@ -641,7 +641,7 @@ this document are approximate; the tokens here are the real ones.
 | Quick capture opens | The box comes into focus: from 97% and 10 px up, blurred 10 px, to sharp (snap; the blur over 260 ms on enter), fading in over 280 ms (standard) |
 | Quick capture is put away (<kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd>, a click outside) | The page shrinks to its grain and flies to the tray on an arc: across quickly (`cubic-bezier(.25,.65,.45,1)`), down slowly then fast (`cubic-bezier(.6,0,.9,.45)`), so the path curves (600 ms). The tray icon pulses once as it lands: a ring in the accent grows from 40% to 260% and fades (560 ms, enter). With nothing written it only fades (280 ms, standard) |
 | A file is attached | Its tile grows out of the paperclip, or out of the point it was dropped on, and bounces into place (pop). Several files follow one another, 70 ms apart |
-| A preview opens and closes | The file grows out of its tile (420 ms, enter) and shrinks back into it (320 ms, standard), the backdrop fading with it (280 ms, standard). With reduced motion it fades in where it is (6.16) |
+| A preview opens and closes | The file grows out of its tile (420 ms, enter) and shrinks back into it (320 ms, standard), the backdrop, the buttons, the dots and the name fading with it both ways (280 ms, standard): the whole screen changes as one movement. With reduced motion it fades in where it is, and what is around it fades in 90 ms (6.16, 5.8) |
 | The next file in the preview | It comes in 48 px from the side it was asked for from (280 ms, enter). A file read after its thumbnail was shown fades in where the thumbnail was |
 | Files dragged over the window | A clay dashed edge and the words of what a drop would do fade in over the window (200 ms, standard) |
 
@@ -744,6 +744,8 @@ settled in mending them:
 | Settings' rail, how it moves | On the snap spring, as the mockup has it. It was a plain 280 ms ease-out (`--d-3`, enter) |
 | Settings' rail, opening | Its names slide in from the left, 10 px, fading, 30 ms apart from 110 ms (snap), the mockup's numbers; the app had brought them in with the panel at once |
 | The screen behind Android's sheet | Its rounded corners are a clip (`clip-path: inset(0 round 28px)`), which moves with its scale and its darkness both ways. They were `overflow: hidden` with a radius, and `overflow` cannot move: closing, it was given up in the first frame, and the cards behind, fixed to the screen, were not drawn until the screen had come forward. The mockup has the old rule; its screen behind is not fixed, so it showed nothing wrong |
+| The file preview, around the file | The backdrop, the buttons, the dots and the name fade with the file both ways (280 ms, standard), each from the opacity it has, so that controls Android has hidden, or a name not under the pointer, stay unseen. They were left to the style sheet's transitions, which never ran: opening, the preview comes from `display: none`, from which nothing transitions; closing, it was cut in the first frame too. With reduced motion they fade in 90 ms. The file itself is the mockup's: from 50% and to 40% opacity, over its tile |
+| The preview and a window that changes size | If the window changes size while the file grows (Android's keyboard going as the preview takes the focus, with a note's field focused under it), the movement begins again from the tile where it is now, at the time it had reached, before a frame is drawn from the old place |
 
 ---
 

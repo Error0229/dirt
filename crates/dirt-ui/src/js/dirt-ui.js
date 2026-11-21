@@ -2175,20 +2175,69 @@
     const dy = a.top + a.height / 2 - (whole.top + whole.height / 2) - by * k;
     return `translate(${dx}px, ${dy}px) scale(${k})`;
   }
+  // What is around the file (the backdrop, the buttons, the dots, the
+  // name) fades with it, both ways (280 ms, standard), so that the whole
+  // screen changes as one movement (#323). It was left to the style
+  // sheet's transitions, which never ran: opening, the preview comes from
+  // `display: none`, from which nothing transitions; closing, it was cut
+  // in the first frame too. Each fades from the opacity it has, so that
+  // controls Android has hidden (`bare`) or a name not hovered stay
+  // unseen.
+  function fadeAround(modal, state, opening) {
+    (state.fades || []).forEach(run => run.cancel());
+    const ms = reduced() ? tokens.reducedMs : 280;
+    const bare = modal.classList.contains('bare');
+    const parts = [
+      ['.dui-pv-scrim', 1],
+      ['.dui-pv-bar', bare ? 0 : 1],
+      ['.dui-pv-dots', null],
+      ['.dui-pv-name', null],
+    ];
+    state.fades = [];
+    for (const [selector, shownAt] of parts) {
+      const element = modal.querySelector(selector);
+      if (!element) continue;
+      const at = shownAt === null ? parseFloat(getComputedStyle(element).opacity) || 0 : shownAt;
+      if (!at) continue;
+      const frames = opening ? [{ opacity: 0 }, { opacity: at }] : [{ opacity: at }, { opacity: 0 }];
+      state.fades.push(element.animate(frames, { duration: ms, easing: tokens.standard, fill: opening ? 'none' : 'forwards' }));
+    }
+  }
   function previewOpened(modal, state) {
     modal.classList.remove('leaving', 'bare');
     previewStep = 1;
     state.item = null;
     const stage = stageOf(modal), tile = tileOf(modal);
     if (state.run) state.run.cancel();
+    fadeAround(modal, state, true);
     if (!stage) return;
     if (reduced() || !tile) {
       state.run = stage.animate([{ opacity: 0 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 200, easing: tokens.standard });
       return;
     }
     // It grows out of its tile (420 ms, enter).
-    state.run = stage.animate([{ transform: towardsTile(stage, tile), opacity: 0.5 }, { transform: 'none', opacity: 1 }],
+    const grow = from => stage.animate([{ transform: towardsTile(stage, from), opacity: 0.5 }, { transform: 'none', opacity: 1 }],
       { duration: 420, easing: tokens.enter });
+    const run = grow(tile);
+    state.run = run;
+    // The window may change size as it opens: on Android the keyboard goes
+    // as the preview takes the focus, and the page under it moves. The
+    // file still grows out of its tile where the tile is now: the movement
+    // is begun again from there at the time it had reached, before a frame
+    // is drawn from the old place.
+    let current = run;
+    const resized = () => {
+      if (state.run !== current || current.playState !== 'running' || !modal.classList.contains('on')) return;
+      const at = current.currentTime;
+      current.cancel();
+      const now = tileOf(modal);
+      if (!now) return;
+      current = grow(now);
+      current.currentTime = at;
+      state.run = current;
+    };
+    addEventListener('resize', resized);
+    setTimeout(() => removeEventListener('resize', resized), 520);
   }
   function previewClosed(modal, state) {
     const stage = stageOf(modal), tile = tileOf(modal);
@@ -2200,7 +2249,13 @@
     if (state.run) state.run.cancel();
     modal.classList.add('leaving');
     if (!stage) { modal.classList.remove('leaving'); return; }
-    const finish = () => { if (!modal.classList.contains('on')) modal.classList.remove('leaving'); };
+    fadeAround(modal, state, false);
+    const finish = () => {
+      if (modal.classList.contains('on')) return;
+      modal.classList.remove('leaving');
+      (state.fades || []).forEach(run => run.cancel());
+      state.fades = [];
+    };
     let run, ms;
     if (reduced() || !tile) {
       ms = reduced() ? tokens.reducedMs : 160;
