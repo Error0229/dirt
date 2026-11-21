@@ -502,29 +502,31 @@ impl Session {
         // A sign-in record that cannot be read leaves the device signed out
         // for now. It is not removed: signing in refuses to replace it.
         //
-        // So does one that cannot be taken into use: the notes of the last
-        // sign-in may still be open in the other program on this computer
+        // So does one whose store is in the way: the notes of the last
+        // sign-in are still open in the other program on this computer
         // (`SessionError::PreviousNotesOpen`). The CLI opens a session for
         // each command, and the desktop app at each start; neither may
         // fail for that. The session opens on the local store, says why
         // (`held_back`), and the next session or reload takes the sign-in
-        // into use.
+        // into use. Any other failure to open the account's store is the
+        // session's.
         match DeviceSecrets::read(&*session.inner.secrets) {
-            Ok(Some(saved)) => {
-                if let Err(error) = session.activate(saved) {
-                    tracing::debug!("the saved sign-in is not in use yet: {error}");
-                }
-            }
+            Ok(Some(saved)) => match session.activate(saved) {
+                Ok(()) | Err(SessionError::PreviousNotesOpen) => {}
+                Err(error) => return Err(error),
+            },
             Ok(None) => {}
             Err(error) => tracing::error!("the saved sign-in was not used: {error}"),
         }
         Ok(session)
     }
 
-    /// Why this device's stored sign-in is not in use, if it is not: it
-    /// could not be taken into use when the session opened or last read
-    /// it, and the session is signed out on the local store meanwhile. The
-    /// next session that opens, or the next [`Self::reload`], tries again.
+    /// Why this device's stored sign-in is not in use, if it is not: the
+    /// notes of the last sign-in to the account were still open in a
+    /// program when the session opened or last read it
+    /// ([`SessionError::PreviousNotesOpen`]), and the session is signed out
+    /// on the local store meanwhile. The next session that opens, or the
+    /// next [`Self::reload`], tries again; signing in is refused until then.
     #[must_use]
     pub fn held_back(&self) -> Option<String> {
         lock(&self.inner.held_back).clone()
@@ -624,7 +626,9 @@ impl Session {
                     // What is published says what this session holds now,
                     // which is no sign-in. The secrets stay stored, and
                     // the next reload tries them again.
-                    *lock(&self.inner.held_back) = Some(error.to_string());
+                    if matches!(error, SessionError::PreviousNotesOpen) {
+                        *lock(&self.inner.held_back) = Some(error.to_string());
+                    }
                     self.inner.status.send_replace(SyncStatus::default());
                     self.inner.state.send_replace(SessionState::SignedOut);
                     return Err(error);
@@ -727,6 +731,11 @@ impl Session {
     /// directly. Desktop and the CLI use
     /// [`sign_in_with_browser`](Self::sign_in_with_browser).
     pub async fn begin_sign_in(&self, redirect_uri: &str) -> Result<String, SessionError> {
+        // Signed in already, with the sign-in waiting for the last one's
+        // notes to be let go: signing in again would end where it is.
+        if self.held_back().is_some() {
+            return Err(SessionError::PreviousNotesOpen);
+        }
         let ticket = self.inner.sign_ins.fetch_add(1, Ordering::Relaxed);
         {
             let mut step = lock(&self.inner.sign_in);
@@ -1256,12 +1265,12 @@ impl Session {
     /// whatever notes are in it. The device is signed out afterwards.
     fn forget_account(&self, secrets: &DeviceSecrets) -> Result<(), SessionError> {
         // The worker and this session's store handles go before the files.
-        let had_account = lock(&self.inner.signed_in)
-            .take()
-            .is_some_and(|signed_in| signed_in.account.is_some());
+        lock(&self.inner.signed_in).take();
         self.clear_secrets()?;
         lock(&self.inner.held_back).take();
-        if had_account {
+        // A sign-in that held the key may have notes on this device, even
+        // when this session had not opened them: they go too.
+        if secrets.keys().is_some() {
             let folder = account_folder(&self.inner.config.data_folder, secrets.account_id)?;
             // The mark comes first: if the folder cannot be removed now,
             // because an interface still holds the store, nothing more is

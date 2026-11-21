@@ -154,8 +154,10 @@ pub const WAITING_TO_BE_LET_IN: &str = concat!(
 pub fn held_back_words(session: &Session) -> String {
     let why = session.held_back().unwrap_or_default();
     format!(
-        "This computer is signed in, but the sign-in is not in use yet: {} Until then, notes \
-         are kept on this device only. If the desktop app is open, switch to it or close it.",
+        "This computer is signed in, but the sign-in is not in use yet: {} If the desktop app \
+         is open, switch to it or close it. Notes written meanwhile stay on this computer, \
+         outside the account; once the sign-in is in use, `dirt auth login --move-local-notes` \
+         moves them in.",
         dirt_core::util::as_sentence(&why)
     )
 }

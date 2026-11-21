@@ -573,6 +573,14 @@ async fn signing_back_in_beside_the_open_app_starts_clean_and_loses_nothing(pool
         let next_command = desktop.second_program(&server);
         assert_eq!(next_command.session.state(), SessionState::SignedOut);
         assert!(next_command.session.held_back().is_some());
+        // Signing in again would end where it is: refused.
+        assert!(matches!(
+            next_command
+                .session
+                .begin_sign_in("dev.dirt.app://callback")
+                .await,
+            Err(SessionError::PreviousNotesOpen)
+        ));
         let local = next_command.session.store();
         assert_eq!(local.path(), next_command.session.device_store().path());
         local.create_note("a thought meanwhile").await.unwrap();
@@ -699,4 +707,50 @@ async fn a_sign_out_the_server_does_not_hear_of_says_so(pool: PgPool) {
     assert_eq!(signed_out, dirt_core::session::SignedOut::StillListed);
     assert!(phone.secrets_are_empty());
     assert_eq!(phone.session.state(), SessionState::SignedOut);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn an_account_store_that_cannot_be_opened_is_an_error_not_a_wait(pool: PgPool) {
+    use std::sync::Arc;
+
+    use dirt_core::session::{Session, SessionConfig};
+
+    let server = Server::with_sign_in(pool).await;
+    let laptop = Client::new(&server, "Laptop", false);
+    laptop.sign_in("alice").await.unwrap();
+    // Another account's sign-in arrives in this device's storage, as when
+    // the other program signs in as bob; bob's store cannot be made here.
+    let bob = Client::new(&server, "Bob's", false);
+    let (bobs_account, _) = ids(bob.sign_in("bob").await.unwrap());
+    let bobs_store = store_path(
+        laptop.folder(),
+        &StoreName::account(&bobs_account.to_string()).unwrap(),
+    );
+    std::fs::write(bobs_store.parent().unwrap(), b"not a folder").unwrap();
+    laptop
+        .secrets
+        .save(&bob.secrets.load().unwrap().unwrap())
+        .unwrap();
+
+    // The running app is told, and is not held back waiting for nothing.
+    let refused = laptop.session.reload().unwrap_err();
+    assert!(
+        !matches!(refused, SessionError::PreviousNotesOpen),
+        "{refused}"
+    );
+    assert_eq!(laptop.session.held_back(), None);
+    assert_eq!(laptop.session.state(), SessionState::SignedOut);
+    // And a program that starts says so, as it did before.
+    let opened = Session::open(
+        SessionConfig {
+            data_folder: laptop.folder().to_owned(),
+            device_name: "Laptop".to_owned(),
+            background_sync: false,
+            persist_attempts: false,
+            timing: dirt_sim::fast_timing(),
+        },
+        server.transport(),
+        Arc::clone(&laptop.secrets) as Arc<dyn SecretStore>,
+    );
+    assert!(opened.is_err());
 }

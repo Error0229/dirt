@@ -37,8 +37,10 @@ pub const SIGNED_OUT_MARKER: &str = "signed-out";
 /// uses the store, so it goes first. Then everything else, and the mark for
 /// removal ([`SIGNED_OUT_MARKER`]) last of all: a file still held, a
 /// picture another program is showing, leaves the folder marked, to be
-/// tried again. Elsewhere a file that is open can be removed, and the
-/// folder goes whatever holds it.
+/// tried again. So does a file that appears once the rest has gone: the
+/// mark is put back, so no folder is ever left unmarked for a later
+/// sign-in to open as its own. Elsewhere a file that is open can be
+/// removed, and the folder goes whatever holds it.
 pub fn remove_store_folder(folder: &Path) -> io::Result<()> {
     let gone = |done: io::Result<()>| match done {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -61,7 +63,11 @@ pub fn remove_store_folder(folder: &Path) -> io::Result<()> {
             gone(std::fs::remove_file(entry.path()))?;
         }
     }
-    gone(std::fs::remove_dir_all(folder))
+    let mark = folder.join(SIGNED_OUT_MARKER);
+    gone(std::fs::remove_file(&mark))?;
+    gone(std::fs::remove_dir(folder)).inspect_err(|_| {
+        let _ = std::fs::write(&mark, b"");
+    })
 }
 
 /// Which store to open.

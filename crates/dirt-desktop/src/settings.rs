@@ -165,6 +165,7 @@ pub fn SettingsPanel() -> Element {
         Box::pin(crate::app::hand_everything_over(
             app.page_leaver,
             app.current_note_id,
+            || {},
         )) as dirt_ui::settings::Task<_>
     });
     let save_phrase: SavePhrase = use_callback(move |text: String| {

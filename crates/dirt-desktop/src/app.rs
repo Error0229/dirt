@@ -10,6 +10,7 @@
 //! window of its own (`capture`), made hidden beside this one as the app
 //! starts.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -18,7 +19,7 @@ use dioxus::desktop::{use_wry_event_handler, window, LogicalPosition};
 use dioxus::prelude::*;
 use dirt_core::config::ServerAddress;
 use dirt_core::models::NoteId;
-use dirt_core::session::{Session, SessionState};
+use dirt_core::session::{Session, SessionError, SessionState};
 use dirt_core::sync::worker::{SyncStatus, Trigger};
 use dirt_core::Store;
 use dirt_ui::{Appearance, UiRoot};
@@ -41,48 +42,72 @@ const QUEUE_WAITS_AT_MOST: Duration = Duration::from_secs(5);
 const HANDING_OVER_AT_MOST: Duration = Duration::from_secs(1);
 
 /// Hands what the page, quick capture and a recording being kept hold to
-/// the store in use, and waits for the store's queue: before signing out,
-/// so that the sign-out's sync takes it to the server (checklist D74 and
-/// D90). Signing out syncs and then removes the store; what reached the
-/// store only afterwards was refused (`dirt_core::Error::SignedOut`). The
-/// page is left, as it is when another store is taken into use.
+/// the store each was written in, and waits for the store's queue. Before
+/// signing out, so that the sign-out's sync takes it all to the server
+/// (checklist D74 and D90), and before another store is taken into use,
+/// which `then` does, once all is handed over and before the queue is
+/// waited for: a thought typed meanwhile goes to the new store. The page
+/// is left either way.
 pub async fn hand_everything_over(
     page_leaver: CopyValue<Option<Callback<()>>>,
     mut current_note_id: Signal<Option<NoteId>>,
+    then: impl FnOnce(),
 ) {
     let leave = *page_leaver.peek();
     if let Some(leave) = leave {
         leave.call(());
     }
-    current_note_id.set(None);
+    // Quick capture hands over to the store it was given when its first
+    // character was typed, and a recording goes to the one in use as it
+    // began.
     if !crate::capture::link().hand_over(HANDING_OVER_AT_MOST).await {
         tracing::warn!("Quick capture did not hand over what it held in time");
     }
     if !crate::voice::keeping_settled(QUEUE_WAITS_AT_MOST).await {
         tracing::warn!("A recording was not kept in time");
     }
+    current_note_id.set(None);
+    then();
     if !Scribe::global().settle(QUEUE_WAITS_AT_MOST).await {
-        tracing::warn!("Signing out with the store's work unfinished");
+        tracing::warn!("The store's queue did not finish in time");
     }
 }
 
+/// How many times the stores this device was signed out of are tried,
+/// with a pause that doubles from 3 s to a minute, before what is left is
+/// left for the next start. A sign-in held back by them is tried for as
+/// long as it is held back.
+const SWEEP_TRIES: u32 = 8;
+
 /// Removes the stores this device was signed out of, here or by the CLI,
 /// once nothing holds them: at once, and again while something does, a
-/// list being loaded for a moment or the CLI waiting on an editor. Then,
-/// if the session could not take the stored sign-in into use because an
-/// old store was in the way (`Session::held_back`), it tries again.
+/// list being loaded for a moment or the CLI waiting on an editor. A
+/// sign-in that an old store kept from being taken into use
+/// (`Session::held_back`) is taken into use as soon as it can be. One of
+/// these runs at a time; it ends when nothing is held back and nothing is
+/// left, or the tries run out.
 fn remove_signed_out_stores_soon(session: Session) {
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    if RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
     tokio::spawn(async move {
         let mut wait = Duration::from_secs(3);
-        while session.remove_signed_out_stores() {
+        for tries in 1.. {
+            let left = session.remove_signed_out_stores();
+            if session.held_back().is_some() {
+                match session.reload() {
+                    Ok(_) | Err(SessionError::PreviousNotesOpen) => {}
+                    Err(error) => tracing::error!("Could not take the sign-in into use: {error}"),
+                }
+            }
+            if session.held_back().is_none() && (!left || tries >= SWEEP_TRIES) {
+                break;
+            }
             tokio::time::sleep(wait).await;
             wait = (wait * 2).min(Duration::from_secs(60));
         }
-        if session.held_back().is_some() {
-            if let Err(error) = session.reload() {
-                tracing::error!("Could not take the sign-in into use: {error}");
-            }
-        }
+        RUNNING.store(false, Ordering::SeqCst);
     });
 }
 
@@ -147,7 +172,7 @@ pub fn App() -> Element {
             }
         });
     });
-    let mut current_note_id = use_signal(|| None);
+    let current_note_id = use_signal(|| None);
     let open_request = use_signal(|| None);
     let notes_read = use_signal(|| 0_u64);
     let pulled = use_signal(|| 0_u64);
@@ -262,25 +287,10 @@ pub fn App() -> Element {
                     let store = Arc::new(store);
                     let capture = crate::capture::link();
                     capture.set_context(Some(Arc::clone(&store)), Some(current.clone()));
-                    let leave = *page_leaver.peek();
-                    if let Some(leave) = leave {
-                        leave.call(());
-                    }
-                    if !capture.hand_over(HANDING_OVER_AT_MOST).await {
-                        tracing::warn!("Quick capture did not hand over what it held in time");
-                    }
-                    // What was being said is kept, in the store it was
-                    // said into, before that store is let go.
-                    if !crate::voice::keeping_settled(QUEUE_WAITS_AT_MOST).await {
-                        tracing::warn!("A recording was not kept in time");
-                    }
-                    current_note_id.set(None);
-                    db_service.set(Some(store));
-                    if !Scribe::global().settle(QUEUE_WAITS_AT_MOST).await {
-                        tracing::warn!("Took another store into use with work unfinished");
-                    }
-                }
-                if !same_store {
+                    hand_everything_over(page_leaver, current_note_id, move || {
+                        db_service.set(Some(store));
+                    })
+                    .await;
                     // The store let go of above may be one this device was
                     // signed out of, here or by the CLI, so its files can
                     // go now, and a sign-in it kept from being taken into
