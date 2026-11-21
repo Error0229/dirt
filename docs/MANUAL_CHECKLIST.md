@@ -75,6 +75,11 @@ screen), gives the web view a data folder and a debugging port of its own
 ID. A web view that shares a data folder with a Dirt already running joins
 that one's browser process and ignores its own arguments.
 
+The motion check (`docs/ui/motion-check.md`) starts its test copy of the
+desktop app that way, with every stand-in above, and stops it by its process
+ID. It adds `DIRT_MOTION_BROWSER`, the Edge or Chrome it uses for the
+mockup and its sheets when neither is in the usual place.
+
 ### Starting, and writing
 
 The page is always there; the first character makes the note (design 6.1, 7.9).

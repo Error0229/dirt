@@ -244,6 +244,18 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  # The motion check's analysis (docs/ui/motion-check.md): pure functions,
+  # tested with Node's own runner and the runner's own Node. Nothing to
+  # install and no browser.
+  motion-tools:
+    name: Motion check tools
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Test the analysis
+        run: node --version && node --test tools/motion/test/analyse.test.mjs
+
   build:
     name: Build
     runs-on: ${{ matrix.os }}

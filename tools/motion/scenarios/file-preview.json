@@ -1,0 +1,48 @@
+{
+  "name": "file-preview",
+  "title": "The file preview opened from a picture's tile and closed with Esc (#323)",
+  "issue": 323,
+  "platforms": ["desktop", "mockup-desktop"],
+  "description": "Design 5.5 and 6.16: the file grows out of its tile (420 ms, enter) and shrinks back into it (320 ms, standard), the backdrop fading with it (280 ms, standard). The preview is opened by its tile's picture (.dui-file-main), never by the tile's buttons: the first of those opens the file in another app.",
+  "setup": [
+    { "platforms": ["desktop"], "click": "[data-dui-typed]" },
+    { "platforms": ["desktop"], "pastePicture": "[data-dui-typed]", "name": "garden.png", "then": 3000 },
+    { "platforms": ["desktop"], "waitFor": ".dk-files .dui-file-main", "ms": 15000 },
+    { "platforms": ["mockup"], "eval": "(() => { const n = S.notes.find(n => !n.deleted && !n.archived && n.files.some(f => f.src || f.thumb)); document.querySelector('#d-list .row[data-id=\"' + n.id + '\"]').click(); return true; })()", "then": 800 }
+  ],
+  "parts": {
+    "preview": { "desktop": ".dui-preview", "mockup-desktop": "#D .pv" },
+    "backdrop": { "desktop": ".dui-pv-scrim", "mockup-desktop": "#D .pv-scrim" },
+    "file": { "desktop": ".dui-pv-item", "mockup-desktop": "#D .pv-item" },
+    "picture": { "desktop": ".dui-pv-item img", "mockup-desktop": "#D .pv-item img, #D .pv-item .pv-fake" },
+    "name": { "desktop": ".dui-pv-name", "mockup-desktop": "#D .pv-name" },
+    "find": { "desktop": ".dk-side .dui-find", "mockup-desktop": "#d-omni" },
+    "bar": { "desktop": ".dui-pv-bar", "mockup-desktop": "#D .pv-bar" },
+    "tile": { "desktop": ".dk-files .dui-file", "mockup-desktop": "#d-files .file" },
+    "page": { "desktop": ".dk-col", "mockup-desktop": "#d-ed" },
+    "list": { "desktop": ".dk-side", "mockup-desktop": "#D .dk-side" }
+  },
+  "crop": { "mockup-desktop": "#D" },
+  "checks": {
+    "within": [["file", "viewport"]],
+    "apart": [["name", "find"]],
+    "pops": { "px": 24, "opacity": 0.3 }
+  },
+  "movements": [
+    {
+      "name": "open",
+      "description": "The picture on the note's tile is pressed.",
+      "steps": [{ "click": { "desktop": ".dk-files .dui-file-main", "mockup-desktop": "#d-files .file .file-thumb" } }],
+      "arrives": ["file", "picture"],
+      "ms": 1200
+    },
+    {
+      "name": "close",
+      "description": "Esc closes the preview.",
+      "steps": [{ "key": "Escape" }],
+      "reverseOf": "open",
+      "leaves": ["preview", "backdrop", "file", "picture", "bar"],
+      "ms": 1200
+    }
+  ]
+}
