@@ -175,6 +175,11 @@ pub struct Settings {
     /// What is kept of a thought said aloud.
     #[serde(default)]
     pub voice_recording: VoiceRecording,
+    /// The desktop's microphone, by the ID the system gives it; nothing
+    /// for the system's default. One that is not connected when the
+    /// person talks gives way to the default.
+    #[serde(default)]
+    pub microphone: Option<String>,
 }
 
 impl Default for Settings {
@@ -187,6 +192,7 @@ impl Default for Settings {
             capture_hotkey: "Ctrl+Shift+D".to_string(),
             focus_style: FocusStyle::Slide,
             voice_recording: VoiceRecording::Keep,
+            microphone: None,
         }
     }
 }

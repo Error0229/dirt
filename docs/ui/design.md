@@ -184,14 +184,14 @@ How the counts were brought down, compared with the current apps:
 │   Sourdough: 78% hydration…        50m                            │
 │   …                                                               │
 │               ⋰⋱  (the pile)                                      │
-│  ☁                                 ⚙                              │
+│  ☁                              +  ⚙                              │
 └─────────────────────────────────────────────────────────────────┘
        the list (344 px)                  the page
 ```
 
 - **Left:** Find (with its `#` for tags), the list in its layers with the
-  pile at the end, and a footer with the sync icon and Settings. While a
-  note is being written the list goes (7.7).
+  pile at the end, and a footer with the sync icon, + (a new note, 7.12)
+  and Settings. While a note is being written the list goes (7.7).
 - **Right:** **the page.** With no note open it is blank, with the cursor
   in it, its placeholder and two icons in its gutter (🎙, 📎). An open note
   is the same page, with ✓, 📎 and the archive box in the gutter (6.1,
@@ -599,10 +599,10 @@ this document are approximate; the tokens here are the real ones.
 
 | Moment | Motion |
 |---|---|
-| The first word on the blank page | Nothing jumps: the page simply becomes a note, and the list starts to leave (focus, 7.7) |
-| A new thought is let go (<kbd>Esc</kbd>, ✓) | **Settling**, in four beats. The words shrink toward where they began and fade (280 ms, on their own curve, 5.4), and the note's grain, in its own shade, pops out there (150 ms). The grain is tossed: up 46 px on the toss curve, then down onto the top of the list on gravity, moving across on a curve all the while (480–640 ms by distance). Where it lands the row appears (snap, from 96%), the rows below give 3 px and come back one after another, 24 ms apart, and seven specks of dust puff out and fall. The blank page is ready from the first beat; only its placeholder fades back in. A sync arriving mid-flight does not show the row early |
+| The first word on the blank page | Nothing jumps: the page simply becomes a note, and the list starts to leave (focus, 7.7). The layout moves at the first pause, not the first character, on purpose (7.12) |
+| A new thought is let go (<kbd>Esc</kbd>, ✓) | **Settling**, in four beats. The words shrink toward where they began and fade (280 ms, on their own curve, 5.4), and the note's grain, in its own shade, pops out there (150 ms). The grain is tossed: up 46 px on the toss curve, then down onto the top of the list on gravity, moving across on a curve all the while (480–640 ms by distance). Where it lands the row appears (snap, from 96%), the rows below give 3 px and come back one after another, 24 ms apart, and seven specks of dust puff out and fall. The blank page is ready from the first beat; only its placeholder fades back in (300 ms from 140 ms, enter). A sync arriving mid-flight does not show the row early |
 | A new page is let go on Android (⌄, Back) | The page closes to a 7 px circle where its words began (300 ms, on its own curve, 5.4); the grain is tossed from there onto the top card, as above |
-| An old note is let go | No grain: the list comes back and the note is in its place |
+| An old note is let go | No grain. Its words fade where they were (140 ms, exit), its row's highlight fades (150 ms, standard), and the blank page's placeholder fades back in (300 ms from 140 ms, enter); the list comes back if it had gone, and the note is in its place. With reduced motion the page is simply blank (7.12) |
 | A note arrives from another device | It settles into place from 8 px above (snap) and its row flashes clay-soft for 1.6 s |
 | The list narrows or reorders | Rows that stay slide to their new places (snap); new ones settle in from 8 px above (snap), staggered 24 ms, the seventh and later together |
 | Selecting a note | One highlight, with its clay bar, slides from the old row to the new one, stretching to the new row's height (snap). Nothing fades |
@@ -1084,15 +1084,18 @@ Android, and lie over the content instead of taking a strip of its width.
 | | Desktop | Android |
 |---|---|---|
 | At rest | Not shown | Not shown |
-| Appears | While scrolling, and when the pointer comes within 28 px of the edge | While scrolling |
+| Appears | While scrolling, and when the pointer is on its own strip, the 10 px at the edge (7.12) | While scrolling |
 | Thumb | 5 px, fully rounded, `--text` at 24%, 2 px in from the edge, 4 px from the ends; never shorter than 28 px | 3 px, 1 px from the edge; never shorter than 36 dp |
 | Under the pointer | Widens to 8 px, `--text` at 42% | n/a |
 | Track | Invisible. A click on it scrolls 90% of a page towards the click | n/a |
 | Dragging | The thumb follows the pointer | n/a: the content follows the finger |
 | Goes | Fades out 0.9 s after the last scroll, unless the pointer is on it or dragging it | Fades out 0.9 s after the last scroll |
 
-It is used on everything that scrolls: the list, the open note, Settings,
-and a text file in the preview. The colour follows the theme because it is
+It is used on everything that scrolls and needs one: the list, the open
+note, Settings, a text file and a PDF in the preview, and quick capture's
+box. The system's own bar is drawn nowhere in either app, the window's
+among it; what scrolls with no need of a bar (the rail, the tag strip, a
+zoomed picture) has none (7.12). The colour follows the theme because it is
 made from `--text`, and the accent is not used: a scrollbar is never the
 thing to look at. Keyboard and screen readers are untouched, because the
 content still scrolls natively and only the drawing of the bar is the
@@ -1343,9 +1346,10 @@ that heard it and is never sent anywhere: not to Dirt's server, not to a
 speech service. That is the only way voice keeps Dirt's promise that the
 server sees nothing it can read. A kept recording is an attached file,
 encrypted like any other. Settings → **Voice** has: one line, "Turned into
-text here. Your voice is never sent anywhere"; **The recording** (Keep, or
-Text only); **Language** (Auto, or one chosen); and on the desktop the held
-hotkey, on Android a word about the side key.
+text here. Your voice is never sent anywhere"; on the desktop
+**Microphone**, the system's default or one chosen (7.12); **The
+recording** (Keep, or Text only); **Language** (Auto, or one chosen); and
+on the desktop the held hotkey, on Android a word about the side key.
 
 **Failing well.** Nothing heard: the sheet shakes once and goes, and
 nothing is made. The words cannot be made (the engine
@@ -1444,7 +1448,7 @@ Everything can be done without the mouse.
 |---|---|
 | <kbd>Ctrl Alt N</kbd> | Quick capture, from any app. **Held**: talk; letting go keeps it |
 | <kbd>Esc</kbd> or <kbd>Ctrl Enter</kbd> in a note | Done: a new thought settles onto the pile, and the page is blank again |
-| <kbd>Ctrl N</kbd> | The same, from anywhere in the window |
+| <kbd>Ctrl N</kbd> | The same, from anywhere in the window; + at the foot of the list does it with the pointer (7.12) |
 | <kbd>Ctrl F</kbd>, <kbd>Ctrl K</kbd> or <kbd>/</kbd> | To Find, its text selected |
 | <kbd>Enter</kbd> in Find | Open the first note found |
 | <kbd>#</kbd> in Find | The tag list; <kbd>Tab</kbd> picks the first |
@@ -1592,7 +1596,7 @@ title bar (7.6) came after it, in step 3b, and what that settled is in 7.9.
 | The hollow dot | Only while signed in and let in. Signed out, every note is on this device alone, and the status says so ("This device only") instead of a dot on every row |
 | Files on the blank page | 📎 or a drop makes a note of the files, with the tags chosen in Find as its text (6.1: a file with no words under it is a note). The list names such a note after its first file |
 | The page's text | Saved 400 ms after typing pauses, and at once when the note is left (done, another note opened, archived). The first character that is not a space makes the note at once |
-| Narrower than 720 px | The list takes the window. A note, or a page begun with <kbd>Ctrl N</kbd> or the + that appears at the foot of the list, comes over it; done goes back to the list. The breakpoint is the window's width |
+| Narrower than 720 px | The list takes the window. A note, or a page begun with <kbd>Ctrl N</kbd> or the + at the foot of the list, comes over it; done goes back to the list. The breakpoint is the window's width. The + was there only at this width until 7.12 |
 | The app's own menu | Copy when something is selected, Paste and Select all in a text field, and "Copy the note" (<kbd>Ctrl Shift C</kbd>) while a note is open. Paste reads the clipboard in the app, since a web view may not read it without asking |
 | Where the keyboard goes | When what had the keyboard is taken away (a row archived, the archived notes closed), the screen takes it, so that its keys still work |
 | An archived row leaving | It folds shut where it was (on the exit curve, at most 320 ms) while the rows below rise into its place (snap), and its grain sinks into the pile (5.5, 6.17) |
@@ -1681,7 +1685,7 @@ note, Settings → Voice) holds there too.
 | Words that cannot be made | Tried at most three times (`dirt_core::voice::MOST_TRIES`), each try loading the model and counted as it begins, so that a reading the process does not survive (Android ends an app short of memory) counts too and says "the reading stopped before it ended" (found in review, #302). Then the device stops: the recording stays on the note, which keeps its name, and its row says "Its words could not be made" with why. A later version may try again; the tries and the reason are kept on the device |
 | No words found | The note keeps its name, and its row says "No words found" beneath it. The recording stays whatever Settings says, so that nothing said is lost |
 | Text only | Once the words are in, the recording is taken off the note with its mark: a note like any other. Until then it is a file like any other |
-| Settings → Voice | The one line "Turned into text here. Your voice is never sent anywhere."; **The recording**, Keep or Text only, with a grey line saying what the choice does; **Language**, "English", with "Other languages come later": English alone has been tried, and the list holds only what has, so there is nothing to choose yet; **Talk from any app**, the held keys; **Speech model**, the credit its licence asks for: "Parakeet TDT-CTC 110M by NVIDIA, under CC BY 4.0, converted to ONNX by the sherpa-onnx project". Between Appearance and Export, on the rail too |
+| Settings → Voice | The one line "Turned into text here. Your voice is never sent anywhere."; on the desktop **Microphone**, which is to choose (7.12); **The recording**, Keep or Text only, with a grey line saying what the choice does; **Language**, "English", with "Other languages come later": English alone has been tried, and the list holds only what has, so there is nothing to choose yet; **Talk from any app**, the held keys; **Speech model**, the credit its licence asks for: "Parakeet TDT-CTC 110M by NVIDIA, under CC BY 4.0, converted to ONNX by the sherpa-onnx project". Between Appearance and Export, on the rail too |
 | The microphone refused, or none | The press makes nothing, and the mic shows a slash until a press can listen. Its tooltip says where to allow it: "Allow the microphone for desktop apps in Windows Settings, Privacy & security, Microphone" (Windows has no dialog for a desktop app; macOS asks in its own the first time), or "No microphone was found" |
 | A web view that cannot play Ogg Opus | Asked of the web view as the app starts (`canPlayType`). Where it says no, by its documentation macOS's before 15.4, the preview is handed the recording decoded, as a WAV made in memory. WebView2 says "probably", and plays it as it is |
 | A screen reader | Is told "Listening" as it starts, "Kept", "Thrown away" or "Nothing heard" as it ends, and "Words arrived: …" with the first line when the words come of a thought said in this run (section 12): not for each of a backlog made as the app starts. Two with the same first line are each told |
@@ -1690,6 +1694,19 @@ note, Settings → Voice) holds there too.
 | Reduced motion | The grains stay in a still row and only their strength changes; an ending only fades |
 | The voice folder | The model, Silero's detector and, on Windows, the engine's two libraries are one folder that ships with the app as one of its assets. The libraries are loaded from it the first time voice is used, not as the app starts, so an app without them still starts, with no mic. A load that fails is tried again the next time |
 | A build without voice | `DIRT_VOICE=off` builds with no engine and no mic, fetching nothing. Unset, a development build that cannot fetch the engine or its files (offline, or a target with no pinned libraries) is built without voice and says why in a warning; a release build, or `DIRT_VOICE=required` (CI), fails instead, so that an app meant to have voice never ships without its mic. The voice-less build still runs `dirt-voice`'s code, which says voice is not in this build |
+
+### 7.12 Settled after the first hands-on test
+
+The owner's notes from trying both apps (issue #315), settled in one pull
+request. Each can be undone on its own.
+
+| | Settled |
+|---|---|
+| The scrollbar | It is the drawn one of 6.15 everywhere, and the system's is drawn nowhere: one rule in `dirt-ui`'s sheet turns it off for the whole app, the window itself among it. Quick capture's box, which scrolled past twelve lines with the system's thin bar, has the drawn one. On the desktop the bar came back whenever the pointer was within 28 px of the edge, where a row's archive box and its time are, so it came and went while the pointer worked on the list; now only the pointer on the bar's own strip, the 10 px at the edge, brings it, besides scrolling. Kept everywhere else as 6.15 has it: thin, `--text` at 24%, fading 0.9 s after the last scroll. Not hidden where position is shown otherwise: the bar is also what is dragged to go far |
+| The first character | The layout does not move into the editor at the first character, and that is meant. At the first key only the controls fade (200 ms); the list folds and the column glides to the middle at the first pause in typing (600 ms) or the first new line (5.5, 7.7). The mockup moved the column at once once, and it was changed: a column that slides under the word being typed moves the words away from the eye at the moment they are written. A pause is when the eye can follow a move |
+| Done on the desktop | Done on an old note had nothing to see: the words went, the page was blank. It now has the mockup's beat: the words fade where they were (140 ms, exit), the row's highlight fades (150 ms, standard), and the blank page's placeholder fades back in from 140 ms (300 ms, enter), the mockup's duration and curve for the blank page. A new thought keeps its settling (5.5), with the same placeholder. With reduced motion nothing moves: the page is simply blank, as in the mockup. Android's ⌄ already had its own (the page back into its card, or to a grain) |
+| A new note while scrolling | The desktop: + ("New note", <kbd>Ctrl N</kbd>) at the foot of the list, between the sync status and the gear, on every width. The foot does not scroll, so it is in reach wherever the list is. It does what <kbd>Ctrl N</kbd> does: what is on the page is let go as Done lets it go, and the page is blank with the cursor in it; on a blank page it only puts the cursor there. A + was chosen over keeping the blank page beside an open note, which would take a second column, and over a button that floats over the list, which would lie over rows. Android: the dock at the bottom (the bar and the mic) does not scroll with the list either, so it already was the way in; nothing changes there. Capture stays one action: the + is the press that Done was, with a name that says what it is for |
+| The desktop's microphone | Settings → Voice → **Microphone**, the first row after the line about where speech becomes text, shown where the mic is offered. It names the one in use: "The system's default", the one chosen, or "Not connected: the system's default is used". Pressed, it opens a short list in place under it (the system's default, then each input connected, the chosen ticked in the accent) and a choice closes it. The list is asked of the system when the section is drawn and each time it opens, so that one plugged in meanwhile is there. What is kept is the system's ID for the input, which outlasts a restart and a replug, in the device's settings as `microphone` (empty for the default). Recording asks for it at each press, the page's mic and quick capture's alike, and takes the default when it is not connected. Android records from the system's microphone and has no such row. "The recording" now has the note's icon, so that the two rows do not share the mic |
 
 ---
 

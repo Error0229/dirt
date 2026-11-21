@@ -128,6 +128,9 @@ pub fn Page() -> Element {
                         // command key (`keys::empties_page`).
                         "data-dui-page": done_keys.then_some(super::keys::COMMAND_KEY),
                         "data-dui-typed": typing.id(),
+                        // A note was just let go: the script draws it
+                        // going (5.5).
+                        "data-dui-let-go": view.let_go.map(super::LetGo::mark),
                         onfocus: move |_| screen.focused(Where::Page),
                         onblur: move |_| screen.focused(Where::Elsewhere),
                         // The text is given once, when the page is made,

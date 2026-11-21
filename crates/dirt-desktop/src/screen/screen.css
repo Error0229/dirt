@@ -16,7 +16,6 @@
 .dk-arch-n{color:var(--text-3);font-weight:500;font-variant-numeric:tabular-nums}
 .dk-foot{display:flex;align-items:center;gap:2px;padding:8px;border-top:1px solid var(--border);flex:none}
 .dk-grow{flex:1}
-.dk-new{display:none}
 
 /* ---- The page ---------------------------------------------------------- */
 .dk-main{flex:1;min-width:0;position:relative;display:flex;flex-direction:column;background:var(--surface)}
@@ -28,7 +27,7 @@
 .dk-gutter{position:absolute;top:58px;left:calc(100% + 6px);display:flex;flex-direction:column;gap:2px;opacity:.6;transition:opacity 200ms var(--e-std);z-index:3}
 .dk-gutter:hover,.dk-gutter:focus-within{opacity:1}
 .dk-text{flex:1 0 auto;field-sizing:content;min-height:160px;width:100%;border:0;background:transparent;resize:none;padding:6px 0 18px;font-size:var(--note-size);line-height:1.65;color:var(--text);transition:font-size var(--d-2) var(--e-std)}
-.dk-text::placeholder{color:var(--text-3);opacity:.75}
+.dk-text::placeholder{color:var(--text-3);opacity:calc(.75 * var(--dui-placeholder,1))}
 /* A note opens from the list's side of it, 18 px (snap); its files 50 ms
    behind (5.5). */
 .dk-col[data-from="below"] .dk-text{animation:dk-from-below var(--d-snap) var(--sp-snap)}
@@ -96,8 +95,7 @@
 /* The rail: the list folded to a column of grains (Rail). */
 .dk-rail{position:absolute;inset:0 auto 0 0;width:56px;display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:4px;opacity:0;pointer-events:none;transition:opacity var(--d-3) var(--e-std) 120ms}
 .dk-rail>.dui-icon-btn{margin-bottom:6px;color:var(--text-3);flex:none}
-.dk-rail-dots{flex:1;min-height:0;width:100%;display:flex;flex-direction:column;align-items:center;gap:2px;overflow-y:auto;scrollbar-width:none;padding-bottom:12px}
-.dk-rail-dots::-webkit-scrollbar{display:none}
+.dk-rail-dots{flex:1;min-height:0;width:100%;display:flex;flex-direction:column;align-items:center;gap:2px;overflow-y:auto;padding-bottom:12px}
 .dk-rail-dot{width:32px;height:20px;flex:none;display:grid;place-items:center;border-radius:6px}
 .dk-rail-dot::before{content:"";width:8px;height:7px;border-radius:var(--gr,50%);background:var(--g,var(--text-3));opacity:.9;transition:height var(--d-3) var(--sp-pop),opacity var(--d-1),background var(--d-2),transform var(--d-2) var(--sp-pop)}
 .dk-rail-dot:hover::before{opacity:1;transform:scale(1.35)}
@@ -163,7 +161,6 @@
   .dk-side{width:100%;border-right:0}
   .dk-main{display:none}
   .dk[data-over] .dk-main{display:flex;position:absolute;inset:0;z-index:20}
-  .dk-new{display:inline-grid}
   .dk-page{padding:0 56px 0 20px}
   /* The list reaches the window's top right, where the window's own
      controls are: Find stops short of them. */

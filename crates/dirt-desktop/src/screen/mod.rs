@@ -16,6 +16,7 @@ pub mod window;
 pub mod writing;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -87,6 +88,27 @@ pub enum Arrival {
     Below,
 }
 
+/// A note let go by Done, with the page blank after it (5.5): which time,
+/// so that the script draws each once, and whether its words settle onto
+/// the pile or simply go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LetGo {
+    pub count: u64,
+    pub settles: bool,
+}
+
+impl LetGo {
+    /// What the page's field is marked with (`data-dui-let-go`).
+    #[must_use]
+    pub fn mark(self) -> String {
+        let how = if self.settles { "settle" } else { "go" };
+        format!("{how} {}", self.count)
+    }
+}
+
+/// How many notes Done has let go, for [`LetGo::count`].
+static LET_GO: AtomicU64 = AtomicU64::new(0);
+
 /// What the page shows. A new value with a new `serial` is a new page: its
 /// text field is made afresh with `text` in it. While the person types,
 /// the field keeps its own text and this does not change.
@@ -100,6 +122,8 @@ pub struct PageView {
     pub from: Option<Arrival>,
     /// The field takes the keyboard's focus as it appears.
     pub take_focus: bool,
+    /// The note the page held was just let go.
+    pub let_go: Option<LetGo>,
 }
 
 /// Focus while writing (7.7): how far the screen has gone towards showing
@@ -524,6 +548,11 @@ impl Screen {
         } else {
             self.blank(true);
         }
+        let mut page = self.page;
+        page.write().let_go = Some(LetGo {
+            count: LET_GO.fetch_add(1, Ordering::Relaxed) + 1,
+            settles: settles.is_some(),
+        });
         if let Some(note) = settles {
             self.settle_grain(note);
         }
@@ -668,7 +697,7 @@ impl Screen {
 
     /// The blank page with the cursor in it. In a window narrower than
     /// 720 px it comes over the list; it is focused once it is drawn.
-    pub fn new_page(mut self) {
+    fn new_page(mut self) {
         self.page_over.set(true);
         spawn(async move {
             tokio::time::sleep(Duration::from_millis(40)).await;
@@ -767,6 +796,7 @@ impl Screen {
             archived: note.archived,
             from,
             take_focus,
+            let_go: None,
         });
         self.page_over.set(true);
     }

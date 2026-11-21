@@ -79,7 +79,7 @@ pub(super) fn RowButton(
 
 /// A row's title and its grey line.
 #[component]
-fn Words(title: String, detail: Option<String>, danger: bool) -> Element {
+pub(super) fn Words(title: String, detail: Option<String>, danger: bool) -> Element {
     rsx! {
         div { class: "dui-set-words",
             div { class: if danger { "dui-set-t danger" } else { "dui-set-t" }, "{title}" }

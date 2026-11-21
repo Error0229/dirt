@@ -333,12 +333,14 @@ pub fn Side() -> Element {
                     onclick: move |_| screen.sync_now(),
                 }
                 span { class: "dk-grow" }
+                // A new thought, from anywhere in the list however far it
+                // is scrolled: what is on the page is let go, as Ctrl N
+                // does, and the page is blank with the cursor in it (7.12).
                 IconButton {
                     icon: Icon::Plus,
-                    label: "New page",
+                    label: "New note",
                     shortcut: "Ctrl N",
-                    class: "dk-new",
-                    onclick: move |_| screen.new_page(),
+                    onclick: move |_| screen.done(false),
                 }
                 IconButton {
                     icon: Icon::Settings,
