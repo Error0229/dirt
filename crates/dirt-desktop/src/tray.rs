@@ -201,6 +201,10 @@ fn icon(accent: Accent) -> Result<Icon, Box<dyn std::error::Error>> {
 /// pixels, `SIZE` square: the sprout in the second colour on a rounded
 /// square of the first, or with none the sprout alone in black, whose
 /// shape is all a Mac's menu bar takes of it.
+///
+/// This and `in_square` and `sprout_at` are the logo's third copy, after
+/// `dirt_ui::components::Logo` (SVG) and Android's `dirt_sprout.xml` and
+/// `dirt_logo_square.xml`: a change to the logo is made in all three.
 fn logo_pixels(on_square: Option<(Color, Color)>) -> Vec<u8> {
     let mut rgba = Vec::with_capacity(usize::from(SIZE) * usize::from(SIZE) * 4);
     let per_pixel = f32::from(SAMPLES * SAMPLES);

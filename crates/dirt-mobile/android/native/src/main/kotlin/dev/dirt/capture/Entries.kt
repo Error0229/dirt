@@ -63,7 +63,8 @@ class CaptureTile : TileService() {
 // The widget: one bar. Its logo opens the app; the bar, the sheet; its mic,
 // the sheet listening hands-free, in a build with voice. At one or two cells
 // it is only its icons (8.11): a pencil, which opens the sheet as the bar
-// does, and the mic. The logo and the icons take the accent the person
+// does, and the mic, side by side, or stacked in a cell taller than it is
+// wide. The logo and the icons take the accent the person
 // chose, light or dark as the system is, where Android lets a widget's
 // colour follow the system (12 and later); before that they are Clay.
 class CaptureWidget : AppWidgetProvider() {
@@ -73,7 +74,7 @@ class CaptureWidget : AppWidgetProvider() {
 
     // Before Android 12 the widget chooses its layout by its width, so it
     // is drawn again when the person resizes it. From 12 the home screen
-    // chooses between the two layouts it was given, by itself.
+    // chooses among the layouts it was given, by itself.
     override fun onAppWidgetOptionsChanged(
         context: Context,
         manager: AppWidgetManager,
@@ -83,29 +84,52 @@ class CaptureWidget : AppWidgetProvider() {
         if (Build.VERSION.SDK_INT < 31) manager.updateAppWidget(id, views(context, manager, id))
     }
 
+    // What the widget is drawn as: the bar, or only its icons, side by side
+    // or stacked.
+    private enum class Shape(val layout: Int) {
+        BAR(R.layout.dirt_capture_widget),
+        ROW(R.layout.dirt_capture_widget_icons),
+        STACK(R.layout.dirt_capture_widget_stack),
+    }
+
     companion object {
-        // Narrower than this, in dp, the bar is only its icons: one cell or
-        // two, where "Write a thought" had no room beside the logo and mic.
-        private const val ICONS_BELOW_DP = 180
+        // Each shape and the size in dp it is meant for. The one drawn is
+        // the nearest of those that fit the widget, as Android 12 and later
+        // choose (`RemoteViews` by size), or the first if none fits. So the
+        // bar from 180 dp wide, where "Write a thought" has room between the
+        // logo and the mic; below that the icons, stacked where the cell is
+        // tall enough for two rows of 48 dp and not much wider than one
+        // icon's target, else side by side.
+        private val SHAPES = listOf(
+            SizeF(40f, 40f) to Shape.ROW,
+            SizeF(100f, 40f) to Shape.ROW,
+            SizeF(40f, 96f) to Shape.STACK,
+            SizeF(180f, 40f) to Shape.BAR,
+        )
 
         private fun views(context: Context, manager: AppWidgetManager, id: Int): RemoteViews =
             if (Build.VERSION.SDK_INT >= 31) {
-                RemoteViews(
-                    mapOf(
-                        SizeF(40f, 40f) to drawn(context, icons = true),
-                        SizeF(ICONS_BELOW_DP.toFloat(), 40f) to drawn(context, icons = false),
-                    ),
-                )
+                RemoteViews(SHAPES.associate { (size, shape) -> size to drawn(context, shape) })
             } else {
-                // The width in portrait; 0 before the home screen has said.
-                val width = manager.getAppWidgetOptions(id)
-                    .getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0)
-                drawn(context, icons = width in 1 until ICONS_BELOW_DP)
+                // Its size in portrait; 0 before the home screen has said,
+                // when it is drawn as the bar it is placed as.
+                val options = manager.getAppWidgetOptions(id)
+                val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0)
+                val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0)
+                drawn(context, if (width == 0) Shape.BAR else nearest(width.toFloat(), height.toFloat()))
             }
 
-        private fun drawn(context: Context, icons: Boolean): RemoteViews {
-            val layout = if (icons) R.layout.dirt_capture_widget_icons else R.layout.dirt_capture_widget
-            val views = RemoteViews(context.packageName, layout)
+        // Android 12's choice, for the widget before 12.
+        private fun nearest(width: Float, height: Float): Shape =
+            SHAPES.filter { (size, _) -> size.width <= width && size.height <= height }
+                .minByOrNull { (size, _) ->
+                    val (across, down) = size.width - width to size.height - height
+                    across * across + down * down
+                }?.second ?: SHAPES.first().second
+
+        private fun drawn(context: Context, shape: Shape): RemoteViews {
+            val icons = shape != Shape.BAR
+            val views = RemoteViews(context.packageName, shape.layout)
             views.setOnClickPendingIntent(
                 if (icons) R.id.dirt_widget_write else R.id.dirt_widget_bar,
                 sheetLater(context),

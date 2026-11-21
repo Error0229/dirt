@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The bar widget at one cell taller than it is wide (design 8.11): the
+     pencil above the mic, each with the whole width of the cell and half
+     its height, so that each target can reach 48 dp each way where side by
+     side neither could. The surface with its hairline and corners of 28 dp,
+     as the pill's. Without voice the pencil has it all. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/dirt_widget_bg"
+    android:orientation="vertical">
+    <ImageView
+        android:id="@+id/dirt_widget_write"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:contentDescription="@string/dirt_widget_bar"
+        android:scaleType="center"
+        android:src="@drawable/dirt_pencil"
+        android:tint="@color/dirt_accent_clay" />
+    <ImageView
+        android:id="@+id/dirt_widget_mic"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:contentDescription="@string/dirt_talk"
+        android:scaleType="center"
+        android:src="@drawable/dirt_mic"
+        android:tint="@color/dirt_accent_clay"
+        android:visibility="gone" />
+</LinearLayout>

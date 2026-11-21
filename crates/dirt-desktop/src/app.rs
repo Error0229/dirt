@@ -407,8 +407,10 @@ pub fn App() -> Element {
         }
     });
     crate::tray::use_tray(choose);
-    // The tray's icon is the logo in the accent chosen in Settings.
-    use_effect(move || crate::tray::show_accent(settings.read().accent));
+    // The tray's icon is the logo in the accent chosen in Settings, drawn
+    // again only when the accent changes, not at every other setting.
+    let accent = use_memo(move || settings.read().accent);
+    use_effect(move || crate::tray::show_accent(accent()));
     let hotkey = crate::hotkey::use_hotkey();
     crate::use_actions_from_stdin(hotkey, choose);
 
