@@ -91,7 +91,7 @@ The hotkey is shown in Settings and cannot be changed there.
 | Where speech becomes text | On this computer, with the model shipped in the app (Parakeet TDT-CTC 110M, NVIDIA, CC BY 4.0, credited in Settings → Voice). Nothing is sent anywhere but the encrypted note and file | The same, on this phone: the model is in the app and copied out of it once, on first use | Not applicable |
 | Keep the recording, or the text only | Settings → Voice → The recording: Keep, or Text only, which takes the recording off once its words are in | The same, and a word about Talk and the side key | No |
 | The microphone's permission | Windows' own setting; the mic shows a slash and says where | Asked at the first press, in Android's dialog. Refused, the mic shows a slash and a press says why; refused for good, it offers Android's page for the app | Not applicable |
-| Choose the microphone | Settings → Voice → Microphone: the system's default or any input connected, kept in this device's settings. One not connected when talking gives way to the default, and the row says so | No: the system's microphone | Not applicable |
+| Choose the microphone | Settings → Voice → Microphone: the system's default or any input connected, kept in this device's settings. One not connected when talking, or one that cannot record, gives way to the default, and the row says so. On Linux only the inputs that can record are listed | No: the system's microphone | Not applicable |
 | Play a recording | The file preview, as any sound | The file preview, as any sound | `dirt save`, then play it |
 
 ## Account and devices

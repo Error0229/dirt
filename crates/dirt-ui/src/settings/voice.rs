@@ -31,6 +31,9 @@ pub struct Microphones {
     pub chosen: Option<String>,
     /// Lists the microphones connected now.
     pub list: Callback<(), Task<Vec<Microphone>>>,
+    /// The chosen one is connected but could not record the last time,
+    /// and the default recorded in its place.
+    pub unusable: bool,
 }
 
 /// The first choice, and what the row says while it is chosen.
@@ -39,19 +42,26 @@ const DEFAULT_MIC: &str = "The system\u{2019}s default";
 /// What the row says of a chosen microphone that is not connected.
 const MIC_GONE: &str = "Not connected: the system\u{2019}s default is used";
 
+/// What the row says of a chosen microphone that is connected but could
+/// not record the last time it was asked for.
+const MIC_UNUSABLE: &str = "Could not record from it: the system\u{2019}s default is used";
+
 /// What the microphone row says of the one chosen. Nothing while the
 /// connected ones are still being listed, rather than a guess.
-fn chosen_words(chosen: Option<&str>, connected: Option<&[Microphone]>) -> Option<String> {
+fn chosen_words(
+    chosen: Option<&str>,
+    connected: Option<&[Microphone]>,
+    unusable: bool,
+) -> Option<String> {
     let Some(id) = chosen else {
         return Some(DEFAULT_MIC.to_owned());
     };
     let connected = connected?;
-    Some(
-        connected
-            .iter()
-            .find(|mic| mic.id == id)
-            .map_or_else(|| MIC_GONE.to_owned(), |mic| mic.name.clone()),
-    )
+    Some(match connected.iter().find(|mic| mic.id == id) {
+        None => MIC_GONE.to_owned(),
+        Some(_) if unusable => MIC_UNUSABLE.to_owned(),
+        Some(mic) => mic.name.clone(),
+    })
 }
 
 /// The microphone row, and under it, opened, the choices: the system's
@@ -71,7 +81,11 @@ fn MicrophoneChoice(microphones: Microphones, on_choose: EventHandler<Option<Str
     };
     use_hook(ask);
     let chosen = microphones.chosen;
-    let detail = chosen_words(chosen.as_deref(), connected.read().as_deref());
+    let detail = chosen_words(
+        chosen.as_deref(),
+        connected.read().as_deref(),
+        microphones.unusable,
+    );
     let is_open = open();
     let listed = connected.read().clone().unwrap_or_default();
     rsx! {
@@ -216,16 +230,24 @@ mod tests {
     #[test]
     fn the_row_names_the_chosen_microphone_or_says_it_is_gone() {
         let connected = [mic("wasapi:a", "Headset"), mic("wasapi:b", "Desk mic")];
-        assert_eq!(chosen_words(None, None).as_deref(), Some(DEFAULT_MIC));
         assert_eq!(
-            chosen_words(Some("wasapi:b"), Some(&connected)).as_deref(),
+            chosen_words(None, None, false).as_deref(),
+            Some(DEFAULT_MIC)
+        );
+        assert_eq!(
+            chosen_words(Some("wasapi:b"), Some(&connected), false).as_deref(),
             Some("Desk mic")
         );
         assert_eq!(
-            chosen_words(Some("wasapi:c"), Some(&connected)).as_deref(),
+            chosen_words(Some("wasapi:c"), Some(&connected), false).as_deref(),
             Some(MIC_GONE)
         );
+        // Listed, but it could not record: the default did.
+        assert_eq!(
+            chosen_words(Some("wasapi:b"), Some(&connected), true).as_deref(),
+            Some(MIC_UNUSABLE)
+        );
         // Not listed yet: nothing is said rather than a guess.
-        assert_eq!(chosen_words(Some("wasapi:b"), None), None);
+        assert_eq!(chosen_words(Some("wasapi:b"), None, false), None);
     }
 }

@@ -8,10 +8,10 @@ html,body{background:transparent;margin:0;overflow:hidden}
 .dk-capture-box{width:560px;box-sizing:border-box;display:flex;gap:12px;align-items:flex-start;padding:14px 14px 10px 16px;background:var(--surface);border-radius:16px;box-shadow:var(--shadow-3),0 0 0 1px var(--border);transform-origin:50% 50%}
 .dk-capture-logo{margin-top:1px}
 /* Grows with the thought to about twelve lines, then scrolls, with the
-   drawn scrollbar (6.15) beside it in the field. */
+   drawn scrollbar (6.15) over its right edge, where the text leaves it
+   room: the pointer there brings it, as anywhere. */
 .dk-capture-field{position:relative;flex:1;min-width:0}
-.dk-capture-field>.dui-sb{top:0;bottom:0;right:-10px}
-.dk-capture-text{display:block;width:100%;min-height:72px;max-height:288px;field-sizing:content;overflow-y:auto;margin:0;padding:0;border:0;outline:0;resize:none;background:none;color:var(--text);font:400 17px/24px var(--font);caret-color:var(--accent)}
+.dk-capture-text{display:block;width:100%;min-height:72px;max-height:288px;field-sizing:content;overflow-y:auto;margin:0;padding:0 10px 0 0;border:0;outline:0;resize:none;background:none;color:var(--text);font:400 17px/24px var(--font);caret-color:var(--accent)}
 .dk-capture-text::placeholder{color:var(--text-3)}
 /* Held, the keys open it listening (6.18): the grains, the timer, ✕ and ✓
    in the text's place. */

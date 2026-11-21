@@ -147,7 +147,8 @@
 }
 
 /* ---- The keys (Ctrl /) ------------------------------------------------ */
-.dk-keys{padding:22px 28px 28px;overflow-y:auto}
+.dk-keys-wrap{flex:1}
+.dk-keys{padding:22px 28px 28px}
 .dk-keys h2{margin:0 0 14px;font-size:20px;font-weight:700;letter-spacing:-.02em}
 .dk-keys table{border-collapse:collapse;width:100%;font-size:13px}
 .dk-keys td{padding:5px 0;vertical-align:middle;border-bottom:1px solid var(--border)}

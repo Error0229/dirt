@@ -197,6 +197,8 @@ pub fn SettingsPanel() -> Element {
     let list_microphones =
         use_callback(move |()| Box::pin(crate::voice::microphones()) as dirt_ui::settings::Task<_>);
     let microphones = voice.is_some().then(|| Microphones {
+        unusable: settings.microphone.is_some()
+            && dirt_voice::microphone::unusable() == settings.microphone,
         chosen: settings.microphone.clone(),
         list: list_microphones,
     });
