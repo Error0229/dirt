@@ -965,8 +965,11 @@ What the table leaves open, settled when that was built:
 Dark on light (and light on dark), bottom centre, above the Android field.
 One at a time: a new one replaces the old. Carries at most one action.
 Lasts 2.6 s, or 6 s when it has **Undo**, with a draining bar along its
-bottom so the time left is visible. Hovering it pauses the timer, and so
-does keyboard focus inside it. The bar is the timer: it stops while the
+bottom so the time left is visible. A mouse or pen moved onto it pauses
+the timer, and so does keyboard focus inside it; leaving the window, or
+putting it away, lets go. A finger does not hold it: Android keeps
+`:hover` on what was last touched and focus on a button tapped, and a
+toast held by either never went (#312). The bar is the timer: it stops while the
 toast is held and goes on from where it was, so what it shows is what is
 left.
 
@@ -995,6 +998,14 @@ five, since a section with nothing in it would be a heading over nothing. On the
 the scroll. On Android it is a sheet with a grabber. Each section is a card
 of rows: an icon square, a title, one line of grey detail, and at most one
 control on the right.
+
+Closed, the panel and the sheet (and the banner, 6.8) are see-through or
+off the screen, take no pointer and are inert; they are never hidden with
+`visibility`. Hidden that way, WebView2 was seen to leave the sections
+under Account hidden after the panel had opened again, their inherited
+`visibility` not worked out afresh, so that Settings opened as a blank page
+beside the rail until something redrew it (#311). Android's WebView had
+done the same to the page that grows out of its card (5.5).
 
 ### 6.10 Buttons
 
@@ -1100,7 +1111,7 @@ gives the bytes with `Session::file_bytes`; a file is 10 MiB at most.
 
 | Kind | Shown as |
 |---|---|
-| Pictures: JPEG, PNG, GIF, WebP | The picture, as large as fits. Double-click or pinch to zoom to 2× |
+| Pictures: JPEG, PNG, GIF, WebP | The whole picture, as large as fits both ways. Double-click or pinch to zoom to 2×; zoomed, a drag, the wheel or a finger moves it to every part |
 | Audio | A card: the clay play button, a waveform that fills with clay as it plays and can be clicked to seek, and the time in mono |
 | Video | The video with the system's own controls |
 | Text: `.txt`, `.md`, `.csv`, `.json`, code | The text in mono on a card, with its own scrollbar |
@@ -1151,7 +1162,7 @@ gives them what only it can do (another app, a save dialog).
 | A sound | The card's bars are the sound's own shape, read from it in the page; a sound the web view cannot read is drawn flat and still plays. The time is "0:12 / 0:48" |
 | A PDF | Its pages one under another, as wide as the column allows up to 900 px, each drawn as it comes within 600 px of sight. Drawn by PDF.js (section 11); a PDF it cannot draw says so where its pages would be, and **Open in another app** is beside it |
 | Text | In mono on a card, with the drawn scrollbar. Read as UTF-8, a byte-order mark left off and anything that is not UTF-8 shown as the replacement character |
-| Pinch | Two fingers spreading by a fifth zoom a picture to 2×, closing by a seventh bring it back. A double tap does the same |
+| Pinch | Two fingers spreading by a fifth zoom a picture to 2×, closing by a seventh bring it back. A double tap does the same. Zoomed, one finger moves the picture, as it scrolls, and does not step or close |
 | The bytes | Held in memory by the app while the file is shown, and given to the web view at an address only the app answers (`dirt_ui::files::served`), which tells it to keep nothing and guess nothing, and lets a video seek. The type it is told is the app's, from a short list for the kind it decided, never the note's claim. Let go of as the preview moves on or closes; a file still being read then is dropped when it comes (`docs/SECURITY.md`) |
 | A video | The web view's controls without Download, picture-in-picture or casting. Nothing in the preview has the web view's menu, or can be dragged out of the window |
 | Dropping (desktop) | Anywhere on the window, as 7.3 says; while files are dragged over it, a dashed clay edge and "Drop to attach to this note" or "Drop to make a note of it" show. Not while the preview, Settings or the panel of keys is open: the note they would go to cannot be seen, so the hint does not show and the drop does nothing |
@@ -1172,6 +1183,15 @@ was taken for the swipe's own end and swallowed. And a swipe begun on a
 picture's stand-in, which the picture replaces a moment later, stopped
 being heard, as touches on an element taken out of the page no longer
 reach the document. Each is mended in the script, as the table says.
+
+**A tall picture** (#313) was fitted to the stage's width alone and ran
+off its foot, where nothing could reach it: the stage and its item were
+grids whose row took the picture's own height, so its `max-height: 100%`
+had nothing to be measured against. They are grids of one cell their own
+size now. Zoom was a `scale(2)` that could not be moved, so a zoomed
+picture's edges were out of reach too: it is now the picture at twice the
+size it fitted at, in an item that scrolls, the point clicked kept under
+the pointer (280 ms, enter, as the mockup's transition).
 
 ### 6.17 Grains, layers and the pile
 

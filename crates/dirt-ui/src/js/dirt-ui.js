@@ -1113,12 +1113,24 @@
     if (!bar || !ms) return;
     const drain = bar.animate([{ width: '100%' }, { width: '0%' }], { duration: ms, easing: 'linear', fill: 'forwards' });
     toast._duiDrain = drain;
-    const hold = () => drain.pause();
-    const go = () => { if (!toast.matches(':hover') && !toast.contains(document.activeElement)) drain.play(); };
-    toast.addEventListener('pointerenter', hold);
-    toast.addEventListener('pointerleave', go);
-    toast.addEventListener('focusin', hold);
+    // Held while a mouse or pen moves onto it and stays, or the keyboard is
+    // in it (#312). A finger is no pointer that rests: Android keeps :hover
+    // on what was last touched, and focus stays on a button tapped, so a
+    // toast touched, or one whose Settings was tapped, waited for ever.
+    let pointer = false;
+    const keyboard = () => !!toast.querySelector(':focus-visible');
+    const go = () => { if (!pointer && !keyboard()) drain.play(); };
+    toast.addEventListener('pointermove', event => {
+      if (event.pointerType === 'touch' || pointer) return;
+      pointer = true;
+      drain.pause();
+    });
+    toast.addEventListener('pointerleave', () => { pointer = false; go(); });
+    toast.addEventListener('focusin', () => { if (keyboard()) drain.pause(); });
     toast.addEventListener('focusout', () => setTimeout(go, 0));
+    // The window put away or left with the pointer still on the toast
+    // tells it nothing: it lets go then.
+    toast._duiLetGo = () => { pointer = false; go(); };
     drain.finished.catch(() => {}).then(() => {
       if (!toast.isConnected) return;
       closeToast(toast, () => { toast._duiTold = true; tell(toast, 'expired'); });
@@ -1139,6 +1151,9 @@
     layer.append(ghost);
     closeToast(ghost, () => ghost.remove());
   }
+  const letGoOfToasts = () => $$('.dui-toast').forEach(toast => toast._duiLetGo && toast._duiLetGo());
+  window.addEventListener('blur', letGoOfToasts);
+  document.addEventListener('visibilitychange', letGoOfToasts);
   // Ctrl Z, outside a text, presses Undo on the toast that offers it.
   document.addEventListener('keydown', event => {
     if (event.isComposing || event.key.toLowerCase() !== 'z' || !(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return;
@@ -2155,12 +2170,35 @@
     event.preventDefault();
     event.stopPropagation();
   }, true));
-  // A double click on a picture zooms it to twice its size about the
-  // point clicked, and back.
+  // A double click on a picture zooms it to twice the size it fitted at,
+  // about the point clicked, and back (280 ms, enter). Zoomed, its item
+  // scrolls, so that every part of it can be reached: the wheel, a drag
+  // or a finger moves it (#313). The point clicked stays where it was,
+  // unless that would leave the picture short of an edge.
   function zoom(picture, x, y, on) {
+    const item = picture.closest('.dui-pv-item');
+    if (!item || on === picture.classList.contains('zoom')) return;
     const box = picture.getBoundingClientRect();
-    if (on) picture.style.transformOrigin = `${((x - box.left) / box.width) * 100}% ${((y - box.top) / box.height) * 100}%`;
-    picture.classList.toggle('zoom', on);
+    const fx = Math.min(1, Math.max(0, (x - box.left) / box.width));
+    const fy = Math.min(1, Math.max(0, (y - box.top) / box.height));
+    if (on) {
+      picture.style.setProperty('--w', `${box.width * 2}px`);
+      picture.style.setProperty('--h', `${box.height * 2}px`);
+      item.classList.add('zoomed');
+      picture.classList.add('zoom');
+      const now = picture.getBoundingClientRect();
+      item.scrollLeft += now.left + fx * now.width - x;
+      item.scrollTop += now.top + fy * now.height - y;
+    } else {
+      picture.classList.remove('zoom', 'held');
+      item.classList.remove('zoomed');
+      picture.style.removeProperty('--w');
+      picture.style.removeProperty('--h');
+    }
+    if (reduced()) return;
+    const origin = `${fx * 100}% ${fy * 100}%`;
+    picture.animate([{ transform: `scale(${on ? 0.5 : 2})`, transformOrigin: origin }, { transform: 'none', transformOrigin: origin }],
+      { duration: 280, easing: tokens.enter });
   }
   document.addEventListener('dblclick', event => {
     const picture = event.target.closest && event.target.closest('img[data-dui-zoom]');
@@ -2205,7 +2243,8 @@
         picture: modal.querySelector('img[data-dui-zoom]'), at: [(a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2] };
       return;
     }
-    if (event.touches.length !== 1 || event.target.closest('button, video, .dui-pv-audio')) { previewSwipe = null; return; }
+    // One finger on a zoomed picture moves it, as its item scrolls.
+    if (event.touches.length !== 1 || event.target.closest('button, video, .dui-pv-audio, .dui-pv-item.zoomed')) { previewSwipe = null; return; }
     const touch = event.touches[0];
     previewSwipe = { x: touch.clientX, y: touch.clientY, mode: null, d: 0, modal,
       scrolls: !!event.target.closest('[data-dui-scroll]') };
@@ -2244,6 +2283,30 @@
     }
   }
   document.addEventListener('touchmove', movePreviewSwipe, { passive: true });
+  // A mouse or pen dragging a zoomed picture moves it.
+  let panning = null;
+  document.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'touch' || event.button || !event.target.closest) return;
+    const picture = event.target.closest('img[data-dui-zoom].zoom');
+    const item = picture && picture.closest('.dui-pv-item');
+    if (!item) return;
+    event.preventDefault();
+    panning = { item, picture, id: event.pointerId, x: event.clientX, y: event.clientY, left: item.scrollLeft, top: item.scrollTop };
+    picture.classList.add('held');
+    try { picture.setPointerCapture(event.pointerId); } catch (error) { /* the pointer has gone */ }
+  });
+  window.addEventListener('pointermove', event => {
+    if (!panning || event.pointerId !== panning.id) return;
+    panning.item.scrollLeft = panning.left - (event.clientX - panning.x);
+    panning.item.scrollTop = panning.top - (event.clientY - panning.y);
+  }, { passive: true });
+  const endPan = event => {
+    if (!panning || event.pointerId !== panning.id) return;
+    panning.picture.classList.remove('held');
+    panning = null;
+  };
+  window.addEventListener('pointerup', endPan);
+  window.addEventListener('pointercancel', endPan);
   function endPreviewSwipe(event) {
     if (!onceOnly(event)) return;
     const swipe = previewSwipe;
