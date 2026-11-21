@@ -12,10 +12,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import { launchDesktop, launchAndroid, launchMockup, launchHeadless } from './lib/targets.mjs';
-import { prepare, sendSteps, partsFor, cropFor, scaleFor, captureStepped, captureRealtime, measureFrameRate, pick } from './lib/capture.mjs';
-import { findPops, findOutside, findOverlaps, findLingering, findMissing, compareReversed, compareWithMockup, frameIntervals, traceTiming, tracksOf, movingWindow, CHANNELS, round } from './lib/analyse.mjs';
+import { launchDesktop, launchAndroid, launchMockup, launchHeadless, runCleanups, onCleanup, dirtIsRunning } from './lib/targets.mjs';
+import { prepare, sendSteps, partsFor, cropFor, scaleFor, captureStepped, captureRealtime, measureFrameRate, pick, writes } from './lib/capture.mjs';
+import {
+  findPops, findOutside, findOverlaps, findLingering, findMissing, compareMirror, compareWithMockup,
+  frameIntervals, activeSpans, traceTiming, tracksOf, movingWindow, CHANNELS, round, when, contradictedInRealTime,
+} from './lib/analyse.mjs';
 import { contactSheets, sideBySide, video, nearest, removeFrames } from './lib/sheets.mjs';
 import { writeReport, trustOf } from './lib/report.mjs';
 
@@ -44,21 +46,25 @@ platform: desktop, android, mockup-desktop, mockup-android
 options:
   --mockup             also run the scenario on the mockup and compare (desktop, android)
   --layers stepped,realtime   which captures to make (both by default)
-  --only <movement,...>       run only these movements (and the ones they are compared with)
+  --only <movement,...>       run only these movements (and the ones they mirror)
   --step-ms <ms>       the stepped clock's step (default 1000/60)
   --realtime-probe off  measure no parts on each frame in real time (to see that
                        the probe costs nothing); frame timing and screenshots stay
   --keep-frames        keep every frame and the DevTools trace, not only the sheets
   --video              also write a 60 fps video of each stepped movement (ffmpeg)
   --out <folder>       where run folders go (default: $CARGO_TARGET_DIR/motion, or target/motion)
-  desktop:  --exe <path>        the app (default: <target>/dx/dirt-desktop/debug/windows/app/dirt-desktop.exe)
-            --beside-running    run a copy whose single-instance lock has another name,
-                                beside a Dirt that is already running
-            --voice             with --beside-running, copy the voice model too
-            --port <n>          its DevTools port (default: the first free from 9581)
+  desktop:  --exe <path>        a development build of the app (default:
+                                <target>/dx/dirt-desktop/debug/windows/app/dirt-desktop.exe);
+                                a release build is refused, since it ignores every stand-in
+            --in-place          run the app where it is, not a copy whose single-instance
+                                lock has another name (a Dirt started meanwhile then exits)
+            --voice             copy the voice model too
+            --port <n>          its DevTools port, if free (default: the first free from 9581)
   android:  --serial <s>        the device (default: the running emulator)
-            --real-phone        allow a device that is not an emulator (its owner's choice)
-            --package <name>    (default com.example.DirtMobile)`;
+            --real-phone        allow a device that is not an emulator (its owner's choice; needs --serial)
+            --allow-writes      on a phone, allow the steps that type or change notes
+            --package <name>    (default com.example.DirtMobile)
+            --port <n>          the local port forwarded to its web view, if free`;
 
 function targetFolder() {
   return process.env.CARGO_TARGET_DIR ? path.resolve(process.env.CARGO_TARGET_DIR) : path.join(repo, 'target');
@@ -80,6 +86,29 @@ function forPlatform(list, platform) {
   return (list || []).filter(item => !item.platforms || item.platforms.includes(platform) || (platform.startsWith('mockup-') && item.platforms.includes('mockup')));
 }
 
+/** A list a scenario gives for every platform, or per platform. */
+function listFor(value, platform) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  return pick(value, platform) || [];
+}
+
+/** What a movement is meant to mirror on this platform, from the design, or null. */
+function mirrorFor(movement, platform) {
+  const spec = movement.mirrors;
+  if (!spec) return null;
+  const parts = spec.parts && !Object.values(spec.parts).every(Array.isArray) ? pick(spec.parts, platform) : spec.parts;
+  if (!parts) return null;
+  return { of: spec.of, parts, curve: !!spec.curve, because: spec.because };
+}
+
+/** Every step a run would send on this platform. */
+function stepsOf(scenario, platform) {
+  const steps = [...forPlatform(scenario.setup, platform), ...forPlatform(scenario.between, platform)];
+  for (const movement of forPlatform(scenario.movements, platform)) steps.push(...forPlatform(movement.steps, platform), ...forPlatform(movement.after, platform));
+  return steps.filter(step => !step.platforms || step.platforms.includes(platform));
+}
+
 /** Runs a scenario's movements on one target: stepped, then in real time. */
 async function capture(target, scenario, { layers, dir, stepMs, only, probeLive = true }) {
   const viewport = await prepare(target.cdp);
@@ -87,8 +116,9 @@ async function capture(target, scenario, { layers, dir, stepMs, only, probeLive 
   await sendSteps(target, forPlatform(scenario.setup, target.platform));
   const idle = await measureFrameRate(target.cdp, 1000);
   const parts = partsFor(scenario, target.platform);
+  const pairs = ((scenario.checks || {}).apart || []).filter(([a, b]) => parts[a] && parts[b]);
   const movements = forPlatform(scenario.movements, target.platform).filter(m => !only || only.includes(m.name));
-  const results = { viewport, idle, stepped: {}, realtime: {} };
+  const results = { viewport, idle, stepped: {}, realtime: {}, notes: target.notes || [] };
   const passes = layers.filter(layer => layer === 'stepped' || layer === 'realtime');
   for (const [n, layer] of passes.entries()) {
     if (n > 0) await sendSteps(target, forPlatform(scenario.between, target.platform));
@@ -98,11 +128,11 @@ async function capture(target, scenario, { layers, dir, stepMs, only, probeLive 
       const into = path.join(dir, 'frames', target.platform, `${layer}-${movement.name}`);
       log(`${target.platform}: ${movement.name}, ${layer}`);
       if (layer === 'stepped') {
-        results.stepped[movement.name] = { ...await captureStepped(target, movement, { parts, crop, scale, dir: into, stepMs, viewport, log }), crop };
+        results.stepped[movement.name] = { ...await captureStepped(target, movement, { parts, pairs, crop, scale, dir: into, stepMs, viewport, log }), crop };
       } else {
         // Without the probe, the page does no work of ours while it plays:
         // for checking that the probe itself is not what drops frames.
-        results.realtime[movement.name] = { ...await captureRealtime(target, movement, { parts: probeLive ? parts : {}, crop, scale, dir: into, viewport, log }), crop };
+        results.realtime[movement.name] = { ...await captureRealtime(target, movement, { parts: probeLive ? parts : {}, pairs: probeLive ? pairs : [], crop, scale, dir: into, viewport, log }), crop };
       }
       await sendSteps(target, forPlatform(movement.after, target.platform));
     }
@@ -112,18 +142,21 @@ async function capture(target, scenario, { layers, dir, stepMs, only, probeLive 
 
 async function launch(platform, args) {
   const target = targetFolder();
+  const port = args.port ? Number(args.port) : undefined;
   if (platform === 'desktop') {
+    const inPlace = !!args['in-place'];
+    if (inPlace && await dirtIsRunning()) throw new Error('--in-place, but a Dirt is running: its single-instance lock would stop the test app. Leave --in-place out to run a copy');
     return launchDesktop({
       exe: args.exe || path.join(target, 'dx', 'dirt-desktop', 'debug', 'windows', 'app', process.platform === 'win32' ? 'dirt-desktop.exe' : 'dirt-desktop'),
-      besideRunning: !!args['beside-running'], voice: !!args.voice, port: args.port ? Number(args.port) : undefined, log,
+      inPlace, voice: !!args.voice, port, log,
     });
   }
-  if (platform === 'android') return launchAndroid({ serial: args.serial, realPhone: !!args['real-phone'], packageName: args.package, port: args.port ? Number(args.port) : undefined, log });
+  if (platform === 'android') return launchAndroid({ serial: args.serial, realPhone: !!args['real-phone'], packageName: args.package, port, log });
   if (platform === 'mockup-desktop' || platform === 'mockup-android') return launchMockup({ as: platform.slice(7), mockup: path.join(repo, 'docs', 'ui', 'mockup.html'), log });
   throw new Error(`no platform ${platform}`);
 }
 
-/** The time span over which anything in a stepped trace moves. */
+/** The time span over which anything in a trace moves. */
 function windowOf(frames) {
   let from = Infinity, to = -Infinity;
   for (const track of tracksOf(frames.filter(f => !f.before)).values()) {
@@ -135,16 +168,78 @@ function windowOf(frames) {
   return from === Infinity ? null : { from, to };
 }
 
-/** A list a scenario gives for every platform, or per platform. */
-function listFor(value, platform) {
-  if (!value) return [];
-  if (Array.isArray(value)) return value;
-  return pick(value, platform) || [];
+function flag(frames, t, text, kind = 'flags') {
+  const frame = frames.find(f => f.t === t) || nearest(frames, t);
+  if (frame) (frame[kind] = frame[kind] || []).push(text);
 }
 
-function flag(frames, t, text, kind = 'flags') {
-  const frame = nearest(frames, t);
-  if (frame) (frame[kind] = frame[kind] || []).push(text);
+const sheetName = (sheets, t, frames) => {
+  if (!sheets?.length) return '';
+  if (sheets.length === 1) return path.basename(sheets[0]);
+  const index = Math.max(0, frames.findIndex(f => f.t >= t));
+  return path.basename(sheets[Math.min(sheets.length - 1, Math.floor(index / 24))]);
+};
+
+/**
+ * The findings of a run, most telling first, each in one line with its
+ * movement, its millisecond and the sheet that shows it.
+ */
+function summarise(movements, { platform, trust }) {
+  const lines = [];
+  const add = (rank, text) => lines.push({ rank, text });
+  for (const m of movements) {
+    const f = m.findings;
+    const frames = m.stepped?.frames || [];
+    const sheetAt = t => sheetName(m.stepped?.sheets, t, frames);
+    if (f) {
+      for (const p of f.pops) add(p.contradicted ? 4 : p.atInput ? 1 : 2, `**${m.name}**: \`${p.key}\` ${p.detail} (${when(p.t)}, ${sheetAt(p.t)})`);
+      for (const l of f.lingering) if (!l.ok) add(1, `**${m.name}**: \`${l.part}\` should have left: ${l.detail} (${sheetAt(l.t)})`);
+      for (const o of f.overlaps) add(o.stacking ? 2 : 3, `**${m.name}**: \`${o.a}\` and \`${o.b}\` are ${o.stacking ? 'seen over one another' : 'boxed over one another (what is on top could not be told)'} from ${when(o.from)} to ${when(o.until)} (${sheetAt(o.from)})`);
+      for (const o of f.outside) add(2, `**${m.name}**: \`${o.part}\` reaches ${o.worst} px past \`${o.container}\` from ${when(o.from)} to ${when(o.until)} (${sheetAt(o.from)})`);
+      for (const a of f.missing) add(1, `**${m.name}**: \`${a.part}\` is ${a.detail}`);
+    }
+    for (const r of m.mirror || []) {
+      if (r.note) add(2, `**${m.name}** against **${m.mirrorOf}**: \`${r.key}\` ${r.channel} ${r.note} (meant to mirror: ${m.mirrorBecause})`);
+      else if (r.endsAway) add(2, `**${m.name}** against **${m.mirrorOf}**: \`${r.key}\` is last seen at ${r.channel} ${r.closeTo}, ${r.away}${r.channel === 'o' ? '' : ' px'} from where **${m.mirrorOf}** first showed it (${r.openFrom}) (meant to mirror: ${m.mirrorBecause})`);
+      if (r.distance && r.distance.max > 0.3) add(3, `**${m.name}** against **${m.mirrorOf}** played backwards: \`${r.key}\` ${r.channel} curves ${r.distance.max} apart (worst at ${Math.round(r.distance.worstAt * 100)}% of the way)`);
+    }
+    // A part whose stepped trace an app timer cut short is compared on that
+    // short trace: said, but as a note on the capture.
+    const cutShort = new Set((f?.pops || []).filter(p => p.contradicted).map(p => p.key));
+    for (const r of m.mockup || []) {
+      if (cutShort.has(r.key) && m.mockupIn !== 'real time') {
+        add(4, `**${m.name}** against the mockup: \`${r.key}\` ${r.channel} is compared on a stepped trace an app timer cut short (see above); judge it from the real-time frames`);
+        continue;
+      }
+      if (r.note && r.note !== 'not in the mockup') add(2,`**${m.name}** against the mockup: \`${r.key}\` ${r.channel} ${r.note}${r.mockupMs ? ` (mockup: ${r.mockupMs} ms from ${when(r.mockupStart)})` : ''}`);
+      else if (r.distance) {
+        const longer = Math.abs(r.appMs - r.mockupMs) > Math.max(60, 0.3 * r.mockupMs);
+        if (longer || r.distance.max > 0.3) add(3, `**${m.name}** against the mockup: \`${r.key}\` ${r.channel} takes ${r.appMs} ms (mockup ${r.mockupMs} ms), curves ${r.distance.max} apart`);
+      }
+    }
+    const rt = m.realtime;
+    if (rt?.composited?.missed > 1 && trust.ok) {
+      add(3, `**${m.name}** in real time: ${rt.composited.fps} frames a second, about ${rt.composited.missed} not drawn, judged ${rt.composited.judged}${platform === 'android' ? ' (the emulator\'s, not a phone\'s)' : ''}`);
+    }
+    for (const note of m.stepped?.notes || []) add(4, `**${m.name}**: ${note}`);
+  }
+  // Rows of one part and one kind are said once, with how many there are.
+  const seen = new Map();
+  for (const line of lines) {
+    const key = `${line.rank}|${line.text.replace(/\[\d+(,\d+)*\]/g, '[…]').replace(/[\d.]+/g, '#')}`;
+    if (seen.has(key)) seen.get(key).more++;
+    else seen.set(key, { ...line, more: 0 });
+  }
+  return [...seen.values()].sort((a, b) => a.rank - b.rank).map(l => ({ rank: l.rank, text: l.more ? `${l.text}, and ${l.more} more like it` : l.text }));
+}
+
+/** A real phone's notes are the person's and sync: steps that write are refused unless allowed. */
+function guardPhone(scenario, args) {
+  if (!args['real-phone']) return;
+  const writing = stepsOf(scenario, 'android').filter(writes);
+  if (writing.length && !args['allow-writes']) {
+    throw new Error(`on a real phone, ${scenario.name} would write into the phone's notes, which sync: ${writing.slice(0, 4).map(s => JSON.stringify(s)).join(', ')}${writing.length > 4 ? ', …' : ''}. Give --allow-writes only if the phone's owner agrees`);
+  }
 }
 
 async function runScenario(args) {
@@ -154,22 +249,22 @@ async function runScenario(args) {
   const only = args.only ? String(args.only).split(',') : null;
   const stepMs = Number(args['step-ms'] || 1000 / 60);
   const started = new Date().toString();
+  if (platform === 'android') guardPhone(scenario, args);
   const dir = path.join(path.resolve(args.out || path.join(targetFolder(), 'motion')), `${scenario.name}-${platform}-${stamp()}`);
   fs.mkdirSync(dir, { recursive: true });
+  // A run that fails or is stopped leaves no half-made folder behind.
+  let undoDir = onCleanup(`unfinished run folder ${dir}`, () => fs.rmSync(dir, { recursive: true, force: true }));
   log(`run folder ${dir}`);
   if (only) {
     // A movement compared with another needs that one too.
-    for (const m of scenario.movements) if (only.includes(m.name) && m.reverseOf && !only.includes(m.reverseOf)) only.push(m.reverseOf);
+    for (const m of scenario.movements) if (only.includes(m.name) && m.mirrors?.of && !only.includes(m.mirrors.of)) only.push(m.mirrors.of);
   }
 
   const target = await launch(platform, args);
-  let results, describe = target.describe;
+  let results;
+  const describe = target.describe;
   try {
     results = await capture(target, scenario, { layers, dir, stepMs, only, probeLive: args['realtime-probe'] !== 'off' });
-  } catch (error) {
-    // A run that failed leaves no half-made folder behind.
-    fs.rmSync(dir, { recursive: true, force: true });
-    throw error;
   } finally {
     await target.stop();
   }
@@ -193,25 +288,26 @@ async function runScenario(args) {
   const browser = await launchHeadless({ log });
   const checks = scenario.checks || {};
   const movements = [];
-  const notes = [];
+  const notes = [...results.notes, ...(mockup ? mockup.notes : [])];
   try {
     for (const movement of forPlatform(scenario.movements, platform).filter(m => !only || only.includes(m.name))) {
-      const out = { name: movement.name, description: movement.description, reverseOf: movement.reverseOf };
+      const out = { name: movement.name, description: movement.description };
       const stepped = results.stepped[movement.name];
       const viewport = results.viewport;
       const aspect = stepped ? stepped.crop.width / stepped.crop.height : viewport.width / viewport.height;
       if (stepped) {
         const frames = stepped.frames;
         const findings = {
-          pops: findPops(frames.filter(f => !f.before), checks.pops),
+          // The frame before the input is kept: a cut at the input is a pop.
+          pops: findPops(frames, checks.pops),
           outside: findOutside(frames, checks.within || [], { viewport }),
           overlaps: findOverlaps(frames, checks.apart || []),
           lingering: findLingering(frames, listFor(movement.leaves, platform)),
           missing: findMissing(frames, listFor(movement.arrives, platform)),
         };
-        for (const p of findings.pops) flag(frames, p.t, `pop: ${p.key} ${p.channel || p.kind}`);
+        for (const p of findings.pops) flag(frames, p.t, `pop: ${p.key} ${p.channel || p.kind}${p.atInput ? ' at the input' : ''}`);
         for (const o of findings.outside) flag(frames, o.from, `${o.part} outside ${o.container} by ${o.worst}px until ${o.until}`);
-        for (const o of findings.overlaps) flag(frames, o.from, `${o.a} over ${o.b} until ${o.until}`);
+        for (const o of findings.overlaps) flag(frames, o.from, `${o.a} over ${o.b} until ${o.until}${o.stacking ? '' : ' (boxes)'}`);
         for (const l of findings.lingering) if (!l.ok) flag(frames, l.t, `${l.part}: ${l.kind}`);
         for (const a of stepped.seen || []) if (a.born > 0) flag(frames, a.born, `starts: ${a.what.replace('CSSTransition ', '').replace('Animation', 'anim')} on ${a.on.split('.').slice(0, 2).join('.')}`, 'notes');
         out.findings = findings;
@@ -230,24 +326,34 @@ async function runScenario(args) {
       const realtime = results.realtime[movement.name];
       if (realtime) {
         const steppedWindow = out.stepped?.window;
-        // Judged over the time anything moves (in the stepped trace or in
-        // this one), and a little after: a blinking caret draws a frame
-        // every half second long after, which is not a dropped frame.
-        const liveWindow = windowOf(realtime.samples.filter(s => s.t >= 0));
+        // Judged while something moves: the probe's samples say when. A
+        // blinking caret draws a frame every half second long after, and
+        // nothing is drawn while the app has not answered yet; neither is a
+        // frame missed. Without the probe, the whole span is judged.
+        const samples = realtime.samples.filter(s => s.t >= 0);
+        const spans = samples.length ? activeSpans(samples) : null;
+        const liveWindow = spans?.length ? { from: spans[0].from, to: spans[spans.length - 1].to } : null;
         const moved = Math.max(steppedWindow ? steppedWindow.to : 0, liveWindow ? liveWindow.to : 0);
         const until = Math.round(Math.min(movement.ms || 1500, moved ? moved + 100 : movement.ms || 1500));
-        const view = { crop: realtime.crop, width: results.viewport.width, height: results.viewport.height };
+        const view = { crop: realtime.crop, width: viewport.width, height: viewport.height };
         const shown = realtime.frames.filter(f => f.t <= until).map(f => Object.assign(f, { view }));
+        const active = spans && spans.length ? spans : null;
         let previous = null;
-        for (const frame of shown) { frame.kind = previous === null ? '' : `+${round(frame.t - previous, 1)}`; if (previous !== null && frame.t - previous > 25) frame.flags = [`gap ${round(frame.t - previous, 1)} ms`]; previous = frame.t; }
+        for (const frame of shown) {
+          frame.kind = previous === null ? '' : `+${round(frame.t - previous, 1)}`;
+          const counted = !active || active.some(span => previous < span.to && frame.t > span.from);
+          if (previous !== null && frame.t - previous > 25 && counted) frame.flags = [`gap ${round(frame.t - previous, 1)} ms`];
+          previous = frame.t;
+        }
         const r = {
           until,
-          composited: frameIntervals(shown.map(f => f.t)),
-          raf: frameIntervals(realtime.samples.filter(s => s.t >= 0 && s.t <= until).map(s => s.t)),
+          firstChange: liveWindow ? liveWindow.from : null,
+          composited: frameIntervals(shown.map(f => f.t), { active }),
+          raf: frameIntervals(samples.filter(s => s.t <= until).map(s => s.t)),
           timing: traceTiming(realtime.events, { untilMs: until }),
           sheets: await contactSheets(browser, shown, {
             title: `${scenario.name} · ${movement.name} · ${platform} · real time`,
-            subtitle: 'frames as composited, ms from the input; the small number is the gap since the frame before; red: a gap over 25 ms',
+            subtitle: `frames as composited, ms from the input; the small number is the gap since the frame before; red: a gap over 25 ms ${active ? 'while something moved' : '(no probe: every gap)'}`,
             out: path.join(dir, `realtime-${movement.name}`), aspect,
           }),
         };
@@ -265,18 +371,33 @@ async function runScenario(args) {
             }));
           }
         }
-        if (out.findings) out.findings.realtimePops = findPops(realtime.samples.filter(s => s.t >= 0 && s.t <= until), { ...checks.pops, px: (checks.pops?.px || 24) * 2 });
+        if (out.findings) {
+          out.findings.realtimePops = findPops(samples.filter(s => s.t <= until), { ...checks.pops, px: (checks.pops?.px || 24) * 2 });
+          // A part the stepped frames saw vanish that real time still draws
+          // went early because a timer on the app's real clock took it.
+          for (const pop of out.findings.pops) {
+            if (contradictedInRealTime(pop, out.stepped.frames, samples, { answeredAt: liveWindow ? liveWindow.from : 0 })) {
+              pop.contradicted = true;
+              pop.detail += '; real time still draws it well after, so a timer on the app’s own clock (which stepping cannot hold) took it early here';
+            }
+          }
+        }
         out.realtime = r;
       }
       movements.push(out);
     }
 
-    // Closing against opening played backwards.
+    // A closing against the opening the design means it to mirror.
     for (const out of movements) {
-      if (!out.reverseOf) continue;
-      const open = movements.find(m => m.name === out.reverseOf);
+      const movement = scenario.movements.find(m => m.name === out.name);
+      const spec = mirrorFor(movement, platform);
+      if (!spec) continue;
+      const open = movements.find(m => m.name === spec.of);
       if (!open?.stepped || !out.stepped) continue;
-      out.reversed = compareReversed(open.stepped.frames, out.stepped.frames);
+      out.mirrorOf = spec.of;
+      out.mirrorBecause = spec.because;
+      out.mirrorCurve = spec.curve;
+      out.mirror = compareMirror(open.stepped.frames, out.stepped.frames, spec);
       const a = open.stepped.window, b = out.stepped.window;
       if (a && b) {
         const columns = 12;
@@ -287,11 +408,11 @@ async function runScenario(args) {
           const bottom = nearest(out.stepped.frames, b.to - s * (b.to - b.from));
           pairs.push({ top: top && { ...top, label: `${top.t} ms`, flags: [], notes: [] }, bottom: bottom && { ...bottom, label: `${bottom.t} ms`, flags: [], notes: [] } });
         }
-        out.reversedSheet = await sideBySide(browser, pairs, {
-          title: `${scenario.name} · ${out.reverseOf} against ${out.name} played backwards · ${platform}`,
-          subtitle: `columns at the same fraction of each movement: ${out.reverseOf} ${a.from}–${a.to} ms forwards, ${out.name} ${b.from}–${b.to} ms backwards. If ${out.name} were ${out.reverseOf} reversed, each column's two frames would match`,
-          out: path.join(dir, `reversed-${out.name}.png`), aspect: open.stepped && results.stepped[out.reverseOf] ? results.stepped[out.reverseOf].crop.width / results.stepped[out.reverseOf].crop.height : 1.5,
-          topLabel: `${out.reverseOf}, forwards`, bottomLabel: `${out.name}, backwards`,
+        out.mirrorSheet = await sideBySide(browser, pairs, {
+          title: `${scenario.name} · ${spec.of} against ${out.name} played backwards · ${platform}`,
+          subtitle: `columns at the same fraction of each movement: ${spec.of} ${a.from}–${a.to} ms forwards, ${out.name} ${b.from}–${b.to} ms backwards. Meant to mirror: ${spec.because}`,
+          out: path.join(dir, `mirror-${out.name}.png`), aspect: results.stepped[spec.of] ? results.stepped[spec.of].crop.width / results.stepped[spec.of].crop.height : 1.5,
+          topLabel: `${spec.of}, forwards`, bottomLabel: `${out.name}, backwards`,
         });
       }
     }
@@ -316,12 +437,8 @@ async function runScenario(args) {
           for (let i = 0; i < columns; i++) {
             const t = Math.round((i / (columns - 1)) * end);
             const top = nearest(mine.frames, t), bottom = nearest(theirs.frames, t);
-            if (live) {
-              if (top) top.view = { crop: mine.crop, width: results.viewport.width, height: results.viewport.height };
-              if (bottom) bottom.view = { crop: theirs.crop, width: mockup.viewport.width, height: mockup.viewport.height };
-            }
-            pairs.push({ top: top && { ...top, label: `${round(top.t, 1)} ms`, flags: [], notes: [], kind: '' }, bottom: bottom && { ...bottom, label: `${round(bottom.t, 1)} ms`, flags: [], notes: [], kind: '' } });
-            if (live) { delete top?.view; delete bottom?.view; }
+            const cell = (frame, crop, size) => frame && { ...frame, label: `${round(frame.t, 1)} ms`, flags: [], notes: [], kind: '', view: live ? { crop, width: size.width, height: size.height } : undefined };
+            pairs.push({ top: cell(top, mine.crop, results.viewport), bottom: cell(bottom, theirs.crop, mockup.viewport) });
           }
           out.mockupSheet = await sideBySide(browser, pairs, {
             title: `${scenario.name} · ${out.name} · ${platform} against the mockup${live ? ', in real time' : ''}`,
@@ -339,7 +456,7 @@ async function runScenario(args) {
   }
 
   const trust = trustOf(results.idle);
-  if (args['realtime-probe'] === 'off') notes.push('The real-time probe was off (--realtime-probe off): frame timing and screenshots only, no numbers per part in real time.');
+  if (args['realtime-probe'] === 'off') notes.push('The real-time probe was off (--realtime-probe off): frame timing and screenshots only, no numbers per part in real time, so every gap between frames is judged, not only those while something moved.');
   else if (platform === 'android' && layers.includes('realtime')) notes.push('The probe measured every part on every frame in real time, which costs a slow device frames (on the emulator, a third or more of them). Judge the frame rate from a run with --realtime-probe off.');
   if (trust.ok) {
     // Real time while it moved, too: an off-screen window may be throttled only while busy.
@@ -347,18 +464,20 @@ async function runScenario(args) {
       if (m.realtime?.raf?.medianMs > 20) notes.push(`While "${m.name}" played in real time the page ran an animation frame every ${m.realtime.raf.medianMs} ms: real time is suspect for it.`);
     }
   }
-  const report = writeReport({ scenario, platform, describe, viewport: results.viewport, trust, movements, dir, started, mockupDescribe, notes });
+  const summary = summarise(movements, { platform, trust });
+  const report = writeReport({ scenario, platform, describe, viewport: results.viewport, trust, movements, dir, started, mockupDescribe, notes, summary });
   fs.writeFileSync(path.join(dir, 'report.md'), report);
   const trace = {
     scenario: scenario.file, platform, started, describe, viewport: results.viewport,
     idleFrameTimes: results.idle,
+    summary,
     movements: movements.map(m => ({
       name: m.name,
-      stepped: m.stepped && { stepMs: m.stepped.stepMs, window: m.stepped.window, seen: m.stepped.seen, frames: m.stepped.frames.map(f => ({ t: f.t, before: f.before || undefined, parts: f.parts })) },
+      stepped: m.stepped && { stepMs: m.stepped.stepMs, window: m.stepped.window, seen: m.stepped.seen, frames: m.stepped.frames.map(f => ({ t: f.t, before: f.before || undefined, parts: f.parts, overlaps: f.overlaps })) },
       realtime: m.realtime && { composited: m.realtime.composited, raf: m.realtime.raf, timing: m.realtime.timing, android: m.realtime.android, samples: results.realtime[m.name].samples },
-      findings: m.findings, reversed: m.reversed, mockup: m.mockup,
+      findings: m.findings, mirror: m.mirror, mockup: m.mockup,
     })),
-    mockup: mockup && { movements: Object.fromEntries(Object.entries(mockup.stepped).map(([name, s]) => [name, { seen: s.seen, frames: s.frames.map(f => ({ t: f.t, parts: f.parts })) }])) },
+    mockup: mockup && { movements: Object.fromEntries(Object.entries(mockup.stepped).map(([name, s]) => [name, { seen: s.seen, frames: s.frames.map(f => ({ t: f.t, before: f.before || undefined, parts: f.parts })) }])) },
   };
   fs.writeFileSync(path.join(dir, 'trace.json'), JSON.stringify(trace));
   if (args['keep-frames']) {
@@ -366,6 +485,7 @@ async function runScenario(args) {
   } else {
     removeFrames(path.join(dir, 'frames'));
   }
+  undoDir();
   log(`done: ${path.join(dir, 'report.md')}`);
   return dir;
 }
@@ -386,5 +506,20 @@ async function main() {
   }
 }
 
-main().catch(error => { console.error(`[motion] ${error.stack || error.message}`); process.exitCode = 1; });
+// Stopped by Ctrl C, a signal or an error: every process this run started
+// is ended by its ID, every forward and temporary folder removed, and the
+// page given back its own timers and animation rate.
+let ending = false;
+async function end(code, why) {
+  if (ending) return;
+  ending = true;
+  if (why) console.error(`[motion] ${why}`);
+  await runCleanups(log);
+  process.exit(code);
+}
+process.on('SIGINT', () => end(130, 'interrupted; cleaning up'));
+process.on('SIGTERM', () => end(143, 'stopped; cleaning up'));
+process.on('uncaughtException', error => end(1, error.stack || error.message));
+process.on('unhandledRejection', error => end(1, (error && error.stack) || String(error)));
 
+main().then(() => end(process.exitCode || 0)).catch(error => end(1, error.stack || error.message));

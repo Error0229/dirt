@@ -12,10 +12,14 @@ the PATH for Android's screen recording and for videos.
 
 ```bash
 node tools/motion/motion.mjs list
-node tools/motion/motion.mjs run settings-panel --platform desktop --beside-running --mockup
+node tools/motion/motion.mjs run settings-panel --platform desktop --mockup
 node tools/motion/motion.mjs run note-open-close --platform android --mockup
-node --test tools/motion/test/analyse.test.mjs
+node --test tools/motion/test/analyse.test.mjs tools/motion/test/page.test.mjs
 ```
+
+The second test file runs the page script (the stepped clock, the probe) in
+a headless Edge or Chrome, and is skipped where neither is installed. CI
+runs both (`motion-tools`), on Node 22.
 
 A change to a movement is checked with it before and after (CLAUDE.md).
 
@@ -50,6 +54,12 @@ What cannot be stepped:
 - **Native smooth scrolling** runs on the real clock. Settings' rail jump
   uses it. When something scrolled during a stepped capture, the report
   says so; read the real-time layer for it.
+- **The app's own timers in Rust** run on the real clock, and stepping
+  takes more real time than the movement does. The file preview keeps its
+  file for 450 ms after it closes (`dirt_ui::files::note_files`, `CLOSING`),
+  so in the stepped frames the picture goes at once. When real time still
+  draws a part that the stepped frames saw vanish, the report says so and
+  ranks the finding as about the capture, not the app.
 - **`requestAnimationFrame` in `dirt-ui.js`** is not stepped. It is used
   only to measure (the list's positions after a resize, the nearness of
   controls, the gallery's frame counter), to wait one frame before a grain
@@ -60,8 +70,13 @@ What cannot be stepped:
 under a DevTools trace that keeps a screenshot of every composited frame
 (`disabled-by-default-devtools.screenshot`). The report gives:
 
-- the frame rate and the gaps between frames, over the time something
-  moves;
+- the frame rate and the gaps between frames, judged only while
+  something moved, by the probe's samples. Nothing is asked of the screen
+  while the app has not answered yet, or after it settles (a blinking caret
+  draws a frame every half second), so a gap there is not a frame missed.
+  With the probe off (`--realtime-probe off`) every gap is judged, and the
+  report says which;
+- when the first change came after the input (the app's answer);
 - the frames not drawn, and the gaps longer than a frame and a half;
 - long tasks on the page's main thread;
 - Chromium's own frame reports (presented, dropped, partial).
@@ -75,11 +90,14 @@ when the screen changes, so its gaps are the gaps a person saw.
 every frame (each step, and each animation frame in real time) records each
 element's:
 
-- box on screen, transforms included, and cut by a `clip-path` of
+- box on screen, transforms included, and cut by its own `clip-path` of
   `inset()` or `circle()`;
 - opacity as drawn (its own times its ancestors');
-- how much of the box is not clipped by the viewport or a scrolling
-  ancestor;
+- how much of the box can be seen: cut by the viewport, by the `clip-path`
+  of every ancestor (Android's note page grows and shrinks by one, with its
+  bar and text inside), and by the overflow of the ancestors on its chain of
+  containing blocks (so a `position: fixed` part inside a scrolling list is
+  not cut by the list);
 - whether it takes the pointer;
 - its scroll position.
 
@@ -89,45 +107,91 @@ From that, `tools/motion/lib/analyse.mjs` finds:
   it, or a part that appears or goes in one frame while well opaque.
   Entering sight past the edge of a scrolling list is not a pop;
 - **a part outside its container** (`checks.within`), and **two parts
-  covering each other** (`checks.apart`);
+  seen over one another** (`checks.apart`). The probe asks the page what is
+  on top (`elementsFromPoint`) at points where their boxes meet: it counts
+  where nothing else is drawn over either, so a part under a backdrop is not
+  seen under the other. Where neither can be hit (both take no pointer) the
+  boxes alone are used, and the report says so;
 - **a part that should have left** (`leaves`): still drawn at the end, or
   gone from sight but still taking the pointer. With it, when each part was
   last drawn. Also **a part that should have arrived** (`arrives`);
-- **closing against opening reversed** (`reverseOf`): for each part and
-  channel, how long each took, whether closing ends where opening began, and
-  how far the closing's curve is from the opening's played backwards (0 is
-  the same curve);
+- **a closing against the opening it is meant to mirror** (`mirrors`),
+  only where the scenario declares it from the design, for the parts and
+  channels it names. For each, it gives how long each took, and where the
+  closing last showed the part against where the opening first showed it
+  (for opacity, where each began and ended). With `curve: true`, it also
+  gives how far the closing's curve is from the opening's played backwards.
+  Where the design means a closing to differ (the desktop's note only fades
+  as it is let go), nothing is declared and it is compared with the mockup
+  alone;
 - **the app against the mockup** (`--mockup`): the same steps on
   `docs/ui/mockup.html` in a headless Edge or Chrome, with a profile of its
   own in a temporary folder. Durations, start times and curve distances,
-  part by part. The mockup holds for durations and curves (CLAUDE.md).
+  part by part. The mockup holds for durations and curves (CLAUDE.md). The
+  mockup takes its fonts from Google Fonts, so the headless browser asks for
+  them; when they do not load, the report says so, since text boxes then
+  differ a little.
+
+A curve here is a channel's distance from where it started, as a share of
+the furthest it gets, against its own time. A part that goes out and comes
+back is measured by how far it went. A curve distance is the largest gap
+between two curves at the same moment, from 0 (the same) to 1 (a whole
+movement apart, the most reported). A channel that moves less than 3 px, or
+0.05 of opacity, is no movement and is not compared.
 
 ## Where it runs
 
-**Desktop: a test copy of the app, never the person's.** It starts the
-dx-built app (`dx build --platform desktop --package dirt-desktop`; `--exe`
-names another) with every development stand-in set:
+**Desktop: a test copy of the app, never the person's.** It starts a copy
+of the dx-built app (`dx build --platform desktop --package dirt-desktop`;
+`--exe` names another development build) with every development stand-in
+set. A release build ignores every stand-in: its window would open on the
+screen, its hotkey would be real and signing in would open the browser. So a
+program that looks like one is refused, told by a `release` folder in its
+path or by the lack of the overflow-check panic message that development
+builds carry. The stand-ins are:
 
 - its own `DIRT_DATA_DIR` and `WEBVIEW2_USER_DATA_FOLDER` in a temporary
   folder;
-- `DIRT_WINDOW_AT` and `DIRT_TRAY_AT` off every screen, so the copy never
-  takes the keyboard;
+- `DIRT_WINDOW_AT` off every screen, so the window is out of sight and
+  never takes the keyboard;
+- `DIRT_TRAY_AT` off every screen, which is only where quick capture's
+  flight lands. **The copy's tray icon is real**: while a run lasts, a
+  second Dirt icon is in the person's tray. Nothing clicks it;
 - `DIRT_ACTIONS_FROM_STDIN`, never sent `open dirt`, and `quit` to end it;
 - `DIRT_OPENED_TO_FILE`, `DIRT_SIGN_IN_TO_FILE` and `DIRT_EXPORT_TO`, as
   files in its data folder;
 - `DIRT_API_BASE_URL` pointed at a closed local port, so that no server is
   ever reached;
-- its own DevTools port from 9581 (never 9222, 9333, 9377, 9471 or
-  9563–9565), with Chromium's occlusion and background throttling turned
-  off.
+- its own DevTools port, the first free from 9581 (never 9222, 9333,
+  9377, 9471 or 9563–9565), with Chromium's occlusion and background
+  throttling turned off. A port given with `--port` that something else
+  uses is refused: the tool would drive whatever web view answers there.
 
 It is stopped by its process ID, and its folder is removed.
 
-The app holds a single-instance lock, so a copy will not start beside a
-Dirt that is already running. `--beside-running` copies the app's folder to
-the temporary folder and renames the lock in the copy, keeping its length.
-Neither the repository nor the original folder is changed. The copy leaves
-out the voice model unless `--voice` is given.
+The app holds a single-instance lock. The test app is therefore always a
+copy, in the temporary folder, whose lock has another name of the same
+length. It never stops a Dirt that is running from going on, and never makes
+a Dirt the person starts during a run exit without a word. Only what the app
+needs is copied: the program, the libraries beside it and its `assets`
+folder, the voice model only with `--voice`. A copy over 600 MB is refused
+(an `--exe` in a folder like `target/debug`), since the disk may be nearly
+full. Neither the repository nor the original folder is changed.
+`--in-place` runs the app where it is instead. That is refused while a Dirt
+is running, and warns that a Dirt started during the run will exit.
+
+**Stopped part way.** Ctrl C, a signal or an error runs every cleanup the
+run put down, the last first:
+- the page gets back its own timers and an animation rate of 1;
+- every process the run started is ended by its ID;
+- the device's screen recording is stopped and deleted;
+- every adb forward and temporary folder is removed;
+- a half-made run folder is removed.
+
+A run killed outright (Task Manager, `kill -9`) cannot clean up. If that
+happens, restart the app on the device, which gives it back its own timers;
+on the desktop the copy and its folder are in the temporary folder, named
+`dirt-motion-*`.
 
 A window off the screen may be held back by Chromium. Every run measures
 how often the page drew while idle and says in the report whether real time
@@ -153,13 +217,21 @@ Nothing installed or written there outlives it.
 emulator is refused unless named and allowed:
 
 ```bash
-node tools/motion/motion.mjs run note-open-close --platform android --serial <phone> --real-phone
+node tools/motion/motion.mjs run settings-panel --platform android --serial <phone> --real-phone
 ```
 
-The phone needs a debug build and USB debugging. Everything runs the same,
-the screen recording included, and the recording is deleted from the phone
-afterwards. Only a phone's numbers say how a phone performs; the
-emulator's do not.
+The phone needs a debug build and USB debugging.
+- **Its notes are its owner's, and they sync.** A scenario with steps that
+  write (it types, pastes a file, or has a step marked `"writes": true`, a
+  press that makes, archives or deletes a note) is refused on a phone unless
+  `--allow-writes` is given. `note-open-close.json` writes: it makes three
+  notes to open. `settings-panel.json` does not.
+- The screen recording is stopped by its own process ID and deleted from
+  the phone however the run ends.
+- An interrupted run gives the page back its timers and animation rate. If
+  the run was killed outright, restart the app.
+
+Only a phone's numbers say how a phone performs; the emulator's do not.
 
 **The mockup.** `--platform mockup-desktop` or `mockup-android` runs a
 scenario on the mockup alone. `--mockup` runs it after the app and compares
@@ -187,7 +259,9 @@ mockups) and `default`.
   "checks": { "within": [["railButton", "panel"]], "apart": [], "pops": { "px": 24, "opacity": 0.3 } },
   "movements": [
     { "name": "open", "steps": [{ "click": { "desktop": "button[aria-label='Settings']", "mockup-desktop": "#D [data-act='settings']" } }], "arrives": ["panel"], "ms": 1400 },
-    { "name": "close", "steps": [{ "key": "Escape" }], "reverseOf": "open", "leaves": ["panel"], "ms": 1200 }
+    { "name": "close", "steps": [{ "key": "Escape" }], "leaves": ["panel"], "ms": 1200,
+      "mirrors": { "of": "open", "parts": { "desktop": { "panel": ["x", "y", "w", "h"] } }, "curve": false,
+                   "because": "design 5.5: it grows out of the gear and shrinks back into it" } }
   ]
 }
 ```
@@ -206,7 +280,10 @@ mockups) and `default`.
   movement has:
   - `steps`: its input;
   - `ms`: the longest it may take;
-  - `reverseOf`, `leaves` and `arrives`, as above;
+  - `leaves` and `arrives`, as above;
+  - `mirrors`: `of` (the opening), `parts` (part → channels, or per platform),
+    `curve` (whether the curve too is meant to be the opening's reversed, or
+    only where it goes) and `because` (the design's words, with the section);
   - `crop`, for that movement only;
   - `compareIn: "realtime"`, to compare it with the mockup in real time
     rather than stepped (a smooth scroll);
@@ -227,9 +304,12 @@ mockups) and `default`.
   - `eval` (for a mockup's start state only, never for the input of a
     movement).
 
-  Any step can carry `then` (ms to wait after it), `platforms` and
+  Any step can carry `then` (ms to wait after it), `platforms`,
   `repeatUntilGone` (press again until a selector has gone: Android's page
-  bar takes the first touch while typing).
+  bar takes the first touch while typing) and `writes` (it changes notes;
+  refused on a phone without `--allow-writes`). After a mouse `click` the
+  pointer moves off the page, so that no `:hover` is left on what opened
+  under it; `"stay": true` keeps it there.
 
 All pointer and key input goes through DevTools' `Input` domain into the
 test app's own web view, as a hand would give it. Nothing reaches the
@@ -247,12 +327,19 @@ in a worktree that shares the main target outlives the worktree. `--out`
 names another place. The folder holds:
 
 - **`report.md`**: start here. The idle frame rate, and whether real time
-  can be judged. For each movement:
+  can be judged. Then a **summary**, most telling first:
+  - parts cut or left behind;
+  - what is wrong against the design or the mockup;
+  - what differs and is worth a look;
+  - notes about the capture.
+
+  Each line has its movement, its millisecond and its sheet. Then, for each
+  movement:
   - the stepped frames, and the animations the clock saw (what, on what,
     delay, duration, easing);
   - the real-time frame rate and its gaps;
   - each finding with its millisecond;
-  - closing against opening reversed;
+  - a closing against the opening it is meant to mirror;
   - the app against the mockup.
 - **`stepped-<movement>(-n).png`**: the stepped frames, at most 24 to a
   sheet, each stamped with its millisecond. A red border is a finding,
@@ -261,9 +348,9 @@ names another place. The folder holds:
   since the frame before. A red border is a gap over 25 ms.
 - **`screen-<movement>(-n).png`** (Android): the device's own recording.
   Its times are the video's, from when recording began.
-- **`reversed-<movement>.png`**: the opening forwards above, the closing
-  backwards below, column by column at the same fraction of each. If one
-  were the other reversed, each column's two frames would match.
+- **`mirror-<movement>.png`** (where the scenario declares a mirror): the
+  opening forwards above, the closing backwards below, column by column at
+  the same fraction of each.
 - **`mockup-<movement>.png`**: the app above, the mockup below, at the same
   millisecond.
 - **`trace.json`**: every probe sample, the findings and the comparisons.
@@ -291,14 +378,11 @@ be seen.
   body nearly opaque. The device's recording and the composited frames
   show it fading in. Trust the numbers and the real-time layer for that
   part.
-- **A stepped finding that surprises is checked against real time.**
-  Once, closing the file preview, the stepped capture lost the picture
-  inside the preview's frame at 33 ms. Real time showed it shrinking into
-  its tile to the end. The cause was not found. When the two layers
-  disagree, a person sees the real-time frames.
+- **The app's own timers run on the real clock** (see above). When the two
+  layers disagree, a person sees the real-time frames.
 - **On Android the real-time probe costs frames.** Measuring every part on
-  every frame is work for the page. On the emulator, opening Settings drew
-  14 to 19 frames a second with it and 23 to 27 without. Judge Android's frame rate from
+  every frame is work for the page. On the emulator it cost a third or more
+  of the frames. Judge Android's frame rate from
   a run with `--realtime-probe off`, which keeps the trace, the screenshots,
   the recording and `gfxinfo`. The screen recording costs the device a
   little too.
@@ -319,8 +403,10 @@ be seen.
 
 | | Settled |
 |---|---|
-| Node, no packages | Node 22 has a WebSocket of its own, so the DevTools Protocol needs nothing installed. The analysis is pure functions with `node --test` tests, and CI runs them (`motion-tools`) |
+| Node, no packages | Node 22 has a WebSocket of its own, so the DevTools Protocol needs nothing installed. The analysis is pure functions with `node --test` tests; the page script is tested in a headless browser; CI runs both on Node 22 (`motion-tools`) |
 | Sheets drawn by the browser | The issue suggested ffmpeg for the contact sheets. They are an HTML grid photographed by the headless browser that the mockup already needs. That gives a label on every frame, real-time frames at uneven times, findings in red beside the frame that shows them, and two rows side by side, which ffmpeg's tile filter does not. ffmpeg stays for the screen recording and the video |
 | The stepped clock | Stopping the timeline alone stepped the desktop correctly. Android's WebView drew a compositor-run opacity animation at its start while the page reported it nearly done, so each animation is also paused, and finished as the clock passes its end |
 | Real-time stamps | WebView2 counted `requestAnimationFrame`'s timestamps from another origin than `performance.now()`, 12.7 s apart. The recorder moves them onto `performance.now()` once, at the first frame |
 | A page that outlives a run | Android's web view keeps what an earlier run installed. The page script carries a version and replaces an older one |
+| What mirrors what | A first version compared every closing with its opening reversed. Where the design means them to differ (Settings shrinks into the gear on the exit curve; the desktop's note only fades) that was noise, so a scenario declares what is meant to mirror, from the design, and the rest is compared with the mockup alone |
+| A cut at the input | The frame before the input is kept and compared with the first, so a part the input itself switches on or off (the preview's backdrop) is a pop, and a part drawn only before the input "went at once" |

@@ -4,30 +4,59 @@
   "issue": 321,
   "platforms": ["desktop", "android", "mockup-desktop", "mockup-android"],
   "description": "Design 5.5 and 6.9: on the desktop the panel grows out of the gear (480 ms, snap), the rail's entries slide in from the left 30 ms apart and the sections rise 14 px 40 ms apart; it shrinks back into the gear (240 ms, exit). On Android the sheet rises (glide) while the screen behind steps back. The rail's highlight follows the scroll.",
-  "setup": [
-    { "wait": 1500 }
-  ],
+  "setup": [{ "wait": 1500 }],
   "parts": {
-    "panel": { "desktop": ".dui-panel[aria-label='Settings']", "android": ".dui-sheet[aria-label='Settings']", "mockup-desktop": "#d-settings", "mockup-android": "#m-sheet" },
-    "scrim": { "desktop": ".dui-scrim:has(+ .dui-panel[aria-label='Settings'])", "android": ".dui-scrim:has(+ .dui-sheet[aria-label='Settings'])", "mockup-desktop": "#d-scrim", "mockup-android": "#m-scrim" },
+    "panel": {
+      "desktop": ".dui-panel[aria-label='Settings']",
+      "android": ".dui-sheet[aria-label='Settings']",
+      "mockup-desktop": "#d-settings",
+      "mockup-android": "#m-sheet"
+    },
+    "scrim": {
+      "desktop": ".dui-scrim:has(+ .dui-panel[aria-label='Settings'])",
+      "android": ".dui-scrim:has(+ .dui-sheet[aria-label='Settings'])",
+      "mockup-desktop": "#d-scrim",
+      "mockup-android": "#m-scrim"
+    },
     "rail": { "desktop": ".dui-rail", "mockup-desktop": "#d-settings .rail" },
     "railButton": { "desktop": ".dui-rail button", "mockup-desktop": "#d-settings .rail button" },
     "railHighlight": { "desktop": ".dui-rail-ind", "mockup-desktop": "#d-settings .rail-ind" },
-    "section": { "desktop": ".dui-panel[aria-label='Settings'] [data-dui-section]", "android": ".dui-sheet [data-dui-section]", "mockup-desktop": "#d-settings .sec", "mockup-android": "#m-sheet .sec" },
-    "scroller": { "desktop": ".dui-panel[aria-label='Settings'] [data-dui-scroll]", "android": ".dui-sheet [data-dui-scroll]", "mockup-desktop": "#d-sbody", "mockup-android": "#m-sbody" },
+    "section": {
+      "desktop": ".dui-panel[aria-label='Settings'] [data-dui-section]",
+      "android": ".dui-sheet [data-dui-section]",
+      "mockup-desktop": "#d-settings .sec",
+      "mockup-android": "#m-sheet .sec"
+    },
+    "scroller": {
+      "desktop": ".dui-panel[aria-label='Settings'] [data-dui-scroll]",
+      "android": ".dui-sheet [data-dui-scroll]",
+      "mockup-desktop": "#d-sbody",
+      "mockup-android": "#m-sbody"
+    },
     "behind": { "android": ".dui-steps-back", "mockup-android": "#M .m-app" },
-    "gear": { "desktop": "button[aria-label='Settings']", "android": "button[aria-label='Settings']", "mockup-desktop": "#D .side-foot [data-act='settings']", "mockup-android": "#M [data-act='settings']" }
+    "gear": {
+      "desktop": "button[aria-label='Settings']",
+      "android": "button[aria-label='Settings']",
+      "mockup-desktop": "#D .side-foot [data-act='settings']",
+      "mockup-android": "#M [data-act='settings']"
+    }
   },
   "crop": { "mockup-desktop": "#D", "mockup-android": "#M" },
-  "checks": {
-    "within": [["railButton", "panel"], ["railHighlight", "panel"], ["rail", "panel"]],
-    "pops": { "px": 24, "opacity": 0.3 }
-  },
+  "checks": { "within": [["railButton", "panel"], ["railHighlight", "panel"], ["rail", "panel"]], "pops": { "px": 24, "opacity": 0.3 } },
   "movements": [
     {
       "name": "open",
       "description": "The gear is pressed: Settings opens.",
-      "steps": [{ "click": { "desktop": "button[aria-label='Settings']", "android": "button[aria-label='Settings']", "mockup-desktop": "#D .side-foot [data-act='settings']", "mockup-android": "#M [data-act='settings']" } }],
+      "steps": [
+        {
+          "click": {
+            "desktop": "button[aria-label='Settings']",
+            "android": "button[aria-label='Settings']",
+            "mockup-desktop": "#D .side-foot [data-act='settings']",
+            "mockup-android": "#M [data-act='settings']"
+          }
+        }
+      ],
       "arrives": ["panel"],
       "ms": 1400
     },
@@ -52,10 +81,24 @@
     {
       "name": "close",
       "description": "Close is pressed: Settings goes back into the gear.",
-      "steps": [{ "click": { "desktop": ".dui-panel-close", "android": ".dui-sheet-head button[aria-label='Close']", "mockup-desktop": "#d-settings .close", "mockup-android": "#m-sheet [data-act='close-settings']" } }],
-      "reverseOf": "open",
+      "steps": [
+        {
+          "click": {
+            "desktop": ".dui-panel-close",
+            "android": ".dui-sheet-head button[aria-label='Close']",
+            "mockup-desktop": "#d-settings .close",
+            "mockup-android": "#m-sheet [data-act='close-settings']"
+          }
+        }
+      ],
       "leaves": ["panel", "scrim"],
-      "ms": 1200
+      "ms": 1200,
+      "mirrors": {
+        "of": "open",
+        "parts": { "desktop": { "panel": ["x", "y", "w", "h"] }, "mockup-desktop": { "panel": ["x", "y", "w", "h"] } },
+        "curve": false,
+        "because": "design 5.5: Settings grows out of the gear and shrinks back into it (240 ms, exit); the curve is meant to differ (snap in, exit out)"
+      }
     }
   ]
 }

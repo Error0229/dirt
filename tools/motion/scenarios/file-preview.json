@@ -8,7 +8,11 @@
     { "platforms": ["desktop"], "click": "[data-dui-typed]" },
     { "platforms": ["desktop"], "pastePicture": "[data-dui-typed]", "name": "garden.png", "then": 3000 },
     { "platforms": ["desktop"], "waitFor": ".dk-files .dui-file-main", "ms": 15000 },
-    { "platforms": ["mockup"], "eval": "(() => { const n = S.notes.find(n => !n.deleted && !n.archived && n.files.some(f => f.src || f.thumb)); document.querySelector('#d-list .row[data-id=\"' + n.id + '\"]').click(); return true; })()", "then": 800 }
+    {
+      "platforms": ["mockup"],
+      "eval": "(() => { const n = S.notes.find(n => !n.deleted && !n.archived && n.files.some(f => f.src || f.thumb)); document.querySelector('#d-list .row[data-id=\"' + n.id + '\"]').click(); return true; })()",
+      "then": 800
+    }
   ],
   "parts": {
     "preview": { "desktop": ".dui-preview", "mockup-desktop": "#D .pv" },
@@ -23,11 +27,7 @@
     "list": { "desktop": ".dk-side", "mockup-desktop": "#D .dk-side" }
   },
   "crop": { "mockup-desktop": "#D" },
-  "checks": {
-    "within": [["file", "viewport"]],
-    "apart": [["name", "find"]],
-    "pops": { "px": 24, "opacity": 0.3 }
-  },
+  "checks": { "within": [["file", "viewport"]], "apart": [["name", "find"]], "pops": { "px": 24, "opacity": 0.3 } },
   "movements": [
     {
       "name": "open",
@@ -40,9 +40,14 @@
       "name": "close",
       "description": "Esc closes the preview.",
       "steps": [{ "key": "Escape" }],
-      "reverseOf": "open",
       "leaves": ["preview", "backdrop", "file", "picture", "bar"],
-      "ms": 1200
+      "ms": 1200,
+      "mirrors": {
+        "of": "open",
+        "parts": { "file": ["x", "y", "w", "h"], "backdrop": ["o"] },
+        "curve": false,
+        "because": "design 5.5: the file grows out of its tile (420 ms, enter) and shrinks back into it (320 ms, standard), the backdrop fading with it"
+      }
     }
   ]
 }

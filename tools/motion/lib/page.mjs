@@ -13,6 +13,11 @@ function install(version) {
     if (window.__motion.version === version) return 'already';
     try { window.__motion.thaw(); window.__motion.stopRecording(); } catch { /* an older one */ }
   }
+  // The page's own functions, put back as they were by thaw; `real` calls them.
+  const own = {
+    setTimeout: window.setTimeout, clearTimeout: window.clearTimeout,
+    setInterval: window.setInterval, clearInterval: window.clearInterval,
+  };
   const real = {
     setTimeout: window.setTimeout.bind(window),
     clearTimeout: window.clearTimeout.bind(window),
@@ -55,6 +60,34 @@ function install(version) {
     }
     return null;
   }
+  const intersect = (a, b) => ({ left: Math.max(a.left, b.left), top: Math.max(a.top, b.top), right: Math.min(a.right, b.right), bottom: Math.min(a.bottom, b.bottom) });
+  const edges = box => ({ left: box.left, top: box.top, right: box.left + box.width, bottom: box.top + box.height });
+  // Whether an ancestor is where a fixed (or absolute) element's containing
+  // block is: only those, and the ancestors on from there, clip it with
+  // their overflow. A fixed element inside a scrolling list is not cut by it.
+  const holdsFixed = s => s.transform !== 'none' || s.perspective !== 'none' || s.filter !== 'none'
+    || (s.backdropFilter && s.backdropFilter !== 'none') || /paint|layout|strict|content/.test(s.contain) || /transform|perspective|filter/.test(s.willChange);
+  const holdsAbsolute = s => s.position !== 'static' || holdsFixed(s);
+  // What is left of `box` to be seen: cut by the viewport, by the overflow
+  // of each ancestor on its chain of containing blocks, and by the
+  // clip-path of every ancestor (Android's note page grows and shrinks by
+  // one, and its bar and text are inside it).
+  function cutOf(element, box) {
+    let cut = intersect(edges(box), { left: 0, top: 0, right: innerWidth, bottom: innerHeight });
+    let position = getComputedStyle(element).position;
+    for (let at = element.parentElement; at && at !== document.documentElement; at = at.parentElement) {
+      const s = getComputedStyle(at);
+      if (s.clipPath !== 'none') {
+        const shape = clipped(at.getBoundingClientRect(), s.clipPath);
+        if (shape) cut = intersect(cut, edges(shape));
+      }
+      const containing = position === 'fixed' ? holdsFixed(s) : position === 'absolute' ? holdsAbsolute(s) : true;
+      if (!containing) continue;
+      if (!(s.overflowX === 'visible' && s.overflowY === 'visible')) cut = intersect(cut, at.getBoundingClientRect());
+      position = s.position;
+    }
+    return cut;
+  }
   function measure(element) {
     const style = getComputedStyle(element);
     const whole = element.getBoundingClientRect();
@@ -65,16 +98,8 @@ function install(version) {
       if (getComputedStyle(at).display === 'none') displayed = false;
     }
     const opacity = displayed ? drawnOpacity(element) : 0;
-    // How much of its box can be seen: cut by the viewport and by every
-    // ancestor that clips (a list that scrolls, a panel with its overflow
-    // hidden), 0 to 1.
-    let cut = { left: Math.max(box.left, 0), top: Math.max(box.top, 0), right: Math.min(box.right, innerWidth), bottom: Math.min(box.bottom, innerHeight) };
-    for (let at = element.parentElement; at && at !== document.documentElement; at = at.parentElement) {
-      const clips = getComputedStyle(at);
-      if (clips.overflowX === 'visible' && clips.overflowY === 'visible') continue;
-      const edge = at.getBoundingClientRect();
-      cut = { left: Math.max(cut.left, edge.left), top: Math.max(cut.top, edge.top), right: Math.min(cut.right, edge.right), bottom: Math.min(cut.bottom, edge.bottom) };
-    }
+    // How much of its box can be seen, 0 to 1.
+    const cut = cutOf(element, box);
     const area = box.width * box.height;
     const seen = area > 0 ? Math.max(0, cut.right - cut.left) * Math.max(0, cut.bottom - cut.top) / area : 0;
     const visible = displayed && style.visibility === 'visible' && opacity > 0.01 && box.width > 0.5 && box.height > 0.5 && seen > 0;
@@ -94,27 +119,66 @@ function install(version) {
     if (element.scrollHeight > element.clientHeight + 1 && /(auto|scroll)/.test(style.overflowY)) sample.scroll = Math.round(element.scrollTop);
     return sample;
   }
-  function probe(parts) {
-    const out = {};
+  // Whether two parts are seen over one another, not only boxed over one
+  // another: at points where their boxes meet, what the page would hit is
+  // asked (elementsFromPoint, top first). It counts where both are in the
+  // stack with nothing else between them, or where the one that can be hit
+  // has nothing else over it (the other may take no pointer). Something
+  // drawn over both, a backdrop, hides the meeting. The share of points
+  // where it is seen, or null where nothing at the points could be hit.
+  function seenOver(a, b) {
+    if (a.contains(b) || b.contains(a)) return null;
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    const left = Math.max(ra.left, rb.left, 0), top = Math.max(ra.top, rb.top, 0);
+    const right = Math.min(ra.right, rb.right, innerWidth), bottom = Math.min(ra.bottom, rb.bottom, innerHeight);
+    if (right - left < 4 || bottom - top < 4) return 0;
+    const related = e => a.contains(e) || b.contains(e) || e.contains(a) || e.contains(b);
+    let known = 0, over = 0;
+    for (const fx of [0.2, 0.5, 0.8]) {
+      for (const fy of [0.2, 0.5, 0.8]) {
+        const stack = document.elementsFromPoint(left + (right - left) * fx, top + (bottom - top) * fy);
+        const ia = stack.findIndex(e => a.contains(e)), ib = stack.findIndex(e => b.contains(e));
+        if (ia < 0 && ib < 0) continue;
+        known++;
+        // Nothing else over either, down to the lower of the two.
+        if (stack.slice(0, Math.max(ia, ib)).every(related)) over++;
+      }
+    }
+    return known ? Math.round((over / known) * 100) / 100 : null;
+  }
+  function probe(parts, pairs = []) {
+    const out = {}, elements = {};
     for (const [name, selector] of Object.entries(parts)) {
       let found;
       try { found = [...document.querySelectorAll(selector)]; } catch { found = []; }
-      out[name] = found.slice(0, 24).map(measure);
+      elements[name] = found.slice(0, 24);
+      out[name] = elements[name].map(measure);
     }
-    return out;
+    const overlaps = {};
+    for (const [a, b] of pairs) {
+      let worst = null;
+      for (const ea of elements[a] || []) {
+        for (const eb of elements[b] || []) {
+          const share = seenOver(ea, eb);
+          if (share !== null) worst = Math.max(worst ?? 0, share);
+        }
+      }
+      overlaps[`${a}|${b}`] = worst;
+    }
+    return { parts: out, overlaps };
   }
 
   // ---- The recorder: every frame, in real time --------------------------
   let recording = null;
-  function record(parts) {
-    recording = { parts, frames: [], startedAt: real.now(), offset: null };
+  function record(parts, pairs) {
+    recording = { parts, pairs, frames: [], startedAt: real.now(), offset: null };
     // A frame's own time keeps the gaps between frames exact, but WebView2
     // was seen to count it from another origin than performance.now()
     // (12.7 s apart), so it is moved onto that clock once, at the first frame.
     const tick = stamp => {
       if (!recording) return;
       if (recording.offset === null) recording.offset = real.now() - stamp;
-      recording.frames.push({ t: stamp + recording.offset, parts: probe(recording.parts) });
+      recording.frames.push({ t: stamp + recording.offset, ...probe(recording.parts, recording.pairs) });
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -181,6 +245,7 @@ function install(version) {
     return { what, on, duration: timing.duration, delay: timing.delay, easing: effect && effect.getTiming().easing };
   }
   function freeze() {
+    if (clock) thaw();
     clock = { now: 0, timers: new Map(), seq: 1, born: new Map(), names: new Map(), held: new Set(), base: real.now(), mutations: 0 };
     for (const animation of document.getAnimations()) {
       clock.born.set(animation, -(Number(animation.currentTime) || 0));
@@ -189,24 +254,24 @@ function install(version) {
     }
     clock.observer = new MutationObserver(list => { clock.mutations += list.length; });
     clock.observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
-    const hold = (fn, ms, args, every) => {
+    const later = (fn, ms, args, every) => {
       const id = 1e9 + clock.seq++;
       clock.timers.set(id, { at: clock.now + ms, fn, args, every, id });
       return id;
     };
     window.setTimeout = (fn, ms, ...args) => {
       ms = Number(ms) || 0;
-      if (ms <= 0 || typeof fn !== 'function') return real.setTimeout(fn, ms, ...args);
-      return hold(fn, ms, args, 0);
+      if (!clock || ms <= 0 || typeof fn !== 'function') return real.setTimeout(fn, ms, ...args);
+      return later(fn, ms, args, 0);
     };
     window.setInterval = (fn, ms, ...args) => {
       ms = Math.max(1, Number(ms) || 0);
-      if (typeof fn !== 'function') return real.setInterval(fn, ms, ...args);
-      return hold(fn, ms, args, ms);
+      if (!clock || typeof fn !== 'function') return real.setInterval(fn, ms, ...args);
+      return later(fn, ms, args, ms);
     };
     window.clearTimeout = id => { if (!(clock && clock.timers.delete(id))) real.clearTimeout(id); };
     window.clearInterval = id => { if (!(clock && clock.timers.delete(id))) real.clearInterval(id); };
-    performance.now = () => clock.base + clock.now;
+    performance.now = () => (clock ? clock.base + clock.now : real.now());
     return true;
   }
   // While the page answers the input (the app's round trip to Rust), the
@@ -257,16 +322,18 @@ function install(version) {
     if (!clock) return [];
     return [...clock.born.entries()].map(([animation, born]) => ({ born: Math.round(born), ...clock.names.get(animation) }));
   }
+  // Puts the page's own timers and clock back, whatever state a freeze left
+  // (one that failed half way, or a run that was stopped), and lets every
+  // held animation go on.
   function thaw() {
+    Object.assign(window, own);
+    // performance.now lives on Performance's prototype; ours was put on the
+    // object itself, and goes.
+    if (Object.prototype.hasOwnProperty.call(performance, 'now')) delete performance.now;
     if (!clock) return false;
     const left = [...clock.timers.values()];
     const now = clock.now;
-    window.setTimeout = real.setTimeout;
-    window.clearTimeout = real.clearTimeout;
-    window.setInterval = real.setInterval;
-    window.clearInterval = real.clearInterval;
-    performance.now = real.now;
-    clock.observer.disconnect();
+    if (clock.observer) clock.observer.disconnect();
     for (const animation of clock.held) {
       try { if (animation.playState === 'paused') animation.play(); } catch { /* gone */ }
     }
@@ -303,5 +370,5 @@ function install(version) {
 
 // Changed whenever what runs in the page changes, so that a page that kept
 // an older one takes this one.
-const VERSION = 3;
+const VERSION = 4;
 export const installSource = `(${install.toString()})(${VERSION})`;

@@ -165,8 +165,8 @@ dx build --platform android --package dirt-mobile --target aarch64-linux-android
 
 # The motion check: a movement's frames, stepped and in real time, against
 # the mockup (docs/ui/motion-check.md); and its analysis's tests
-node tools/motion/motion.mjs run settings-panel --platform desktop --beside-running --mockup
-node --test tools/motion/test/analyse.test.mjs
+node tools/motion/motion.mjs run settings-panel --platform desktop --mockup
+node --test tools/motion/test/analyse.test.mjs tools/motion/test/page.test.mjs
 
 # List Makefile shortcuts
 make help

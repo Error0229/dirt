@@ -2,9 +2,9 @@
 // millisecond and the sheet that shows it.
 
 import path from 'node:path';
-import { frameIntervals, round } from './analyse.mjs';
+import { frameIntervals, round, when } from './analyse.mjs';
 
-const ms = t => (t === null || t === undefined ? '–' : `${t} ms`);
+const ms = when;
 const rel = (file, dir) => path.relative(dir, file).replace(/\\/g, '/');
 
 /**
@@ -40,18 +40,30 @@ export function trustOf(stamps) {
   return { ok: true, timing };
 }
 
-export function writeReport({ scenario, platform, describe, viewport, trust, movements, dir, started, mockupDescribe, notes }) {
+export function writeReport({ scenario, platform, describe, viewport, trust, movements, dir, started, mockupDescribe, notes, summary = [] }) {
   let out = `# Motion check: ${scenario.title || scenario.name}, ${platform}\n\n`;
   out += `- Scenario: \`${scenario.file}\`${scenario.issue ? ` (#${scenario.issue})` : ''}\n`;
   out += `- Ran on: ${describe}\n`;
   if (mockupDescribe) out += `- Against: ${mockupDescribe}\n`;
   out += `- When: ${started}\n`;
   out += `- Page: ${viewport.width} × ${viewport.height} CSS px at ${viewport.dpr}×${viewport.reduced ? ', reduced motion ON (movements are cut short)' : ''}\n`;
-  out += `- Idle frame rate: ${trust.timing.fps ?? '–'} frames a second (median gap ${trust.timing.medianMs ?? '–'} ms). `;
+  out += `- Idle frame rate: about ${trust.timing.medianMs ? Math.round(1000 / trust.timing.medianMs) : '–'} frames a second (median gap ${trust.timing.medianMs ?? '–'} ms). `;
   out += trust.ok ? 'Real time can be judged.\n' : `**Real time cannot be judged here:** ${trust.why}. The stepped frames still hold.\n`;
   if (platform === 'android') out += '- Android frame rates here are the emulator\'s, not a phone\'s.\n';
   for (const note of notes || []) out += `- ${note}\n`;
   out += '\n';
+
+  // What was found, most telling first, before the tables.
+  const ranks = { 1: 'cut or left behind', 2: 'wrong against the design or the mockup', 3: 'different, worth a look', 4: 'about the capture' };
+  out += '## Summary\n\n';
+  if (!summary.length) out += 'Nothing the checks look for.\n\n';
+  else {
+    for (const [rank, label] of Object.entries(ranks)) {
+      const lines = summary.filter(l => String(l.rank) === rank);
+      if (!lines.length) continue;
+      out += `**${label[0].toUpperCase()}${label.slice(1)}**\n\n${lines.slice(0, 14).map(l => `- ${l.text}`).join('\n')}${lines.length > 14 ? `\n- …and ${lines.length - 14} more in the sections below` : ''}\n\n`;
+    }
+  }
 
   for (const m of movements) {
     out += `## ${m.name}\n\n${m.description ? `${m.description}\n\n` : ''}`;
@@ -73,7 +85,8 @@ export function writeReport({ scenario, platform, describe, viewport, trust, mov
       const r = m.realtime;
       out += `### In real time\n\n`;
       if (r.composited?.gaps) {
-        out += `- Composited frames from the input to ${ms(r.until)}: ${r.composited.frames}, ${r.composited.fps} a second; gaps median ${r.composited.medianMs} ms, 95th percentile ${r.composited.p95Ms} ms, longest ${r.composited.maxMs} ms; about ${r.composited.missed} frames not drawn.\n`;
+        out += `- Composited frames from the input to ${ms(r.until)}, judged ${r.composited.judged}: ${r.composited.fps} a second; gaps median ${r.composited.medianMs} ms, 95th percentile ${r.composited.p95Ms} ms, longest ${r.composited.maxMs} ms; about ${r.composited.missed} frames not drawn.\n`;
+        if (r.firstChange !== null && r.firstChange !== undefined) out += `- The first change the probe saw came ${ms(r.firstChange)} after the input (the app's answer; not counted as frames missed).\n`;
         if (r.composited.longGaps.length) out += `- Long gaps (more than 1.5 frames): ${r.composited.longGaps.slice(0, 12).map(g => `${g.gap} ms before ${g.at} ms`).join(', ')}${r.composited.longGaps.length > 12 ? ', …' : ''}.\n`;
       } else out += '- DevTools kept no composited frames for this movement.\n';
       if (r.raf?.gaps) out += `- Animation frames the page ran (the probe): ${r.raf.frames}, gaps median ${r.raf.medianMs} ms, longest ${r.raf.maxMs} ms.\n`;
@@ -100,19 +113,21 @@ export function writeReport({ scenario, platform, describe, viewport, trust, mov
       const lines = [];
       for (const p of f.pops) lines.push(`- **Pop**, \`${p.key}\` at ${ms(p.t)}: ${p.detail}.`);
       for (const o of f.outside) lines.push(`- **Outside its container**: \`${o.part}\` reaches up to ${o.worst} px past \`${o.container}\`, from ${ms(o.from)} to ${ms(o.until)} (${o.frames} frames).`);
-      for (const o of f.overlaps) lines.push(`- **Overlap**: \`${o.a}\` and \`${o.b}\` cover each other (up to ${Math.round(o.worst * 100)}% of the smaller) from ${ms(o.from)} to ${ms(o.until)}.`);
-      for (const l of f.lingering) if (!l.ok) lines.push(`- **Should have left**, \`${l.part}\`: ${l.detail}${l.lastShown !== null ? `; last drawn at ${ms(l.lastShown)}` : ''}.`);
-      for (const l of f.lingering) if (l.ok) lines.push(`- Left as it should: \`${l.part}\`, ${l.detail}.`);
+      for (const o of f.overlaps) lines.push(o.stacking
+        ? `- **Seen over one another**: \`${o.a}\` and \`${o.b}\`, at up to ${Math.round(o.worst * 100)}% of the points where they meet, from ${ms(o.from)} to ${ms(o.until)}.`
+        : `- **Boxed over one another**: \`${o.a}\` and \`${o.b}\` (up to ${Math.round(o.worst * 100)}% of the smaller) from ${ms(o.from)} to ${ms(o.until)}; what is on top could not be told there.`);
+      for (const l of f.lingering) if (!l.ok) lines.push(`- **Should have left**, \`${l.part}\`: ${l.detail}${l.lastShown !== null ? `; last drawn ${l.lastShown < 0 ? 'before the input' : `at ${ms(l.lastShown)}`}` : ''}.`);
+      for (const l of f.lingering) if (l.ok) lines.push(`- ${l.cut ? '**Cut at the input**' : 'Left as it should'}: \`${l.part}\`, ${l.detail}.`);
       for (const a of f.missing) lines.push(`- **Not there at the end**: \`${a.part}\` is ${a.detail}.`);
       for (const p of f.realtimePops || []) lines.push(`- In real time, a **pop** of \`${p.key}\` at ${ms(p.t)}: ${p.detail}.`);
       out += lines.length ? `${lines.join('\n')}\n\n` : 'Nothing the checks look for.\n\n';
     }
-    if (m.reversed) {
-      out += `### ${m.name} against ${m.reverseOf} played backwards\n\n`;
-      out += `Each channel's progress, start to end, against its own time: 0 is the same curve reversed, 1 is as far apart as can be. The ends say whether ${m.name} ends where ${m.reverseOf} began.\n\n`;
-      out += table(['part', 'channel', `${m.reverseOf} ms`, `${m.name} ms`, `${m.reverseOf} from → to`, `${m.name} from → to`, 'curve distance (max / mean, worst at)', 'note'],
-        mergeRows(m.reversed).map(r => [`\`${r.key}\``, r.channel, r.openMs, r.closeMs, `${r.openFrom ?? '–'} → ${r.openTo ?? '–'}`, `${r.closeFrom ?? '–'} → ${r.closeTo ?? '–'}`, r.distance ? `${r.distance.max} / ${r.distance.mean}, ${r.distance.worstAt}` : '–', r.note || (r.endsWhereOpenBegan > 2 ? `ends ${r.endsWhereOpenBegan} away from where ${m.reverseOf} began` : '')]));
-      if (m.reversedSheet) out += `\nSheet: [${rel(m.reversedSheet, dir)}](${rel(m.reversedSheet, dir)})\n`;
+    if (m.mirror) {
+      out += `### ${m.name} against ${m.mirrorOf}, which it is meant to mirror\n\n`;
+      out += `Meant to mirror: ${m.mirrorBecause}. For each part and channel the scenario names: how long each took; where ${m.name} last showed it against where ${m.mirrorOf} first showed it (for opacity, where each began and ended)${m.mirrorCurve ? `; and how far apart the curves are, ${m.name} played backwards, in shares of the furthest each goes (0 the same, 1 at most)` : ''}.\n\n`;
+      out += table(['part', 'channel', `${m.mirrorOf} ms`, `${m.name} ms`, `${m.mirrorOf} first shown at`, `${m.name} last shown at`, 'apart', ...(m.mirrorCurve ? ['curve distance (max / mean, worst at)'] : []), 'note'],
+        mergeRows(m.mirror).map(r => [`\`${r.key}\``, r.channel, r.openMs ?? '–', r.closeMs ?? '–', r.openFrom ?? '–', r.closeTo ?? '–', r.away ?? '–', ...(m.mirrorCurve ? [r.distance ? `${r.distance.max} / ${r.distance.mean}, ${r.distance.worstAt}` : '–'] : []), r.note || (r.endsAway ? `does not end where ${m.mirrorOf} began` : '')]));
+      if (m.mirrorSheet) out += `\nSheet: [${rel(m.mirrorSheet, dir)}](${rel(m.mirrorSheet, dir)})\n`;
       out += '\n';
     }
     if (m.mockup) {
@@ -120,6 +135,7 @@ export function writeReport({ scenario, platform, describe, viewport, trust, mov
       out += `### Against the mockup${live ? ', in real time' : ''}\n\nThe mockup holds for durations and curves. Times are from ${live ? 'the input' : 'the first stepped frame'} in each.\n\n`;
       out += table(['part', 'channel', 'mockup ms', 'app ms', 'mockup starts', 'app starts', 'curve distance (max / mean)', 'note'],
         mergeRows(m.mockup).map(r => [`\`${r.key}\``, r.channel, r.mockupMs, r.appMs, ms(r.mockupStart), ms(r.appStart), r.distance ? `${r.distance.max} / ${r.distance.mean}` : '–', r.note || '']));
+      out += `\nCurve distance is in shares of the furthest each moves: 0 the same curve, 1 at most. Channels that move under 3 px (opacity 0.05) in both are left out.\n`;
       if (m.mockupSheet) out += `\nSheet: [${rel(m.mockupSheet, dir)}](${rel(m.mockupSheet, dir)})\n`;
       out += '\n';
     }

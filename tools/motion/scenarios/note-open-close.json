@@ -17,7 +17,6 @@
     { "platforms": ["desktop"], "type": "Ask about the allotment waiting list, third of three" },
     { "platforms": ["desktop"], "wait": 900 },
     { "platforms": ["desktop"], "key": "Escape", "then": 2000 },
-
     { "platforms": ["android"], "tap": ".dm-bar", "then": 1200 },
     { "platforms": ["android"], "tap": ".dm-text", "then": 400 },
     { "platforms": ["android"], "type": "A thought about the garden, first of three", "then": 1200 },
@@ -30,7 +29,6 @@
     { "platforms": ["android"], "tap": ".dm-text", "then": 400 },
     { "platforms": ["android"], "type": "Ask about the allotment waiting list, third of three", "then": 1200 },
     { "platforms": ["android"], "tap": ".dm-page-bar button[aria-label='Done']", "repeatUntilGone": ".dui-grow.dm-page.on", "then": 2200 },
-
     { "platforms": ["mockup"], "wait": 500 }
   ],
   "parts": {
@@ -38,27 +36,54 @@
     "text": { "desktop": ".dk-text", "android": ".dm-page-body", "mockup-desktop": "#d-text", "mockup-android": "#m-ed .m-ed-body" },
     "bar": { "android": ".dm-page-bar", "mockup-android": "#m-ed .m-ed-bar" },
     "gutter": { "desktop": ".dk-gutter" },
-    "card": { "desktop": ".dk-side [role='option'][data-key]", "android": ".dm-list .dui-card", "mockup-desktop": "#d-list .row", "mockup-android": "#m-list .card-n" },
+    "card": {
+      "desktop": ".dk-side [role='option'][data-key]",
+      "android": ".dm-list .dui-card",
+      "mockup-desktop": "#d-list .row",
+      "mockup-android": "#m-list .card-n"
+    },
     "highlight": { "desktop": ".dui-sel-ind", "mockup-desktop": "#d-list .sel-ind" }
   },
   "crop": { "mockup-desktop": "#D", "mockup-android": "#M" },
-  "checks": {
-    "pops": { "px": 24, "opacity": 0.3 }
-  },
+  "checks": { "pops": { "px": 24, "opacity": 0.3 } },
   "movements": [
     {
       "name": "open",
       "description": "The second note in the list is pressed.",
-      "steps": [{ "click": { "desktop": ".dk-side [role='option'][data-key]", "android": ".dm-list .dui-card-in", "mockup-desktop": "#d-list .row", "mockup-android": "#m-list .card-in" }, "index": 1 }],
+      "steps": [
+        {
+          "click": {
+            "desktop": ".dk-side [role='option'][data-key]",
+            "android": ".dm-list .dui-card-in",
+            "mockup-desktop": "#d-list .row",
+            "mockup-android": "#m-list .card-in"
+          },
+          "index": 1
+        }
+      ],
       "ms": 1200
     },
     {
       "name": "close",
       "description": "Done is pressed: back to the list.",
-      "steps": [{ "click": { "desktop": ".dk-gutter button[aria-label='Done']", "android": ".dm-page-bar button[aria-label='Done']", "mockup-desktop": "#D [data-act='settle']", "mockup-android": "#M [data-act='m-back']" } }],
-      "reverseOf": "open",
+      "steps": [
+        {
+          "click": {
+            "desktop": ".dk-gutter button[aria-label='Done']",
+            "android": ".dm-page-bar button[aria-label='Done']",
+            "mockup-desktop": "#D [data-act='settle']",
+            "mockup-android": "#M [data-act='m-back']"
+          }
+        }
+      ],
       "leaves": { "android": ["page"], "mockup-android": ["page"] },
-      "ms": 1200
+      "ms": 1200,
+      "mirrors": {
+        "of": "open",
+        "parts": { "android": { "page": ["x", "y", "w", "h"] }, "mockup-android": { "page": ["x", "y", "w", "h"] } },
+        "curve": false,
+        "because": "design 5.5: on Android the note grows out of its card (440 ms, enter) and shrinks back into it (340 ms, standard); on the desktop a note let go only fades, by design, so nothing there is meant to mirror"
+      }
     }
   ]
 }

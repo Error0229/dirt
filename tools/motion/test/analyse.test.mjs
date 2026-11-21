@@ -1,15 +1,15 @@
-// node --test tools/motion
+// node --test tools/motion/test/analyse.test.mjs
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   tracksOf, valueOf, findPops, findOutside, findOverlaps, findLingering, findMissing, beyond,
-  movingWindow, progressCurve, sampleCurve, curveDistance, compareReversed, compareWithMockup,
-  frameIntervals, traceTiming, parseFramestats, parseShowinfo,
+  movingWindow, progressCurve, sampleCurve, curveDistance, compareMirror, compareWithMockup,
+  frameIntervals, activeSpans, traceTiming, parseFramestats, parseShowinfo, indexedParts, when, contradictedInRealTime,
 } from '../lib/analyse.mjs';
 import { mergeRows, trustOf } from '../lib/report.mjs';
 import { columnsFor } from '../lib/sheets.mjs';
-import { pick, partsFor } from '../lib/capture.mjs';
+import { pick, partsFor, writes } from '../lib/capture.mjs';
 
 const box = (x, y, w, h, o = 1, more = {}) => ({ x, y, w, h, o, seen: 1, visible: o > 0.01, interactive: o > 0.01, ...more });
 const frame = (t, parts) => ({ t, parts });
@@ -26,6 +26,21 @@ test('valueOf: an element not drawn is opacity 0, and a box of no size has no pl
   assert.equal(valueOf(box(5, 5, 10, 10, 0), 'o'), 0);
   assert.equal(valueOf({ x: 0, y: 0, w: 0, h: 0, o: 0, visible: false }, 'x'), null);
   assert.equal(valueOf(box(5, 6, 10, 10), 'y'), 6);
+});
+
+test('pops: a cut at the input, against the frame before it, is one', () => {
+  const frames = [{ t: -1, before: true, parts: { a: [box(0, 0, 10, 10, 0)] } }, frame(0, { a: [box(0, 0, 10, 10, 1)] }), frame(17, { a: [box(0, 0, 10, 10, 1)] })];
+  const [pop] = findPops(frames);
+  assert.equal(pop.atInput, true);
+  assert.equal(pop.t, 0);
+  assert.equal(when(-1), 'before the input');
+});
+
+test('lingering: a part drawn only before the input went at once', () => {
+  const frames = [{ t: -1, before: true, parts: { a: [box(0, 0, 10, 10)] } }, frame(0, { a: [box(0, 0, 10, 10, 0)] })];
+  const [left] = findLingering(frames, ['a']);
+  assert.equal(left.cut, true);
+  assert.match(left.detail, /only before the input/);
 });
 
 test('pops: steady fast movement is not one', () => {
@@ -68,6 +83,18 @@ test('outside: how far a part reaches past its container, as one run of frames',
 test('outside: the viewport as the container', () => {
   const frames = [frame(0, { a: [box(-30, 0, 50, 50)] })];
   assert.equal(findOutside(frames, [['a', 'viewport']], { viewport: { width: 400, height: 400 } })[0].worst, 30);
+});
+
+test('overlaps: what the page says is on top wins over the boxes', () => {
+  const frames = [
+    { t: 0, parts: { a: [box(0, 0, 50, 50)], b: [box(25, 25, 50, 50)] }, overlaps: { 'a|b': 0 } },
+    { t: 17, parts: { a: [box(0, 0, 50, 50)], b: [box(25, 25, 50, 50)] }, overlaps: { 'a|b': 0.5 } },
+    { t: 33, parts: { a: [box(0, 0, 50, 50)], b: [box(25, 25, 50, 50)] }, overlaps: { 'a|b': null } },
+  ];
+  const runs = findOverlaps(frames, [['a', 'b']]);
+  assert.equal(runs.length, 2);
+  assert.equal(runs.find(r => r.stacking).from, 17);
+  assert.equal(runs.find(r => !r.stacking).from, 33);
 });
 
 test('overlaps: only while both are drawn', () => {
@@ -119,22 +146,59 @@ test('sampleCurve reads between points; curveDistance is 0 for the same curve an
   assert.ok(curveDistance(ease, ease, { reversed: true }).max > 0.2);
 });
 
-test('compareReversed: a closing that is the opening reversed scores 0 and ends where it began', () => {
+test('compareMirror: a closing that is the opening reversed scores 0 and ends where the opening began', () => {
   const open = along([0, 10, 40, 90, 100], v => box(v, 0, 10, 10));
   const close = along([100, 90, 40, 10, 0], v => box(v, 0, 10, 10));
-  const [row] = compareReversed(open, close);
+  const [row] = compareMirror(open, close, { parts: { a: ['x'] }, curve: true });
   assert.equal(row.channel, 'x');
   // Frame times are whole milliseconds, so not quite even: near 0, not 0.
   assert.ok(row.distance.max < 0.05);
-  assert.equal(row.endsWhereOpenBegan, 0);
+  assert.equal(row.away, 0);
+  assert.equal(row.endsAway, false);
 });
 
-test('compareReversed: a closing that only fades where it is shows the opening\'s path missing', () => {
-  const open = along([0, 50, 100], v => box(v, 0, 10, 10));
-  const close = along([1, 0.5, 0], o => box(100, 0, 10, 10, o));
-  const rows = compareReversed(open, close);
-  assert.equal(rows.find(r => r.channel === 'x').note, 'moves when opening, not when closing');
-  assert.equal(rows.find(r => r.channel === 'o').note, 'moves when closing, not when opening');
+test('compareMirror: a closing that fades where it is is last seen far from where the opening was first seen', () => {
+  // Opening: from a small box at 300 to a big one at 100, drawn throughout.
+  const open = along([300, 200, 100], v => box(v, v, 400 - v, 400 - v));
+  // Closing: fades out in place, then (invisible) snaps back.
+  const close = [frame(-1, { a: [box(100, 100, 300, 300)] }), ...along([1, 0.5, 0], o => box(110, 110, 290, 290, o)), frame(60, { a: [box(100, 100, 300, 300, 0)] })];
+  close[0].before = true;
+  const rows = compareMirror(open, close, { parts: { a: ['x', 'w'] }, curve: false });
+  const x = rows.find(r => r.channel === 'x');
+  assert.equal(x.openFrom, 300);
+  assert.equal(x.closeTo, 110);
+  assert.equal(x.endsAway, true);
+  assert.equal(x.distance, undefined);
+});
+
+test('compareMirror: only the parts and channels the scenario names', () => {
+  const open = along([0, 50, 100], v => box(v, v, 10, 10));
+  const close = along([100, 50, 0], v => box(v, v, 10, 10));
+  const rows = compareMirror(open, close, { parts: { a: ['y'] } });
+  assert.deepEqual(rows.map(r => r.channel), ['y']);
+});
+
+test('compareMirror and compareWithMockup line up parts with more elements in one trace than the other', () => {
+  const one = [frame(0, { b: [box(0, 0, 10, 10)] }), frame(17, { b: [box(50, 0, 10, 10)] })];
+  const two = [frame(0, { b: [box(0, 0, 10, 10), box(0, 20, 10, 10)] }), frame(17, { b: [box(50, 0, 10, 10), box(50, 20, 10, 10)] })];
+  assert.deepEqual([...indexedParts(one, two)], ['b']);
+  const rows = compareWithMockup(one, two);
+  assert.ok(rows.some(r => r.key === 'b[0]' && r.distance));
+  assert.ok(rows.some(r => r.key === 'b[1]' && r.note === 'the part is not in the app'));
+});
+
+test('progressCurve: a part that goes out and comes back is measured by how far it went; less than a few px is no movement', () => {
+  const track = tracksOf(along([500, 600, 700, 600, 501], v => box(0, v, 10, 10))).get('a');
+  const curve = progressCurve(track, 'y');
+  assert.equal(Math.max(...curve.points.map(p => p.p)), 1);
+  assert.ok(curve.points.every(p => Math.abs(p.p) <= 1));
+  assert.equal(progressCurve(tracksOf(along([10, 11, 12, 11], v => box(0, v, 10, 10))).get('a'), 'y'), null);
+});
+
+test('curveDistance is at most 1', () => {
+  const a = [{ s: 0, p: 0 }, { s: 1, p: 1 }];
+  const b = [{ s: 0, p: 0 }, { s: 0.5, p: -3 }, { s: 1, p: 1 }];
+  assert.ok(curveDistance(a, b).max <= 1);
 });
 
 test('compareWithMockup: durations, start times and parts one side lacks', () => {
@@ -147,6 +211,19 @@ test('compareWithMockup: durations, start times and parts one side lacks', () =>
   assert.equal(row.appStart, 0);
   const lacking = compareWithMockup([frame(0, {})], mockup);
   assert.equal(lacking[0].note, 'the part is not in the app');
+});
+
+test('frameIntervals: only the gaps while something moved count, with active spans', () => {
+  const times = [0, 16.7, 33.3, 50, 400, 416.7];
+  assert.equal(frameIntervals(times).missed, 20);
+  const judged = frameIntervals(times, { active: [{ from: 0, to: 50 }] });
+  assert.equal(judged.missed, 0);
+  assert.equal(judged.judged, 'while something moved');
+});
+
+test('activeSpans: when the probe saw something change', () => {
+  const samples = [0, 17, 33, 50, 300, 317].map((t, i) => frame(t, { a: [box(i < 3 ? i * 10 : 20, 0, 10, 10)] }));
+  assert.deepEqual(activeSpans(samples), [{ from: 0, to: 33 }]);
 });
 
 test('frameIntervals: rate, gaps, and frames not drawn', () => {
@@ -212,4 +289,38 @@ test('pick and partsFor: a selector for every platform, or per platform with the
   assert.equal(pick({ desktop: '.d', mockup: '.m' }, 'mockup-android'), '.m');
   assert.equal(pick({ desktop: '.d' }, 'android'), null);
   assert.deepEqual(partsFor({ parts: { p: { desktop: '.d' }, q: '.q' } }, 'android'), { q: '.q' });
+});
+
+test('contradictedInRealTime: a part stepped frames saw vanish that real time still draws', () => {
+  const stepped = [frame(0, { a: [box(0, 0, 10, 10)] }), frame(33, { a: [box(0, 0, 10, 10, 0)] })];
+  const [pop] = findPops(stepped);
+  const late = [0, 100, 200, 300].map(t => frame(t, { a: [box(0, 0, 10, 10, t < 300 ? 1 : 0)] }));
+  assert.equal(contradictedInRealTime(pop, stepped, late), true);
+  const early = [0, 17, 33, 50].map(t => frame(t, { a: [box(0, 0, 10, 10, t < 33 ? 1 : 0)] }));
+  assert.equal(contradictedInRealTime(pop, stepped, early), false);
+});
+
+test('pops: what a scroll carries in the same frame is not a jump of its own', () => {
+  const frames = [
+    frame(0, { list: [{ ...box(0, 0, 100, 100), scroll: 0 }], row: [box(0, 300, 100, 20)] }),
+    frame(17, { list: [{ ...box(0, 0, 100, 100), scroll: 300 }], row: [box(0, 0, 100, 20)] }),
+    frame(33, { list: [{ ...box(0, 0, 100, 100), scroll: 300 }], row: [box(0, 0, 100, 20)] }),
+  ];
+  assert.deepEqual(findPops(frames), []);
+});
+
+test('contradictedInRealTime: real time counted from the app\'s answer, not the input', () => {
+  const stepped = [frame(0, { a: [box(0, 0, 10, 10)] }), frame(350, { a: [box(0, 0, 10, 10, 0)] })];
+  const [pop] = findPops(stepped);
+  const late = [300, 500, 700, 726].map(t => frame(t, { a: [box(0, 0, 10, 10, t < 726 ? 1 : 0)] }));
+  assert.equal(contradictedInRealTime(pop, stepped, late, { answeredAt: 0 }), true);
+  assert.equal(contradictedInRealTime(pop, stepped, late, { answeredAt: 380 }), false);
+});
+
+test('writes: the steps refused on a real phone without --allow-writes', () => {
+  assert.equal(writes({ type: 'a thought' }), true);
+  assert.equal(writes({ pastePicture: '[data-dui-typed]' }), true);
+  assert.equal(writes({ tap: '.archive', writes: true }), true);
+  assert.equal(writes({ tap: "button[aria-label='Settings']" }), false);
+  assert.equal(writes({ key: 'Escape' }), false);
 });
