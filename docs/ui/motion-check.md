@@ -205,7 +205,10 @@ how often the page drew while idle and says in the report whether real time
 can be judged. Off the screen, with the flags above, WebView2 drew at
 56–57 frames a second on a 60 Hz laptop.
 
-**Android: the emulator.** The tool starts the app if it is not running.
+**Android: the emulator.** The tool brings the app's main screen up by
+name (`dev.dioxus.main.MainActivity`), running or not: the app has a second
+launcher entry, Talk, and its process also runs without its screen, for a
+capture job.
 It finds the web view's DevTools socket (`webview_devtools_remote_<pid>`)
 and forwards a local port to it from 9591. A debug build is debuggable,
 because wry calls `WebView.setWebContentsDebuggingEnabled` when
@@ -322,6 +325,20 @@ mockups) and `default`.
 All pointer and key input goes through DevTools' `Input` domain into the
 test app's own web view, as a hand would give it. Nothing reaches the
 person's screen, keyboard or mouse.
+
+**A picture on the emulator.** `pastePicture` is the desktop's paste;
+Android has none. `file-preview` on Android needs its newest note to hold a
+picture, made by sharing one to the app. A debug build lets `run-as` put
+the file where the app's own `FileProvider` lends from, which the app can
+read without a grant (a picture in the emulator's media store it cannot):
+
+```bash
+adb -s emulator-5554 push garden.png /data/local/tmp/garden.png
+adb -s emulator-5554 shell "run-as com.example.DirtMobile sh -c 'mkdir -p files/dirt/opened && cat /data/local/tmp/garden.png > files/dirt/opened/garden.png'"
+adb -s emulator-5554 shell am start -W -a android.intent.action.SEND -t image/png   --eu android.intent.extra.STREAM content://com.example.DirtMobile.files/opened/garden.png   -n com.example.DirtMobile/dev.dioxus.main.MainActivity
+```
+
+(In Git Bash, set `MSYS_NO_PATHCONV=1` and give `push` a Windows path.)
 
 **Never press a file tile's buttons.** The first opens the file in another
 app, on the person's screen. Open the preview by `.dui-file-main`.
