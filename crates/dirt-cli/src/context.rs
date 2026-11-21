@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use dirt_core::api::ErrorClass;
 use dirt_core::config::ServerAddress;
-use dirt_core::session::{Session, SessionError};
+use dirt_core::session::{Session, SessionError, SessionState};
 use dirt_core::sync::engine::SyncError;
 use dirt_core::Store;
 
@@ -78,11 +78,19 @@ impl Context {
             });
         };
         let session = Session::on_this_computer(&server.url, data_folder(), false)
-            .map_err(|error| CliError::Account(error.to_string()))?;
+            .map_err(|error| CliError::Account(dirt_core::util::as_sentence(&error)))?;
         Ok(Self {
             store: session.store(),
             session: Some(session),
             server: Some(server),
+        })
+    }
+
+    /// Whether this device is signed in and waiting to be let in, so that
+    /// it reads none of the account's notes yet.
+    pub fn waiting_to_be_let_in(&self) -> bool {
+        self.session.as_ref().is_some_and(|session| {
+            matches!(session.state(), SessionState::WaitingForApproval { .. })
         })
     }
 
@@ -129,6 +137,29 @@ impl Context {
             Err(_) => eprintln!("Saved, but sync is taking too long. Run `dirt sync` later."),
         }
     }
+}
+
+/// What a device that is waiting to be let in says, in place of an empty
+/// list, and how it is let in.
+pub const WAITING_TO_BE_LET_IN: &str = concat!(
+    "This device is waiting to be let in to the account, so it cannot read the account's ",
+    "notes yet; until then, notes are kept on this device only. Run `dirt auth join` here ",
+    "and approve it on a device that is already signed in, with `dirt devices approve` or ",
+    "in the app's Settings, or run `dirt auth recover` with the recovery phrase."
+);
+
+/// What a command says when this computer is signed in but the sign-in is
+/// not in use yet ([`Session::held_back`]): the notes of the last sign-in
+/// are still open, most likely in the desktop app.
+pub fn held_back_words(session: &Session) -> String {
+    let why = session.held_back().unwrap_or_default();
+    format!(
+        "This computer is signed in, but the sign-in is not in use yet: {} If the desktop app \
+         is open, switch to it or close it. Notes written meanwhile stay on this computer, \
+         outside the account; once the sign-in is in use, `dirt auth login --move-local-notes` \
+         moves them in.",
+        dirt_core::util::as_sentence(&why)
+    )
 }
 
 /// Words for a failure, by what the person can do about it.

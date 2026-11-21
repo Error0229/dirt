@@ -1982,7 +1982,11 @@ screen reader.
 
 Settings → Account → **Sign in**. The system browser opens Clerk; when it
 returns, the button has shown "Waiting for browser" with a spinner the whole
-time, so nothing seems stuck. "Bring the 12 notes on this device into the
+time, from the press, so nothing seems stuck. Pressed again while it waits,
+it stops waiting; it never begins a second sign-in beside the first, which
+the core refuses (`SessionError::AlreadySigningIn`). Once the browser has
+come back and the device is being registered, it can no longer be stopped,
+and a press does nothing. "Bring the 12 notes on this device into the
 account" is checked by default. Back in the app, sync starts on its own.
 
 ### 9.2 Letting a new device in
@@ -2053,7 +2057,7 @@ page in its panel beside the rail, Android in its sheet.
 | The account | The device knows the account by its ID only, not by an address (the server keeps none, `SECURITY.md`), so the row says "Signed in" and "🔒 Encrypted on your devices", or "Waiting to be let in", and shows no address. A device that has to sign in again has a row of its own with **Sign in** |
 | Waiting for the browser | Pressing the button again while it waits stops waiting (its tooltip says Cancel): a sign-in can fail in the browser and never come back |
 | Bringing notes in | The box shows only when there are notes on the device, and is checked. A device that has to wait to be let in brings them in once it is in. Unchecked, or later, Account has a row "12 notes from before you signed in" with **Bring them in**. When notes come in the app reads its list again at once: offline, no sync comes to do it |
-| Signing out | No question, unless it would lose notes or files that have not reached the server: then the row asks, in the overview's words. **Sign out** there asks the session again first, which syncs; it goes ahead only if what would be lost is still what was said, and otherwise asks again with the new numbers. Refused on the only device that can read the account, with the reason |
+| Signing out | No question, unless it would lose notes or files that have not reached the server: then the row asks, in the overview's words. **Sign out** there asks the session again first, which syncs; it goes ahead only if what would be lost is still what was said, and otherwise asks again with the new numbers. Refused on the only device that can read the account, with the reason. Before it syncs, the desktop leaves the page and has quick capture hand over, so that their last words go with the sync and are not left in the store that is removed. When the server could not be told, the toast "Signed out" says that the device is still in the account's list until another device removes it |
 | Account actions | A disclosure under the account's card, closed at first: change the key, start the account again, delete the account, each a confirmation in its row. A device waiting to be let in is offered only starting again, which then waits (the server's seven days). A reset that somebody asked for is not hidden in it: it is a row of the account's card, with when and **Refuse**, since it needs the person |
 | The devices | Each by its name, a phone's icon for a name that says Android or phone and a computer's otherwise: "This device", "Waiting to be let in" (with **Let it in**), or "Seen 4m ago" in the list's own words of time (with ✕, which asks in the row) |
 | Add a device | Looks every two seconds, while Settings is open and for at most five minutes, as an exchange does, and compares with the first device that waits |

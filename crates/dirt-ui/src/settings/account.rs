@@ -5,14 +5,16 @@
 use dioxus::prelude::*;
 use dirt_core::api::ErrorClass;
 use dirt_core::session::{
-    KeyChange, ResetOutcome, SessionError, SessionState, SignOutError, Unsynced,
+    KeyChange, ResetOutcome, SessionError, SessionState, SignOutError, SignedOut, Unsynced,
 };
-use dirt_core::sync::overview::{sign_out_would_lose, SyncOverview, SIGN_IN_AGAIN_TO_SYNC};
+use dirt_core::sync::overview::{
+    sign_out_would_lose, SyncOverview, SIGNED_OUT_STILL_LISTED, SIGN_IN_AGAIN_TO_SYNC,
+};
 use dirt_core::sync::worker::Trigger;
 use dirt_core::util::as_sentence;
 
 use super::rows::{Btn, Card, Row, RowButton};
-use super::{facts, settings_nav, Linked, Section, SignIn};
+use super::{facts, settings_nav, BeforeSignOut, Linked, Section, SignIn};
 use crate::components::{use_toasts, ConfirmInPlace, Toast};
 use crate::icons::{Icon, IconSize, IconSvg};
 
@@ -47,7 +49,12 @@ fn notes(count: usize) -> String {
 }
 
 #[component]
-pub(super) fn Account(linked: Linked, sign_in: SignIn, notes_brought: EventHandler<()>) -> Element {
+pub(super) fn Account(
+    linked: Linked,
+    sign_in: SignIn,
+    before_sign_out: Option<BeforeSignOut>,
+    notes_brought: EventHandler<()>,
+) -> Element {
     let toasts = use_toasts();
     let nav = settings_nav();
     let facts = facts();
@@ -152,7 +159,8 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn, notes_brought: EventHandl
                         bring_when_in.set(bring_now);
                         nav.open_at(Section::Devices);
                     }
-                    Ok(_) | Err(SessionError::Cancelled) => {}
+                    // Another press began one first; that one goes on.
+                    Ok(_) | Err(SessionError::Cancelled | SessionError::AlreadySigningIn) => {}
                     Err(error) => toasts
                         .show_error(Toast::new("Could not sign in").detail(as_sentence(&error))),
                 }
@@ -176,6 +184,9 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn, notes_brought: EventHandl
                 .map(|(notes, files, _)| (*notes, *files));
             busy.set(true);
             spawn(async move {
+                if let Some(before) = before_sign_out {
+                    before.call(()).await;
+                }
                 let mut outcome = session.sign_out(Unsynced::Refuse).await;
                 if let Err(SignOutError::Unsynced { notes, files, .. }) = &outcome {
                     if agreed && shown == Some((*notes, *files)) {
@@ -183,10 +194,15 @@ pub(super) fn Account(linked: Linked, sign_in: SignIn, notes_brought: EventHandl
                     }
                 }
                 match outcome {
-                    Ok(()) => {
+                    Ok(signed_out) => {
                         asking.set(None);
                         would_lose.set(None);
-                        toasts.show(Toast::new("Signed out"));
+                        let toast = Toast::new("Signed out");
+                        toasts.show(if signed_out == SignedOut::StillListed {
+                            toast.detail(as_sentence(&SIGNED_OUT_STILL_LISTED))
+                        } else {
+                            toast
+                        });
                     }
                     Err(SignOutError::Unsynced {
                         notes,

@@ -20,6 +20,56 @@ use crate::{Error, Result};
 
 const DATABASE_FILE: &str = "notes.db";
 
+/// The file that marks an account's store folder for removal.
+///
+/// Sign-out writes it. The folder goes then if no program holds the store
+/// open, and otherwise once none does: the program that held it removes it
+/// as it lets go, or the next program to start does. Nothing more is
+/// written to a store whose folder holds it.
+pub const SIGNED_OUT_MARKER: &str = "signed-out";
+
+/// Removes a store's folder. While a program still has its database open,
+/// nothing at all is removed, and the error says why.
+///
+/// On Windows a file that a program holds open cannot be removed, and
+/// removing the folder file by file would take the files that are not open
+/// and leave the rest. The database is held open by every program that
+/// uses the store, so it goes first. Then everything else, and the mark for
+/// removal ([`SIGNED_OUT_MARKER`]) last of all: a file still held, a
+/// picture another program is showing, leaves the folder marked, to be
+/// tried again. So does a file that appears once the rest has gone: the
+/// mark is put back, so no folder is ever left unmarked for a later
+/// sign-in to open as its own. Elsewhere a file that is open can be
+/// removed, and the folder goes whatever holds it.
+pub fn remove_store_folder(folder: &Path) -> io::Result<()> {
+    let gone = |done: io::Result<()>| match done {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        done => done,
+    };
+    gone(std::fs::remove_file(folder.join(DATABASE_FILE)))?;
+    let entries = match std::fs::read_dir(folder) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
+        if entry.file_name() == SIGNED_OUT_MARKER {
+            continue;
+        }
+        if entry.file_type()?.is_dir() {
+            gone(std::fs::remove_dir_all(entry.path()))?;
+        } else {
+            gone(std::fs::remove_file(entry.path()))?;
+        }
+    }
+    let mark = folder.join(SIGNED_OUT_MARKER);
+    gone(std::fs::remove_file(&mark))?;
+    gone(std::fs::remove_dir(folder)).inspect_err(|_| {
+        let _ = std::fs::write(&mark, b"");
+    })
+}
+
 /// Which store to open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoreName {

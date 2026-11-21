@@ -646,7 +646,18 @@ under the old key. Everything written since the change is under the new one.
 
 **Signing out** deletes the account's notes and keys from the device. It is
 refused on an account's only approved device unless a recovery phrase
-exists, because that device's copy of the key would be the last.
+exists, because that device's copy of the key would be the last. On a
+computer the CLI and the desktop app are one device: when one signs out
+while the other has the notes open, the keys go at once and the notes as
+soon as nothing holds them, and until then nothing more is written to them.
+The CLI says so when it signs out. A later sign-in to the same account on
+that computer never takes those notes over: until they have gone, it is
+kept but not taken into use, both programs work on the computer's own
+notes and the CLI says why, and then it starts with an empty store and
+fetches the account's notes again. A sign-out the server could not be told
+of leaves the device in the account's list, with a token that works until
+it expires unused; nothing on the device holds the token any more, and
+every client says to remove the device from another one.
 
 **Resetting** an account deletes its notes on the server, its recovery copy
 and every other device, and makes the device that asked the first device of

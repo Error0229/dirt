@@ -6,7 +6,7 @@ use dirt_core::sync::engine::SyncReport;
 use dirt_core::sync::overview::SyncOverview;
 use dirt_core::sync::worker::SyncFailure;
 
-use crate::context::{describe, Context};
+use crate::context::{describe, Context, WAITING_TO_BE_LET_IN};
 use crate::error::CliError;
 
 /// What a cycle did, in one line. Files are mentioned when any were sent.
@@ -57,6 +57,9 @@ pub fn files_not_sent(report: &SyncReport, refused: &[FileProblem]) -> Vec<Strin
 /// is when it is wanted most.
 pub async fn run_sync(context: &Context, verbose: bool) -> Result<(), CliError> {
     let session = context.require_session()?;
+    if context.waiting_to_be_let_in() {
+        return Err(CliError::Account(WAITING_TO_BE_LET_IN.to_owned()));
+    }
     let outcome = session.sync_now().await;
 
     if let Ok(report) = &outcome {

@@ -5,6 +5,7 @@
 //! set `DATABASE_URL` as `compose.yaml` shows. Each test runs in its own
 //! throwaway database.
 
+use dirt_core::api::BoxFuture;
 use dirt_core::identity::IdentityError;
 use dirt_core::secrets::{DeviceSecrets, SecretStore};
 use dirt_core::session::{SessionError, SessionState, SignOutError, Unsynced};
@@ -220,6 +221,69 @@ async fn a_sign_in_that_fails_or_is_cancelled_leaves_the_device_as_it_was(pool: 
     assert!(laptop.sign_in("alice").await.unwrap().is_ready());
 }
 
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn one_sign_in_at_a_time_until_it_ends_fails_or_is_cancelled(pool: PgPool) {
+    const REDIRECT: &str = "dev.dirt.app://callback";
+    let server = Server::with_sign_in(pool).await;
+    let phone = Client::new(&server, "Phone", false);
+    let session = &phone.session;
+
+    // Two presses at once: the second is refused before it asks the server
+    // anything, and so is the desktop's way of signing in meanwhile.
+    let (first, second) = tokio::join!(
+        session.begin_sign_in(REDIRECT),
+        session.begin_sign_in(REDIRECT)
+    );
+    let address = first.unwrap();
+    assert!(matches!(second, Err(SessionError::AlreadySigningIn)));
+    assert!(matches!(
+        phone.sign_in("alice").await,
+        Err(SessionError::AlreadySigningIn)
+    ));
+    assert_eq!(session.state(), SessionState::SigningIn);
+
+    // The person leaves the browser and cancels: another may begin, and
+    // the first attempt's redirect finishes nothing.
+    session.cancel_sign_in();
+    assert_eq!(session.state(), SessionState::SignedOut);
+    let stale = Client::redirect_for(&address, "alice").await;
+    assert!(matches!(
+        session.finish_sign_in(&stale).await,
+        Err(SessionError::NoAttempt)
+    ));
+
+    // Cancelled while the sign-in page's address is being made: that
+    // beginning ends as cancelled, and leaves the way free.
+    let cancelling = session.clone();
+    phone
+        .transport
+        .before_next("POST /v1/nonces", move || -> BoxFuture<'static, ()> {
+            Box::pin(async move { cancelling.cancel_sign_in() })
+        });
+    assert!(matches!(
+        session.begin_sign_in(REDIRECT).await,
+        Err(SessionError::Cancelled)
+    ));
+    assert_eq!(session.state(), SessionState::SignedOut);
+
+    // A sign-in that fails frees it too.
+    session.begin_sign_in(REDIRECT).await.unwrap();
+    assert!(session
+        .finish_sign_in("dev.dirt.app://callback?code=stolen&state=someone-elses")
+        .await
+        .is_err());
+    assert_eq!(session.state(), SessionState::SignedOut);
+
+    // And so does one that finishes.
+    let address = session.begin_sign_in(REDIRECT).await.unwrap();
+    let redirect = Client::redirect_for(&address, "alice").await;
+    assert!(session.finish_sign_in(&redirect).await.unwrap().is_ready());
+    assert!(matches!(
+        session.finish_sign_in(&redirect).await,
+        Err(SessionError::NoAttempt)
+    ));
+}
+
 // ---- A token that stopped working ----
 
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
@@ -424,6 +488,151 @@ async fn a_folder_that_could_not_be_removed_at_sign_out_goes_at_the_next_start(p
 
 // ---- Two programs, one device ----
 
+/// The account's store folder on `client`'s device.
+fn account_folder(client: &Client) -> std::path::PathBuf {
+    let (account, _) = ids(client.session.state());
+    store_path(
+        client.folder(),
+        &StoreName::account(&account.to_string()).unwrap(),
+    )
+    .parent()
+    .unwrap()
+    .to_owned()
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_sign_out_by_the_cli_stops_the_open_app_writing_to_the_notes_it_removes(pool: PgPool) {
+    let server = Server::with_sign_in(pool).await;
+    let laptop = Client::new(&server, "Laptop", false);
+    laptop.sign_in("alice").await.unwrap();
+    let desktop = second_device(&server, &laptop, "Desktop").await;
+    let cli = desktop.second_program(&server);
+    let folder = account_folder(&desktop);
+    // What the desktop app's screen holds.
+    let screen = desktop.session.store();
+    screen.create_note("synced before").await.unwrap();
+    desktop.session.sync_now().await.unwrap();
+
+    cli.session.sign_out(Unsynced::Refuse).await.unwrap();
+
+    // On Windows the desktop's hold keeps the folder, whole, until it lets
+    // go, and the CLI says so; elsewhere it went at once.
+    assert_eq!(cli.session.remove_signed_out_stores(), cfg!(windows));
+    // The desktop writes nothing more to it...
+    let refused = screen
+        .create_note("typed after the sign-out")
+        .await
+        .unwrap_err();
+    assert!(matches!(refused, dirt_core::Error::SignedOut), "{refused}");
+    // ...and notices the sign-out, and takes the local store into use.
+    assert_eq!(desktop.session.reload().unwrap(), SessionState::SignedOut);
+    assert_ne!(desktop.session.store().path(), screen.path());
+    drop(screen);
+    assert!(!desktop.session.remove_signed_out_stores());
+    assert!(!folder.exists());
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn signing_back_in_beside_the_open_app_starts_clean_and_loses_nothing(pool: PgPool) {
+    let server = Server::with_sign_in(pool).await;
+    let laptop = Client::new(&server, "Laptop", false);
+    laptop.sign_in("alice").await.unwrap();
+    let desktop = second_device(&server, &laptop, "Desktop").await;
+    let cli = desktop.second_program(&server);
+    let screen = desktop.session.store();
+    // Sent by the sync that signing out begins with.
+    screen.create_note("sent at sign-out").await.unwrap();
+    cli.session.sign_out(Unsynced::Refuse).await.unwrap();
+    laptop
+        .session
+        .store()
+        .create_note("in the account")
+        .await
+        .unwrap();
+    laptop.session.sync_now().await.unwrap();
+
+    // The CLI signs in again to the same account, as a new device, and is
+    // let in before the desktop app has noticed anything.
+    let state = cli.sign_in("alice").await.unwrap();
+    assert!(matches!(state, SessionState::WaitingForApproval { .. }));
+    let mut secrets = DeviceSecrets::read(&*cli.secrets).unwrap().unwrap();
+    server.approve(secrets.device_id).await;
+    secrets.account_key = Some(laptop.account_key());
+    secrets.approved = true;
+    secrets.write(&*cli.secrets).unwrap();
+    let taken = cli.session.reload();
+
+    if cfg!(windows) {
+        // The old notes are still held, so they cannot go; the new sign-in
+        // does not take them over, and is taken into use once they have.
+        assert!(matches!(taken, Err(SessionError::PreviousNotesOpen)));
+        assert_eq!(cli.session.state(), SessionState::SignedOut);
+        assert!(cli.session.held_back().is_some());
+        // The CLI opens a session for each command: that still opens, on
+        // the local store, and says why, so a thought can be written.
+        let next_command = desktop.second_program(&server);
+        assert_eq!(next_command.session.state(), SessionState::SignedOut);
+        assert!(next_command.session.held_back().is_some());
+        // Signing in again would end where it is: refused.
+        assert!(matches!(
+            next_command
+                .session
+                .begin_sign_in("dev.dirt.app://callback")
+                .await,
+            Err(SessionError::PreviousNotesOpen)
+        ));
+        let local = next_command.session.store();
+        assert_eq!(local.path(), next_command.session.device_store().path());
+        local.create_note("a thought meanwhile").await.unwrap();
+        drop(local);
+        drop(next_command);
+        // The desktop app notices, and cannot either while its screen holds
+        // the old store. Once the screen lets go, it can.
+        assert!(matches!(
+            desktop.session.reload(),
+            Err(SessionError::PreviousNotesOpen)
+        ));
+        assert_eq!(desktop.session.state(), SessionState::SignedOut);
+        drop(screen);
+        assert!(!desktop.session.remove_signed_out_stores());
+        assert!(desktop.session.reload().unwrap().is_ready());
+        assert!(cli.session.reload().unwrap().is_ready());
+        assert_eq!(desktop.session.held_back(), None);
+        // And the next command takes it into use as it opens.
+        assert!(desktop.second_program(&server).session.state().is_ready());
+    } else {
+        // The old folder went at sign-out, under the desktop's hold, and
+        // what the desktop writes to it is refused.
+        assert!(taken.unwrap().is_ready());
+        assert!(matches!(
+            screen.create_note("lost").await.unwrap_err(),
+            dirt_core::Error::SignedOut
+        ));
+        drop(screen);
+        assert!(desktop.session.reload().unwrap().is_ready());
+    }
+
+    // One new store for the new device, which has never synced, and from
+    // which nothing is lost: the account's notes come to it.
+    assert_eq!(cli.session.store().path(), desktop.session.store().path());
+    assert!(cli.notes().await.is_empty());
+    assert_eq!(cli.session.store().last_synced_ms().await.unwrap(), None);
+    cli.session.sync_now().await.unwrap();
+    let texts: Vec<String> = cli
+        .notes()
+        .await
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    assert_eq!(texts, ["sent at sign-out", "in the account"]);
+    cli.session
+        .store()
+        .create_note("written after")
+        .await
+        .unwrap();
+    assert_eq!(cli.session.sync_now().await.unwrap().pushed, 1);
+}
+
 #[sqlx::test(migrator = "dirt_api::MIGRATOR")]
 async fn a_running_app_notices_a_sign_in_or_sign_out_made_by_the_other_program(pool: PgPool) {
     let server = Server::with_sign_in(pool).await;
@@ -450,4 +659,98 @@ async fn a_running_app_notices_a_sign_in_or_sign_out_made_by_the_other_program(p
         laptop.session.sync_now().await,
         Err(SessionError::NotReady)
     ));
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_sign_in_not_yet_in_use_can_sign_out(pool: PgPool) {
+    // Only Windows keeps a folder that another program holds open.
+    if !cfg!(windows) {
+        return;
+    }
+    let server = Server::with_sign_in(pool).await;
+    let laptop = Client::new(&server, "Laptop", false);
+    laptop.sign_in("alice").await.unwrap();
+    let desktop = second_device(&server, &laptop, "Desktop").await;
+    let cli = desktop.second_program(&server);
+    let screen = desktop.session.store();
+    cli.session.sign_out(Unsynced::Refuse).await.unwrap();
+    cli.sign_in("alice").await.unwrap();
+    let mut secrets = DeviceSecrets::read(&*cli.secrets).unwrap().unwrap();
+    let device = secrets.device_id;
+    server.approve(device).await;
+    secrets.account_key = Some(laptop.account_key());
+    secrets.approved = true;
+    secrets.write(&*cli.secrets).unwrap();
+
+    // The next command finds the sign-in held back, and signs it out.
+    let next_command = desktop.second_program(&server);
+    assert!(next_command.session.held_back().is_some());
+    let signed_out = next_command.session.sign_out(Unsynced::Refuse).await;
+    assert_eq!(signed_out.unwrap(), dirt_core::session::SignedOut::Complete);
+    assert!(next_command.secrets_are_empty());
+    assert_eq!(next_command.session.held_back(), None);
+    assert_eq!(server.device_status(device).await, "revoked");
+    drop(screen);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn a_sign_out_the_server_does_not_hear_of_says_so(pool: PgPool) {
+    let server = Server::with_sign_in(pool).await;
+    let laptop = Client::new(&server, "Laptop", false);
+    laptop.sign_in("alice").await.unwrap();
+    let phone = second_device(&server, &laptop, "Phone").await;
+    // The server's answer never arrives, as when the network goes.
+    phone.transport.lose_next_answer("DELETE /v1/devices");
+
+    let signed_out = phone.session.sign_out(Unsynced::Refuse).await.unwrap();
+
+    assert_eq!(signed_out, dirt_core::session::SignedOut::StillListed);
+    assert!(phone.secrets_are_empty());
+    assert_eq!(phone.session.state(), SessionState::SignedOut);
+}
+
+#[sqlx::test(migrator = "dirt_api::MIGRATOR")]
+async fn an_account_store_that_cannot_be_opened_is_an_error_not_a_wait(pool: PgPool) {
+    use std::sync::Arc;
+
+    use dirt_core::session::{Session, SessionConfig};
+
+    let server = Server::with_sign_in(pool).await;
+    let laptop = Client::new(&server, "Laptop", false);
+    laptop.sign_in("alice").await.unwrap();
+    // Another account's sign-in arrives in this device's storage, as when
+    // the other program signs in as bob; bob's store cannot be made here.
+    let bob = Client::new(&server, "Bob's", false);
+    let (bobs_account, _) = ids(bob.sign_in("bob").await.unwrap());
+    let bobs_store = store_path(
+        laptop.folder(),
+        &StoreName::account(&bobs_account.to_string()).unwrap(),
+    );
+    std::fs::write(bobs_store.parent().unwrap(), b"not a folder").unwrap();
+    laptop
+        .secrets
+        .save(&bob.secrets.load().unwrap().unwrap())
+        .unwrap();
+
+    // The running app is told, and is not held back waiting for nothing.
+    let refused = laptop.session.reload().unwrap_err();
+    assert!(
+        !matches!(refused, SessionError::PreviousNotesOpen),
+        "{refused}"
+    );
+    assert_eq!(laptop.session.held_back(), None);
+    assert_eq!(laptop.session.state(), SessionState::SignedOut);
+    // And a program that starts says so, as it did before.
+    let opened = Session::open(
+        SessionConfig {
+            data_folder: laptop.folder().to_owned(),
+            device_name: "Laptop".to_owned(),
+            background_sync: false,
+            persist_attempts: false,
+            timing: dirt_sim::fast_timing(),
+        },
+        server.transport(),
+        Arc::clone(&laptop.secrets) as Arc<dyn SecretStore>,
+    );
+    assert!(opened.is_err());
 }

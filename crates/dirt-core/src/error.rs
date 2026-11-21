@@ -35,6 +35,14 @@ pub enum Error {
     #[error("The note store is closed")]
     StoreClosed,
 
+    /// The device was signed out of the account this store holds, by this
+    /// program or by another on the same computer, and the store is to be
+    /// removed. Nothing more is written to it
+    #[error(
+        "this computer was signed out of the account, so nothing more is saved to its notes here"
+    )]
+    SignedOut,
+
     /// IO error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

@@ -3,11 +3,13 @@
 use std::io::{self, BufRead, IsTerminal, Write};
 
 use dirt_core::config::AddressSource;
-use dirt_core::session::{KeyChange, ResetOutcome, Session, SessionState, SignOutError, Unsynced};
+use dirt_core::session::{
+    KeyChange, ResetOutcome, Session, SessionState, SignOutError, SignedOut, Unsynced,
+};
 use dirt_core::util::as_sentence;
 
 use crate::cli::{AuthCommands, PhraseCommands};
-use crate::context::{describe, Context};
+use crate::context::{describe, Context, WAITING_TO_BE_LET_IN};
 use crate::error::CliError;
 
 pub async fn run_auth(command: AuthCommands, context: Context) -> Result<(), CliError> {
@@ -17,8 +19,16 @@ pub async fn run_auth(command: AuthCommands, context: Context) -> Result<(), Cli
     let (command, context) = match command {
         AuthCommands::Logout { discard_unsynced } => {
             let session = context.into_session()?;
-            logout(&session, discard_unsynced).await?;
-            session.remove_signed_out_stores();
+            if let Some(outcome) = logout(&session, discard_unsynced).await? {
+                let still_open = session.remove_signed_out_stores();
+                println!("{}", signed_out_words(still_open));
+                if outcome == SignedOut::StillListed {
+                    println!(
+                        "{} (`dirt devices remove`, or Settings, Devices).",
+                        dirt_core::sync::overview::SIGNED_OUT_STILL_LISTED
+                    );
+                }
+            }
             return Ok(());
         }
         AuthCommands::DeleteAccount { yes } => {
@@ -313,6 +323,14 @@ async fn login(
     move_local_notes: bool,
     no_browser: bool,
 ) -> Result<(), CliError> {
+    // Signed in already, with the sign-in waiting for the notes of the last
+    // one to be let go: signing in again would change nothing.
+    if session.held_back().is_some() {
+        // What is in the way has been said above, as for every command.
+        return Err(CliError::Account(
+            "already signed in; there is nothing to do until then".to_owned(),
+        ));
+    }
     // A device that is ready signs in again only when the server has told
     // it to; otherwise there is nothing to do but move notes if asked.
     let must_sign_in = !session.state().is_ready() || needs_sign_in_again(session).await;
@@ -340,10 +358,7 @@ async fn login(
                 println!("Signed in to account {account_id}.");
             }
             SessionState::WaitingForApproval { .. } => {
-                println!(
-                    "Signed in. This device must be approved by another device of the \
-                     account before it can read its notes."
-                );
+                println!("Signed in. {WAITING_TO_BE_LET_IN}");
                 return Ok(());
             }
             SessionState::SignedOut | SessionState::SigningIn => {
@@ -393,10 +408,26 @@ async fn needs_sign_in_again(session: &Session) -> bool {
     }
 }
 
-async fn logout(session: &Session, discard_unsynced: bool) -> Result<(), CliError> {
-    if session.state() == SessionState::SignedOut {
+/// What `dirt auth logout` says once the device has signed out:
+/// `still_open` when another program on this computer, the desktop app,
+/// has the account's notes open, so that they could not be removed yet.
+pub const fn signed_out_words(still_open: bool) -> &'static str {
+    if still_open {
+        concat!(
+            "Signed out, and this account's keys were removed from this device. Its notes are ",
+            "open in another Dirt program, such as the desktop app, and nothing more is saved ",
+            "to them; they are removed from this device when it lets go of them, or closes."
+        )
+    } else {
+        "Signed out. This account's notes and keys were removed from this device."
+    }
+}
+
+/// Signs out, and says how, if it did.
+async fn logout(session: &Session, discard_unsynced: bool) -> Result<Option<SignedOut>, CliError> {
+    if session.state() == SessionState::SignedOut && session.held_back().is_none() {
         println!("Not signed in.");
-        return Ok(());
+        return Ok(None);
     }
     let choice = if discard_unsynced {
         Unsynced::Discard
@@ -404,10 +435,7 @@ async fn logout(session: &Session, discard_unsynced: bool) -> Result<(), CliErro
         Unsynced::Refuse
     };
     match session.sign_out(choice).await {
-        Ok(()) => {
-            println!("Signed out. This account's notes and keys were removed from this device.");
-            Ok(())
-        }
+        Ok(outcome) => Ok(Some(outcome)),
         Err(SignOutError::Unsynced {
             notes,
             files,
