@@ -853,6 +853,10 @@
           { transform: `translate(${state.from[0] - cx}px, ${state.from[1] - cy}px) scale(.06)`, borderRadius: '80px' },
           { transform: 'none', borderRadius: '14px' },
         ], { duration: 480, easing: snap.easing });
+        // The rail's entries slide in from the left, 30 ms apart; the
+        // sections rise 14 px, 40 ms apart (5.5).
+        $$('[data-dui-rail] [data-dui-jump]', modal).forEach((entry, index) => entry.animate([{ opacity: 0, transform: 'translateX(-10px)' }, { opacity: 1, transform: 'none' }],
+          { duration: snap.ms, easing: snap.easing, delay: 110 + index * 30, fill: 'backwards' }));
         rises.forEach((rise, index) => rise.animate([{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }],
           { duration: snap.ms, easing: snap.easing, delay: 140 + index * 40, fill: 'backwards' }));
       }
@@ -997,7 +1001,34 @@
     const bar = rail.querySelector('.dui-rail-b');
     if (bar) bar.style.setProperty('--i', index);
   }
+  // A press on the rail holds its highlight on the section pressed while
+  // the page scrolls there, rather than stopping on each section the
+  // scroll passes (#321). The hold lasts until the scroll has settled and
+  // the person scrolls again, or takes the scroll over on the way (the
+  // wheel, a finger, a key). A section near the end that cannot come to
+  // the top keeps the highlight once it is there.
+  const railHolds = new WeakMap();
+  function holdRail(scroller, name) {
+    const hold = railHolds.get(scroller);
+    if (hold) clearTimeout(hold.timer);
+    const next = { name, settled: false, timer: 0 };
+    railHolds.set(scroller, next);
+    settleRail(scroller, next, 300);
+  }
+  // The scroll has settled when no scroll has come for a while (or at its
+  // `scrollend`, where the web view has one).
+  function settleRail(scroller, hold, ms) {
+    clearTimeout(hold.timer);
+    hold.timer = setTimeout(() => { hold.settled = true; }, ms);
+  }
+  function letRailGo(scroller) {
+    const hold = railHolds.get(scroller);
+    if (!hold) return;
+    clearTimeout(hold.timer);
+    railHolds.delete(scroller);
+  }
   function followRail(scroller) {
+    if (railHolds.has(scroller)) return;
     const sections = sectionsOf(scroller);
     if (!sections.length) return;
     let current = sections[0];
@@ -1007,7 +1038,32 @@
   }
   document.addEventListener('scroll', event => {
     const scroller = event.target;
-    if (scroller && scroller.matches && scroller.matches('[data-dui-scroll]') && railFor(scroller)) followRail(scroller);
+    if (!scroller || !scroller.matches || !scroller.matches('[data-dui-scroll]') || !railFor(scroller)) return;
+    const hold = railHolds.get(scroller);
+    if (hold && !hold.settled) { settleRail(scroller, hold, 150); return; }
+    if (hold) letRailGo(scroller);
+    followRail(scroller);
+  }, true);
+  document.addEventListener('scrollend', event => {
+    const hold = event.target && railHolds.get(event.target);
+    if (hold) { clearTimeout(hold.timer); hold.settled = true; }
+  }, true);
+  const takeScroll = event => {
+    const scroller = event.target.closest && event.target.closest('[data-dui-scroll]');
+    if (scroller && railHolds.has(scroller)) letRailGo(scroller);
+  };
+  document.addEventListener('wheel', takeScroll, { capture: true, passive: true });
+  document.addEventListener('touchstart', takeScroll, { capture: true, passive: true });
+  document.addEventListener('pointerdown', event => {
+    // The page's own scrollbar, dragged (6.15).
+    if (event.target.closest && event.target.closest('.dui-sb')) {
+      const area = event.target.closest('.dui-scroll-wrap');
+      const scroller = area && area.querySelector(':scope > [data-dui-scroll]');
+      if (scroller) letRailGo(scroller);
+    }
+  }, true);
+  document.addEventListener('keydown', event => {
+    if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) takeScroll(event);
   }, true);
   // Asked as Settings opens, it may come before the panel or sheet is
   // open; it waits for it, a little.
@@ -1020,6 +1076,7 @@
     const scroller = section.closest('[data-dui-scroll]');
     if (!scroller) return;
     const top = topIn(section, scroller) - 8;
+    holdRail(scroller, name);
     scroller.scrollTo({ top, behavior: instant || reduced() ? 'auto' : 'smooth' });
     markRail(scroller, name);
   }

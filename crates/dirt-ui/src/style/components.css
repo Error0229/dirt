@@ -175,9 +175,13 @@
 .dui-sheet-head::before{content:"";position:absolute;top:8px;left:50%;translate:-50% 0;width:36px;height:4px;border-radius:4px;background:var(--border-strong)}
 .dui-sheet-head h2{flex:1;margin:12px 0 0;font-size:20px;font-weight:700;letter-spacing:-.02em}
 .dui-sheet-body{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
-/* The screen behind a sheet steps back: mark it with .dui-steps-back. */
-.dui-steps-back{transform-origin:50% 0;transition:transform var(--d-glide) var(--sp-glide),border-radius var(--d-glide) var(--sp-glide),filter var(--d-glide) var(--e-std)}
-:root:has(.dui-sheet.on) .dui-steps-back{transform:scale(.93) translateY(12px);border-radius:28px;filter:brightness(.82);overflow:hidden}
+/* The screen behind a sheet steps back: mark it with .dui-steps-back. Its
+   rounded corners are a clip, which moves with it both ways. They were
+   `overflow: hidden` and a radius, and `overflow` cannot move: as the
+   sheet closed the corners went in the first frame while the screen was
+   still small and dark (#321). */
+.dui-steps-back{transform-origin:50% 0;clip-path:inset(0 round 0);transition:transform var(--d-glide) var(--sp-glide),clip-path var(--d-glide) var(--sp-glide),filter var(--d-glide) var(--e-std)}
+:root:has(.dui-sheet.on) .dui-steps-back{transform:scale(.93) translateY(12px);clip-path:inset(0 round 28px);filter:brightness(.82)}
 
 /* ---- Confirmation in place (6.12) ------------------------------------ */
 .dui-confirm{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--danger-soft);animation:dui-confirm-in var(--d-3) var(--e-out)}
@@ -406,7 +410,7 @@
 .dui-rail button{position:relative;z-index:1;display:flex;gap:10px;align-items:center;width:100%;height:34px;padding:0 10px;border-radius:8px;color:var(--text-2);font-size:13.5px;transition:color var(--d-2)}
 .dui-rail button:hover{color:var(--text)}
 .dui-rail button[aria-current="true"]{color:var(--text);font-weight:550}
-.dui-rail-ind{position:absolute;left:0;right:0;top:0;height:34px;border-radius:8px;background:var(--surface-2);transform:translateY(calc(var(--i,0) * 34px));transition:transform var(--d-3) var(--e-out)}
+.dui-rail-ind{position:absolute;left:0;right:0;top:0;height:34px;border-radius:8px;background:var(--surface-2);transform:translateY(calc(var(--i,0) * 34px));transition:transform var(--d-snap) var(--sp-snap)}
 .dui-set-wrap{flex:1}
 /* The frame its sections are measured in (the script's jump and rail). */
 .dui-set{padding:4px 28px 28px;position:relative}

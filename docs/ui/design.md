@@ -620,9 +620,9 @@ this document are approximate; the tokens here are the real ones.
 
 | Moment | Motion |
 |---|---|
-| Settings opens (desktop) | It grows out of the gear: from the gear's centre and 6% of its size, corners from round to 14 px (480 ms, snap). The rail's entries slide in from the left, 30 ms apart; the sections rise 14 px, 40 ms apart |
+| Settings opens (desktop) | It grows out of the gear: from the gear's centre and 6% of its size, corners from round to 14 px (480 ms, snap). The rail's entries slide in from the left, 10 px, fading, 30 ms apart from 110 ms (snap); the sections rise 14 px, 40 ms apart from 140 ms. The rail's highlight, on its section, moves on snap |
 | Settings closes | It shrinks back into the gear (240 ms, exit) |
-| Settings opens (Android) | The sheet rises (glide) while the screen behind steps back: 93%, rounded corners, a little darker. The sections rise 28 px in turn, 45 ms apart |
+| Settings opens (Android) | The sheet rises (glide) while the screen behind steps back: 93%, rounded corners, a little darker. The sections rise 28 px in turn, 45 ms apart. Closing, the screen comes forward on the same curves, its corners and its darkness going with its size (5.8) |
 | A toast | 560 ms in all: a 44 px pill rises 16 px (enter, the first third), then opens sideways into the message (snap); the words fade in after it, from 230 ms, 50 ms apart (220 ms each, enter). Going, it closes back to a pill and drops away (300 ms, exit). A new toast opens while the old one closes, so one seems to turn into the other |
 | A device asks to join | The banner drops from the top edge with a bounce (pop), fading in over 180 ms. Dismissed, it flicks back up the same way |
 | Menus and tooltips | Menus grow from their button (snap from 96%); tooltips fade in over 120 ms (standard) while moving 3 px from their element (snap) |
@@ -731,6 +731,19 @@ Spinners still turn, because they carry information.
   (`docs/ui/motion-check.md`): its frames stepped at a fixed interval and
   as composited in real time, the parts' boxes and opacity on every frame,
   closing against opening reversed, and the app against this mockup.
+
+### 5.8 Settled when the motion check's first findings were fixed
+
+The motion check's first runs (#321, #322, #323) found movements that were
+cut, or that stopped on the way, and one that answered late. What was
+settled in mending them:
+
+| | Settled |
+|---|---|
+| Settings' rail, pressed | The highlight goes straight to the section pressed and stays there while the page scrolls to it. It had stopped on each section the smooth scroll passed, since it followed the scroll, as the mockup's still does. It follows the scroll again from the next scroll after the page has settled, or at once if the person takes the scroll over on the way: the wheel, a finger, the scrollbar, or a key that scrolls (9.7) |
+| Settings' rail, how it moves | On the snap spring, as the mockup has it. It was a plain 280 ms ease-out (`--d-3`, enter) |
+| Settings' rail, opening | Its names slide in from the left, 10 px, fading, 30 ms apart from 110 ms (snap), the mockup's numbers; the app had brought them in with the panel at once |
+| The screen behind Android's sheet | Its rounded corners are a clip (`clip-path: inset(0 round 28px)`), which moves with its scale and its darkness both ways. They were `overflow: hidden` with a radius, and `overflow` cannot move: closing, it was given up in the first frame, and the cards behind, fixed to the screen, were not drawn until the screen had come forward. The mockup has the old rule; its screen behind is not fixed, so it showed nothing wrong |
 
 ---
 
@@ -2119,7 +2132,7 @@ page in its panel beside the rail, Android in its sheet.
 | | Settled |
 |---|---|
 | Where it opens | The gear and <kbd>Ctrl ,</kbd> open it where it was left. The sync status opens it at Sync when there is a problem, at Account when signed out, and at Devices on a device waiting to be let in. **Review** opens it at Devices, comparing. Signing in and then having to wait jumps to Devices |
-| The rail | Its highlight is on the last section whose top has passed the top of the page, and on the last section once the page is at its end, as the mockup has it |
+| The rail | Its highlight is on the last section whose top has passed the top of the page, and on the last section once the page is at its end, as the mockup has it. A press on the rail is different (#321): the highlight goes straight to the section pressed, on the snap spring, and stays there while the page scrolls to it, where it first stopped on each section the scroll passed, as the mockup's still does. It follows the scroll again from the next scroll after the page has settled, or at once if the person takes the scroll over on the way (the wheel, a finger, the scrollbar, a key); a section near the end that cannot come to the top keeps it. The highlight moved on a plain 280 ms ease-out (`--d-3`, enter) where the mockup has the snap spring; it has the spring now |
 | Counting the actions (section 2) | Scrolling the page is not counted, as the mockup's own count does not count it: Export and the theme are "Settings, then the control", wherever the page is. With the rail instead of the wheel it is one more |
 | The account | The device knows the account by its ID only, not by an address (the server keeps none, `SECURITY.md`), so the row says "Signed in" and "🔒 Encrypted on your devices", or "Waiting to be let in", and shows no address. A device that has to sign in again has a row of its own with **Sign in** |
 | Waiting for the browser | Pressing the button again while it waits stops waiting (its tooltip says Cancel): a sign-in can fail in the browser and never come back |

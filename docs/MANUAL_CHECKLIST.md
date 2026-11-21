@@ -224,7 +224,7 @@ Run with the real microphone and the real keys; an agent can run the same with `
 
 | # | Who | Do | Expect |
 |---|---|---|---|
-| D49 |  | Settings: the gear, Ctrl , and Esc; Tab through it; scroll it; press each name on the rail | It grows out of the gear and shrinks back into it. Focus goes into it, Tab stays inside, Esc closes it, and focus goes back to the gear. The rail's highlight follows the scroll, and a name on it brings its section into sight |
+| D49 |  | Settings: the gear, Ctrl , and Esc; Tab through it; scroll it; press each name on the rail, and Appearance from the top | It grows out of the gear, the rail's names sliding in one after another, and shrinks back into it. Focus goes into it, Tab stays inside, Esc closes it, and focus goes back to the gear. The rail's highlight follows the scroll. A name pressed on it brings its section into sight, and the highlight slides straight to that name, a little springy, and stays there while the page scrolls: it does not stop on the sections passed (#321). Scrolling again afterwards, it follows the scroll |
 | D12 |  | Settings → Appearance: Light, Dark, Auto; each accent dot; the text-size slider; then Ctrl + and Ctrl − | The window follows at once, the new look spreading from where it was pressed. Each dot's tooltip is its name, Clay's "(default)". The text follows the slider's thumb while it is held. The text size goes from 13 to 20 and is kept. There is no choice of font |
 | D10 | Person | Settings → Export: JSON, Export; then Markdown, Export | A dialog for choosing a folder each time. In the folder chosen is a new one, `dirt-export-<time>`, holding `notes.json` or `notes.md` and, under `files`, a folder for each note with files. The app says how many notes and files were exported, and where. What was in the chosen folder is untouched |
 | D24 | Person | With a note whose file this device has never opened, export | The file is in the export, the same as the original: it was fetched. Its row in the note no longer says it is not on this device |
@@ -298,6 +298,7 @@ Run with the real microphone and the real keys; an agent can run the same with `
 
 | # | Who | Do | Expect |
 |---|---|---|---|
+| A77 |  | Open Settings, then close it with ✕, then drag it down by its grabber | Opening, the list behind steps back: smaller, darker, with rounded corners. Closing, it comes forward again as one movement: the cards stay drawn and the corners and the darkness go with the size, not before it (#321) |
 | A38 |  | Settings → Appearance: Auto, Light, Dark, an accent, the text size. With Auto, change the system's dark theme while the app is open | The app follows at once and keeps the choice over a restart. With Auto it follows the system's change without restarting, the status bar with it |
 | A39 |  | Turn "Remove animations" on in Android's accessibility settings while the app is open; come back to it; open a note and swipe a card | From the return, things fade instead of moving; the swiped card still follows the finger |
 | A72 | Person | Android's Settings → Display → Font size (and Display size) at the largest; open Dirt; then the smallest | The text of the list, a note and Settings follows the system's size, on top of the size chosen in Settings → Appearance; nothing is cut off or overlaps, and the dock and the page's bar still fit |
