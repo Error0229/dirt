@@ -1119,7 +1119,9 @@
     // toast touched, or one whose Settings was tapped, waited for ever.
     let pointer = false;
     const keyboard = () => !!toast.querySelector(':focus-visible');
-    const go = () => { if (!pointer && !keyboard()) drain.play(); };
+    // Only a paused bar goes on: play() would refill one that has run out,
+    // while its toast closes.
+    const go = () => { if (!pointer && !keyboard() && drain.playState === 'paused') drain.play(); };
     toast.addEventListener('pointermove', event => {
       if (event.pointerType === 'touch' || pointer) return;
       pointer = true;
@@ -2100,6 +2102,11 @@
   }
   function previewClosed(modal, state) {
     const stage = stageOf(modal), tile = tileOf(modal);
+    // A zoomed picture is let go of first, at once, so that the preview
+    // shrinks into its tile from the picture as it fitted, not from twice
+    // that, mostly scrolled away; and opens again unzoomed.
+    const zoomed = modal.querySelector('img[data-dui-zoom].zoom');
+    if (zoomed) zoom(zoomed, 0, 0, false, true);
     if (state.run) state.run.cancel();
     modal.classList.add('leaving');
     if (!stage) { modal.classList.remove('leaving'); return; }
@@ -2175,7 +2182,7 @@
   // scrolls, so that every part of it can be reached: the wheel, a drag
   // or a finger moves it (#313). The point clicked stays where it was,
   // unless that would leave the picture short of an edge.
-  function zoom(picture, x, y, on) {
+  function zoom(picture, x, y, on, still = false) {
     const item = picture.closest('.dui-pv-item');
     if (!item || on === picture.classList.contains('zoom')) return;
     const box = picture.getBoundingClientRect();
@@ -2195,7 +2202,7 @@
       picture.style.removeProperty('--w');
       picture.style.removeProperty('--h');
     }
-    if (reduced()) return;
+    if (still || reduced()) return;
     const origin = `${fx * 100}% ${fy * 100}%`;
     picture.animate([{ transform: `scale(${on ? 0.5 : 2})`, transformOrigin: origin }, { transform: 'none', transformOrigin: origin }],
       { duration: 280, easing: tokens.enter });

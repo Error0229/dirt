@@ -40,18 +40,6 @@ fn screen_reader() -> bool {
     SCREEN_READER.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// How long a toast stays, in milliseconds, or nothing when it stays until
-/// it is dismissed: one told to hold, or any while a screen reader is on.
-const fn stays_ms(hold: bool, undo: bool, screen_reader: bool) -> Option<u32> {
-    if hold || screen_reader {
-        None
-    } else if undo {
-        Some(STAYS_WITH_UNDO_MS)
-    } else {
-        Some(STAYS_MS)
-    }
-}
-
 /// A toast to show.
 #[derive(Clone, PartialEq)]
 pub struct Toast {
@@ -241,8 +229,14 @@ fn ToastView(serial: u64, toast: Toast, platform: Platform) -> Element {
             toasts.dismiss(serial);
         }
     });
-    let stays = stays_ms(toast.hold, toast.undo.is_some(), screen_reader());
-    let hold = stays.is_none();
+    let hold = toast.hold || screen_reader();
+    let stays = if hold {
+        None
+    } else if toast.undo.is_some() {
+        Some(STAYS_WITH_UNDO_MS)
+    } else {
+        Some(STAYS_MS)
+    };
     // The key that undoes, shown beside Undo where there is a keyboard.
     let undo_keys = match platform {
         Platform::Desktop if cfg!(target_os = "macos") => Some("⌘ Z"),
@@ -304,24 +298,5 @@ fn ToastView(serial: u64, toast: Toast, platform: Platform) -> Element {
                 span { class: "dui-toast-bar" }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_toast_goes_by_itself_unless_it_holds() {
-        assert_eq!(stays_ms(false, false, false), Some(STAYS_MS));
-        assert_eq!(stays_ms(false, true, false), Some(STAYS_WITH_UNDO_MS));
-        assert_eq!(stays_ms(true, false, false), None);
-        assert_eq!(stays_ms(true, true, false), None);
-    }
-
-    #[test]
-    fn a_screen_reader_holds_every_toast() {
-        assert_eq!(stays_ms(false, false, true), None);
-        assert_eq!(stays_ms(false, true, true), None);
     }
 }

@@ -44,7 +44,10 @@
    grains, the timer, ✕ and ✓ are at its bottom. The mic stays in the
    gutter while it is held; the other icons go. */
 .dk-listening{position:absolute;inset:0;z-index:4;background:var(--surface);display:flex;flex-direction:column;justify-content:flex-end;padding:0 0 24px}
-.dk-col:has(.dk-listening) .dk-gutter>:not(.dui-mic){visibility:hidden}
+/* The other icons go while the page listens. By display, not visibility,
+   which the web view was seen to leave stale on what is inside (#311); the
+   mic is first in the column, so nothing moves. */
+.dk-col:has(.dk-listening) .dk-gutter>:not(.dui-mic){display:none}
 .dk-voice{width:100%}
 
 /* ---- The note's files, under its text: dirt-ui's tiles (6.5) ---------- */

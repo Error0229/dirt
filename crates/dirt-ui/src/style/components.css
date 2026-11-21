@@ -154,7 +154,8 @@
    no pointer, and is inert. It is never hidden by visibility: the web view
    was seen to leave what is inside it hidden after it had opened again,
    its inherited visibility not worked out afresh, and Settings opened
-   blank until something redrew it (#311; and the page that grows, below). */
+   blank until something redrew it (#311; and the page that grows, below).
+   Nothing with children is shown and hidden by toggling visibility. */
 .dui-scrim{position:fixed;inset:0;background:rgba(20,16,12,.34);opacity:0;pointer-events:none;transition:opacity var(--d-3) var(--e-std);z-index:600}
 .dui-scrim.on{opacity:1;pointer-events:auto}
 .dui-panel{position:fixed;left:50%;top:50%;width:min(740px,92vw);height:min(540px,88vh);translate:-50% -50%;background:var(--surface);border-radius:var(--r-l);box-shadow:var(--shadow-3);display:flex;flex-direction:column;overflow:hidden;z-index:601;opacity:0;scale:.96;pointer-events:none;transition:opacity var(--d-2) var(--e-std),scale var(--d-3) var(--e-out)}

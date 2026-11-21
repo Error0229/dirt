@@ -1005,7 +1005,11 @@ off the screen, take no pointer and are inert; they are never hidden with
 under Account hidden after the panel had opened again, their inherited
 `visibility` not worked out afresh, so that Settings opened as a blank page
 beside the rail until something redrew it (#311). Android's WebView had
-done the same to the page that grows out of its card (5.5).
+done the same to the page that grows out of its card (5.5). So nothing
+with children is shown and hidden by toggling `visibility`, in either app:
+it goes by `display`, or by opacity with no pointer and `inert`. The
+desktop's gutter icons, which go while the page listens (7.11), go by
+`display`.
 
 ### 6.10 Buttons
 
