@@ -2283,9 +2283,14 @@
   // check's stepped clock holds every animation it steps).
   const unfinished = run => !!run && (run.playState === 'running' || run.playState === 'paused');
   const stageOf = modal => modal.querySelector('[data-dui-pv-stage]');
+  // The tile, or while the shelf is folded the file's square on its line
+  // (6.5), which carries the tile's ID with `-mini` after it.
   const tileOf = modal => {
-    const tile = document.getElementById(modal.dataset.duiFrom || '');
-    return tile && onScreen(tile) ? (tile.querySelector('.dui-file-thumb') || tile) : null;
+    const id = modal.dataset.duiFrom || '';
+    const tile = document.getElementById(id);
+    if (tile && onScreen(tile) && !tile.closest('.dui-shelf[data-folded]')) return tile.querySelector('.dui-file-thumb') || tile;
+    const mini = id && document.getElementById(id + '-mini');
+    return mini && onScreen(mini) ? mini : null;
   };
   // The box of what the stage shows, or a part of the stage's middle.
   function shownBox(stage) {

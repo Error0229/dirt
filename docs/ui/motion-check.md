@@ -346,6 +346,19 @@ adb -s emulator-5554 shell am start -W -a android.intent.action.SEND -t image/pn
 
 (In Git Bash, set `MSYS_NO_PATHCONV=1` and give `push` a Windows path.)
 
+**Several files on one note on the emulator.** `files-fold` on Android
+needs its newest note to hold three files or more. A share brings one file
+to a note of its own, and `am` cannot send the list of addresses a share
+of several needs, so they are chosen with the note's paperclip, in
+Android's own screen for choosing files. Push them to
+`/sdcard/Download/<folder>/`, have the media store scan it
+(`adb shell content call --uri content://media --method scan_volume --arg external_primary`),
+then on the page press the paperclip and, in that screen, switch to the
+list, long-press the first file and tap the others, and press **Select**.
+`uiautomator dump` says where each is (it may end with code 137 after
+writing its file; the file is there). Share the picture for `file-preview`
+after, so that it is the newest note again.
+
 **Never press a file tile's buttons.** The first opens the file in another
 app, on the person's screen. Open the preview by `.dui-file-main`.
 `DIRT_OPENED_TO_FILE` stands in if anything else is pressed.

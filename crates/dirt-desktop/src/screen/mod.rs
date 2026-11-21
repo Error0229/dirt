@@ -415,7 +415,7 @@ impl Screen {
             }
             Done::Attached { note, ref failed } => {
                 if self.open_note() == Some(note) {
-                    self.files.reread();
+                    self.files.attached();
                 }
                 if !failed.is_empty() {
                     let words = if failed.len() == 1 {

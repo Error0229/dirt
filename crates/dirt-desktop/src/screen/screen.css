@@ -64,8 +64,8 @@
 .dk-col:has(.dk-listening) .dk-gutter>:not(.dui-mic){display:none}
 .dk-voice{width:100%}
 
-/* ---- The note's files, under its text: dirt-ui's tiles (6.5) ---------- */
-.dk-files{padding:0 0 22px;flex:none}
+/* ---- The note's files: dirt-ui's shelf at the foot of the column (6.5) - */
+.dk-files{flex:none;padding-bottom:18px}
 
 /* ---- The window's own controls (7.6): Windows, with no title bar -------- */
 .dk-wctl{position:absolute;top:0;right:0;height:44px;display:flex;z-index:30;opacity:.55;transition:opacity 200ms var(--e-std)}
@@ -155,7 +155,7 @@
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main{background:var(--bg);transition:background-color 600ms var(--e-std) 260ms}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-text{font-size:calc(var(--note-size) + 4px);line-height:1.8;padding-top:56px;transition:font-size var(--d-glide) var(--sp-glide) 300ms,line-height var(--d-glide) var(--sp-glide) 300ms,padding var(--d-glide) var(--sp-glide) 300ms}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::before,.dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::after{opacity:1;transition:opacity 500ms var(--e-std) 420ms}
-  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-files{opacity:0}
+  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-files{opacity:0;pointer-events:none}
   /* The note's icons stay beside its first line, which starts lower. */
   .dk-gutter{transition:opacity 200ms var(--e-std),top var(--d-glide) var(--sp-glide)}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-gutter{top:114px;transition:opacity 200ms var(--e-std),top var(--d-glide) var(--sp-glide) 300ms}

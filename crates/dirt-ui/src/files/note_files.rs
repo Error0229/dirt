@@ -33,6 +33,7 @@ use uuid::Uuid;
 
 use super::kind::{as_text, preview_kind, served_type, PreviewKind};
 use super::served;
+use super::shelf::UNFOLDED_MOST;
 use crate::components::{use_toasts, Toast, Toasts};
 use crate::icons::Icon;
 
@@ -134,6 +135,12 @@ pub struct NoteFiles {
     shown: Signal<Option<Uuid>>,
     /// The preview is open.
     open: Signal<bool>,
+    /// Whether the shelf is folded, as the person last chose while this
+    /// note is open; `None` until they choose (`folded`).
+    folded: Signal<Option<bool>>,
+    /// Files were attached here: the next reading that brings a new file
+    /// unfolds the shelf.
+    unfold_new: CopyValue<bool>,
     showing: Signal<Showing>,
     /// Raised by every load the preview starts and by its closing, so that
     /// a load that comes back late shows nothing.
@@ -173,6 +180,8 @@ pub fn use_note_files(
         fetching: Signal::new(HashSet::new()),
         shown: Signal::new(None),
         open: Signal::new(false),
+        folded: Signal::new(None),
+        unfold_new: CopyValue::new(false),
         showing: Signal::new(Showing::Nothing),
         loads: CopyValue::new(0),
     });
@@ -188,6 +197,7 @@ pub fn use_note_files(
             files.asked.write().clear();
             files.close();
             files.shown.set(None);
+            files.folded.set(None);
         }
     });
 
@@ -211,6 +221,7 @@ pub fn use_note_files(
             let note = note?;
             let store = files.source.call(()).store?;
             let found = store.attached_files(&note).await.unwrap_or_default();
+            files.unfold_if_new(note, &found);
             listed.set(Some((note, found)));
             files.keep_preview_in_step();
             Some(())
@@ -288,9 +299,61 @@ impl NoteFiles {
         self.showing.read().clone()
     }
 
-    /// Reads the note's files again: files were attached to it.
+    /// Reads the note's files again: a sync, or this device, may have
+    /// changed them.
     pub fn reread(mut self) {
         *self.reread.write() += 1;
+    }
+
+    /// Reads the note's files again after files were attached to it here:
+    /// the shelf unfolds when they come, so that their tiles are seen
+    /// arriving (5.5).
+    pub fn attached(mut self) {
+        self.unfold_new.set(true);
+        self.reread();
+    }
+
+    /// Whether the shelf is folded. A note opens with its files unfolded
+    /// when it has [`UNFOLDED_MOST`] or fewer, and folded when it has more;
+    /// what the person chooses then holds until another note is opened.
+    ///
+    /// It is not kept. Kept for each note it would be a view of the note
+    /// that every device keeps for itself and lets go of when the note is
+    /// purged, for thoughts that are opened a few times; the rule gives the
+    /// same shelf each time, and the other is one press away.
+    pub fn folded(self) -> bool {
+        let count = self
+            .listed
+            .read()
+            .as_ref()
+            .map_or(0, |(_, found)| found.len());
+        (*self.folded.read()).unwrap_or(count > UNFOLDED_MOST)
+    }
+
+    /// Folds or unfolds the shelf, for as long as the note is open.
+    pub fn set_folded(mut self, folded: bool) {
+        self.folded.set(Some(folded));
+    }
+
+    /// Unfolds the shelf if files were attached here and `found`, the
+    /// note's files as just read, has one that the last reading had not.
+    fn unfold_if_new(mut self, note: NoteId, found: &[AttachedFile]) {
+        if !*self.unfold_new.peek() {
+            return;
+        }
+        let known: HashSet<Uuid> = match self.listed.peek().as_ref() {
+            Some((held, before)) if *held == note => {
+                before.iter().map(|file| file.attachment.file_id).collect()
+            }
+            _ => HashSet::new(),
+        };
+        if found
+            .iter()
+            .any(|file| !known.contains(&file.attachment.file_id))
+        {
+            self.unfold_new.set(false);
+            self.folded.set(Some(false));
+        }
     }
 
     fn next_load(mut self) -> u64 {

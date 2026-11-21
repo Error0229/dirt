@@ -4,8 +4,9 @@
 //! itself as it is typed.
 //!
 //! The note's icons sit in a gutter beside its first line, just outside
-//! its column, so that they travel with it. The note's files are tiles
-//! under its text (6.5); files dropped anywhere on the window come to it
+//! its column, so that they travel with it. The note's files are on the
+//! shelf at the foot of its column (6.5), held at the bottom of the window
+//! while the text scrolls; files dropped anywhere on the window come to it
 //! (the screen takes the drop).
 //!
 //! The blank page has the mic in its gutter (6.18). While it listens the
@@ -16,7 +17,7 @@ use dioxus::prelude::*;
 use dirt_core::sync::overview::SyncIndicator;
 use dirt_ui::components::{IconButton, Listening, MicButton, ScrollArea};
 use dirt_ui::dom::{self, Caret};
-use dirt_ui::files::FileTiles;
+use dirt_ui::files::FileShelf;
 use dirt_ui::typing::use_typing;
 use dirt_ui::Icon;
 
@@ -167,7 +168,7 @@ pub fn Page() -> Element {
                         }
                     }
                     if let Some(note) = open {
-                        FileTiles {
+                        FileShelf {
                             key: "{note}",
                             files: screen.files,
                             note,

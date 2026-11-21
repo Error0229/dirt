@@ -1,0 +1,237 @@
+//! The shelf (interface design, section 6.5): the files of the note that
+//! is open, at the foot of its page, held at the bottom of the screen
+//! while the text scrolls above it.
+//!
+//! It is one line, "3 files", which folds and unfolds the tiles under it.
+//! Folded, the line also holds each file as a small square, its thumbnail
+//! or its kind, as many as fit and the rest a sideways scroll away: a
+//! square previews its file, so that looking at a file is still one
+//! action (section 2). Unfolded, the tiles (6.5) are under the line, at
+//! most three rows and a third of the window high; more scroll inside it.
+//!
+//! A note opens with its files unfolded when it has one or two, and
+//! folded when it has more ([`UNFOLDED_MOST`]). What the person chooses
+//! holds while the note is open, and is not kept: see [`NoteFiles::folded`].
+//! Files just attached unfold it, so that their tiles are seen arriving.
+
+use dioxus::prelude::*;
+use dirt_core::models::NoteId;
+use dirt_core::store::AttachedFile;
+use uuid::Uuid;
+
+use super::kind::{preview_kind, PreviewKind};
+use super::note_files::NoteFiles;
+use super::tile::{tile_element_id, FileTiles};
+use crate::components::ScrollArea;
+use crate::dom::{self, Caret};
+use crate::icons::{Icon, IconSize, IconSvg};
+
+/// A note with this many files or fewer opens with them unfolded; one with
+/// more opens with them folded.
+pub const UNFOLDED_MOST: usize = 2;
+
+/// The ID of a file's square on the folded shelf. The preview grows out of
+/// it while the shelf is folded, and out of the tile while it is not.
+#[must_use]
+pub fn mini_element_id(file: Uuid) -> String {
+    format!("{}-mini", tile_element_id(file))
+}
+
+/// What the line of a shelf says: "1 file", "3 files".
+#[must_use]
+pub fn count_words(count: usize) -> String {
+    if count == 1 {
+        "1 file".to_owned()
+    } else {
+        format!("{count} files")
+    }
+}
+
+/// The shelf of the files of `note`, the open note, as both apps show it.
+/// Its props are [`FileTiles`]'s. Nothing is drawn until the note's files
+/// have been read, nor for a note with none.
+#[component]
+pub fn FileShelf(
+    files: NoteFiles,
+    note: NoteId,
+    can_send: bool,
+    on_open: EventHandler<AttachedFile>,
+    on_save: EventHandler<AttachedFile>,
+    /// More classes, for where the shelf sits.
+    #[props(default)]
+    class: String,
+) -> Element {
+    // The tile whose first icon is to have the keyboard once the shelf
+    // has unfolded: a file the preview does not show, pressed folded.
+    let mut show_tile = use_signal(|| None::<Uuid>);
+    use_effect(move || {
+        if let Some(file) = show_tile() {
+            let first = format!("#{} .dui-file-acts button", tile_element_id(file));
+            dom::focus(&[first.as_str()], Caret::Kept);
+            show_tile.set(None);
+        }
+    });
+    let Some(found) = files
+        .listed()
+        .and_then(|(held, found)| (held == note).then_some(found))
+    else {
+        return rsx! {};
+    };
+    if found.is_empty() {
+        return rsx! {};
+    }
+    let folded = files.folded();
+    rsx! {
+        ShelfFrame {
+            note: note.to_string(),
+            count: found.len(),
+            folded,
+            class,
+            on_fold: move |fold: bool| files.set_folded(fold),
+            minis: rsx! {
+                for file in found {
+                    FileMini {
+                        key: "{file.attachment.file_id}",
+                        thumbnail: files.thumbnail(file.attachment.file_id),
+                        fetching: files.is_fetching(file.attachment.file_id),
+                        file,
+                        on_preview: move |file: AttachedFile| files.preview(&file),
+                        on_show: move |file: AttachedFile| {
+                            files.set_folded(false);
+                            show_tile.set(Some(file.attachment.file_id));
+                        },
+                    }
+                }
+            },
+            FileTiles { files, note, can_send, on_open, on_save }
+        }
+    }
+}
+
+/// The shelf as it is drawn: the line with the count and, folded, the
+/// squares (`minis`); under it the tiles (`children`), shown while it is
+/// unfolded. `note` names it, for the line's `aria-controls`. Given the
+/// squares and the tiles by [`FileShelf`], or by the gallery.
+#[component]
+pub fn ShelfFrame(
+    note: String,
+    count: usize,
+    folded: bool,
+    on_fold: EventHandler<bool>,
+    minis: Element,
+    children: Element,
+    #[props(default)] class: String,
+) -> Element {
+    let body = format!("dui-shelf-{note}");
+    let words = count_words(count);
+    rsx! {
+        div {
+            class: if class.is_empty() { "dui-shelf".to_owned() } else { format!("dui-shelf {class}") },
+            "data-folded": folded.then_some(""),
+            div { class: "dui-shelf-head",
+                button {
+                    r#type: "button",
+                    class: "dui-shelf-fold",
+                    "aria-expanded": if folded { "false" } else { "true" },
+                    "aria-controls": "{body}",
+                    "data-tip": if folded { "Show the files" } else { "Fold the files" },
+                    // A press leaves the keyboard's focus where it is: in
+                    // the note's text, the cursor stays and Android's
+                    // keyboard does not go and resize the page under the
+                    // movement.
+                    "data-dui-keep-focus": "",
+                    onclick: move |_| on_fold.call(!folded),
+                    IconSvg { icon: Icon::ChevronUp, size: IconSize::Small }
+                    // Told when it changes (a file attached or removed),
+                    // not when a note opens: the shelf is new then.
+                    span { "aria-live": "polite", "{words}" }
+                }
+                div {
+                    class: "dui-shelf-minis",
+                    role: "list",
+                    "aria-label": "Files",
+                    "inert": (!folded).then_some(""),
+                    {minis}
+                }
+            }
+            div {
+                id: "{body}",
+                class: "dui-shelf-body",
+                "inert": folded.then_some(""),
+                div { class: "dui-shelf-clip",
+                    ScrollArea { class: "dui-shelf-scroll", {children} }
+                }
+            }
+        }
+    }
+}
+
+/// One file's square on the folded shelf: its thumbnail, or its kind.
+/// Pressed, it previews the file; one the preview does not show unfolds
+/// the shelf and gives the keyboard to its tile's first icon (`on_show`),
+/// as a press on its tile does (6.16).
+#[component]
+pub fn FileMini(
+    file: AttachedFile,
+    thumbnail: Option<String>,
+    fetching: bool,
+    on_preview: EventHandler<AttachedFile>,
+    on_show: EventHandler<AttachedFile>,
+) -> Element {
+    let attachment = &file.attachment;
+    let name = attachment.name.clone();
+    let kind = preview_kind(&name, &attachment.media_type);
+    let label = if kind.is_some() {
+        format!("Preview: {name}")
+    } else {
+        format!("Show its icons: {name}")
+    };
+    let icon = match kind {
+        Some(PreviewKind::Audio) => Icon::Music,
+        _ => Icon::File,
+    };
+    rsx! {
+        span { role: "listitem", class: "dui-mini-at",
+            button {
+                r#type: "button",
+                id: "{mini_element_id(attachment.file_id)}",
+                class: if fetching { "dui-mini fetching" } else { "dui-mini" },
+                "aria-label": "{label}",
+                "aria-busy": fetching.then_some("true"),
+                "data-tip": "{name}",
+                onclick: move |_| {
+                    if kind.is_some() {
+                        on_preview.call(file.clone());
+                    } else {
+                        on_show.call(file.clone());
+                    }
+                },
+                if let Some(picture) = thumbnail {
+                    img { src: "{picture}", alt: "" }
+                } else {
+                    IconSvg { icon, size: IconSize::Small }
+                }
+                if fetching {
+                    svg {
+                        class: "dui-file-ring",
+                        view_box: "0 0 44 44",
+                        "aria-hidden": "true",
+                        circle { cx: "22", cy: "22", r: "19" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_line_counts_in_words() {
+        assert_eq!(count_words(1), "1 file");
+        assert_eq!(count_words(3), "3 files");
+        assert_eq!(count_words(20), "20 files");
+    }
+}

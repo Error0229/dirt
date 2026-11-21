@@ -32,7 +32,7 @@ use crate::components::{
 };
 use crate::components::{Ended, Listening, MicButton, Talk};
 use crate::events::Bus;
-use crate::files::FileTile;
+use crate::files::{FileMini, FileTile, ShelfFrame};
 use crate::icons::{Icon, IconSize, IconSvg};
 use crate::tokens::NEUTRALS;
 use crate::UiRoot;
@@ -863,6 +863,7 @@ fn a_file(
 #[component]
 fn FileTilesShown() -> Element {
     let toasts = use_toasts();
+    let mut folded = use_signal(|| true);
     let said = move |words: &'static str| {
         move |file: AttachedFile| {
             toasts.show(Toast::new(format!("{words} {}", file.attachment.name)));
@@ -913,7 +914,7 @@ fn FileTilesShown() -> Element {
             "Sent; being sent; on this device only; being fetched; a script, which is never opened and could not be sent."
         }
         div { class: "dui-files",
-            for (file , fetching , can_send) in tiles {
+            for (file , fetching , can_send) in tiles.clone() {
                 FileTile {
                     key: "{file.attachment.file_id}",
                     whereabouts: file.whereabouts(can_send),
@@ -924,6 +925,43 @@ fn FileTilesShown() -> Element {
                     on_open: said("Open"),
                     on_save: said("Save"),
                     on_remove: said("Remove"),
+                }
+            }
+        }
+        h2 { "The shelf" }
+        p { class: "gal-s",
+            "A note's files at the foot of its page: its line folds and unfolds them. Folded, a square for each previews it."
+        }
+        ShelfFrame {
+            note: "gallery",
+            count: tiles.len(),
+            folded: folded(),
+            on_fold: move |fold: bool| folded.set(fold),
+            minis: rsx! {
+                for (file , fetching , _) in tiles.clone() {
+                    FileMini {
+                        key: "{file.attachment.file_id}",
+                        file,
+                        thumbnail: None,
+                        fetching,
+                        on_preview: said("Preview"),
+                        on_show: move |_| folded.set(false),
+                    }
+                }
+            },
+            div { class: "dui-files",
+                for (file , fetching , can_send) in tiles {
+                    FileTile {
+                        key: "{file.attachment.file_id}",
+                        whereabouts: file.whereabouts(can_send),
+                        file,
+                        thumbnail: None,
+                        fetching,
+                        on_preview: said("Preview"),
+                        on_open: said("Open"),
+                        on_save: said("Save"),
+                        on_remove: said("Remove"),
+                    }
                 }
             }
         }

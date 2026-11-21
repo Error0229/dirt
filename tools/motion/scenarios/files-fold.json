@@ -1,0 +1,260 @@
+{
+  "name": "files-fold",
+  "title": "A note's files folded and unfolded on the shelf (#324)",
+  "issue": 324,
+  "platforms": [
+    "desktop",
+    "android",
+    "mockup-desktop",
+    "mockup-android"
+  ],
+  "description": "Design 5.5 and 6.5. The shelf's line, \"3 files\", folds the tiles: their room closes on glide (750 ms) while they fade (120 ms, exit) and the files' squares fade in on the line (140 ms, standard); the chevron turns (snap). Unfolding is the same the other way: the room opens on glide, the squares fade (120 ms, exit) and the tiles fade in (200 ms from 60 ms). The text above does not move. Desktop: three pictures pasted onto a new note, which unfolds the shelf. Android: the newest note must already have three files or more (docs/ui/motion-check.md, Writing a scenario); it opens folded, and the setup unfolds it. On Android the note is closed with Done after each pass, and opened again for the next.",
+  "setup": [
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "click": "[data-dui-typed]"
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "type": "Three pictures from the garden"
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "wait": 900
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "pastePicture": "[data-dui-typed]",
+      "name": "beans.png",
+      "then": 2000
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "pastePicture": "[data-dui-typed]",
+      "name": "shed.png",
+      "then": 2000
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "pastePicture": "[data-dui-typed]",
+      "name": "gate.png",
+      "then": 2500
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "waitFor": ".dk-files.dui-shelf:not([data-folded])",
+      "ms": 15000
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-list .dui-card-in",
+      "then": 1800
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "waitFor": ".dm-page .dui-shelf-fold",
+      "ms": 15000
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "androidKey": 4,
+      "then": 900
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-page .dui-shelf-fold",
+      "then": 1500
+    },
+    {
+      "platforms": [
+        "mockup"
+      ],
+      "eval": {
+        "mockup-desktop": "(() => { const n = S.notes.find(n => !n.deleted && !n.archived && n.files.length); openD(n.id); return true; })()",
+        "mockup-android": "(() => { const n = S.notes.find(n => !n.deleted && !n.archived && n.files.length); openM(n.id); return true; })()"
+      },
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "mockup"
+      ],
+      "eval": {
+        "mockup-desktop": "(() => { ACT.attach(document.querySelector('#d-ed [data-act=\"attach\"]'), 'd', {}); ACT.attach(document.querySelector('#d-ed [data-act=\"attach\"]'), 'd', {}); return true; })()",
+        "mockup-android": "(() => { ACT.attach(document.querySelector('#m-ed [data-act=\"attach\"]'), 'm', {}); ACT.attach(document.querySelector('#m-ed [data-act=\"attach\"]'), 'm', {}); closeKb && closeKb(); return true; })()"
+      },
+      "then": 1500
+    }
+  ],
+  "parts": {
+    "shelf": {
+      "desktop": ".dk-files.dui-shelf",
+      "android": ".dm-page .dui-shelf",
+      "mockup-desktop": "#d-shelf",
+      "mockup-android": "#m-shelf"
+    },
+    "tiles": {
+      "desktop": ".dk-files .dui-files",
+      "android": ".dm-page .dui-files",
+      "mockup-desktop": "#d-files",
+      "mockup-android": "#m-files"
+    },
+    "squares": {
+      "desktop": ".dk-files .dui-shelf-minis",
+      "android": ".dm-page .dui-shelf-minis",
+      "mockup-desktop": "#d-minis",
+      "mockup-android": "#m-minis"
+    },
+    "chevron": {
+      "desktop": ".dk-files .dui-shelf-fold .dui-i",
+      "android": ".dm-page .dui-shelf-fold .dui-i",
+      "mockup-desktop": "#d-shelf .shelf-fold .i",
+      "mockup-android": "#m-shelf .shelf-fold .i"
+    },
+    "text": {
+      "desktop": ".dk-text",
+      "android": ".dm-text",
+      "mockup-desktop": "#d-text",
+      "mockup-android": "#m-text"
+    }
+  },
+  "crop": {
+    "mockup-desktop": "#D",
+    "mockup-android": "#M"
+  },
+  "checks": {
+    "within": [
+      [
+        "squares",
+        "shelf"
+      ]
+    ],
+    "apart": [
+      [
+        "shelf",
+        "text"
+      ]
+    ],
+    "pops": {
+      "px": 24,
+      "opacity": 0.3
+    }
+  },
+  "movements": [
+    {
+      "name": "fold",
+      "description": "The shelf's line is pressed: the tiles fold into it.",
+      "steps": [
+        {
+          "click": {
+            "desktop": ".dk-files .dui-shelf-fold",
+            "android": ".dm-page .dui-shelf-fold",
+            "mockup-desktop": "#d-shelf .shelf-fold",
+            "mockup-android": "#m-shelf .shelf-fold"
+          }
+        }
+      ],
+      "leaves": [
+        "tiles"
+      ],
+      "arrives": [
+        "squares"
+      ],
+      "ms": 1200
+    },
+    {
+      "name": "unfold",
+      "description": "Pressed again: the tiles unfold from it.",
+      "steps": [
+        {
+          "click": {
+            "desktop": ".dk-files .dui-shelf-fold",
+            "android": ".dm-page .dui-shelf-fold",
+            "mockup-desktop": "#d-shelf .shelf-fold",
+            "mockup-android": "#m-shelf .shelf-fold"
+          }
+        }
+      ],
+      "leaves": [
+        "squares"
+      ],
+      "arrives": [
+        "tiles"
+      ],
+      "ms": 1200,
+      "mirrors": {
+        "of": "fold",
+        "parts": {
+          "shelf": [
+            "y",
+            "h"
+          ]
+        },
+        "curve": false,
+        "because": "design 6.5: the tiles' room opens and closes on glide, each way forwards, the shelf's top edge with it, between the same two heights"
+      },
+      "after": [
+        {
+          "platforms": [
+            "android"
+          ],
+          "tap": ".dm-page-bar button[aria-label='Done']",
+          "repeatUntilGone": ".dui-grow.dm-page.on",
+          "then": 1500
+        }
+      ]
+    }
+  ],
+  "between": [
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-list .dui-card-in",
+      "then": 1800
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "waitFor": ".dm-page .dui-shelf-fold",
+      "ms": 15000
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "androidKey": 4,
+      "then": 900
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-page .dui-shelf-fold",
+      "then": 1500
+    }
+  ]
+}

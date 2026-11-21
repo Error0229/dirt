@@ -1,7 +1,9 @@
 //! The files of a note, as both apps show them (interface design, sections
 //! 6.5, 6.16 and 7.3).
 //!
-//! - [`FileTiles`]: the tiles under the open note's text.
+//! - [`FileShelf`]: the open note's files at the foot of its page, folded
+//!   to a line or unfolded to their tiles.
+//! - [`FileTiles`]: the tiles, on the shelf.
 //! - [`FilePreview`]: the preview over the screen.
 //! - [`NoteFiles`], from [`use_note_files`]: what the two share, read from
 //!   `dirt-core`.
@@ -21,9 +23,11 @@ mod pasted;
 pub mod pdf;
 mod preview;
 pub mod served;
+mod shelf;
 mod tile;
 
 pub use note_files::{use_note_files, FileSource, NoteFiles, Showing};
 pub use pasted::{use_pasted_files, Pasted};
 pub use preview::FilePreview;
+pub use shelf::{count_words, mini_element_id, FileMini, FileShelf, ShelfFrame, UNFOLDED_MOST};
 pub use tile::{tile_element_id, FileTile, FileTiles};

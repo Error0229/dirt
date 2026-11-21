@@ -3,7 +3,7 @@
   "title": "The file preview opened from a picture's tile and closed with Esc (#323)",
   "issue": 323,
   "platforms": ["desktop", "android", "mockup-desktop"],
-  "description": "Design 5.5 and 6.16: the file grows out of its tile (420 ms, enter) and shrinks back into it (320 ms, standard), the backdrop fading with it (280 ms, standard). The preview is opened by its tile's picture (.dui-file-main), never by the tile's buttons: the first of those opens the file in another app. On Android the newest note must already have a picture (one shared to the app: docs/ui/motion-check.md, Writing a scenario); the scenario opens that note first.",
+  "description": "Design 5.5 and 6.16: the file grows out of its tile (420 ms, enter) and shrinks back into it (320 ms, standard), the backdrop fading with it (280 ms, standard). The preview is opened by its tile's picture (.dui-file-main), on an unfolded shelf (6.5), never by the tile's buttons: the first of those opens the file in another app. On Android the newest note must already have a picture (one shared to the app: docs/ui/motion-check.md, Writing a scenario); the scenario opens that note first.",
   "setup": [
     { "platforms": ["desktop"], "click": "[data-dui-typed]" },
     { "platforms": ["desktop"], "pastePicture": "[data-dui-typed]", "name": "garden.png", "then": 3000 },
@@ -14,6 +14,11 @@
       "platforms": ["mockup"],
       "eval": "(() => { const n = S.notes.find(n => !n.deleted && !n.archived && n.files.some(f => f.src || f.thumb)); document.querySelector('#d-list .row[data-id=\"' + n.id + '\"]').click(); return true; })()",
       "then": 800
+    },
+    {
+      "platforms": ["mockup"],
+      "eval": "(() => { const shelf = document.querySelector('#d-shelf[data-folded]'); if (shelf) shelf.querySelector('.shelf-fold').click(); return true; })()",
+      "then": 900
     }
   ],
   "parts": {
