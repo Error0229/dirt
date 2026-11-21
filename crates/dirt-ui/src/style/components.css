@@ -97,8 +97,8 @@
 .android .dui-toast-act{height:36px}
 
 /* ---- Banner (6.8) ---------------------------------------------------- */
-.dui-banner{position:fixed;top:12px;left:50%;translate:-50% 0;z-index:800;display:flex;align-items:center;gap:12px;padding:8px 8px 8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-l);box-shadow:var(--shadow-3);max-width:calc(100vw - 24px);transform:translateY(-160%);opacity:0;visibility:hidden;transition:transform var(--d-pop) var(--sp-pop),opacity 180ms var(--e-std),visibility 0s var(--d-pop)}
-.dui-banner.on{transform:none;opacity:1;visibility:visible;transition:transform var(--d-pop) var(--sp-pop),opacity 180ms var(--e-std),visibility 0s}
+.dui-banner{position:fixed;top:12px;left:50%;translate:-50% 0;z-index:800;display:flex;align-items:center;gap:12px;padding:8px 8px 8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-l);box-shadow:var(--shadow-3);max-width:calc(100vw - 24px);transform:translateY(-160%);opacity:0;pointer-events:none;transition:transform var(--d-pop) var(--sp-pop),opacity 180ms var(--e-std)}
+.dui-banner.on{transform:none;opacity:1;pointer-events:auto}
 .dui-banner-words{min-width:0}
 .dui-banner-title{font-size:13.5px;font-weight:550}
 .dui-banner-detail{font-size:12px;color:var(--text-3)}
@@ -150,10 +150,16 @@
 .android .dui-dot::before{content:"";position:absolute;inset:-8px}
 
 /* ---- Panel (desktop) and sheet (Android) (6.9) ------------------------- */
+/* A closed panel, sheet or banner is see-through or off the screen, takes
+   no pointer, and is inert. It is never hidden by visibility: the web view
+   was seen to leave what is inside it hidden after it had opened again,
+   its inherited visibility not worked out afresh, and Settings opened
+   blank until something redrew it (#311; and the page that grows, below).
+   Nothing with children is shown and hidden by toggling visibility. */
 .dui-scrim{position:fixed;inset:0;background:rgba(20,16,12,.34);opacity:0;pointer-events:none;transition:opacity var(--d-3) var(--e-std);z-index:600}
 .dui-scrim.on{opacity:1;pointer-events:auto}
-.dui-panel{position:fixed;left:50%;top:50%;width:min(740px,92vw);height:min(540px,88vh);translate:-50% -50%;background:var(--surface);border-radius:var(--r-l);box-shadow:var(--shadow-3);display:flex;flex-direction:column;overflow:hidden;z-index:601;opacity:0;scale:.96;visibility:hidden;pointer-events:none;transition:opacity var(--d-2) var(--e-std),scale var(--d-3) var(--e-out),visibility 0s var(--d-3)}
-.dui-panel.on{opacity:1;scale:1;visibility:visible;pointer-events:auto;transition:opacity var(--d-2) var(--e-std),scale var(--d-3) var(--e-out),visibility 0s}
+.dui-panel{position:fixed;left:50%;top:50%;width:min(740px,92vw);height:min(540px,88vh);translate:-50% -50%;background:var(--surface);border-radius:var(--r-l);box-shadow:var(--shadow-3);display:flex;flex-direction:column;overflow:hidden;z-index:601;opacity:0;scale:.96;pointer-events:none;transition:opacity var(--d-2) var(--e-std),scale var(--d-3) var(--e-out)}
+.dui-panel.on{opacity:1;scale:1;pointer-events:auto}
 .dui-panel-close{position:absolute;top:10px;right:10px;z-index:3}
 .dui-panel-body{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
 /* What scrolls inside a panel or sheet has the surface's colour itself.
@@ -161,8 +167,8 @@
    over the last 20 px of an open panel, in a window on the screen; with a
    colour of its own it did not. */
 .dui-panel .dui-scroll,.dui-sheet .dui-scroll{background:var(--surface)}
-.dui-sheet{position:fixed;left:0;right:0;bottom:0;top:46px;background:var(--surface);border-radius:var(--r-sheet) var(--r-sheet) 0 0;z-index:601;transform:translateY(102%);visibility:hidden;transition:transform var(--d-glide) var(--sp-glide),visibility 0s var(--d-glide);display:flex;flex-direction:column;box-shadow:var(--shadow-3)}
-.dui-sheet.on{transform:none;visibility:visible;transition:transform var(--d-glide) var(--sp-glide),visibility 0s}
+.dui-sheet{position:fixed;left:0;right:0;bottom:0;top:46px;background:var(--surface);border-radius:var(--r-sheet) var(--r-sheet) 0 0;z-index:601;transform:translateY(102%);pointer-events:none;transition:transform var(--d-glide) var(--sp-glide);display:flex;flex-direction:column;box-shadow:var(--shadow-3)}
+.dui-sheet.on{transform:none;pointer-events:auto}
 /* While a finger holds it, it follows the finger and nothing else. */
 .dui-sheet.drag{transition:none}
 .dui-sheet-head{padding:8px 12px 4px 20px;display:flex;align-items:center;flex:none;cursor:grab;touch-action:none;position:relative}
@@ -513,16 +519,26 @@
 .dui-pv-scrim{position:absolute;inset:0;background:rgba(12,10,8,.9);opacity:0;transition:opacity var(--d-3) var(--e-std)}
 .dui-preview.on .dui-pv-scrim{opacity:1}
 .dui-pv-bars{display:none;background:#0c0a08}
-.dui-pv-stage{position:absolute;inset:58px 72px 52px;display:grid;place-items:center;touch-action:none}
+.dui-pv-stage{position:absolute;inset:58px 72px 52px;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);place-items:center;touch-action:none}
 /* The web view keeps a finger moving up or down on text or a PDF for their
    own scrolling, and hands every other touch in the preview to the script:
    a swipe sideways, a swipe down, a pinch. */
 .dui-preview{touch-action:none}
 .dui-preview .dui-scroll{touch-action:pan-y}
 .android .dui-pv-stage{inset:92px 0 76px}
-.dui-pv-item{width:100%;height:100%;min-height:0;display:grid;place-items:center;position:relative}
-.dui-pv-picture,.dui-pv-video{max-width:100%;max-height:100%;object-fit:contain;display:block;border-radius:6px;box-shadow:0 24px 60px rgba(0,0,0,.5);transition:transform var(--d-3) var(--e-out);cursor:zoom-in}
-.dui-pv-picture.zoom{transform:scale(2);cursor:zoom-out}
+/* The stage and its item are grids of one cell exactly their own size, so
+   that a picture's max-height has a height to be measured against: in a
+   row sized by its content a tall picture was fitted to the width alone,
+   and ran off the bottom where it could not be reached (#313). */
+.dui-pv-item{width:100%;height:100%;min-height:0;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);place-items:center;position:relative}
+.dui-pv-picture,.dui-pv-video{max-width:100%;max-height:100%;object-fit:contain;display:block;border-radius:6px;box-shadow:0 24px 60px rgba(0,0,0,.5);cursor:zoom-in}
+/* Zoomed, the picture is twice the size it fitted at, and its item
+   scrolls to every part of it; auto margins centre it on a side where it
+   still fits and keep its start in reach where it does not. */
+.dui-pv-item.zoomed{overflow:auto;place-items:start;scrollbar-width:none;touch-action:pan-x pan-y}
+.dui-pv-item.zoomed::-webkit-scrollbar{display:none}
+.dui-pv-picture.zoom{width:var(--w);height:var(--h);max-width:none;max-height:none;margin:auto;cursor:grab}
+.dui-pv-picture.zoom.held{cursor:grabbing}
 .dui-pv-video{cursor:default}
 /* A thumbnail stands in while the picture is read. */
 .dui-pv-standin{width:min(480px,100%);filter:blur(6px);opacity:.7}
