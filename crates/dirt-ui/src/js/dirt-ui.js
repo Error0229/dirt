@@ -813,6 +813,9 @@
     if (bar) state.runs.push(bar.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, delay: 120, fill: 'backwards' }));
   }
   function growClosed(page, state) {
+    // This closing's own number in the script: a late end of an earlier
+    // one (the wait after a press went through it) must not end this one.
+    const mine = state.closings = (state.closings || 0) + 1;
     state.runs.forEach(run => run.cancel());
     state.runs = [];
     // Drawn until it has gone; the style sheet hides a page without `on`.
@@ -851,7 +854,7 @@
     // Its field kept the keyboard while it shrank; at the end the keyboard
     // goes, and Rust makes the page inert and hidden from a screen reader.
     const end = () => {
-      if (page.classList.contains('on')) return;
+      if (page.classList.contains('on') || state.closings !== mine) return;
       page.style.opacity = '';
       page.classList.remove('leaving');
       state.leaving = false;
