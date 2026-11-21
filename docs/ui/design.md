@@ -727,6 +727,10 @@ Spinners still turn, because they carry information.
   time the person returns to it, and gives the answer to the root
   component's `reduced_motion`. Changed while Dirt is in front, it is
   honoured from the next return.
+- A movement is checked on the real app with the motion check
+  (`docs/ui/motion-check.md`): its frames stepped at a fixed interval and
+  as composited in real time, the parts' boxes and opacity on every frame,
+  closing against opening reversed, and the app against this mockup.
 
 ---
 

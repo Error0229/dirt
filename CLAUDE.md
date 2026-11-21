@@ -59,6 +59,7 @@ Rules it set, which still hold:
 - The colours are written once, in `dirt_ui::tokens`, and the style sheet is made from them. A colour that changes is checked by `dirt_ui::contrast`'s tests, and the table in design section 4.1 changes with it. The Android capture sheet's and widgets' colours are made from the same tokens and held to them by a test.
 - Anything that follows a finger or a pointer runs in `dirt-ui`'s script (`crates/dirt-ui/src/js/dirt-ui.js`) from first touch to release, and tells Rust only how it ended (`dirt_ui::events`). The script that animates a list watches the page; it is not called from Rust.
 - A note's text field has no `oninput`: it is heard through `dirt_ui::typing` (`data-dui-typed` and its carrier), which tells Rust each change in order and in pieces. Dioxus sends an `input` from any text field with the field's whole text, which fails past a few hundred kilobytes (design 6.4).
+- A change to a movement is checked with the motion check (`docs/ui/motion-check.md`, `tools/motion/`) before and after, on each app it touches, against the mockup where it has the movement. The pull request says what the frames showed, with the run folders.
 - `dirt-ui`'s classes begin with `dui-`, the desktop's with `dk-` and Android's with `dm-`.
 - Speech becomes text on the device that heard it, with the model shipped in the app, and in `dirt-voice` alone. It reads sound and gives words; it has no SQL, HTTP or cryptography, and `dirt-core` does not depend on it (an app hands the core its engine as a `dirt_core::voice::Transcriber`). Only the device that recorded a thought makes its words.
 - The speech model and the engine's libraries are never committed. Their builds fetch them by an address and a SHA-256 written in `crates/dirt-voice/build.rs` and `crates/dirt-voice/sherpa-onnx-sys/build.rs`, into the build cache. Change a pin only after trying what it pins.
@@ -99,9 +100,10 @@ crates/
 ├── dirt-mobile/   # Dioxus Android application; android/native is its Kotlin module
 └── dirt-cli/      # Command-line interface (`dirt`)
 scripts/           # Dumping the server's database and restoring it
+tools/motion/      # The motion check: a movement's frames on the real app, stepped and in real time (docs/ui/motion-check.md)
 docs/
 ├── DESIGN.md      # Product vision and standing decisions
-├── ui/            # The interface's design and its mockup
+├── ui/            # The interface's design, its mockup, and the motion check
 ├── plans/         # The two redesigns and their implementation plans
 ├── trials/        # The system redesign's trials
 ├── brainstorms/   # Feature brainstorms
@@ -160,6 +162,11 @@ cargo clippy -p dirt-mobile --target x86_64-linux-android --all-targets --featur
 # Build the Android app for the emulator (debug), or for a phone
 dx build --platform android --package dirt-mobile --target x86_64-linux-android
 dx build --platform android --package dirt-mobile --target aarch64-linux-android
+
+# The motion check: a movement's frames, stepped and in real time, against
+# the mockup (docs/ui/motion-check.md); and its analysis's tests
+node tools/motion/motion.mjs run settings-panel --platform desktop --mockup
+node --test tools/motion/test/analyse.test.mjs tools/motion/test/page.test.mjs
 
 # List Makefile shortcuts
 make help

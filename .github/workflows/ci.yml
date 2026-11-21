@@ -244,6 +244,23 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  # The motion check (docs/ui/motion-check.md): its analysis, pure
+  # functions, and what it runs in a page (the stepped clock, the probe) in
+  # the runner's own headless Chrome. Node's own test runner; nothing to
+  # install from npm.
+  motion-tools:
+    name: Motion check tools
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Test the analysis and the page script
+        run: node --test tools/motion/test/analyse.test.mjs tools/motion/test/page.test.mjs
+
   build:
     name: Build
     runs-on: ${{ matrix.os }}
