@@ -723,6 +723,9 @@
   // keyboard resizes the web view, which must not happen under the
   // movement.
   const grows = new Map();
+  // How long the end of a close waits for the page to open again after a
+  // press went through it: a round trip to Rust, with room for a slow one.
+  const PRESSED_THROUGH_WAIT = 350;
   // The right and bottom edges are measured from the page's own size as it
   // is at each frame (`100%`), not from the window's as it was when the
   // movement began: if the window changes size on the way (the keyboard
@@ -739,15 +742,27 @@
   }
   // Once it has grown: its field takes the keyboard, unless the person has
   // given it to something on the page or in a dialog over it meanwhile.
+  // Taken means the person did it while the page grew: the focus moved
+  // since, or a press landed on the page or a dialog over it (a word tapped
+  // in a field that still had the focus from the page before keeps the
+  // focus where it was, and only its caret moves).
   function focusWhenGrown(page, run, ms) {
     const selector = page.dataset.duiGrowFocus;
     if (!selector) return;
+    const before = document.activeElement;
+    let pressed = false;
+    const press = event => {
+      const target = event.target;
+      if (target && target.closest && (page.contains(target) || target.closest('[data-dui-modal].on'))) pressed = true;
+    };
+    document.addEventListener('pointerdown', press, true);
     after(run, ms, () => {
+      document.removeEventListener('pointerdown', press, true);
       if (!page.classList.contains('on')) return;
       const at = document.activeElement;
-      const taken = at && at !== document.body && at !== page
+      const moved = at !== before && at && at !== document.body && at !== page
         && (page.contains(at) || at.closest('[data-dui-modal].on'));
-      if (!taken) focus([selector], 'end');
+      if (!moved && !pressed) focus([selector], 'end');
     });
   }
   function growOpened(page, state) {
@@ -756,13 +771,18 @@
     // 7 of 5.2). A circle, a page closing to its grain, cannot become an
     // inset, so that one starts afresh. Known from the script's own state:
     // Rust writes the whole class as it opens the page, `leaving` with it.
-    // Its bar and its text go on from where their own fade had got to.
+    // Its bar and its text go on from where their own fade had got to. Only
+    // back towards where it was closing to: opened onto something else (the
+    // bar, another card), it starts afresh from there.
     const body = page.querySelector('[data-dui-grow-body]'), bar = page.querySelector('[data-dui-grow-bar]');
-    const was = state.leaving ? getComputedStyle(page).clipPath : '';
+    const same = state.leaving && (page.dataset.duiFrom || '') === state.leavingTo;
+    const was = same ? getComputedStyle(page).clipPath : '';
     const fromNow = was.startsWith('inset(') ? was : null;
     const opacityOf = element => (element ? parseFloat(getComputedStyle(element).opacity) : 1);
     const barNow = fromNow ? opacityOf(bar) : 0, bodyNow = fromNow ? opacityOf(body) : 0;
     state.leaving = false;
+    state.pressedThrough = false;
+    page.style.opacity = '';
     state.runs.forEach(run => run.cancel());
     state.runs = [];
     page.classList.remove('leaving');
@@ -798,10 +818,10 @@
     // Drawn until it has gone; the style sheet hides a page without `on`.
     page.classList.add('leaving');
     state.leaving = true;
-    // What its field held as it was let go: a key typed while it leaves is
-    // undone (below).
-    const field = page.querySelector('[data-dui-typed]');
-    if (field) field.duiLeftAs = field.value;
+    state.leavingTo = page.dataset.duiFrom || '';
+    // Which closing this is, as Rust counts them: `gone` names it, so that
+    // one from an earlier closing cannot end a later one.
+    const closing = Number(page.dataset.duiClosing) || 0;
     const to = document.getElementById(page.dataset.duiFrom || '');
     const body = page.querySelector('[data-dui-grow-body]');
     let going, ms;
@@ -828,16 +848,30 @@
       if (body && page.dataset.duiFromKind !== 'bar') state.runs.push(body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: tokens.standard, fill: 'forwards' }));
     }
     state.runs.push(going);
-    after(going, ms, () => {
+    // Its field kept the keyboard while it shrank; at the end the keyboard
+    // goes, and Rust makes the page inert and hidden from a screen reader.
+    const end = () => {
       if (page.classList.contains('on')) return;
+      page.style.opacity = '';
       page.classList.remove('leaving');
       state.leaving = false;
       state.runs.forEach(run => run.cancel());
       state.runs = [];
-      // Its field kept the keyboard while it shrank; now the keyboard goes,
-      // and Rust makes the page inert and hidden from a screen reader.
       if (page.contains(document.activeElement)) document.activeElement.blur();
-      tell(page, 'gone');
+      tell(page, 'gone', { closing });
+    };
+    after(going, ms, () => {
+      if (page.classList.contains('on')) return;
+      // A press that went through it (a card, the bar) is most likely
+      // opening the page again, which comes a round trip to Rust later. The
+      // keyboard waits that long, rather than going and rising again under
+      // the new page's movement: the page stays, unseen and taking no
+      // press, since a field that is not displayed loses the focus.
+      if (state.pressedThrough) {
+        state.pressedThrough = false;
+        page.style.opacity = '0';
+        setTimeout(end, PRESSED_THROUGH_WAIT);
+      } else end();
     });
   }
   // A page on its way out takes no typing, though its field still has the
@@ -845,7 +879,11 @@
   // so a key typed then is undone in the field, and not left there to be
   // lost unseen. Typed text is stopped before it is inserted; a keyboard's
   // composition (Gboard) cannot be stopped, so what it inserted is taken
-  // out again, before the page's own listener tells Rust of it.
+  // out again, before the page's own listener tells Rust of it. The field
+  // is put back to exactly what Rust last heard of it (`duiBase`), not to
+  // what it held as the page was let go: the app may have written to it
+  // since (another note opened through the leaving page, words merged in),
+  // and Rust heard that.
   const leavingField = target => (target && target.closest && target.closest('[data-dui-grow].leaving')
     && target.matches && target.matches('[data-dui-typed]') ? target : null);
   document.addEventListener('beforeinput', event => {
@@ -853,9 +891,22 @@
   }, true);
   document.addEventListener('input', event => {
     const field = leavingField(event.target);
-    if (!field || typeof field.duiLeftAs !== 'string') return;
+    if (!field || typeof field.duiBase !== 'string') return;
     event.stopImmediatePropagation();
-    if (field.value !== field.duiLeftAs) field.value = field.duiLeftAs;
+    if (field.value !== field.duiBase) field.value = field.duiBase;
+  }, true);
+  // A press that goes through a leaving page (onto the bar, a card) leaves
+  // the keyboard with its field until the page has gone: moving the focus
+  // would put the keyboard away under the movement and resize the web view
+  // (#322), and the page opened by the press wants it again at once. The
+  // press's click still comes; only the focus does not move.
+  document.addEventListener('mousedown', event => {
+    const at = document.activeElement;
+    const leaving = at && at.closest && at.closest('[data-dui-grow].leaving');
+    if (!leaving || leaving.contains(event.target)) return;
+    event.preventDefault();
+    const state = grows.get(leaving);
+    if (state) state.pressedThrough = true;
   }, true);
   function watchGrow(page) {
     if (grows.has(page)) return;

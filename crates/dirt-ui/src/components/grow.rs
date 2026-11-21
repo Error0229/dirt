@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use dioxus::prelude::*;
 
-use crate::events::{use_outcome, Outcome};
+use crate::events::{use_message, Outcome};
 
 /// How long a closing page stays live at most if the script never says it
 /// has gone (no script, or a web view that has stopped drawing). The script
@@ -107,13 +107,15 @@ pub fn GrowPage(
         }))
     });
     let mut drawn = use_signal(|| 0_u64);
-    let id = use_outcome({
+    let id = use_message({
         let state = Rc::clone(&state);
-        move |outcome| match outcome {
+        move |message| match message.kind {
             Outcome::Back => on_back.call(()),
             Outcome::Gone => {
+                // Only the closing it names: one from an earlier closing
+                // cannot end a later one.
                 let now = state.get();
-                if !now.open && now.live {
+                if !now.open && now.live && message.closing == Some(now.number) {
                     state.set(Closing { live: false, ..now });
                     drawn += 1;
                 }
@@ -162,6 +164,8 @@ pub fn GrowPage(
             "data-dui-from": from_id,
             "data-dui-from-kind": kind,
             "data-dui-grow-focus": focus,
+            // Which closing this is, for the script's `gone` to name.
+            "data-dui-closing": "{state.get().number}",
             "data-dui-id": "{id}",
             "data-dui-back": open.then_some(""),
             {children}

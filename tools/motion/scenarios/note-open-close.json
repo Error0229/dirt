@@ -100,6 +100,22 @@
       "arrives": ["page"],
       "after": [{ "tap": ".dm-page-bar button[aria-label='Done']", "then": 1200 }],
       "ms": 1400
+    },
+    {
+      "name": "open-once-more",
+      "description": "The second note is opened again, for the next movement.",
+      "platforms": ["android"],
+      "steps": [{ "tap": ".dm-list .dui-card-in", "index": 1 }],
+      "ms": 1200
+    },
+    {
+      "name": "done-then-card",
+      "description": "Done, and at once another card (design 5.8): the tap goes through the page on its way out, and the third note grows out of its own card, afresh, not out of the second's. It is then let go.",
+      "platforms": ["android"],
+      "steps": [{ "tap": ".dm-page-bar button[aria-label='Done']", "then": 120 }, { "tap": ".dm-list .dui-card-in", "index": 2 }],
+      "arrives": ["page"],
+      "after": [{ "tap": ".dm-page-bar button[aria-label='Done']", "then": 1200 }],
+      "ms": 1400
     }
   ]
 }

@@ -368,9 +368,11 @@
 .dui-grow{position:fixed;inset:0;z-index:500;background:var(--surface);display:none;flex-direction:column}
 .dui-grow.on,.dui-grow.leaving{display:flex}
 /* On its way out it is still drawn, and live, so that its field keeps the
-   keyboard until it has gone; a tap goes through it to what it is closing
-   onto: the bar, for the next thought, or a card (#322). */
-.dui-grow.leaving{pointer-events:none}
+   keyboard until it has gone; a tap goes through it, and through all it
+   holds, to what it is closing onto: the bar, for the next thought, or a
+   card (#322). All of it: Android's file tiles take the pointer for their
+   buttons of their own, and a tap late in the shrink landed on Remove. */
+.dui-grow.leaving,.dui-grow.leaving *{pointer-events:none!important}
 
 /* ---- Pulling a list down to sync (Android, 5.5) --------------------------- */
 .dui-pull{position:relative;min-height:100%;will-change:transform}
