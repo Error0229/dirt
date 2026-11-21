@@ -20,6 +20,7 @@ import {
 } from './lib/analyse.mjs';
 import { contactSheets, sideBySide, video, nearest, removeFrames } from './lib/sheets.mjs';
 import { writeReport, trustOf } from './lib/report.mjs';
+import { sleep } from './lib/cdp.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..', '..');
@@ -111,7 +112,18 @@ function stepsOf(scenario, platform) {
 
 /** Runs a scenario's movements on one target: stepped, then in real time. */
 async function capture(target, scenario, { layers, dir, stepMs, only, probeLive = true }) {
-  const viewport = await prepare(target.cdp);
+  let viewport = await prepare(target.cdp);
+  // A window of another size: the desktop's test copy is laid out as if its
+  // window were that size (DevTools' device metrics), since the window
+  // itself stays off the screen. Never on Android, whose page is the
+  // screen's; the override goes when the run ends.
+  const size = target.platform === 'desktop' ? pick(scenario.viewport, target.platform) : null;
+  if (size) {
+    await target.cdp.send('Emulation.setDeviceMetricsOverride', { width: size.width, height: size.height, deviceScaleFactor: size.scale || 1, mobile: false });
+    onCleanup('the window size given to the test app page', () => target.cdp.send('Emulation.clearDeviceMetricsOverride', {}, 3000).catch(() => {}));
+    await sleep(600);
+    viewport = await target.cdp.evaluate(`({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, reduced: matchMedia('(prefers-reduced-motion: reduce)').matches, agent: navigator.userAgent })`);
+  }
   log(`page ${viewport.width}×${viewport.height} at ${viewport.dpr}×${viewport.reduced ? ', reduced motion' : ''}`);
   await sendSteps(target, forPlatform(scenario.setup, target.platform));
   const idle = await measureFrameRate(target.cdp, 1000);

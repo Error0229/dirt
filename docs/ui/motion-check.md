@@ -284,6 +284,12 @@ mockups) and `default`.
   line up (`.dui-panel` alone also matches the panel of keys).
 - **`crop`**: the part of the page the frames show, by a selector (the
   mockup's device frame, a panel). Default: the whole page.
+- **`viewport`**: a window of another size, for the desktop only:
+  `{ "desktop": { "width": 2560, "height": 1440, "scale": 1 } }`. The test
+  copy stays off the screen, where it cannot be maximised, so its page is
+  laid out at that size by DevTools' device metrics, before the setup runs,
+  and the report gives the size. `focus-wide.json` uses it (#325). Android's
+  page is the screen's and takes none.
 - **`movements`**: captured in order, all of them stepped, then all of them
   in real time. So they should end where they began (open, then close), or
   `between` lists steps that reset the app between the two passes. Each

@@ -178,7 +178,7 @@ the head of the note in the Markdown.
 | | Desktop | Android | CLI |
 |---|---|---|---|
 | Light and dark themes | Settings → Appearance: Auto, which follows the system, Light or Dark; and the six accents | Settings → Appearance: Auto, which follows the system as it changes, Light or Dark; and the six accents | Not applicable |
-| The window | Windows: no title bar. Dirt's own minimise, maximise and close at the top right; the top row moves the window and a double-click on it maximises; every edge resizes it. Linux and macOS: the system's title bar, until they are tried (manual checklist) | Not applicable | Not applicable |
+| The window | Windows: no title bar. Dirt's own minimise, maximise and close at the top right; the top row moves the window and a double-click on it maximises; every edge resizes it. Linux and macOS: the system's title bar, until they are tried (manual checklist). In a window wider than 1112 px, maximised among them, the open note's column is in the middle of the room beside the list, its icons beside its first line | Not applicable | Not applicable |
 | Text size | Settings → Appearance, Ctrl + and Ctrl − (13 to 20 px, 15 at first). Inter and JetBrains Mono, bundled; the choice of font is gone | Settings → Appearance, the same sizes; a note's text is drawn a pixel larger than the size chosen, as design 4.2 has it. The same two fonts | Not applicable |
 | Shell completions | Not applicable | Not applicable | `dirt completions <shell>` |
 

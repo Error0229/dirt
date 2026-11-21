@@ -879,6 +879,12 @@ at the left edge. A mouse moving anywhere else brings nothing back. A
 control that has the keyboard's focus always shows, whatever the pointer
 does, and so does one touched on a touch screen.
 
+**At any size** the column is at most 680 px wide, the measure of a
+readable line, and on the desktop it is in the middle of the room it has:
+beside the list at rest, in the window while writing. Its icons and its
+files go where it goes. What a wide window, a maximised one among them,
+and a short one do is settled in 7.13.
+
 No title field, no formatting, no Save, no "Saved", no "Edited 4 minutes
 ago" (the row in the list has the time, and its tooltip the full date).
 On Android the note already fills the screen, and its top bar fades while
@@ -1737,6 +1743,36 @@ one cell (8.11) in the next. Each can be undone on its own.
 | The tray's menu | The system's own, shorter and clearer, not drawn by Dirt: **Open Dirt**, **New note** with the hotkey beside it, a line, **Quit Dirt**. Open Dirt first, since it is the click's on Windows and what is looked for first. The hotkey is given to the menu as a shortcut, so each system shows it its own way: "Ctrl+Alt+N" on Windows, "⌥⌘N" on a Mac, where the words said Ctrl+Alt+N before, which are not its keys there. A Linux tray's menu shows no shortcut it is given, so there it is in the words. Sentence case, as the + at the foot of the list. No icons: `muda` can put a picture beside an item on all three systems, but tray menus there carry none (Windows' notification area, a Mac's menu bar, GNOME's indicators), and three words need no pictures. The menu itself cannot be styled: the system draws it |
 | No window of its own for the tray | A small window styled from the tokens was weighed and not made. It would be a third web view kept ready, as quick capture's is, with the memory that costs; placed beside the icon, whose place Linux does not give (7.10); closed when a click or the keyboard goes elsewhere, the focus handling that took most of quick capture's work (7.10); and made reachable by the keyboard and screen readers, which the system's menu already is. For three choices that is the most complexity for the least gain. The menu stays the system's, and fits by being short; the icon and the tooltip carry the look |
 | The tray's icon | The logo, the sprout on its rounded square, in the accent chosen in Settings, drawn again when it changes. It was an indigo square from before the design. Its light-scheme colours, the deeper accent with a white sprout, which read on a light taskbar and a dark one alike. On a Mac it is the sprout alone, as a template image, which the system colours as the menu bar's other icons, light or dark. Drawn in code from the logo's own shapes (`tray::logo_pixels`), 32 px and smoothed, so no picture file is added; the system scales it to the tray. Its tooltip says what a click does, on Windows: "Dirt", then "Click to open. Ctrl+Alt+N for a new note"; elsewhere "Dirt" |
+
+### 7.13 Settled when the editor was laid out for large windows
+
+The owner's note (issue #325): in a full-screen window the note's icons,
+✓, the paperclip and the box, were out of place.
+
+**What was wrong.** The note's column is at most 680 px wide, and it sat at
+the left of the page, 44 px from the list. Its icons are just outside its
+right edge (6.4). In the window of 1100 px the design was drawn for, that is
+the right of the page, and the icons are by the window's edge. Maximised,
+the column stayed against the list and the icons floated in the middle of
+the screen with nothing beside them: at 2560 × 1440 they were 1074 px from
+the left and 1450 px from the right, and the files lay at the window's foot
+under the column. Then, at the first pause in typing, focus moved the column
+to the middle of the window, and how far grew with the window: 233 px at
+1920 px wide, 552 px at 2560, 1193 px at 3840. The icons the person had just
+looked at slid across half the screen. Nothing was out of place at the
+size the design shows; the design had not said what the page does with
+more room. The app has no full screen of its own: full screen is the window
+maximised (▢, or a double-click on the top row, 7.6), which is laid out as
+any window of its size.
+
+| | Settled |
+|---|---|
+| The column at rest | In the middle of the page, the room beside the list, once the page is wider than the column and its 44 px margins: a window wider than 1112 px. Narrower, it fills the page between its margins, as before, so nothing changes at the first size or in the mockup, whose window is at most 1000 px. The icons stay beside the text's first line wherever the column is |
+| Into focus | The column glides from the middle of the page to the middle of the window: to the left, as the list leaves to the left, by half the list's width (172 px; 144 px with Rail), at every window size. Coming back is the same glide the other way |
+| Its width | 680 px however wide the window. A longer line is harder to read, and the room left over is margin, as on paper. The text size (<kbd>Ctrl +</kbd>) changes the type, not the measure |
+| Short windows | At the smallest window (360 × 320), at 1100 × 320 and at 2560 × 400, the icons (58 px down, 100 px tall) and the text both show |
+| Tried | On a test copy of the app off the screen, laid out at each size by DevTools (a window of its own cannot be maximised without coming onto the person's screen): 1100 × 720; 720 × 720; 1536 × 816, a 1080p screen at 125%, maximised; 1920 × 1032 and 1920 × 1080; 1707 × 960, a 1440p screen at 150%; 2560 × 1440; 2560 × 1440 at 1.5×, a 2160p screen at 150%; 3840 × 2160; 2560 × 400; 1100 × 320; 360 × 320. At rest and in focus. The window really maximised, at the screen's own scaling, is the manual checklist's (D106) |
+| The motion check | `focus-wide`, at 2560 × 1440: a note opened from the list, a new line (focus), the pointer to the left edge (back). The scenario takes the window's size from DevTools (`viewport`), as the tool now can |
 
 ---
 
