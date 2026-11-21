@@ -582,16 +582,36 @@ mod tests {
     use super::*;
     use dirt_core::models::{NoteId, YearMonth};
 
+    /// The same notes on every run: each note's grain is drawn from its ID,
+    /// so IDs made from the clock and the random generator made the sizes
+    /// these tests measure differ from run to run, and now and then fall
+    /// just outside a bound.
     fn notes(count: usize) -> Vec<PileNote> {
-        let mut notes: Vec<PileNote> = (0..count)
-            .map(|_| PileNote {
-                id: NoteId::new(),
+        (0..count as u64)
+            .map(|index| PileNote {
+                id: NoteId::from_uuid(fixed_v7(index)),
                 edited_at: 0,
                 archived: false,
             })
-            .collect();
-        notes.sort_unstable_by_key(|note| note.id);
-        notes
+            .collect()
+    }
+
+    /// A version 7 UUID made one millisecond after the one before it, with
+    /// its random bits from the `SplitMix64` mixer, so the IDs are sorted and fixed.
+    fn fixed_v7(index: u64) -> uuid::Uuid {
+        let mut mixed = index.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        mixed ^= mixed >> 31;
+        let millis = u128::from(1_790_000_000_000 + index);
+        let random = u128::from(mixed);
+        uuid::Uuid::from_u128(
+            (millis << 80)
+                | (0x7 << 76)
+                | ((random & 0xfff) << 64)
+                | (0b10 << 62)
+                | ((random >> 12) & ((1 << 62) - 1)),
+        )
     }
 
     fn seeds(count: u32) -> Vec<u32> {
