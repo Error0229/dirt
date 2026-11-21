@@ -305,6 +305,8 @@
   // and the script moves. It slides from the row that was chosen to the
   // one that is, stretching to its height (snap); nothing fades. `quiet`
   // puts it there without the slide, for a list that only changed size.
+  // With no row chosen before (the blank page), it fades in where it lands
+  // (150 ms, as it fades out), rather than appearing at once (#322).
   function placeSelection(list, quiet) {
     const mark = [...list.children].find(child => child.classList.contains('dui-sel-ind'));
     if (!mark) return;
@@ -315,7 +317,8 @@
     const place = placeOf(row, list);
     const fresh = !mark.classList.contains('on');
     const jump = quiet || fresh || reduced();
-    if (jump) mark.style.transition = 'none';
+    // Only its place jumps: a fresh one still fades in.
+    if (jump) mark.style.transition = fresh && !quiet ? 'opacity 150ms var(--e-std)' : 'none';
     Object.assign(mark.style, { top: place.y + 'px', left: place.x + 'px', width: place.w + 'px', height: place.h + 'px' });
     if (fresh) mark.classList.add('on');
     if (jump) {
@@ -712,10 +715,14 @@
   // on screen it fades. The movement is a clip-path from the element's
   // rectangle to the screen.
   const grows = new Map();
+  // The right and bottom edges are measured from the page's own size as it
+  // is at each frame (`100%`), not from the window's as it was when the
+  // movement began: if the window changes size on the way (the keyboard
+  // going), the page still ends on the element (#322).
   function clipOf(element, round) {
     const box = element.getBoundingClientRect();
     const radius = round === undefined ? parseFloat(getComputedStyle(element).borderTopLeftRadius) || 16 : round;
-    return `inset(${box.top}px ${innerWidth - box.right}px ${innerHeight - box.bottom}px ${box.left}px round ${radius}px)`;
+    return `inset(${box.top}px calc(100% - ${box.right}px) calc(100% - ${box.bottom}px) ${box.left}px round ${radius}px)`;
   }
   function onScreen(element) {
     if (!element || !element.isConnected || !shown(element)) return false;
@@ -780,8 +787,15 @@
       page.classList.remove('leaving');
       state.runs.forEach(run => run.cancel());
       state.runs = [];
+      // Its field kept the keyboard while it shrank (`GrowPage` keeps it
+      // live a moment); now the keyboard goes.
+      if (page.contains(document.activeElement)) document.activeElement.blur();
     });
   }
+  // A page on its way out takes no more typing.
+  document.addEventListener('beforeinput', event => {
+    if (event.target.closest && event.target.closest('[data-dui-grow].leaving')) event.preventDefault();
+  }, true);
   function watchGrow(page) {
     if (grows.has(page)) return;
     const state = { open: page.classList.contains('on'), runs: [] };

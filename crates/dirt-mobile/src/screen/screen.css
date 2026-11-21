@@ -52,6 +52,7 @@
 /* The page: a note, full screen. */
 .dm-page{padding-top:env(safe-area-inset-top,0px)}
 .dm-page-in{flex:1;min-height:0;display:flex;flex-direction:column}
+.dm-done{display:contents}
 .dm-page-bar{display:flex;align-items:center;gap:2px;padding:4px 8px;flex:none;transition:opacity .5s var(--e-std)}
 /* While typing the bar fades; touching the page brings it back. */
 .dm-page-bar.typing{opacity:0;pointer-events:none}

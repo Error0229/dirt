@@ -88,10 +88,15 @@ pub fn Page() -> Element {
                     role: "toolbar",
                     "aria-label": "The note",
                     "data-dui-grow-bar": "",
-                    IconButton {
-                        icon: if view.new_page { Icon::ChevronDown } else { Icon::ChevronLeft },
-                        label: "Done",
-                        onclick: move |_| screen.done(),
+                    // Pressed, Done leaves the keyboard with the field
+                    // until the page has closed (`GrowPage`), so that the
+                    // web view is not resized under the movement (#322).
+                    span { class: "dm-done", "data-dui-keep-focus": "",
+                        IconButton {
+                            icon: if view.new_page { Icon::ChevronDown } else { Icon::ChevronLeft },
+                            label: "Done",
+                            onclick: move |_| screen.done(),
+                        }
                     }
                     span { class: "dm-grow" }
                     if crate::voice::offered() {

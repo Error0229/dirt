@@ -86,6 +86,12 @@ pub enum Arrival {
     Above,
     /// Further down.
     Below,
+    /// The page was blank: the text fades in where it is, as the mockup's
+    /// does, and the gutter's icons for a note (✓, the box) pop in (#322).
+    Blank,
+    /// The list gives no way to come from (the note before is not in the
+    /// list as it is now): it fades in where it is.
+    Here,
 }
 
 /// A note let go by Done, with the page blank after it (5.5): which time,
@@ -737,7 +743,8 @@ impl Screen {
         let from = match (was, now) {
             (Some(was), Some(now)) if now > was => Some(Arrival::Below),
             (Some(was), Some(now)) if now < was => Some(Arrival::Above),
-            _ => None,
+            _ if self.open_note().is_none() => Some(Arrival::Blank),
+            _ => Some(Arrival::Here),
         };
         self.leave();
         // Text of the note still waiting in the queue is newer than the

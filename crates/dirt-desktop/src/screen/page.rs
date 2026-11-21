@@ -37,6 +37,8 @@ pub fn Page() -> Element {
     let from = view.from.map(|from| match from {
         Arrival::Above => "above",
         Arrival::Below => "below",
+        Arrival::Blank => "blank",
+        Arrival::Here => "here",
     });
     let take_focus = view.take_focus;
     let text = view.text.clone();
@@ -92,6 +94,9 @@ pub fn Page() -> Element {
                             icon: Icon::Paperclip,
                             label: "Attach a file",
                             shortcut: "Ctrl Shift A",
+                            // On the blank page and on a note alike: it
+                            // does not pop in again as the page changes.
+                            class: "dk-stays",
                             onclick: move |_| screen.choose_files(),
                         }
                         if let Some(note) = open {

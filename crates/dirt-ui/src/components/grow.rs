@@ -10,9 +10,20 @@
 //! is told nothing else, and tells Rust nothing but Android's Back, which
 //! the page takes while it is open.
 
+use std::time::Duration;
+
 use dioxus::prelude::*;
 
 use crate::events::{use_outcome, Outcome};
+
+/// How long a closing page stays live (not `inert`) after it closes: a
+/// little past the longest way back (340 ms into a card). Its field keeps
+/// the keyboard's focus until the script has shrunk it away and blurs it,
+/// so that the keyboard goes after the movement, not during it: going, it
+/// resizes the web view, which held the movement's first frames back by a
+/// third of a second on the emulator and moved the place it shrank to
+/// (#322).
+const LIVE_WHILE_CLOSING: Duration = Duration::from_millis(420);
 
 /// What a page grows out of and shrinks back into: the ID of an element in
 /// the page, and what kind of element it is.
@@ -65,13 +76,34 @@ pub fn GrowPage(
         }
     });
     let (from_id, kind) = from.parts();
+    // Kept live while it closes; each closing counts, so that a timer from
+    // an earlier one does not end a later one early.
+    let mut closing = use_signal(|| 0_u64);
+    let mut was_open = use_signal(|| open);
+    use_effect(use_reactive!(|open| {
+        if *was_open.peek() && !open {
+            let this = *closing.peek() + 1;
+            closing.set(this);
+            spawn(async move {
+                tokio::time::sleep(LIVE_WHILE_CLOSING).await;
+                if *closing.peek() == this {
+                    closing.set(0);
+                }
+            });
+        }
+        was_open.set(open);
+    }));
+    // In the render that closes it too, before the effect has counted the
+    // closing: drawn inert even once, the field would lose its focus.
+    let just_closed = *was_open.peek() && !open;
+    let inert = !open && !just_closed && *closing.read() == 0;
     rsx! {
         section {
             class: if open { "dui-grow on {class}" } else { "dui-grow {class}" },
             role: "dialog",
             "aria-label": "{label}",
             "aria-hidden": if open { None } else { Some("true") },
-            "inert": if open { None } else { Some("") },
+            "inert": inert.then_some(""),
             "data-dui-grow": "",
             "data-dui-from": from_id,
             "data-dui-from-kind": kind,
