@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { launchDesktop, launchAndroid, launchMockup, launchHeadless, runCleanups, onCleanup, dirtIsRunning } from './lib/targets.mjs';
 import { prepare, sendSteps, partsFor, cropFor, scaleFor, captureStepped, captureRealtime, measureFrameRate, pick, writes } from './lib/capture.mjs';
 import {
-  findPops, findOutside, findOverlaps, findLingering, findMissing, findStops, compareMirror, compareWithMockup,
+  findPops, findOutside, findOverlaps, findLingering, findMissing, findStops, findBlankSlot, compareMirror, compareWithMockup,
   frameIntervals, activeSpans, traceTiming, tracksOf, movingWindow, CHANNELS, round, when, contradictedInRealTime,
 } from './lib/analyse.mjs';
 import { contactSheets, sideBySide, video, nearest, removeFrames } from './lib/sheets.mjs';
@@ -101,6 +101,19 @@ function mirrorFor(movement, platform) {
   const parts = spec.parts && !Object.values(spec.parts).every(Array.isArray) ? pick(spec.parts, platform) : spec.parts;
   if (!parts) return null;
   return { of: spec.of, parts, curve: !!spec.curve, because: spec.because };
+}
+
+/**
+ * The page and the card it hands over to, on this platform (`handsOver`:
+ * the parts `page`, `words` and `onto`, for every platform or per
+ * platform, with `least` and `because`), or null.
+ */
+function handsOverFor(movement, platform) {
+  const spec = movement.handsOver;
+  if (!spec) return null;
+  const parts = spec.page ? spec : pick(spec, platform);
+  if (!parts?.page) return null;
+  return { page: parts.page, words: parts.words, onto: parts.onto, least: spec.least ?? parts.least, line: spec.line ?? parts.line, because: spec.because };
 }
 
 /** Every step a run would send on this platform. */
@@ -211,6 +224,8 @@ function summarise(movements, { platform, trust }) {
       for (const a of f.missing) add(1, `**${m.name}**: \`${a.part}\` is ${a.detail}`);
       for (const s of f.stops || []) add(2, `**${m.name}**: \`${s.key}\` should go straight to where it ends, but ${s.detail} (${sheetAt(s.t)})`);
       for (const s of f.realtimeStops || []) add(2, `**${m.name}** in real time: \`${s.key}\` should go straight to where it ends, but ${s.detail}`);
+      for (const b of f.blank || []) add(1, `**${m.name}**: ${b.detail} (meant to hand over: ${m.handsOverBecause}) (${sheetAt(b.from)})`);
+      for (const b of f.realtimeBlank || []) add(1, `**${m.name}** in real time: ${b.detail}`);
     }
     for (const r of m.mirror || []) {
       if (r.note) add(2, `**${m.name}** against **${m.mirrorOf}**: \`${r.key}\` ${r.channel} ${r.note} (meant to mirror: ${m.mirrorBecause})`);
@@ -306,6 +321,8 @@ async function runScenario(args) {
   try {
     for (const movement of forPlatform(scenario.movements, platform).filter(m => !only || only.includes(m.name))) {
       const out = { name: movement.name, description: movement.description };
+      const handsOver = handsOverFor(movement, platform);
+      if (handsOver) out.handsOverBecause = handsOver.because;
       const stepped = results.stepped[movement.name];
       const viewport = results.viewport;
       const aspect = stepped ? stepped.crop.width / stepped.crop.height : viewport.width / viewport.height;
@@ -319,12 +336,14 @@ async function runScenario(args) {
           lingering: findLingering(frames, listFor(movement.leaves, platform)),
           missing: findMissing(frames, listFor(movement.arrives, platform)),
           stops: findStops(frames, listFor(movement.straight, platform)),
+          blank: handsOver ? findBlankSlot(frames, handsOver) : [],
         };
         for (const p of findings.pops) flag(frames, p.t, `pop: ${p.key} ${p.channel || p.kind}${p.atInput ? ' at the input' : ''}`);
         for (const o of findings.outside) flag(frames, o.from, `${o.part} outside ${o.container} by ${o.worst}px until ${o.until}`);
         for (const o of findings.overlaps) flag(frames, o.from, `${o.a} over ${o.b} until ${o.until}${o.stacking ? '' : ' (boxes)'}`);
         for (const l of findings.lingering) if (!l.ok) flag(frames, l.t, `${l.part}: ${l.kind}`);
         for (const s of findings.stops) flag(frames, s.t, `${s.key} stops on the way`);
+        for (const b of findings.blank) flag(frames, b.from, `${b.key}'s slot blank until ${b.until}`);
         for (const a of stepped.seen || []) if (a.born > 0) flag(frames, a.born, `starts: ${a.what.replace('CSSTransition ', '').replace('Animation', 'anim')} on ${a.on.split('.').slice(0, 2).join('.')}`, 'notes');
         out.findings = findings;
         const scrolled = [...tracksOf(frames).values()].some(track => movingWindow(track, 'scroll'));
@@ -392,6 +411,7 @@ async function runScenario(args) {
           // A smooth scroll runs only on the real clock: what follows it is
           // judged here too.
           out.findings.realtimeStops = findStops(samples.filter(s => s.t <= until), listFor(movement.straight, platform));
+          out.findings.realtimeBlank = handsOver ? findBlankSlot(samples.filter(s => s.t <= until), handsOver) : [];
           // A part the stepped frames saw vanish that real time still draws
           // went early because a timer on the app's real clock took it.
           for (const pop of out.findings.pops) {

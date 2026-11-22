@@ -286,6 +286,79 @@ export function findStops(frames, parts, { slow = 0.3, again = 0.25, rise = 3, m
   return out.sort((p, q) => p.t - q.t);
 }
 
+/**
+ * A page that hands over to the card it closes onto (`handsOver`): at
+ * every frame, words must be seen in the card's slot, the page's or the
+ * card's own. The page's are its `words` part as drawn (the page's own
+ * opacity included) where its box meets the card; the card's are the
+ * card as drawn and not cut, under what of the page covers it, which is
+ * the share of the card the page's box covers times the page's opacity
+ * (its surface hides what is under it). The card is the one the page's
+ * smallest drawn box covers most, the one it shrinks onto or grows out of.
+ * With `line`, the page's words are only the first line of them, a band
+ * that high at the top of the words part, and count while half of it or
+ * more is inside the page's clip, wherever that is: words left at the top
+ * of a page that shrinks onto a card lower down are cut off by the clip's
+ * top edge before it lands, and the box over the card is empty.
+ * Android's note page had faded its words in 200 ms and then covered its
+ * card, empty, until it had gone 140 ms later, when the card's words came
+ * back at once (#322). Runs of frames where neither reaches `least` are
+ * returned, with the worst.
+ */
+export function findBlankSlot(frames, { page, words, onto, least = 0.35, line = null } = {}) {
+  const live = frames.filter(f => !f.before);
+  // Where the page is smallest, and the card it covers most there.
+  let smallest = null;
+  for (const frame of live) {
+    const p = (frame.parts?.[page] || [])[0];
+    if (shownOf(p) && area(p) > 0 && (!smallest || area(p) < area(smallest.p))) smallest = { frame, p };
+  }
+  if (!smallest) return [];
+  let index = -1, most = 0;
+  (smallest.frame.parts?.[onto] || []).forEach((c, i) => {
+    const shared = c && area(c) > 0 ? overlap(smallest.p, c) / area(c) : 0;
+    if (shared > most) { most = shared; index = i; }
+  });
+  if (index < 0) return [];
+  const found = [];
+  live.forEach((frame, at) => {
+    const c = (frame.parts?.[onto] || [])[index];
+    if (!c || !(area(c) > 0)) return;
+    const p = (frame.parts?.[page] || [])[0], w = (frame.parts?.[words] || [])[0];
+    const cover = shownOf(p) ? Math.min(1, overlap(p, c) / area(c)) * p.o : 0;
+    const band = w && line ? { x: w.x, y: w.y, w: w.w, h: line } : w;
+    const there = line
+      ? shownOf(p) && clipTo(band, p).h >= line / 2 && clipTo(band, p).w > 0
+      : overlap(w, c) > 0;
+    const pageWords = shownOf(w) && w.seen > 0 && there ? w.o : 0;
+    const cardWords = shownOf(c) ? c.o * Math.min(1, c.seen) * (1 - cover) : 0;
+    const shown = Math.max(pageWords, cardWords);
+    if (shown < least) found.push({ at, t: frame.t, shown: round(shown, 2), pageWords: round(pageWords, 2), cover: round(cover, 2), key: `${onto}[${index}]` });
+  });
+  // A run is blank frames one after another, however far apart they came
+  // (a slow device in real time).
+  const runs = [];
+  for (const f of found) {
+    const run = runs[runs.length - 1];
+    if (run && f.at === run.last + 1) {
+      run.last = f.at;
+      run.until = f.t;
+      run.frames++;
+      if (f.shown < run.worst.shown) run.worst = f;
+    } else runs.push({ key: f.key, t: f.t, from: f.t, until: f.t, last: f.at, frames: 1, worst: f });
+  }
+  return runs.map(({ last, ...run }) => ({
+    ...run,
+    detail: `the slot of \`${run.key}\` shows no words from ${when(run.from)} to ${when(run.until)} (${run.frames} frame${run.frames === 1 ? '' : 's'}): at worst, at ${when(run.worst.t)}, the page's words are drawn at ${run.worst.pageWords} and the page covers the card at ${run.worst.cover}`,
+  }));
+}
+
+/** The part of box `a` inside box `b`. */
+function clipTo(a, b) {
+  const x = Math.max(a.x, b.x), y = Math.max(a.y, b.y);
+  return { x, y, w: Math.max(0, Math.min(a.x + a.w, b.x + b.w) - x), h: Math.max(0, Math.min(a.y + a.h, b.y + b.h) - y) };
+}
+
 /** Parts that should be there, drawn and live, at the end of a movement. */
 export function findMissing(frames, parts) {
   const last = frames[frames.length - 1];
@@ -389,10 +462,18 @@ export function curveDistance(a, b, { reversed = false, samples = 41 } = {}) {
   return { max: round(max, 3), mean: round(sum / samples, 3), worstAt: round(worstAt, 2) };
 }
 
-/** Where a part was first drawn (opening) or last drawn (closing), on a channel. */
+/**
+ * Where a part was first drawn (opening) or last drawn (closing), on a
+ * channel. Closing, a part that fades as it lands (Android's note fading
+ * into its card, #322) is too faint to count as drawn for its last few
+ * pixels, though it goes on to its end: where it went is where it was last
+ * on the screen at any opacity above none. Once it is at none, it has gone,
+ * and where it is put then is not where it went.
+ */
 function seenAt(track, channel, last) {
   const order = last ? [...track].reverse() : track;
-  const point = order.find(p => !p.before && drawnOf(p.s));
+  const laidOut = s => !!s && s.o > 0 && s.seen > 0 && s.w > 0.5 && s.h > 0.5 && valueOf(s, channel) !== null;
+  const point = order.find(p => !p.before && (drawnOf(p.s) || (last && laidOut(p.s))));
   return point ? valueOf(point.s, channel) : null;
 }
 

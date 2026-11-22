@@ -3,7 +3,7 @@
   "title": "A note opened from the list and closed with Done (#322)",
   "issue": 322,
   "platforms": ["desktop", "android", "mockup-desktop", "mockup-android"],
-  "description": "Design 5.5. Desktop: the note's text comes from the direction of the list, 18 px (snap); let go, its words fade where they were (140 ms, exit) and the row's highlight fades (150 ms). Android: the note grows out of its card (440 ms, enter; its text rises 14 px behind it, 380 ms from 60 ms) and shrinks back into it (340 ms, standard).",
+  "description": "Design 5.5. Desktop: the note's text comes from the direction of the list, 18 px (snap); let go, its words fade where they were (140 ms, exit) and the row's highlight fades (150 ms). Android: the note grows out of its card (440 ms, enter; its text rises 14 px behind it, 380 ms from 60 ms) and shrinks back into it (340 ms, standard), its words riding with it onto the card's, fading as a whole into the card from 140 ms (200 ms, standard), so that it lands as the card (#322).",
   "setup": [
     { "platforms": ["desktop"], "click": "[data-dui-typed]" },
     { "platforms": ["desktop"], "type": "A thought about the garden, first of three" },
@@ -80,6 +80,11 @@
       ],
       "leaves": { "android": ["page"], "mockup-android": ["page"] },
       "ms": 1200,
+      "handsOver": {
+        "android": { "page": "page", "words": "text", "onto": "card", "line": 30 },
+        "mockup-android": { "page": "page", "words": "text", "onto": "card", "line": 30 },
+        "because": "design 5.5: the note becomes its card; its words ride with the page onto the card's, the whole page fades into the card from 140 ms, and it lands as the card (#322)"
+      },
       "mirrors": {
         "of": "open",
         "parts": { "android": { "page": ["x", "y", "w", "h"] }, "mockup-android": { "page": ["x", "y", "w", "h"] } },

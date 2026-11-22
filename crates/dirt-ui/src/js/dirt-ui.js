@@ -728,6 +728,15 @@
   // on screen it fades. The movement is a clip-path from the element's
   // rectangle to the screen.
   //
+  // Closing, the page becomes what it closes into (#322). Its words ride
+  // with it onto a card's title, and in the later part the whole page
+  // fades (from 140 ms, 200 ms, standard; into the bar 180 ms), so that
+  // what is under it, the card with its own words or the bar, shows
+  // through, and when the clip lands that is all there is. Its text had
+  // faded on its own in the first 200 ms, and the page's empty surface
+  // then covered the card until it went, when the card's words came back
+  // at once.
+  //
   // The keyboard (#322): a page with `data-dui-grow-focus` gives its field
   // the keyboard once it has grown, unless the person has put it somewhere
   // meanwhile (a word tapped, a file opened). Closing, its field keeps the
@@ -739,10 +748,14 @@
   // How long the end of a close waits for the page to open again after a
   // press went through it: a round trip to Rust, with room for a slow one.
   const PRESSED_THROUGH_WAIT = 350;
+  // When a closing page begins to fade into what it closes into: by then
+  // the clip (standard) has gone four fifths of the way.
+  const CROSSFADE_FROM = 140;
   // The right and bottom edges are measured from the page's own size as it
   // is at each frame (`100%`), not from the window's as it was when the
   // movement began: if the window changes size on the way (the keyboard
-  // going), the page still ends on the element (#322).
+  // going), the page still ends on the element (#322). Closing, the element
+  // is measured again at each frame too, since that can move it.
   function clipOf(element, round) {
     const box = element.getBoundingClientRect();
     const radius = round === undefined ? parseFloat(getComputedStyle(element).borderTopLeftRadius) || 16 : round;
@@ -778,6 +791,29 @@
       if (!moved && !pressed) focus([selector], 'end');
     });
   }
+  // A closing page's words: its body, and where the first line of them in
+  // sight begins, under its bar, measured as the close begins (the body
+  // then moves). Closing into a card, they go onto its title (`.dui-card-t`,
+  // the note's first line), which is the same words.
+  function wordsFrom(page) {
+    const body = page.querySelector('[data-dui-grow-body]');
+    if (!body) return null;
+    const field = body.querySelector('textarea') || body;
+    const box = field.getBoundingClientRect(), style = getComputedStyle(field);
+    const bar = page.querySelector('[data-dui-grow-bar]');
+    const top = box.top + (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.paddingTop) || 0);
+    return {
+      body,
+      top: Math.max(top, bar ? bar.getBoundingClientRect().bottom : 0),
+      left: box.left + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.paddingLeft) || 0),
+    };
+  }
+  function wordsShift(words, to) {
+    const onto = words && to && to.isConnected ? to.querySelector('.dui-card-t') : null;
+    if (!onto) return null;
+    const box = onto.getBoundingClientRect();
+    return `translate(${Math.round(box.left - words.left)}px, ${Math.round(box.top - words.top)}px)`;
+  }
   function growOpened(page, state) {
     // Opened again on its way out (the bar tapped while a page closes): it
     // grows on from the clip it has got to, not from the bar at once (rule
@@ -793,6 +829,10 @@
     const fromNow = was.startsWith('inset(') ? was : null;
     const opacityOf = element => (element ? parseFloat(getComputedStyle(element).opacity) : 1);
     const barNow = fromNow ? opacityOf(bar) : 0, bodyNow = fromNow ? opacityOf(body) : 0;
+    // The page's own opacity too: closing, it fades into its card. And its
+    // words, which were on their way to the card's.
+    const pageNow = fromNow ? opacityOf(page) : 1;
+    const bodyAt = fromNow && body ? getComputedStyle(body).transform : 'none';
     state.leaving = false;
     state.pressedThrough = false;
     page.style.opacity = '';
@@ -813,14 +853,18 @@
     if (page.dataset.duiFromKind === 'bar') {
       const glide = spring('glide');
       state.runs.push(page.animate([{ clipPath: fromNow || clipOf(from) }, { clipPath: whole }], { duration: 560, easing: glide.easing }));
-      if (fromNow) { again(bar, barNow); again(body, bodyNow); return; }
+      if (fromNow) { again(page, pageNow); again(bar, barNow); again(body, bodyNow); return; }
       if (bar) state.runs.push(bar.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, delay: 180, fill: 'backwards' }));
       return;
     }
     const run = page.animate([{ clipPath: fromNow || clipOf(from) }, { clipPath: whole }], { duration: 440, easing: tokens.enter });
     state.runs.push(run);
     focusWhenGrown(page, run, 440);
-    if (fromNow) { again(bar, barNow); again(body, bodyNow); return; }
+    if (fromNow) {
+      if (bodyAt !== 'none') state.runs.push(body.animate([{ transform: bodyAt }, { transform: 'none' }], { duration: 440, easing: tokens.enter }));
+      again(page, pageNow); again(bar, barNow); again(body, bodyNow);
+      return;
+    }
     if (body) state.runs.push(body.animate([{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }],
       { duration: 380, delay: 60, easing: tokens.enter, fill: 'backwards' }));
     if (bar) state.runs.push(bar.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, delay: 120, fill: 'backwards' }));
@@ -839,7 +883,6 @@
     // one from an earlier closing cannot end a later one.
     const closing = Number(page.dataset.duiClosing) || 0;
     const to = document.getElementById(page.dataset.duiFrom || '');
-    const body = page.querySelector('[data-dui-grow-body]');
     let going, ms;
     const grain = page.dataset.duiFromKind === 'grain';
     if (reduced() || (!grain && !onScreen(to))) {
@@ -860,8 +903,45 @@
       gathering = { at: performance.now(), x, y };
     } else {
       ms = page.dataset.duiFromKind === 'bar' ? 320 : 340;
-      going = page.animate([{ clipPath: 'inset(0px 0px 0px 0px round 0px)' }, { clipPath: clipOf(to) }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
-      if (body && page.dataset.duiFromKind !== 'bar') state.runs.push(body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: tokens.standard, fill: 'forwards' }));
+      const whole = 'inset(0px 0px 0px 0px round 0px)';
+      let target = clipOf(to);
+      going = page.animate([{ clipPath: whole }, { clipPath: target }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
+      // Its words ride with it, their first line onto the card's (the same
+      // words), so that they are inside the shrinking clip all the way: left
+      // where they were, they were cut off by its top edge long before it
+      // landed on a card lower down, leaving the box empty.
+      const words = wordsFrom(page);
+      const shift = () => wordsShift(words, to);
+      let moved = shift();
+      const riding = moved ? words.body.animate([{ transform: 'none' }, { transform: moved }], { duration: ms, easing: tokens.standard, fill: 'forwards' }) : null;
+      if (riding) state.runs.push(riding);
+      // It becomes what it closes into: the whole page fades in the later
+      // part of the shrink, ending as the clip lands.
+      state.runs.push(page.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms - CROSSFADE_FROM, delay: CROSSFADE_FROM, easing: tokens.standard, fill: 'forwards' }));
+      // Onto it wherever it is at each frame, not where it was as the
+      // movement began: the keyboard going on the way (Back pressed twice,
+      // the first putting it away) grows the web view, which can move the
+      // card (a list scrolled to its end scrolls back) and moves the bar,
+      // and the page had shrunk onto the old place, half a card above the
+      // card, and gone (#322). The clip goes on from the time it has
+      // reached, towards the new place.
+      const follow = () => {
+        if (state.closings !== mine || page.classList.contains('on') || going.playState === 'finished' || going.playState === 'idle') return;
+        if (to.isConnected) {
+          const now = clipOf(to);
+          if (now !== target) {
+            target = now;
+            going.effect.setKeyframes([{ clipPath: whole }, { clipPath: now }]);
+          }
+          const next = riding ? shift() : null;
+          if (next && next !== moved) {
+            moved = next;
+            riding.effect.setKeyframes([{ transform: 'none' }, { transform: next }]);
+          }
+        }
+        requestAnimationFrame(follow);
+      };
+      requestAnimationFrame(follow);
     }
     state.runs.push(going);
     // Its field kept the keyboard while it shrank; at the end the keyboard
