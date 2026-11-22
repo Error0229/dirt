@@ -651,7 +651,7 @@ impl Screen {
         });
     }
 
-    /// "Back to the list", on an archived note's page. Not an edit.
+    /// "Put back in the list", on an archived note's page. Not an edit.
     pub fn unarchive_open(mut self) {
         let Some(id) = self.page.peek().note else {
             return;

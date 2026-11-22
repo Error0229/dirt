@@ -1520,6 +1520,7 @@
     const element = document.querySelector(selector);
     if (!element || element.value === text) return;
     const keep = document.activeElement === element ? [element.selectionStart, element.selectionEnd] : null;
+    twReset(element);
     element.value = text;
     if (keep) element.setSelectionRange(Math.min(keep[0], text.length), Math.min(keep[1], text.length));
     tellText(element, false, false);
@@ -1861,9 +1862,14 @@
   // While a note is written (`data-dui-writing` on the screen), the screen
   // is marked `data-dui-hand` once a mouse or pen has moved `HAND_PX` or
   // more in a straight line from where it was first seen since the last
-  // key: typing has stopped, so the note's icons are no longer noise, and
-  // the style sheet brings them back. A key typed in a text field takes
-  // the mark away and starts again; so does the pointer leaving the window.
+  // change typed: typing has stopped, so the note's icons are no longer
+  // noise, and the style sheet brings them back. Any change a person makes
+  // in a text field takes the mark away and starts again: a key, a
+  // character an input method composes (every key of Pinyin, Japanese or
+  // Korean is "Process"), an AltGr letter, Ctrl Backspace, a paste. So it
+  // is the field's `input` that is heard, not the keys. The pointer
+  // leaving the window only starts the measure again: the hand is still on
+  // the mouse, and the icons it brought back stay.
   // Distance from a point, not a path summed: a hand resting on a mouse
   // shakes by a few pixels and adds up along a path without going
   // anywhere, and the moves Chromium sends after a layout change under a
@@ -1889,13 +1895,15 @@
   document.addEventListener('pointerleave', () => { handFrom = null; });
   window.addEventListener('blur', () => { handFrom = null; });
   document.addEventListener('pointerdown', event => { if (event.pointerType === 'touch') handBack(writingScopes()); }, true);
-  // A key that types or edits, in a text field: the hand is on the keys.
-  // A shortcut (Ctrl O) is not typing, and leaves the icons as they are.
-  document.addEventListener('keydown', event => {
-    if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+  // A change the person made in a text field, composing included: the hand
+  // is on the keys. A shortcut that changes nothing (Ctrl O) leaves the
+  // icons as they are, and so does a change the script makes itself (the
+  // typing carrier's, which is not trusted).
+  document.addEventListener('input', event => {
+    if (!event.isTrusted) return;
     const target = event.target;
     if (!target || !target.matches || !target.matches('textarea, input, [contenteditable]')) return;
-    if (event.key.length === 1 || event.key === 'Enter' || event.key === 'Backspace' || event.key === 'Delete') handAway();
+    handAway();
   }, true);
 
   // ---- Typewriter (sections 5.5, 7.7, 7.14) -------------------------------
@@ -1912,9 +1920,16 @@
   // dims. The caret moved by a key comes to the optical line; moved by a
   // press it only becomes the current paragraph, since the text must not
   // move under the pointer. Where the caret's line is is found by laying
-  // the text out to it in a copy of the field, so a field longer than
-  // `TW_MOST` characters is left as it is.
-  const TW_MOST = 100000, TW_PAUSE = 1500, TW_OFF = 450;
+  // the text out, to the end of the caret's paragraph, in a copy of the
+  // field, once for each change or move of the caret; a field longer than
+  // `TW_MOST` characters is left as it is. The caret is the selection's
+  // moving end (Shift ↑ moves its start). The eased movement is at most
+  // `TW_EASE_LINES` lines; a longer move (a paste, an undo) is made at
+  // once.
+  const TW_MOST = 100000, TW_PAUSE = 1500, TW_OFF = 450, TW_EASE_LINES = 3;
+  const TW_JUMPS = new Set(['insertFromPaste', 'insertFromDrop', 'insertFromYank', 'historyUndo', 'historyRedo', 'deleteByCut']);
+  // The selection's moving end, where the caret is drawn.
+  const caretOf = field => (field.selectionDirection === 'backward' ? field.selectionStart : field.selectionEnd);
   let twBy = 'key', twMirror = null, twDimTimer = 0, twOffTimer = 0;
   function typewriterOf(field) {
     if (!field || !field.matches || !field.matches('[data-dui-typewriter]')) return false;
@@ -1927,7 +1942,7 @@
       twMirror.setAttribute('aria-hidden', 'true');
       document.body.append(twMirror);
     }
-    const style = getComputedStyle(field), text = field.value, at = field.selectionEnd;
+    const style = getComputedStyle(field), text = field.value, at = caretOf(field);
     Object.assign(twMirror.style, {
       position: 'absolute', left: '-9999px', top: '0', visibility: 'hidden', pointerEvents: 'none',
       whiteSpace: 'pre-wrap', overflowWrap: 'break-word', wordBreak: style.wordBreak, boxSizing: 'content-box',
@@ -1943,7 +1958,9 @@
     caret.textContent = '\u200b';
     paragraph.append(document.createTextNode(text.slice(start, at)), caret, document.createTextNode(text.slice(at, end)));
     twMirror.textContent = '';
-    twMirror.append(document.createTextNode(text.slice(0, start)), paragraph, document.createTextNode(text.slice(end) + '\u200b'));
+    // Nothing after the caret's paragraph is laid out: it moves nothing
+    // above it.
+    twMirror.append(document.createTextNode(text.slice(0, start)), paragraph);
     const top = twMirror.getBoundingClientRect().top, boxes = [...paragraph.getClientRects()];
     const geometry = {
       top: boxes[0].top - top, bottom: boxes[boxes.length - 1].bottom - top, caret: caret.getBoundingClientRect().top - top,
@@ -1959,6 +1976,15 @@
     const off = () => { if (field.dataset.duiTw !== undefined) delete field.dataset.duiTw; };
     if (now || reduced()) off(); else twOffTimer = setTimeout(off, TW_OFF);
   }
+  // The field emptied or given another text (Esc, a note opened) or left
+  // (focus ended): a movement on its way stops, and the next change is
+  // taken afresh.
+  function twReset(field) {
+    if (!field) return;
+    if (field._duiLine) { field._duiLine.cancel(); field._duiLine = null; }
+    field._duiTwValue = null;
+    field._duiTwAt = null;
+  }
   // Where a field eased by an earlier line is drawn now, from where it is
   // laid out: the next line takes the movement up from there.
   function twOffset(field) {
@@ -1968,7 +1994,7 @@
     run.cancel();
     return matrix.m42;
   }
-  function twPin(field, geometry) {
+  function twPin(field, geometry, jump) {
     const page = field.closest('[data-dui-scroll]');
     if (!page) return;
     // Whole lines: an inline box's top is a little below its line's, by
@@ -1983,18 +2009,25 @@
     // is left to finish.
     if (!moved) { page._duiQuiet = false; return; }
     const offset = twOffset(field);
-    if (reduced()) return;
+    if (reduced() || jump) return;
+    // A few lines are eased; the rest of a long move is made at once, so
+    // that a paste of fifty lines is not 1,200 px slid in 380 ms.
+    const most = (geometry.line || 25) * TW_EASE_LINES;
+    const from = Math.max(-most, Math.min(most, moved + offset));
+    if (Math.abs(from) < 1) return;
     const snap = spring('snap');
-    field._duiLine = field.animate([{ transform: `translateY(${moved + offset}px)` }, { transform: 'none' }],
+    field._duiLine = field.animate([{ transform: `translateY(${from}px)` }, { transform: 'none' }],
       { duration: snap.ms, easing: snap.easing });
   }
   // `typed`: the text changed, so the others dim. `move`: the caret's line
-  // comes to the optical line.
-  function typewriter(field, typed, move) {
+  // comes to the optical line, at once if `jump`.
+  function typewriter(field, typed, move, jump) {
     if (!field || !field.matches || !field.matches('[data-dui-typewriter]')) return;
     if (!typewriterOf(field) || field.value.length > TW_MOST) { twUndim(field, true); return; }
+    field._duiTwValue = field.value;
+    field._duiTwAt = caretOf(field);
     const geometry = twGeometry(field);
-    if (move) twPin(field, geometry);
+    if (move) twPin(field, geometry, jump);
     field.style.setProperty('--dui-tw-a', geometry.top + 'px');
     field.style.setProperty('--dui-tw-b', geometry.last ? '100%' : geometry.bottom + 'px');
     if (!typed) return;
@@ -2011,16 +2044,18 @@
   document.addEventListener('input', event => {
     const field = event.target;
     if (!field || !field.matches || !field.matches('[data-dui-typewriter]')) return;
-    if (field._duiTwValue === field.value && field._duiTwAt === field.selectionEnd) return;
-    field._duiTwValue = field.value;
-    field._duiTwAt = field.selectionEnd;
-    typewriter(field, true, true);
+    if (field._duiTwValue === field.value && field._duiTwAt === caretOf(field)) return;
+    typewriter(field, true, true, TW_JUMPS.has(event.inputType));
   }, true);
   document.addEventListener('keydown', () => { twBy = 'key'; }, true);
   document.addEventListener('pointerdown', () => { twBy = 'pointer'; }, true);
+  // The caret moved without a change. One that a change just moved, and
+  // which `input` has measured already, is not laid out again.
   document.addEventListener('selectionchange', () => {
     const field = document.activeElement;
-    if (typewriterOf(field)) typewriter(field, false, twBy === 'key');
+    if (!typewriterOf(field)) return;
+    if (field._duiTwValue === field.value && field._duiTwAt === caretOf(field)) return;
+    typewriter(field, false, twBy === 'key');
   });
   // Focus coming in brings the caret's line to the optical line, and again
   // once a column that widened as it came has laid its lines out anew.
@@ -2067,6 +2102,7 @@
       : event.key === 'Escape';
     if (!done) return;
     shootPage();
+    twReset(field);
     field.value = '';
     field.setSelectionRange(0, 0);
     tellText(field, false, false);
@@ -2350,7 +2386,7 @@
     // with the hand on the keys.
     if (!now) { handFrom = null; delete scope.dataset.duiHand; }
     if (now === 'on') typewriterBegins(scope);
-    else $$('[data-dui-typewriter]', scope).forEach(field => twUndim(field, true));
+    else $$('[data-dui-typewriter]', scope).forEach(field => { twReset(field); twUndim(field, true); });
     if (reduced() || was === now) return;
     if (folded(now) && !folded(was) && scope.dataset.duiFocus === 'rail') {
       const rows = rowsInSight(scope);

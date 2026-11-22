@@ -1183,7 +1183,7 @@ input[type=range]{accent-color:var(--accent);width:150px}
               <div class="ed-bar" id="d-acts">
                 <button class="icon-btn when-blank" id="d-mic" data-tip="Talk" data-kbd="hold Ctrl Alt N"><svg class="i"><use href="#i-mic"/></svg></button>
                 <button class="icon-btn when-note when-live" data-act="archive-open" data-tip="Archive" data-kbd="Ctrl E"><svg class="i"><use href="#i-archive"/></svg></button>
-                <button class="icon-btn when-arch" data-act="unarchive" data-tip="Back to the list"><svg class="i"><use href="#i-unarchive"/></svg></button>
+                <button class="icon-btn when-arch" data-act="unarchive" data-tip="Put back in the list"><svg class="i"><use href="#i-unarchive"/></svg></button>
                 <button class="icon-btn" id="d-attach" data-act="attach" data-tip="Attach a file, or drop or paste one" data-kbd="Ctrl O"><svg class="i"><use href="#i-paperclip"/></svg></button>
                 <button class="icon-btn danger when-arch" data-act="del-open" data-tip="Delete for good" data-kbd="Ctrl Shift Del"><svg class="i"><use href="#i-trash"/></svg></button>
                 <button class="icon-btn when-focus" data-act="new-note" data-tip="New note" data-kbd="Ctrl N"><svg class="i"><use href="#i-plus"/></svg></button>
@@ -1277,7 +1277,7 @@ input[type=range]{accent-color:var(--accent);width:150px}
             <button class="icon-btn lg" id="m-ed-mic" aria-label="Talk"><svg class="i"><use href="#i-mic"/></svg></button>
             <button class="icon-btn lg" data-act="attach" data-tip="Attach a file"><svg class="i"><use href="#i-paperclip"/></svg></button>
             <button class="icon-btn lg when-live" data-act="archive-open" data-tip="Archive"><svg class="i"><use href="#i-archive"/></svg></button>
-            <button class="icon-btn lg when-arch" data-act="unarchive" data-tip="Back to the list"><svg class="i"><use href="#i-unarchive"/></svg></button>
+            <button class="icon-btn lg when-arch" data-act="unarchive" data-tip="Put back in the list"><svg class="i"><use href="#i-unarchive"/></svg></button>
             <button class="icon-btn lg danger when-arch" data-act="del-open" data-tip="Delete for good"><svg class="i"><use href="#i-trash"/></svg></button>
           </div>
           <div class="m-ed-body">
@@ -4530,10 +4530,9 @@ setTimeout(() => { if (activeDev === 'd' && !document.activeElement?.closest('[d
     if (Math.hypot(e.clientX - from[0], e.clientY - from[1]) >= 40) D.classList.add('hand');
   });
   D.addEventListener('mouseleave', () => { from = null; });
-  t.addEventListener('keydown', e => {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key.length === 1 || e.key === 'Enter' || e.key === 'Backspace' || e.key === 'Delete') { D.classList.remove('hand'); from = null; }
-  }, true);
+  // Any change typed, an input method's included, takes them away again;
+  // the pointer leaving the window only starts the measure again.
+  t.addEventListener('input', e => { if (e.isTrusted) { D.classList.remove('hand'); from = null; } }, true);
 
   /* The shelf opens folded for every note, and attaching does not unfold
      it: the new square pops into the folded line where it lands. */
@@ -4589,7 +4588,7 @@ setTimeout(() => { if (activeDev === 'd' && !document.activeElement?.closest('[d
   new MutationObserver(() => {
     if (D.classList.contains('writing') && D.classList.contains('fold')) D.classList.remove('fold');
     if (D.classList.contains('writing') && S.focus === 'typewriter' && !D._twWas) { D._twWas = true; setTimeout(() => typewriter(false, true), 0); setTimeout(() => typewriter(false, true), 950); }
-    if (!D.classList.contains('writing')) { D._twWas = false; undim(true); }
+    if (!D.classList.contains('writing')) { D._twWas = false; undim(true); if (t._tw) t._tw.cancel(); }
   }).observe(D, { attributes: true, attributeFilter: ['class'] });
 
   /* Typewriter (design.md 7.7, 7.14): the line being typed stays on the
@@ -4600,7 +4599,7 @@ setTimeout(() => { if (activeDev === 'd' && !document.activeElement?.closest('[d
   let mirror = null, dimTimer = 0, offTimer = 0, by = 'key';
   function geometry() {
     if (!mirror) { mirror = document.createElement('div'); mirror.setAttribute('aria-hidden', 'true'); document.body.append(mirror); }
-    const cs = getComputedStyle(t), v = t.value, at = t.selectionEnd;
+    const cs = getComputedStyle(t), v = t.value, at = t.selectionDirection === 'backward' ? t.selectionStart : t.selectionEnd;
     Object.assign(mirror.style, {
       position: 'absolute', left: '-9999px', top: '0', visibility: 'hidden', whiteSpace: 'pre-wrap', overflowWrap: 'break-word',
       boxSizing: 'content-box', width: (t.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)) + 'px',
@@ -4631,20 +4630,22 @@ setTimeout(() => { if (activeDev === 'd' && !document.activeElement?.closest('[d
   // The text scrolled at once so that the caret's line is on the optical
   // line, and eased up from where it was drawn (snap): a quick run of lines
   // is one movement, taken up from wherever it is.
-  function pin(g) {
+  function pin(g, jump) {
     const target = Math.max(0, g.caret - g.pad), delta = target - t.scrollTop;
     if (Math.abs(delta) < 1) return;
     let off = 0;
     if (t._tw && t._tw.playState === 'running') { off = new DOMMatrixReadOnly(getComputedStyle(t).transform).m42; t._tw.cancel(); }
     t.scrollTop = target;
-    if (reduced()) return;
+    if (reduced() || jump) return;
+    // Three lines at most are eased; the rest moves at once.
+    const most = 3 * parseFloat(getComputedStyle(t).lineHeight), from = Math.max(-most, Math.min(most, delta + off));
     const s = sp('snap');
-    t._tw = t.animate([{ transform: `translateY(${delta + off}px)` }, { transform: 'none' }], { duration: s.d, easing: s.e });
+    t._tw = t.animate([{ transform: `translateY(${from}px)` }, { transform: 'none' }], { duration: s.d, easing: s.e });
   }
-  function typewriter(typed, move) {
+  function typewriter(typed, move, jump) {
     if (!twOn() || t.value.length > MOST) { undim(true); return; }
     const g = geometry();
-    if (move) pin(g);
+    if (move) pin(g, jump);
     band(g);
     if (!typed) return;
     if (g.one) { undim(true); return; }
@@ -4653,7 +4654,8 @@ setTimeout(() => { if (activeDev === 'd' && !document.activeElement?.closest('[d
     clearTimeout(dimTimer);
     dimTimer = setTimeout(() => undim(false), 1500);
   }
-  t.addEventListener('input', () => typewriter(true, true));
+  // A paste, a drop, a cut, an undo: at once.
+  t.addEventListener('input', e => typewriter(true, true, /^(insertFrom|history|deleteByCut)/.test(e.inputType || '')));
   t.addEventListener('keydown', () => { by = 'key'; });
   t.addEventListener('pointerdown', () => { by = 'pointer'; });
   // The caret moved into another paragraph: it becomes the current one. By

@@ -36,7 +36,7 @@ pub enum Icon {
     Hash,
     /// Archive: out of the list, still in the pile and in Find.
     Archive,
-    /// Back to the list, on an archived note.
+    /// Put back in the list, on an archived note.
     Unarchive,
     /// Delete for good.
     Trash,

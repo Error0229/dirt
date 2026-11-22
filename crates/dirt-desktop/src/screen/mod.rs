@@ -918,7 +918,7 @@ impl Screen {
     // ---- Archive, delete, undo (6.19, 6.7) --------------------------------
 
     /// Archives a note unless it is archived already: what Ctrl E does in
-    /// a note (7.14). An archived note's box is "back to the list", and
+    /// a note (7.14). An archived note's box is "put back in the list", and
     /// deleting keeps a key of its own.
     pub fn archive_only(self, id: NoteId) {
         if !self.is_archived(id) {
@@ -1206,8 +1206,7 @@ impl Screen {
         files::save_a_copy(&self.files, self.toasts, file);
     }
 
-    /// Opens the file dialog, and attaches what is chosen: 📎 and Ctrl
-    /// Shift A.
+    /// Opens the file dialog, and attaches what is chosen: 📎 and Ctrl O.
     pub fn choose_files(self) {
         spawn(async move {
             let chosen = rfd::AsyncFileDialog::new()

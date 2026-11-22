@@ -162,7 +162,8 @@ pub fn Page() -> Element {
             // note (or the mic, with the blank page) pop in (5.5). After
             // the text in the order Tab goes in. The paperclip is always
             // second, after the one icon that changes with the page (the
-            // mic, the box, or "back to the list"), so that it never moves
+            // mic or its empty place, the box, or "put back in the list"),
+            // so that it never moves
             // as the page becomes a note; what comes and goes with focus or
             // an archived note is below it, and the edge keeps its top
             // where it is (7.14).
@@ -178,12 +179,16 @@ pub fn Page() -> Element {
                         refused: unheard.is_some(),
                         on_talk: move |talk| screen.talk(talk),
                     }
+                } else if open.is_none() {
+                    // A build without voice: the mic's place is kept, so
+                    // that the paperclip is second here too.
+                    span { class: "dk-slot dk-stays", "aria-hidden": "true" }
                 }
                 if let Some(note) = open {
                     if view.archived {
                         IconButton {
                             icon: Icon::Unarchive,
-                            label: "Back to the list",
+                            label: "Put back in the list",
                             onclick: move |_| screen.unarchive(note),
                         }
                     } else {
@@ -205,7 +210,7 @@ pub fn Page() -> Element {
                     onclick: move |_| screen.choose_files(),
                 }
                 if let Some(note) = open.filter(|_| view.archived) {
-                    // Apart from "back to the list", so that a press meant
+                    // Apart from "put back in the list", so that a press meant
                     // for one does not land on the other.
                     IconButton {
                         icon: Icon::Trash,

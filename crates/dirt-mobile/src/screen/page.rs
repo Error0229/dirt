@@ -4,7 +4,7 @@
 //!
 //! The top bar has ⌄ on a new page and ‹ on a note, the mic where the
 //! build has voice, the paperclip, and the archive box (on an archived
-//! note, "back to the list" and the bin). It fades while the person types,
+//! note, "put back in the list" and the bin). It fades while the person types,
 //! and comes back when the page is touched. The note's files are on the
 //! shelf at the foot of the page (6.5), `dirt-ui`'s, held above the
 //! keyboard while the text scrolls, with the preview over the screen.
@@ -122,7 +122,7 @@ pub fn Page() -> Element {
                             if archived {
                                 IconButton {
                                     icon: Icon::Unarchive,
-                                    label: "Back to the list",
+                                    label: "Put back in the list",
                                     onclick: move |_| screen.unarchive_open(),
                                 }
                                 IconButton {

@@ -228,8 +228,8 @@ fn Buttons() -> Element {
         div { class: "gal-card gal-line",
             IconButton { icon: Icon::Search, label: "Find", shortcut: "Ctrl F", onclick: say("Find") }
             IconButton { icon: Icon::Mic, label: "Talk", shortcut: "hold Ctrl Alt N", onclick: say("Talk") }
-            IconButton { icon: Icon::Paperclip, label: "Attach a file", shortcut: "Ctrl Shift A", onclick: say("Attach a file") }
-            IconButton { icon: Icon::Archive, label: "Archive", shortcut: "Ctrl Del", onclick: say("Archive") }
+            IconButton { icon: Icon::Paperclip, label: "Attach a file", shortcut: "Ctrl O", onclick: say("Attach a file") }
+            IconButton { icon: Icon::Archive, label: "Archive", shortcut: "Ctrl E", onclick: say("Archive") }
             IconButton { icon: Icon::Trash, label: "Delete for good", shortcut: "Ctrl Shift Del", danger: true, onclick: say("Delete for good") }
             IconButton {
                 icon: Icon::Hash,

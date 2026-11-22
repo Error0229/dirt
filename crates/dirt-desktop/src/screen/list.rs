@@ -271,7 +271,7 @@ pub fn Side() -> Element {
                         div { class: "dk-arch-head", "data-key": "archived head",
                             IconButton {
                                 icon: Icon::ChevronLeft,
-                                label: "Back to the list",
+                                label: "Put back in the list",
                                 shortcut: "Esc",
                                 size: IconButtonSize::Small,
                                 onclick: move |_| screen.show_archived(false),

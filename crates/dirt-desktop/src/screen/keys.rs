@@ -132,7 +132,7 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
             (Some("c"), _) if shift => screen.copy_note(),
             // Archive, in a note (7.14). Ctrl Del, which it was, deletes
             // the next word in a text field, and is the text's again. On an
-            // archived note it does nothing: its box is "back to the list".
+            // archived note it does nothing: its box is "put back in the list".
             (Some("e"), _) if !shift && at == Where::Page => {
                 if let Some(open) = screen.open_note() {
                     screen.archive_only(open);

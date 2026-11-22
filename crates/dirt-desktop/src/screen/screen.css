@@ -27,13 +27,10 @@
    goes, not pressed against the list, and focus moves it by half the
    list's width however wide the window is past that. Narrower, it fills
    the page, as before. */
-/* Its text starts at the optical centre (6.4, 7.14): the first line's top
-   38% down the window, on the blank page and in a note alike, the 6 px
-   being the text field's own. The text grows downward from there, so
-   nothing written moves while typing; a long note scrolls as any page
-   does, this room scrolling away above it. Never less than the 52 px of
-   the window's top row. */
-.dk-col{position:relative;max-width:680px;width:100%;min-height:100%;display:flex;flex-direction:column;padding-top:max(52px,calc(38vh - 6px))}
+/* Below the window's top row (52 px, which moves the window), the column
+   holds its text field; the text starts at the optical centre there (the
+   field's own padding, below). */
+.dk-col{position:relative;max-width:680px;width:100%;min-height:100%;display:flex;flex-direction:column;padding-top:52px}
 /* The note's icons, at the window's right edge, in the middle of its
    height (6.4, 7.14): out of the text and away from the window's own
    buttons, clear of the drawn scrollbar's 10 px. They stay there whatever
@@ -42,10 +39,20 @@
    already there moves. At rest at 60%, full on hover. */
 .dk-acts{position:absolute;top:calc(50% - 33px);right:14px;display:flex;flex-direction:column;gap:2px;opacity:.6;transition:opacity 200ms var(--e-std);z-index:5}
 .dk-acts:hover,.dk-acts:focus-within{opacity:1}
+/* The mic's place in a build without voice, so that the paperclip keeps
+   its own. */
+.dk-slot{display:block;width:32px;height:32px;flex:none}
 /* ‹ is the pointer's way back to the list only where the page lies over
    it, below 720 px. */
 .dk-to-list{display:none}
-.dk-text{flex:1 0 auto;field-sizing:content;min-height:160px;width:100%;border:0;background:transparent;resize:none;padding:6px 0 18px;font-size:var(--note-size);line-height:1.65;color:var(--text);transition:font-size var(--d-2) var(--e-std)}
+/* The text starts at the optical centre (6.4, 7.14): the first line's top
+   38% down the window, on the blank page and in a note alike. The text
+   grows downward from there, so nothing written moves while typing; a
+   long note scrolls as any page does, this room scrolling away above it.
+   The room is the field's own padding, so that a click in it puts the
+   caret in the text, as the mockup's does; never less than the 6 px the
+   field had. */
+.dk-text{flex:1 0 auto;field-sizing:content;min-height:160px;width:100%;border:0;background:transparent;resize:none;padding:max(6px,calc(38vh - 52px)) 0 18px;font-size:var(--note-size);line-height:1.65;color:var(--text);transition:font-size var(--d-2) var(--e-std)}
 .dk-text::placeholder{color:var(--text-3);opacity:calc(.75 * var(--dui-placeholder,1))}
 /* A note opens from the list's side of it, 18 px (snap); its files 50 ms
    behind (5.5). */

@@ -229,7 +229,7 @@ pub fn Main() -> Element {
                             div { class: "dm-arch-head", "data-key": "archived head",
                                 IconButton {
                                     icon: Icon::ChevronLeft,
-                                    label: "Back to the list",
+                                    label: "Put back in the list",
                                     onclick: move |_| screen.show_archived(false),
                                 }
                                 span { "Archived" }
