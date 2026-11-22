@@ -3,13 +3,17 @@
 //! cursor in it; the first character makes the note, which then saves
 //! itself as it is typed.
 //!
-//! The note's icons sit in a gutter beside its first line, just outside
-//! its column, so that they travel with it. The note's files are on the
+//! The note's icons are at the window's right edge, in the middle of its
+//! height (6.4, 7.14): out of the text, away from the window's own buttons,
+//! and where a pointer cannot overshoot them. They go at the first key and
+//! come back once the hand is on the mouse (`dirt-ui`'s script marks the
+//! screen `data-dui-hand`). There is no Done: Esc, Ctrl Enter, Ctrl N and
+//! the + under the list put a thought away. The note's files are on the
 //! shelf at the foot of its column (6.5), held at the bottom of the window
 //! while the text scrolls; files dropped anywhere on the window come to it
 //! (the screen takes the drop).
 //!
-//! The blank page has the mic in its gutter (6.18). While it listens the
+//! The blank page has the mic at the edge (6.18). While it listens the
 //! page itself listens: the grains and the timer, ✕ and ✓ at its bottom,
 //! over a page with nothing written on it.
 
@@ -63,6 +67,22 @@ pub fn Page() -> Element {
         screen.sync_indicator(),
         SyncIndicator::Synced { .. } | SyncIndicator::Syncing | SyncIndicator::JustSynced
     );
+    // While the list is folded away (focus), + comes to the edge with the
+    // note's icons, so that it is never shown twice (7.14).
+    let focused = *screen.writing.read() == super::Writing::Focused;
+    // While the note has no files, the paperclip says it takes a dropped or
+    // pasted one too.
+    let no_files = open.is_none_or(|note| {
+        screen
+            .files
+            .listed()
+            .is_none_or(|(held, found)| held != note || found.is_empty())
+    });
+    let attach_label = if no_files {
+        "Attach a file, or drop or paste one"
+    } else {
+        "Attach a file"
+    };
 
     rsx! {
         main {
@@ -72,61 +92,6 @@ pub fn Page() -> Element {
                     key: "{view.serial}",
                     class: if open.is_some() { "dk-col" } else { "dk-col blank" },
                     "data-from": from,
-                    div {
-                        class: "dk-gutter",
-                        role: "toolbar",
-                        // While a note is written the icons go, and come
-                        // back as the pointer nears them (6.4).
-                        "data-dui-near": "64",
-                        "aria-label": if open.is_some() { "The note" } else { "The page" },
-                        if open.is_some() {
-                            IconButton {
-                                icon: Icon::Check,
-                                label: "Done",
-                                shortcut: "Esc",
-                                onclick: move |_| screen.done(false),
-                            }
-                        }
-                        if mic {
-                            MicButton {
-                                label: mic_label,
-                                refused: unheard.is_some(),
-                                on_talk: move |talk| screen.talk(talk),
-                            }
-                        }
-                        IconButton {
-                            icon: Icon::Paperclip,
-                            label: "Attach a file",
-                            shortcut: "Ctrl Shift A",
-                            // On the blank page and on a note alike: it
-                            // does not pop in again as the page changes.
-                            class: "dk-stays",
-                            onclick: move |_| screen.choose_files(),
-                        }
-                        if let Some(note) = open {
-                            if view.archived {
-                                IconButton {
-                                    icon: Icon::Unarchive,
-                                    label: "Back to the list",
-                                    onclick: move |_| screen.unarchive(note),
-                                }
-                                IconButton {
-                                    icon: Icon::Trash,
-                                    label: "Delete for good",
-                                    shortcut: "Ctrl Shift Del",
-                                    danger: true,
-                                    onclick: move |_| screen.delete(note),
-                                }
-                            } else {
-                                IconButton {
-                                    icon: Icon::Archive,
-                                    label: "Archive",
-                                    shortcut: "Ctrl Del",
-                                    onclick: move |_| screen.archive(note),
-                                }
-                            }
-                        }
-                    }
                     textarea {
                         id: PAGE_ID,
                         class: "dk-text",
@@ -181,6 +146,74 @@ pub fn Page() -> Element {
                             on_open: move |file| screen.open_file(file),
                             on_save: move |file| screen.save_file(file),
                         }
+                    }
+                }
+            }
+            // The note's icons, at the window's right edge. Made again with
+            // each page, as the column is, so that those that come with a
+            // note (or the mic, with the blank page) pop in (5.5). After
+            // the text in the order Tab goes in.
+            div {
+                key: "acts {view.serial}",
+                class: if open.is_some() { "dk-acts" } else { "dk-acts blank" },
+                role: "toolbar",
+                "aria-label": if open.is_some() { "The note" } else { "The page" },
+                "data-from": from,
+                // Below 720 px the page lies over the list: the pointer's
+                // way back to it (shown there only).
+                IconButton {
+                    icon: Icon::ChevronLeft,
+                    label: "Show the list",
+                    shortcut: "Esc",
+                    class: "dk-stays dk-to-list",
+                    onclick: move |_| screen.done(false),
+                }
+                if mic {
+                    MicButton {
+                        label: mic_label,
+                        refused: unheard.is_some(),
+                        on_talk: move |talk| screen.talk(talk),
+                    }
+                }
+                IconButton {
+                    icon: Icon::Paperclip,
+                    label: attach_label,
+                    shortcut: "Ctrl O",
+                    // On the blank page and on a note alike: it does not
+                    // pop in again as the page changes.
+                    class: "dk-stays",
+                    onclick: move |_| screen.choose_files(),
+                }
+                if let Some(note) = open {
+                    if view.archived {
+                        IconButton {
+                            icon: Icon::Unarchive,
+                            label: "Back to the list",
+                            onclick: move |_| screen.unarchive(note),
+                        }
+                        IconButton {
+                            icon: Icon::Trash,
+                            label: "Delete for good",
+                            shortcut: "Ctrl Shift Del",
+                            danger: true,
+                            onclick: move |_| screen.delete(note),
+                        }
+                    } else {
+                        IconButton {
+                            icon: Icon::Archive,
+                            label: "Archive",
+                            shortcut: "Ctrl E",
+                            onclick: move |_| screen.archive(note),
+                        }
+                    }
+                }
+                if focused {
+                    IconButton {
+                        icon: Icon::Plus,
+                        label: "New note",
+                        shortcut: "Ctrl N",
+                        class: "dk-stays",
+                        onclick: move |_| screen.done(false),
                     }
                 }
             }

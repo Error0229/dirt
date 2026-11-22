@@ -87,7 +87,7 @@ pub enum Arrival {
     /// Further down.
     Below,
     /// The page was blank: the text fades in where it is, as the mockup's
-    /// does, and the gutter's icons for a note (✓, the box) pop in (#322).
+    /// does, and the edge's icon for a note (the box) pops in (#322).
     Blank,
     /// The list gives no way to come from (the note before is not in the
     /// list as it is now): it fades in where it is.
@@ -530,7 +530,7 @@ impl Screen {
         self.page_over.set(false);
     }
 
-    /// Done with the thought on the page (Esc, Ctrl Enter, ✓, Ctrl N): it
+    /// Done with the thought on the page (Esc, Ctrl Enter, Ctrl N, +): it
     /// is kept, and the page is blank again with the cursor in it. With
     /// nothing written, done does nothing but put the cursor there.
     ///
@@ -898,12 +898,11 @@ impl Screen {
 
     // ---- Archive, delete, undo (6.19, 6.7) --------------------------------
 
-    /// Archives a note, or deletes it if it is archived already: what the
-    /// box, Del and Ctrl Del do.
-    pub fn archive_or_delete(self, id: NoteId) {
-        if self.is_archived(id) {
-            self.delete(id);
-        } else {
+    /// Archives a note unless it is archived already: what Ctrl E does in
+    /// a note (7.14). An archived note's box is "back to the list", and
+    /// deleting keeps a key of its own.
+    pub fn archive_only(self, id: NoteId) {
+        if !self.is_archived(id) {
             self.archive(id);
         }
     }

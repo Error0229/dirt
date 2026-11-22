@@ -1851,6 +1851,47 @@
     nears().forEach(element => setNear(element, false));
   }, true);
 
+  // ---- The hand back on the mouse (sections 1, 6.4, 7.14) -----------------
+  // While a note is written (`data-dui-writing` on the screen), the screen
+  // is marked `data-dui-hand` once a mouse or pen has moved `HAND_PX` or
+  // more in a straight line from where it was first seen since the last
+  // key: typing has stopped, so the note's icons are no longer noise, and
+  // the style sheet brings them back. A key typed in a text field takes
+  // the mark away and starts again; so does the pointer leaving the window.
+  // Distance from a point, not a path summed: a hand resting on a mouse
+  // shakes by a few pixels and adds up along a path without going
+  // anywhere, and the moves Chromium sends after a layout change under a
+  // still pointer (the list folding away) have no distance at all. A
+  // touch shows them at once, as it shows the controls by nearness.
+  const HAND_PX = 40;
+  let handFrom = null;
+  const writingScopes = () => $$('[data-dui-writing]').filter(scope => scope.dataset.duiWriting);
+  function handBack(scopes) {
+    scopes.forEach(scope => { if (scope.dataset.duiHand === undefined) scope.dataset.duiHand = ''; });
+  }
+  function handAway() {
+    handFrom = null;
+    $$('[data-dui-hand]').forEach(scope => { delete scope.dataset.duiHand; });
+  }
+  document.addEventListener('pointermove', event => {
+    if (event.pointerType === 'touch') return;
+    const scopes = writingScopes().filter(scope => scope.dataset.duiHand === undefined);
+    if (!scopes.length) { if (!writingScopes().length) handFrom = null; return; }
+    if (!handFrom) { handFrom = [event.clientX, event.clientY]; return; }
+    if (Math.hypot(event.clientX - handFrom[0], event.clientY - handFrom[1]) >= HAND_PX) handBack(scopes);
+  }, { passive: true });
+  document.addEventListener('pointerleave', () => { handFrom = null; });
+  window.addEventListener('blur', () => { handFrom = null; });
+  document.addEventListener('pointerdown', event => { if (event.pointerType === 'touch') handBack(writingScopes()); }, true);
+  // A key that types or edits, in a text field: the hand is on the keys.
+  // A shortcut (Ctrl O) is not typing, and leaves the icons as they are.
+  document.addEventListener('keydown', event => {
+    if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+    const target = event.target;
+    if (!target || !target.matches || !target.matches('textarea, input, [contenteditable]')) return;
+    if (event.key.length === 1 || event.key === 'Enter' || event.key === 'Backspace' || event.key === 'Delete') handAway();
+  }, true);
+
   // ---- A press that leaves the cursor where it is (section 7.7) -----------
   // Inside `data-dui-keep-focus` (the rail's grains), a press does not take
   // the keyboard's focus from the note being written. The click still
@@ -2163,6 +2204,9 @@
   }
   function writingChanged(scope, was, now) {
     forgetNear();
+    // Out of writing, the icons are shown at rest; the next writing starts
+    // with the hand on the keys.
+    if (!now) { handFrom = null; delete scope.dataset.duiHand; }
     if (reduced() || was === now) return;
     if (now === 'on' && scope.dataset.duiFocus === 'rail') {
       const rows = rowsInSight(scope);

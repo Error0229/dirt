@@ -30,7 +30,7 @@
 //! | Attribute | On | Does |
 //! |---|---|---|
 //! | `data-tip`, `data-kbd` | anything | A tooltip after a hover, a long press on Android, or keyboard focus |
-//! | `data-dui-list` | a list | Its children with `data-key` slide to their new places when the page changes, settle in when new, and are drawn leaving when removed. `data-dui-exit` on the list is `tear` (the default), `fold`, `sink` (an archive: folds, and its grain sinks), `shrink`, `fade` or `none`; `data-dui-enter` on a row is `pop` or `none`. A child `.dui-sel-ind` is the list's one highlight, moved to the row with the class `sel` |
+//! | `data-dui-list` | a list | Its children with `data-key` slide to their new places when the page changes, settle in when new, and are drawn leaving when removed. `data-dui-exit` on the list is `tear` (the default), `fold`, `sink` (an archive: folds, and its grain sinks), `shrink`, `fade` or `none`; `data-dui-enter` on a row is `pop`, `pop-in` (a file's square: from 30%, on the pop spring) or `none`. A child `.dui-sel-ind` is the list's one highlight, moved to the row with the class `sel` |
 //! | `data-dui-grain`, `data-dui-settle` | a row or card | Its grain's shade; marked to settle, it is held out of sight while the new thought's words gather into the grain and the grain is tossed onto it (section 5.5). See [`pile`] |
 //! | `data-dui-pile` | the pile under a list | Its newest grain drops onto the heap as a thought settles, if the heap is in sight ([`components::Pile`]) |
 //! | `data-dui-scroll` | a scrolling element | The drawn scrollbar ([`components::ScrollArea`] renders it) |
@@ -46,7 +46,7 @@
 //! | `data-dui-page` | the desktop's page | <kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd> and <kbd>Ctrl N</kbd> empty it as they are pressed, so that what is typed next is the next thought's |
 //! | `data-dui-drag` | a window's root | A press on an empty part of its top rows (the height in pixels) says [`events::Outcome::Drag`], a double-click [`events::Outcome::Maximize`] |
 //! | `data-dui-resize` | an edge of the window | A press on it says [`events::Outcome::Resize`] |
-//! | `data-dui-focus`, `data-dui-writing` | the desktop's screen | Focus while writing: the style, and `hush` or `on`. The rows of its list fold away and come back, and the grains of `data-dui-rail` pop in |
+//! | `data-dui-focus`, `data-dui-writing` | the desktop's screen | Focus while writing: the style, and `hush` or `on`. The rows of its list fold away and come back, and the grains of `data-dui-rail` pop in. While it has a `data-dui-writing`, the script marks it `data-dui-hand` once a mouse or pen has moved 40 px from where it was first seen since the last key typed in a text field, and takes the mark away at the next such key: the hand is back on the mouse |
 //! | `data-dui-press` | an element that is not a button | <kbd>Space</kbd> and <kbd>Enter</kbd> press it: a file's tile |
 //! | `data-dui-enter="grow"`, `data-dui-enter-first` | a row; its list | The row grows out of the point last pressed or dropped on; with the list's mark, also when the list was empty |
 //! | `data-dui-drop` | a screen | Has the class `dropping` while files are dragged over the window |
