@@ -554,7 +554,7 @@
 .dui-shelf-fold:hover{background:var(--surface-2);color:var(--text)}
 .dui-shelf-fold .dui-i{transition:transform var(--d-snap) var(--sp-snap)}
 .dui-shelf:not([data-folded]) .dui-shelf-fold .dui-i{transform:rotate(180deg)}
-.dui-shelf-minis{flex:1;min-width:0;display:flex;align-items:center;gap:6px;padding:3px 2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;transition:opacity 140ms var(--e-std)}
+.dui-shelf-minis{position:relative;flex:1;min-width:0;display:flex;align-items:center;gap:6px;padding:3px 2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;transition:opacity 140ms var(--e-std)}
 .dui-shelf-minis::-webkit-scrollbar{display:none}
 .dui-shelf:not([data-folded]) .dui-shelf-minis{opacity:0;pointer-events:none;transition:opacity 120ms var(--e-in)}
 .dui-mini-at{display:contents}

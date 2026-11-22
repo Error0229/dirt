@@ -419,7 +419,7 @@ impl Screen {
                 ref failed,
             } => {
                 if added > 0 && self.open_note() == Some(note) {
-                    self.files.attached(note);
+                    self.files.reread();
                 }
                 if !failed.is_empty() {
                     let words = if failed.len() == 1 {

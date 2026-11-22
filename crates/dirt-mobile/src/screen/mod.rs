@@ -935,7 +935,7 @@ impl Screen {
             let tried = files.len();
             let failed = attach(&self.app, id, files).await;
             if failed.len() < tried {
-                self.files.attached(id);
+                self.files.reread();
             }
             self.app.note_changed();
             if !failed.is_empty() {
@@ -1141,9 +1141,8 @@ impl Screen {
             };
             match added {
                 Ok(()) => {
-                    let made = draft.borrow().note();
-                    if let Some(note) = made {
-                        self.files.attached(note);
+                    if draft.borrow().note().is_some() {
+                        self.files.reread();
                     }
                     self.app.note_changed();
                     crate::voice::make_words_soon();

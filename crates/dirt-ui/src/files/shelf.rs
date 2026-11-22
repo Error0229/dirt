@@ -9,10 +9,11 @@
 //! action (section 2). Unfolded, the tiles (6.5) are under the line, at
 //! most three rows and a third of the window high; more scroll inside it.
 //!
-//! A note opens with its files unfolded when it has one or two, and
-//! folded when it has more ([`UNFOLDED_MOST`]). What the person chooses
+//! Every note opens with its files folded, whatever their count, and only
+//! the person unfolds them (interface design 6.5, 7.14). What they choose
 //! holds while the note is open, and is not kept: see [`NoteFiles::folded`].
-//! Files just attached unfold it, so that their tiles are seen arriving.
+//! A file attached, or brought by a sync, does not unfold it: its square
+//! pops into the folded line, and the count changes.
 
 use dioxus::prelude::*;
 use dirt_core::models::NoteId;
@@ -25,10 +26,6 @@ use super::tile::{tile_element_id, FileTiles};
 use crate::components::ScrollArea;
 use crate::dom::{self, Caret};
 use crate::icons::{Icon, IconSize, IconSvg};
-
-/// A note with this many files or fewer opens with them unfolded; one with
-/// more opens with them folded.
-pub const UNFOLDED_MOST: usize = 2;
 
 /// The ID of a file's square on the folded shelf. The preview grows out of
 /// it while the shelf is folded, and out of the tile while it is not.
@@ -200,11 +197,15 @@ pub fn ShelfFrame(
                     IconSvg { icon: Icon::ChevronUp, size: IconSize::Small }
                     span { "{words}" }
                 }
+                // The squares are a list the script watches: a new one pops
+                // into the line where it lands (5.5).
                 div {
                     class: "dui-shelf-minis",
                     role: "list",
                     "aria-label": "Files",
                     "inert": (!folded).then_some(""),
+                    "data-dui-list": "",
+                    "data-dui-exit": "fade",
                     {minis}
                 }
             }
@@ -250,6 +251,8 @@ pub fn FileMini(
                 r#type: "button",
                 id: "{mini_element_id(attachment.file_id)}",
                 class: if fetching { "dui-mini fetching" } else { "dui-mini" },
+                "data-key": "{attachment.file_id}",
+                "data-dui-enter": "pop-in",
                 "aria-label": "{label}",
                 // A press leaves the focus in the note's text: the preview
                 // takes it as it opens, and a kind it does not show only

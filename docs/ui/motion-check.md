@@ -310,14 +310,27 @@ mockups) and `default`.
   - `click` / `tap` (a selector, with `index` for the n-th drawn match);
     `click` presses with the mouse, or with a touch on Android;
   - `hover`;
+  - `move` (`{ "on": …, "dx": 80, "dy": 0, "steps": 8 }`: the pointer
+    moved as a hand moves it, from the centre of what `on` names, or from
+    where it last was, `dx` and `dy` pixels further in `steps` moves. The
+    desktop brings the note's icons back only for a deliberate movement,
+    40 px or more (design 7.14), which one `hover` does not make);
   - `key` (`Escape`, `Enter`, `Tab`, `' '`, the arrows; with `ctrl`,
-    `shift` or `alt`);
+    `shift` or `alt`). A single character (`"x"`) types it, with its key
+    down and up as a hand would, where `type` inserts text with no key:
+    the desktop tells the two apart, since text that came without a key
+    (pasted) brings focus at once (7.9). With `ctrl` it is a shortcut and
+    types nothing;
   - `type` (inserted as typed text);
   - `wheel`;
   - `wait` (ms), `waitFor` / `waitGone` (a selector);
   - `pastePicture` (a picture pasted into the page, as one copied from
     another program; the app's own paste handler takes it);
   - `androidKey` (an Android key code, on the emulator: 4 is Back);
+  - `androidTap` (`[x, y]`, a tap on the emulator's screen outside the web
+    view, in the screen's pixels as `uiautomator dump` gives them: in
+    Android's own screen for choosing files, which the paperclip opens.
+    `files-attach.json` uses it);
   - `eval` (for a mockup's start state only, never for the input of a
     movement);
   - `caretAbove` (a check, not an input: `{ "field": …, "above": … }`;
@@ -370,6 +383,11 @@ adb -s emulator-5554 shell cat /sdcard/ui.xml
 
 Then on the page press the paperclip and, in that screen, switch to the
 list, long-press the first file and tap the others, and press **Select**.
+`files-attach` on Android needs a note with three files made this way,
+newest, and the pictures in a folder of their own that the screen opens
+in, with `purple.png` where its `androidTap` presses (1080 × 2400: the
+second column of the second row of the grid); choose one file at a time,
+three times, and the screen opens in that folder again each time.
 The dump says where each is (`uiautomator` may end with code 137 after
 writing its file; the file is there). The screen shows about nine at a
 time; press the paperclip again for more. Share the picture for

@@ -29,7 +29,5 @@ mod tile;
 pub use note_files::{use_note_files, FileSource, NoteFiles, Showing};
 pub use pasted::{use_pasted_files, Pasted};
 pub use preview::FilePreview;
-pub use shelf::{
-    count_told, count_words, mini_element_id, FileMini, FileShelf, ShelfFrame, UNFOLDED_MOST,
-};
+pub use shelf::{count_told, count_words, mini_element_id, FileMini, FileShelf, ShelfFrame};
 pub use tile::{tile_element_id, FileTile, FileTiles};

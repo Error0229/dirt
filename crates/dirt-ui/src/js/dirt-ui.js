@@ -417,6 +417,13 @@
             { duration: pop.ms, easing: pop.easing, delay: Math.min(fresh++, 6) * 70, fill: 'backwards' });
           return;
         }
+        if (row.dataset.duiEnter === 'pop-in') {
+          // A file's square pops into the shelf's folded line where it
+          // lands, from 30% (pop), opaque a third of the way in; several
+          // follow one another, 70 ms apart (6.5, 7.14).
+          popIn(row, Math.min(fresh++, 6) * 70);
+          return;
+        }
         if (row.dataset.duiEnter === 'pop') {
           // Undo: the row drops back into its place with a bounce.
           const pop = spring('pop');
@@ -441,6 +448,12 @@
     });
     state.seen = next;
     placeSelection(list, false);
+  }
+  function popIn(element, delay) {
+    if (reduced()) { element.animate([{ opacity: 0 }, { opacity: 1 }], { duration: tokens.reducedMs }); return; }
+    const pop = spring('pop');
+    element.animate([{ opacity: 0, transform: 'scale(.3)' }, { opacity: 1, offset: 0.3 }, { opacity: 1, transform: 'none' }],
+      { duration: pop.ms, easing: pop.easing, delay, fill: 'backwards' });
   }
   // A window made narrower, a font arriving or a text size chosen moves
   // rows with no change to the page. Those are not played: the positions
@@ -3151,6 +3164,11 @@
     if (fromEnd <= before + 32) page.scrollTop += height + SHELF_FADE - before;
   }
   function watchShelf(shelf) {
+    // A shelf that comes with a file attached to a note that had none:
+    // its first square pops into the line as every later one does.
+    if (shelf.dataset.duiShelf !== 'with-note' && shown(shelf)) {
+      $$('[data-dui-enter="pop-in"]', shelf).forEach((square, index) => popIn(square, Math.min(index, 6) * 70));
+    }
     const page = shelf.parentElement && shelf.parentElement.closest('[data-dui-scroll]');
     if (!page) return;
     shelf._duiPage = page;
