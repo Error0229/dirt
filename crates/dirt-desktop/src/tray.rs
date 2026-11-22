@@ -20,7 +20,9 @@ use dioxus::desktop::trayicon::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
-use dioxus::desktop::{use_tray_icon_event_handler, use_tray_menu_event_handler};
+use dioxus::desktop::{
+    use_muda_event_handler, use_tray_icon_event_handler, use_tray_menu_event_handler,
+};
 use dioxus::prelude::*;
 use dirt_core::models::Accent;
 use dirt_ui::tokens::{accent_colors, Color, Scheme};
@@ -67,14 +69,21 @@ pub fn use_tray(choose: Callback<Choice>) {
             tracing::error!("Failed to initialize system tray: {why}");
         }
     });
+    // The tray's menu and a window's menu are the same `muda` crate, whose
+    // event handler is set once, by whoever sets it first. Dioxus sets the
+    // window menus' one first, so the tray's choices arrive as a window
+    // menu's event, and the tray menu's handler never hears them: every
+    // item did nothing. Both are listened to, in case that order changes;
+    // only one of them carries any one choice.
+    use_muda_event_handler(move |event| {
+        if let Some(choice) = chosen(event.id.0.as_str()) {
+            choose.call(choice);
+        }
+    });
     use_tray_menu_event_handler(move |event| {
-        let choice = match event.id.0.as_str() {
-            "new-note" => Choice::NewNote,
-            "open-dirt" => Choice::OpenDirt,
-            "quit" => Choice::Quit,
-            _ => return,
-        };
-        choose.call(choice);
+        if let Some(choice) = chosen(event.id.0.as_str()) {
+            choose.call(choice);
+        }
     });
     use_tray_icon_event_handler(move |event| {
         if let TrayIconEvent::Click {
@@ -88,6 +97,16 @@ pub fn use_tray(choose: Callback<Choice>) {
             }
         }
     });
+}
+
+/// What the menu item `id` chooses.
+fn chosen(id: &str) -> Option<Choice> {
+    match id {
+        "new-note" => Some(Choice::NewNote),
+        "open-dirt" => Some(Choice::OpenDirt),
+        "quit" => Some(Choice::Quit),
+        _ => None,
+    }
 }
 
 /// What a click on the icon chooses: Open Dirt for a left button let go,
@@ -305,6 +324,14 @@ mod tests {
         let rgba = logo_pixels(None);
         assert_eq!(pixel(&rgba, 6, 6), [0, 0, 0, 0]);
         assert_eq!(pixel(&rgba, 15, 21), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn each_menu_item_chooses_its_choice() {
+        assert_eq!(chosen("open-dirt"), Some(Choice::OpenDirt));
+        assert_eq!(chosen("new-note"), Some(Choice::NewNote));
+        assert_eq!(chosen("quit"), Some(Choice::Quit));
+        assert_eq!(chosen("something-else"), None);
     }
 
     #[test]
