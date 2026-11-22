@@ -3,7 +3,7 @@
   "title": "Focus while writing in a wide window: the note's column and its icons (#325)",
   "issue": 325,
   "platforms": ["desktop"],
-  "description": "Design 6.4, 7.7 and 7.13. In a window 2560 × 1440 (full screen on a 1440p screen), a note opened from the list goes into focus at its first new line (Slide): the list folds to the left and the note's column glides to the middle of the window, its icons beside it. The pointer at the left edge brings the list back. At rest the column is in the middle of the page beside the list, so the glide is half the list's width, at any window size. The mockup's window is at most 1000 px wide, where nothing of this differs, so it is not compared.",
+  "description": "Design 6.4, 7.7 and 7.13. In a window 2560 × 1440 (full screen on a 1440p screen), a note opened from the list goes into focus at its first new line (Slide): the list folds to the left and the note's column glides to the middle of the window; its icons stay at the window's right edge (7.14). The pointer at the left edge brings the list back. At rest the column is in the middle of the page beside the list, so the glide is half the list's width, at any window size. The mockup's window is at most 1000 px wide, where nothing of this differs, so it is not compared.",
   "viewport": { "desktop": { "width": 2560, "height": 1440 } },
   "setup": [
     { "click": "[data-dui-typed]" },
@@ -14,11 +14,11 @@
   ],
   "parts": {
     "column": ".dk-col",
-    "gutter": ".dk-gutter",
+    "icons": ".dk-acts",
     "list": ".dk-side",
     "text": ".dk-text"
   },
-  "checks": { "within": [["gutter", "viewport"]], "apart": [], "pops": { "px": 24, "opacity": 0.3 } },
+  "checks": { "within": [["icons", "viewport"]], "apart": [], "pops": { "px": 24, "opacity": 0.3 } },
   "movements": [
     {
       "name": "in",

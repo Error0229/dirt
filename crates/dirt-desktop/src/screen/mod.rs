@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use dioxus::desktop::use_wry_event_handler;
 use dioxus::prelude::*;
-use dirt_core::models::{extract_tags, FocusStyle, Note, NoteId};
+use dirt_core::models::{extract_tags, FocusBegins, FocusStyle, Note, NoteId};
 use dirt_core::session::SessionState;
 use dirt_core::store::{AttachedFile, TagCount};
 use dirt_core::sync::overview::SyncIndicator;
@@ -87,7 +87,7 @@ pub enum Arrival {
     /// Further down.
     Below,
     /// The page was blank: the text fades in where it is, as the mockup's
-    /// does, and the gutter's icons for a note (✓, the box) pop in (#322).
+    /// does, and the edge's icon for a note (the box) pops in (#322).
     Blank,
     /// The list gives no way to come from (the note before is not in the
     /// list as it is now): it fades in where it is.
@@ -142,6 +142,11 @@ pub enum Writing {
     /// A key was typed on the page: the controls have faded, and the
     /// layout waits for a pause.
     FirstKeys,
+    /// A key was typed on the page with Focus begins: On the first key
+    /// (7.14): the controls have faded and the list has gone by the chosen
+    /// style, the note's column held where it was. What would move or
+    /// re-wrap the words waits for a pause.
+    Folded,
     /// Only the note, in the chosen style.
     Focused,
 }
@@ -153,6 +158,7 @@ impl Writing {
         match self {
             Self::No => None,
             Self::FirstKeys => Some("hush"),
+            Self::Folded => Some("fold"),
             Self::Focused => Some("on"),
         }
     }
@@ -419,7 +425,7 @@ impl Screen {
                 ref failed,
             } => {
                 if added > 0 && self.open_note() == Some(note) {
-                    self.files.attached(note);
+                    self.files.reread();
                 }
                 if !failed.is_empty() {
                     let words = if failed.len() == 1 {
@@ -530,7 +536,7 @@ impl Screen {
         self.page_over.set(false);
     }
 
-    /// Done with the thought on the page (Esc, Ctrl Enter, ✓, Ctrl N): it
+    /// Done with the thought on the page (Esc, Ctrl Enter, Ctrl N, +): it
     /// is kept, and the page is blank again with the cursor in it. With
     /// nothing written, done does nothing but put the cursor there.
     ///
@@ -849,7 +855,9 @@ impl Screen {
     /// The page's text changed. The first key only fades the controls; the
     /// column does not move under a word being typed. Focus comes at the
     /// first pause or the first new line (5.5). Text that came without a
-    /// key, pasted with the mouse, brings it at once.
+    /// key, pasted with the mouse, brings it at once. With Focus begins: On
+    /// the first key the list goes at the first key too, the column held
+    /// where it is, and the rest comes at the pause (7.14).
     fn writing_typed(mut self, new_line: bool, version: u64) {
         let now = *self.writing.peek();
         if now == Writing::Focused {
@@ -863,12 +871,18 @@ impl Screen {
             self.writing.set(Writing::Focused);
             return;
         }
-        if now != Writing::FirstKeys {
-            self.writing.set(Writing::FirstKeys);
+        let first = if self.focus_begins() == FocusBegins::FirstKey {
+            Writing::Folded
+        } else {
+            Writing::FirstKeys
+        };
+        if now != first {
+            self.writing.set(first);
         }
         spawn(async move {
             tokio::time::sleep(FOCUS_AFTER).await;
-            if self.draft.peek().version() == version && *self.writing.peek() == Writing::FirstKeys
+            if self.draft.peek().version() == version
+                && matches!(*self.writing.peek(), Writing::FirstKeys | Writing::Folded)
             {
                 self.writing.set(Writing::Focused);
             }
@@ -896,14 +910,18 @@ impl Screen {
         self.app.settings.read().focus_style
     }
 
+    /// When focus while writing begins (7.14).
+    pub fn focus_begins(self) -> FocusBegins {
+        self.app.settings.peek().focus_begins
+    }
+
     // ---- Archive, delete, undo (6.19, 6.7) --------------------------------
 
-    /// Archives a note, or deletes it if it is archived already: what the
-    /// box, Del and Ctrl Del do.
-    pub fn archive_or_delete(self, id: NoteId) {
-        if self.is_archived(id) {
-            self.delete(id);
-        } else {
+    /// Archives a note unless it is archived already: what Ctrl E does in
+    /// a note (7.14). An archived note's box is "put back in the list", and
+    /// deleting keeps a key of its own.
+    pub fn archive_only(self, id: NoteId) {
+        if !self.is_archived(id) {
             self.archive(id);
         }
     }
@@ -1188,8 +1206,7 @@ impl Screen {
         files::save_a_copy(&self.files, self.toasts, file);
     }
 
-    /// Opens the file dialog, and attaches what is chosen: 📎 and Ctrl
-    /// Shift A.
+    /// Opens the file dialog, and attaches what is chosen: 📎 and Ctrl O.
     pub fn choose_files(self) {
         spawn(async move {
             let chosen = rfd::AsyncFileDialog::new()
@@ -1479,6 +1496,7 @@ pub fn MainScreen() -> Element {
     let has_note = app.current_note_id.read().is_some();
     let writing = screen.writing.read().name();
     let style = screen.focus_style().name();
+    let begins_at_key = app.settings.read().focus_begins == FocusBegins::FirstKey;
     let drag = window::use_window_drag();
 
     rsx! {
@@ -1490,6 +1508,9 @@ pub fn MainScreen() -> Element {
             // the script plays what depends on where the rows are.
             "data-dui-focus": style,
             "data-dui-writing": writing,
+            // Focus begins: On the first key, where the column is held for
+            // the whole of focus in a wide window (7.14).
+            "data-dui-begins": begins_at_key.then_some("key"),
             // The window's top row moves it, where there is no title bar.
             "data-dui-drag": drag.is_some().then_some(window::DRAG_ROW),
             "data-dui-id": drag,

@@ -323,6 +323,9 @@ test('writes: the steps refused on a real phone without --allow-writes', () => {
   assert.equal(writes({ tap: '.archive', writes: true }), true);
   assert.equal(writes({ tap: "button[aria-label='Settings']" }), false);
   assert.equal(writes({ key: 'Escape' }), false);
+  // A character key types it; with Ctrl it is a shortcut.
+  assert.equal(writes({ key: 'x' }), true);
+  assert.equal(writes({ key: 'o', ctrl: true }), false);
 });
 
 test('stops: a part that halts on the way and sets off again, not one that eases in or swings past its end', () => {

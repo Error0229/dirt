@@ -1,0 +1,98 @@
+{
+  "name": "focus-first-key-wide",
+  "title": "Focus beginning on the first key, in a window of 1600 × 900",
+  "platforms": [
+    "desktop"
+  ],
+  "description": "Design 7.13 and 7.14. Focus begins: On the first key, in a window wider than 1112 px. At the first key the list folds and the note's column stays where it is, the same box on every frame; at the pause nothing more moves. The mockup's window is at most 1000 px wide, so it is not compared.",
+  "setup": [
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "click": "button[aria-label='Settings']",
+      "then": 900
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "eval": "(() => { document.querySelector(\"[aria-label='Focus begins']\").scrollIntoView({ block: 'center' }); return true; })()",
+      "then": 600
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "click": "[aria-label='Focus begins'] button:nth-of-type(2)",
+      "then": 400
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "key": "Escape",
+      "then": 900
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "click": "[data-dui-typed]",
+      "then": 600
+    }
+  ],
+  "parts": {
+    "column": {
+      "desktop": ".dk-col",
+      "mockup-desktop": "#d-col"
+    },
+    "text": {
+      "desktop": ".dk-text",
+      "mockup-desktop": "#d-text"
+    },
+    "list": {
+      "desktop": ".dk-side",
+      "mockup-desktop": "#D .dk-side"
+    },
+    "icons": {
+      "desktop": ".dk-acts",
+      "mockup-desktop": "#d-acts"
+    }
+  },
+  "checks": {
+    "within": [],
+    "apart": [],
+    "pops": {
+      "px": 24,
+      "opacity": 0.3
+    }
+  },
+  "movements": [
+    {
+      "name": "type",
+      "description": "The first key on the blank page: the list goes at once and the column stays where it is; 600 ms later, with no key since, the pause. Nothing more moves: the column is held for the whole of focus.",
+      "steps": [
+        {
+          "key": "a"
+        }
+      ],
+      "ms": 1900
+    }
+  ],
+  "between": [
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "key": "Escape",
+      "then": 1800
+    }
+  ],
+  "viewport": {
+    "desktop": {
+      "width": 1600,
+      "height": 900
+    }
+  }
+}

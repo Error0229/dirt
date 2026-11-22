@@ -1,0 +1,203 @@
+{
+  "name": "files-attach",
+  "title": "A file attached to a note whose shelf is folded",
+  "platforms": [
+    "desktop",
+    "android",
+    "mockup-desktop"
+  ],
+  "description": "Design 5.5 and 6.5. A note's shelf opens folded whatever its count, and attaching does not unfold it: the new file's square pops into the folded line (the pop spring, from 30%), and the count changes. Desktop: a new note with three pictures pasted onto it, then a fourth pasted. Before this design, attaching unfolded the shelf and the tile grew out of where the file came from; the same scenario measures that. Android: the newest note must already have three files (docs/ui/motion-check.md, Writing a scenario); it is opened, and the paperclip is pressed and a picture chosen in Android's own screen for choosing files, which must open in the folder of pictures with purple.png where androidTap presses (1080 × 2400, the second column of the second row). On Android the note is closed after the pass and opened again.",
+  "setup": [
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "click": "[data-dui-typed]"
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "type": "Four pictures from the garden"
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "wait": 900
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "pastePicture": "[data-dui-typed]",
+      "name": "beans.png",
+      "then": 2000
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "pastePicture": "[data-dui-typed]",
+      "name": "shed.png",
+      "then": 2000
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "pastePicture": "[data-dui-typed]",
+      "name": "gate.png",
+      "then": 2500
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "waitFor": ".dk-files.dui-shelf",
+      "ms": 15000
+    },
+    {
+      "platforms": [
+        "mockup-desktop"
+      ],
+      "eval": "(() => { const n = S.notes.find(n => !n.deleted && !n.archived && n.files.length); openD(n.id); return true; })()",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-list .dui-card-in",
+      "then": 1800
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "waitFor": ".dm-page .dui-shelf-fold",
+      "ms": 15000
+    }
+  ],
+  "parts": {
+    "shelf": {
+      "desktop": ".dk-files.dui-shelf",
+      "mockup-desktop": "#d-shelf",
+      "android": ".dm-page .dui-shelf"
+    },
+    "squares": {
+      "desktop": ".dk-files .dui-shelf-minis",
+      "mockup-desktop": "#d-minis",
+      "android": ".dm-page .dui-shelf-minis"
+    },
+    "newest": {
+      "desktop": ".dk-files .dui-shelf-minis .dui-mini-at:last-child .dui-mini",
+      "mockup-desktop": "#d-minis > :last-child .mini",
+      "android": ".dm-page .dui-shelf-minis .dui-mini-at:last-child .dui-mini"
+    },
+    "tiles": {
+      "desktop": ".dk-files .dui-files",
+      "mockup-desktop": "#d-files",
+      "android": ".dm-page .dui-files"
+    },
+    "text": {
+      "desktop": ".dk-text",
+      "mockup-desktop": "#d-text",
+      "android": ".dm-text"
+    }
+  },
+  "crop": {
+    "mockup-desktop": "#D"
+  },
+  "checks": {
+    "within": [
+      [
+        "squares",
+        "shelf"
+      ]
+    ],
+    "apart": [
+      [
+        "shelf",
+        "text"
+      ]
+    ],
+    "pops": {
+      "px": 24,
+      "opacity": 0.3
+    }
+  },
+  "movements": [
+    {
+      "name": "attach",
+      "description": "Another picture pasted into the note.",
+      "steps": [
+        {
+          "platforms": [
+            "desktop"
+          ],
+          "pastePicture": "[data-dui-typed]",
+          "name": "pond.png"
+        },
+        {
+          "platforms": [
+            "android"
+          ],
+          "tap": ".dm-page button[aria-label='Attach a file']",
+          "then": 4500
+        },
+        {
+          "platforms": [
+            "android"
+          ],
+          "androidTap": [
+            760,
+            1620
+          ],
+          "then": 300
+        },
+        {
+          "platforms": [
+            "android"
+          ],
+          "waitFor": ".dm-page .dui-shelf-minis .dui-mini-at:nth-child(4) .dui-mini",
+          "ms": 15000
+        },
+        {
+          "platforms": [
+            "mockup-desktop"
+          ],
+          "click": "#d-acts [data-act='attach']",
+          "stay": true
+        }
+      ],
+      "ms": 1200,
+      "after": [
+        {
+          "platforms": [
+            "android"
+          ],
+          "tap": ".dm-page-bar button[aria-label='Done']",
+          "repeatUntilGone": ".dui-grow.dm-page.on",
+          "then": 1500
+        }
+      ]
+    }
+  ],
+  "between": [
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-list .dui-card-in",
+      "then": 1800
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "waitFor": ".dm-page .dui-shelf-fold",
+      "ms": 15000
+    }
+  ]
+}

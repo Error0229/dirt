@@ -417,6 +417,13 @@
             { duration: pop.ms, easing: pop.easing, delay: Math.min(fresh++, 6) * 70, fill: 'backwards' });
           return;
         }
+        if (row.dataset.duiEnter === 'pop-in') {
+          // A file's square pops into the shelf's folded line where it
+          // lands, from 30% (pop), opaque a third of the way in; several
+          // follow one another, 70 ms apart (6.5, 7.14).
+          popIn(row, Math.min(fresh++, 6) * 70);
+          return;
+        }
         if (row.dataset.duiEnter === 'pop') {
           // Undo: the row drops back into its place with a bounce.
           const pop = spring('pop');
@@ -441,6 +448,12 @@
     });
     state.seen = next;
     placeSelection(list, false);
+  }
+  function popIn(element, delay) {
+    if (reduced()) { element.animate([{ opacity: 0 }, { opacity: 1 }], { duration: tokens.reducedMs }); return; }
+    const pop = spring('pop');
+    element.animate([{ opacity: 0, transform: 'scale(.3)' }, { opacity: 1, offset: 0.3 }, { opacity: 1, transform: 'none' }],
+      { duration: pop.ms, easing: pop.easing, delay, fill: 'backwards' });
   }
   // A window made narrower, a font arriving or a text size chosen moves
   // rows with no change to the page. Those are not played: the positions
@@ -1396,7 +1409,13 @@
       // It goes 0.9 s after the last scroll, unless the pointer is on it.
       hideTimer = setTimeout(() => { if (!drag && !bar.matches(':hover')) bar.classList.remove('on'); }, 900);
     }
-    area.addEventListener('scroll', show, { passive: true });
+    // A scroll the script makes itself to hold a line in place (Typewriter)
+    // marks the area `_duiQuiet` first: the bar keeps its place and does
+    // not come for each line typed.
+    area.addEventListener('scroll', () => {
+      if (area._duiQuiet) { area._duiQuiet = false; layout(); return; }
+      show();
+    }, { passive: true });
     // The pointer on the bar's own strip shows it, so that it can be taken.
     // Only there: a row's box and the time sit a few pixels further in,
     // and the bar is not to come and go while the pointer works on them.
@@ -1501,6 +1520,7 @@
     const element = document.querySelector(selector);
     if (!element || element.value === text) return;
     const keep = document.activeElement === element ? [element.selectionStart, element.selectionEnd] : null;
+    twReset(element);
     element.value = text;
     if (keep) element.setSelectionRange(Math.min(keep[0], text.length), Math.min(keep[1], text.length));
     tellText(element, false, false);
@@ -1756,9 +1776,16 @@
     }
   });
   // The clipboard's text, read by the app, put where the caret was.
+  // A paste from the app's own menu reaches the field as typed text
+  // (`execCommand('insertText')`): it is marked while it goes in, so that
+  // Typewriter moves at once for it and the hand rule does not take it for
+  // typing (the hand is on the mouse).
+  let menuPasting = false;
   function paste(text) {
     const field = menuFor && menuFor.isConnected && isField(menuFor) ? menuFor : null;
-    if (field && text) insertText(field, text);
+    if (!field || !text) return;
+    menuPasting = true;
+    try { insertText(field, text); } finally { menuPasting = false; }
   }
 
   // ---- More rows as a list nears its end (section 3) -----------------------
@@ -1838,6 +1865,221 @@
     nears().forEach(element => setNear(element, false));
   }, true);
 
+  // ---- The hand back on the mouse (sections 1, 6.4, 7.14) -----------------
+  // While a note is written (`data-dui-writing` on the screen), the screen
+  // is marked `data-dui-hand` once a mouse or pen has moved `HAND_PX` or
+  // more in a straight line from where it was first seen since the last
+  // change typed: typing has stopped, so the note's icons are no longer
+  // noise, and the style sheet brings them back. Any change a person makes
+  // in a text field takes the mark away and starts again: a key, a
+  // character an input method composes (every key of Pinyin, Japanese or
+  // Korean is "Process"), an AltGr letter, Ctrl Backspace, a paste. So it
+  // is the field's `input` that is heard, not the keys. The pointer
+  // leaving the window only starts the measure again: the hand is still on
+  // the mouse, and the icons it brought back stay.
+  // Distance from a point, not a path summed: a hand resting on a mouse
+  // shakes by a few pixels and adds up along a path without going
+  // anywhere, and the moves Chromium sends after a layout change under a
+  // still pointer (the list folding away) have no distance at all. A
+  // touch shows them at once, as it shows the controls by nearness.
+  const HAND_PX = 40;
+  let handFrom = null;
+  const writingScopes = () => $$('[data-dui-writing]').filter(scope => scope.dataset.duiWriting);
+  function handBack(scopes) {
+    scopes.forEach(scope => { if (scope.dataset.duiHand === undefined) scope.dataset.duiHand = ''; });
+  }
+  function handAway() {
+    handFrom = null;
+    $$('[data-dui-hand]').forEach(scope => { delete scope.dataset.duiHand; });
+  }
+  document.addEventListener('pointermove', event => {
+    if (event.pointerType === 'touch') return;
+    const scopes = writingScopes().filter(scope => scope.dataset.duiHand === undefined);
+    if (!scopes.length) { if (!writingScopes().length) handFrom = null; return; }
+    if (!handFrom) { handFrom = [event.clientX, event.clientY]; return; }
+    if (Math.hypot(event.clientX - handFrom[0], event.clientY - handFrom[1]) >= HAND_PX) handBack(scopes);
+  }, { passive: true });
+  document.addEventListener('pointerleave', () => { handFrom = null; });
+  window.addEventListener('blur', () => { handFrom = null; });
+  document.addEventListener('pointerdown', event => { if (event.pointerType === 'touch') handBack(writingScopes()); }, true);
+  // A change the person made in a text field, composing included: the hand
+  // is on the keys. A shortcut that changes nothing (Ctrl O) leaves the
+  // icons as they are, and so does a change the script makes itself (the
+  // typing carrier's, which is not trusted).
+  // A slider or a box ticked with the mouse is not typing, nor is a paste
+  // from the app's menu, a drop, or a paste after a press (a middle
+  // click): the hand is on the mouse.
+  const TEXT_FIELDS = 'textarea, [contenteditable], input:not([type]), input[type="text"], input[type="search"], '
+    + 'input[type="email"], input[type="url"], input[type="tel"], input[type="password"], input[type="number"]';
+  document.addEventListener('input', event => {
+    if (!event.isTrusted || menuPasting) return;
+    const target = event.target;
+    if (!target || !target.matches || !target.matches(TEXT_FIELDS)) return;
+    if (event.inputType === 'insertFromDrop' || event.inputType === 'deleteByDrag'
+      || (event.inputType === 'insertFromPaste' && twBy === 'pointer')) return;
+    handAway();
+  }, true);
+
+  // ---- Typewriter (sections 5.5, 7.7, 7.14) -------------------------------
+  // A text field `[data-dui-typewriter]`, while its screen's
+  // `data-dui-writing` is `on`, holds the line the caret is on where the
+  // field's first line sits with the page at its top: the optical line.
+  // The page that scrolls (`[data-dui-scroll]`) is scrolled at once, and
+  // the field eased up from where it was drawn (snap), so that a quick run
+  // of lines is one movement, taken up from wherever it is. While typing,
+  // the paragraphs but the caret's dim (`data-dui-dim`, by a mask the
+  // style sheet draws from `--dui-tw-a` and `--dui-tw-b`, the caret's
+  // paragraph's top and foot in the field), and 1.5 s without a key brings
+  // them back. A paragraph is a line ended by Enter; a field of one never
+  // dims. The caret moved by a key comes to the optical line; moved by a
+  // press it only becomes the current paragraph, since the text must not
+  // move under the pointer. Where the caret's line is is found by laying
+  // the text out, to the end of the caret's paragraph, in a copy of the
+  // field, once for each change or move of the caret; a field longer than
+  // `TW_MOST` characters is left as it is. The caret is the selection's
+  // moving end (Shift ↑ moves its start). The eased movement is at most
+  // `TW_EASE_LINES` lines; a longer move (a paste, an undo) is made at
+  // once.
+  const TW_MOST = 100000, TW_PAUSE = 1500, TW_OFF = 450, TW_EASE_LINES = 3;
+  const TW_JUMPS = new Set(['insertFromPaste', 'insertFromDrop', 'insertFromYank', 'historyUndo', 'historyRedo', 'deleteByCut']);
+  // The selection's moving end, where the caret is drawn.
+  const caretOf = field => (field.selectionDirection === 'backward' ? field.selectionStart : field.selectionEnd);
+  let twBy = 'key', twMirror = null, twDimTimer = 0, twOffTimer = 0;
+  function typewriterOf(field) {
+    if (!field || !field.matches || !field.matches('[data-dui-typewriter]')) return false;
+    const scope = field.closest('[data-dui-writing]');
+    return !!scope && scope.dataset.duiWriting === 'on';
+  }
+  function twGeometry(field) {
+    if (!twMirror) {
+      twMirror = document.createElement('div');
+      twMirror.setAttribute('aria-hidden', 'true');
+      document.body.append(twMirror);
+    }
+    const style = getComputedStyle(field), text = field.value, at = caretOf(field);
+    Object.assign(twMirror.style, {
+      position: 'absolute', left: '-9999px', top: '0', visibility: 'hidden', pointerEvents: 'none',
+      whiteSpace: 'pre-wrap', overflowWrap: 'break-word', wordBreak: style.wordBreak, boxSizing: 'content-box',
+      width: (field.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) + 'px',
+      fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight, fontStyle: style.fontStyle,
+      letterSpacing: style.letterSpacing, lineHeight: style.lineHeight, tabSize: style.tabSize,
+      paddingTop: style.paddingTop, paddingLeft: '0', paddingRight: '0', paddingBottom: '0', border: '0',
+    });
+    const start = text.lastIndexOf('\n', at - 1) + 1;
+    let end = text.indexOf('\n', at);
+    if (end < 0) end = text.length;
+    const paragraph = document.createElement('span'), caret = document.createElement('span');
+    caret.textContent = '\u200b';
+    paragraph.append(document.createTextNode(text.slice(start, at)), caret, document.createTextNode(text.slice(at, end)));
+    twMirror.textContent = '';
+    // Nothing after the caret's paragraph is laid out: it moves nothing
+    // above it.
+    twMirror.append(document.createTextNode(text.slice(0, start)), paragraph);
+    const top = twMirror.getBoundingClientRect().top, boxes = [...paragraph.getClientRects()];
+    const geometry = {
+      top: boxes[0].top - top, bottom: boxes[boxes.length - 1].bottom - top, caret: caret.getBoundingClientRect().top - top,
+      last: end === text.length, one: text.indexOf('\n') < 0, pad: parseFloat(style.paddingTop),
+      line: parseFloat(style.lineHeight) || 0,
+    };
+    twMirror.textContent = '';
+    return geometry;
+  }
+  function twUndim(field, now) {
+    clearTimeout(twDimTimer); clearTimeout(twOffTimer);
+    if (field.dataset.duiDim !== undefined) delete field.dataset.duiDim;
+    const off = () => { if (field.dataset.duiTw !== undefined) delete field.dataset.duiTw; };
+    if (now || reduced()) off(); else twOffTimer = setTimeout(off, TW_OFF);
+  }
+  // The field emptied or given another text (Esc, a note opened) or left
+  // (focus ended): a movement on its way stops, and the next change is
+  // taken afresh.
+  function twReset(field) {
+    if (!field) return;
+    if (field._duiLine) { field._duiLine.cancel(); field._duiLine = null; }
+    field._duiTwValue = null;
+    field._duiTwAt = null;
+  }
+  // Where a field eased by an earlier line is drawn now, from where it is
+  // laid out: the next line takes the movement up from there.
+  function twOffset(field) {
+    const run = field._duiLine;
+    if (!run || run.playState !== 'running') return 0;
+    const matrix = new DOMMatrixReadOnly(getComputedStyle(field).transform);
+    run.cancel();
+    return matrix.m42;
+  }
+  function twPin(field, geometry, jump) {
+    const page = field.closest('[data-dui-scroll]');
+    if (!page) return;
+    // Whole lines: an inline box's top is a little below its line's, by
+    // how much depends on what is on the line.
+    const lines = geometry.line ? Math.round((geometry.caret - geometry.pad) / geometry.line) * geometry.line : geometry.caret - geometry.pad;
+    const target = Math.max(0, Math.round(lines)), before = page.scrollTop;
+    if (Math.abs(target - before) < 1) return;
+    page._duiQuiet = true;
+    page.scrollTop = target;
+    const moved = page.scrollTop - before;
+    // Nothing scrolled (the page at its end): a movement still on its way
+    // is left to finish.
+    if (!moved) { page._duiQuiet = false; return; }
+    const offset = twOffset(field);
+    if (reduced() || jump) return;
+    // A few lines are eased; the rest of a long move is made at once, so
+    // that a paste of fifty lines is not 1,200 px slid in 380 ms.
+    const most = (geometry.line || 25) * TW_EASE_LINES;
+    const from = Math.max(-most, Math.min(most, moved + offset));
+    if (Math.abs(from) < 1) return;
+    const snap = spring('snap');
+    field._duiLine = field.animate([{ transform: `translateY(${from}px)` }, { transform: 'none' }],
+      { duration: snap.ms, easing: snap.easing });
+  }
+  // `typed`: the text changed, so the others dim. `move`: the caret's line
+  // comes to the optical line, at once if `jump`.
+  function typewriter(field, typed, move, jump) {
+    if (!field || !field.matches || !field.matches('[data-dui-typewriter]')) return;
+    if (!typewriterOf(field) || field.value.length > TW_MOST) { twUndim(field, true); return; }
+    field._duiTwValue = field.value;
+    field._duiTwAt = caretOf(field);
+    const geometry = twGeometry(field);
+    if (move) twPin(field, geometry, jump);
+    field.style.setProperty('--dui-tw-a', geometry.top + 'px');
+    field.style.setProperty('--dui-tw-b', geometry.last ? '100%' : geometry.bottom + 'px');
+    if (!typed) return;
+    if (geometry.one) { twUndim(field, true); return; }
+    clearTimeout(twOffTimer);
+    if (field.dataset.duiTw === undefined) field.dataset.duiTw = '';
+    if (field.dataset.duiDim === undefined) field.dataset.duiDim = '';
+    clearTimeout(twDimTimer);
+    twDimTimer = setTimeout(() => twUndim(field, false), TW_PAUSE);
+  }
+  // The page's field hears more than one `input` for one change (its own,
+  // and the one the typing carrier passes on): a change already taken is
+  // not taken again, so that the second does not cut the first's movement.
+  document.addEventListener('input', event => {
+    const field = event.target;
+    if (!field || !field.matches || !field.matches('[data-dui-typewriter]')) return;
+    if (field._duiTwValue === field.value && field._duiTwAt === caretOf(field)) return;
+    typewriter(field, true, true, menuPasting || TW_JUMPS.has(event.inputType));
+  }, true);
+  document.addEventListener('keydown', () => { twBy = 'key'; }, true);
+  document.addEventListener('pointerdown', () => { twBy = 'pointer'; }, true);
+  // The caret moved without a change. One that a change just moved, and
+  // which `input` has measured already, is not laid out again.
+  document.addEventListener('selectionchange', () => {
+    const field = document.activeElement;
+    if (!typewriterOf(field)) return;
+    if (field._duiTwValue === field.value && field._duiTwAt === caretOf(field)) return;
+    typewriter(field, false, twBy === 'key');
+  });
+  // Focus coming in brings the caret's line to the optical line, and again
+  // once a column that widened as it came has laid its lines out anew.
+  function typewriterBegins(scope) {
+    const field = scope.querySelector('[data-dui-typewriter]');
+    if (!field || document.activeElement !== field) return;
+    typewriter(field, false, true);
+    setTimeout(() => typewriter(field, false, true), 950);
+  }
+
   // ---- A press that leaves the cursor where it is (section 7.7) -----------
   // Inside `data-dui-keep-focus` (the rail's grains), a press does not take
   // the keyboard's focus from the note being written. The click still
@@ -1874,6 +2116,7 @@
       : event.key === 'Escape';
     if (!done) return;
     shootPage();
+    twReset(field);
     field.value = '';
     field.setSelectionRange(0, 0);
     tellText(field, false, false);
@@ -1896,11 +2139,26 @@
     event.preventDefault();
     tell(edge, 'resize');
   }, true);
+  // A field marked `data-dui-drag-through` (the desktop's page) gives the
+  // top rows to the window: scrolled, its text passes under them, and a
+  // press there still moves the window, and two maximise it, rather than
+  // putting the caret on a line half under the window's buttons.
+  // Over that strip the field shows the arrow, not the text's I-beam: a
+  // press there moves the window, so it must look like a title bar.
+  document.addEventListener('pointermove', event => {
+    if (event.pointerType !== 'mouse' || !event.target || !event.target.closest) return;
+    const field = event.target.closest('[data-dui-drag-through]');
+    if (!field) return;
+    const area = field.closest('[data-dui-drag]');
+    const inRow = !!area && event.clientY - area.getBoundingClientRect().top <= (Number(area.dataset.duiDrag) || 0);
+    field.classList.toggle('dui-drag-row', inRow);
+  }, { passive: true });
   let lastDragPress = null;
   document.addEventListener('pointerdown', event => {
     if (event.button !== 0 || event.pointerType !== 'mouse' || !event.target.closest) return;
     const area = event.target.closest('[data-dui-drag]');
-    if (!area || event.target.closest(NOT_DRAG)) return;
+    const through = event.target.closest('[data-dui-drag-through]');
+    if (!area || (!through && event.target.closest(NOT_DRAG))) return;
     const box = area.getBoundingClientRect();
     if (event.clientY - box.top > (Number(area.dataset.duiDrag) || 0)) return;
     event.preventDefault();
@@ -2148,10 +2406,18 @@
       return box.height && box.bottom > view.top && box.top < view.bottom;
     }).slice(0, 12);
   }
+  // The list is folded away in focus, and at the first key with Focus
+  // begins: On the first key (`fold`, 7.14).
+  const folded = state => state === 'on' || state === 'fold';
   function writingChanged(scope, was, now) {
     forgetNear();
+    // Out of writing, the icons are shown at rest; the next writing starts
+    // with the hand on the keys.
+    if (!now) { handFrom = null; delete scope.dataset.duiHand; }
+    if (now === 'on') typewriterBegins(scope);
+    else $$('[data-dui-typewriter]', scope).forEach(field => { twReset(field); twUndim(field, true); });
     if (reduced() || was === now) return;
-    if (now === 'on' && scope.dataset.duiFocus === 'rail') {
+    if (folded(now) && !folded(was) && scope.dataset.duiFocus === 'rail') {
       const rows = rowsInSight(scope);
       rows.forEach((row, index) => row.animate(
         [{ transform: 'none', opacity: 1, transformOrigin: 'left center' },
@@ -2168,7 +2434,7 @@
           .forEach((stop, index) => stop.animate([{ transform: 'scale(0)', opacity: 0 }, { transform: 'none', opacity: 1 }],
             { duration: pop.ms, easing: pop.easing, delay: 280 + index * 24, fill: 'backwards' }));
       }
-    } else if (was === 'on' && now !== 'on') {
+    } else if (folded(was) && !folded(now)) {
       const snap = spring('snap');
       // A new thought's row waits for its grain.
       rowsInSight(scope).filter(row => row.dataset.duiSettle === undefined).forEach((row, index) => row.animate(
@@ -3151,6 +3417,11 @@
     if (fromEnd <= before + 32) page.scrollTop += height + SHELF_FADE - before;
   }
   function watchShelf(shelf) {
+    // A shelf that comes with a file attached to a note that had none:
+    // its first square pops into the line as every later one does.
+    if (shelf.dataset.duiShelf !== 'with-note' && shown(shelf)) {
+      $$('[data-dui-enter="pop-in"]', shelf).forEach((square, index) => popIn(square, Math.min(index, 6) * 70));
+    }
     const page = shelf.parentElement && shelf.parentElement.closest('[data-dui-scroll]');
     if (!page) return;
     shelf._duiPage = page;

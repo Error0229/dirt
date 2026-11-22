@@ -554,7 +554,7 @@
 .dui-shelf-fold:hover{background:var(--surface-2);color:var(--text)}
 .dui-shelf-fold .dui-i{transition:transform var(--d-snap) var(--sp-snap)}
 .dui-shelf:not([data-folded]) .dui-shelf-fold .dui-i{transform:rotate(180deg)}
-.dui-shelf-minis{flex:1;min-width:0;display:flex;align-items:center;gap:6px;padding:3px 2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;transition:opacity 140ms var(--e-std)}
+.dui-shelf-minis{position:relative;flex:1;min-width:0;display:flex;align-items:center;gap:6px;padding:3px 2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;transition:opacity 140ms var(--e-std)}
 .dui-shelf-minis::-webkit-scrollbar{display:none}
 .dui-shelf:not([data-folded]) .dui-shelf-minis{opacity:0;pointer-events:none;transition:opacity 120ms var(--e-in)}
 .dui-mini-at{display:contents}
@@ -673,3 +673,19 @@
 .dui-voice-keep:active{transform:scale(.9)}
 .dui-voice-keep .dui-i{width:18px;height:18px}
 .dui-set-value{font-size:13.5px;color:var(--text-2);flex:none}
+
+/* ---- Typewriter (7.7, 7.14): the paragraphs but the caret's at 40% while
+   typing. The script sets the caret's paragraph's top and foot in the field
+   (--dui-tw-a, --dui-tw-b) and marks the field while it dims; the mask's
+   strength is a registered property, so it fades: in over 200 ms, out over
+   400 ms. With reduced motion it changes at once. */
+@property --dui-tw-dim{syntax:'<number>';inherits:false;initial-value:1}
+@property --dui-tw-a{syntax:'<length>';inherits:false;initial-value:0px}
+@property --dui-tw-b{syntax:'<length-percentage>';inherits:false;initial-value:100%}
+[data-dui-typewriter][data-dui-tw]{--dui-tw-dim:1;-webkit-mask-image:linear-gradient(to bottom,rgba(0,0,0,var(--dui-tw-dim)) var(--dui-tw-a),#000 var(--dui-tw-a),#000 var(--dui-tw-b),rgba(0,0,0,var(--dui-tw-dim)) var(--dui-tw-b));mask-image:linear-gradient(to bottom,rgba(0,0,0,var(--dui-tw-dim)) var(--dui-tw-a),#000 var(--dui-tw-a),#000 var(--dui-tw-b),rgba(0,0,0,var(--dui-tw-dim)) var(--dui-tw-b));transition:--dui-tw-dim var(--d-4) var(--e-std),--dui-tw-a var(--d-2) var(--e-std),--dui-tw-b var(--d-2) var(--e-std)}
+[data-dui-typewriter][data-dui-tw][data-dui-dim]{--dui-tw-dim:.4;transition:--dui-tw-dim var(--d-2) var(--e-std),--dui-tw-a var(--d-2) var(--e-std),--dui-tw-b var(--d-2) var(--e-std)}
+:root[data-motion="reduced"] [data-dui-typewriter][data-dui-tw]{transition:none}
+@media (prefers-reduced-motion:reduce){[data-dui-typewriter][data-dui-tw]{transition:none}}
+/* A field's part under the window's top row moves the window (7.6), so it
+   shows the arrow there (dirt-ui.js). */
+.dui-drag-row{cursor:default}

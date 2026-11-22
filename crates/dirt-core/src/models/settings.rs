@@ -93,11 +93,14 @@ pub enum FocusStyle {
     Rail,
     /// Slide, and a calmer page: warmer paper, larger type.
     Zen,
+    /// Slide, and the line being typed held at the optical line, the
+    /// other paragraphs dimmed while typing.
+    Typewriter,
 }
 
 impl FocusStyle {
     /// Every style, in the order the interface offers them.
-    pub const ALL: [Self; 3] = [Self::Slide, Self::Rail, Self::Zen];
+    pub const ALL: [Self; 4] = [Self::Slide, Self::Rail, Self::Zen, Self::Typewriter];
 
     /// The name the style is stored under and the style sheet knows it by.
     #[must_use]
@@ -106,6 +109,7 @@ impl FocusStyle {
             Self::Slide => "slide",
             Self::Rail => "rail",
             Self::Zen => "zen",
+            Self::Typewriter => "typewriter",
         }
     }
 
@@ -116,6 +120,7 @@ impl FocusStyle {
             Self::Slide => "Slide",
             Self::Rail => "Rail",
             Self::Zen => "Zen",
+            Self::Typewriter => "Typewriter",
         }
     }
 
@@ -123,6 +128,50 @@ impl FocusStyle {
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|style| style.name() == name)
+    }
+}
+
+/// When the desktop's list gets out of the way as a note is written
+/// (interface design, section 7.14). Kept on the device, like the style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FocusBegins {
+    /// At the first pause in typing, or a new line: the first key only
+    /// fades the controls. The default.
+    #[default]
+    Pause,
+    /// At the first key, by the chosen style, without moving the words:
+    /// the column is held where it was, and what would move or re-wrap the
+    /// lines waits for the pause.
+    FirstKey,
+}
+
+impl FocusBegins {
+    /// Each choice, in the order the interface offers them.
+    pub const ALL: [Self; 2] = [Self::Pause, Self::FirstKey];
+
+    /// The name it is stored under and the style sheet knows it by.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Pause => "pause",
+            Self::FirstKey => "first_key",
+        }
+    }
+
+    /// The name a person reads.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Pause => "After a pause",
+            Self::FirstKey => "On the first key",
+        }
+    }
+
+    /// The choice stored under `name`, if this build has one of that name.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|begins| begins.name() == name)
     }
 }
 
@@ -172,6 +221,9 @@ pub struct Settings {
     pub capture_hotkey: String,
     /// How the desktop's list gets out of the way while a note is written.
     pub focus_style: FocusStyle,
+    /// When it does.
+    #[serde(default)]
+    pub focus_begins: FocusBegins,
     /// What is kept of a thought said aloud.
     #[serde(default)]
     pub voice_recording: VoiceRecording,
@@ -191,6 +243,7 @@ impl Default for Settings {
             accent: Accent::Clay,
             capture_hotkey: "Ctrl+Shift+D".to_string(),
             focus_style: FocusStyle::Slide,
+            focus_begins: FocusBegins::Pause,
             voice_recording: VoiceRecording::Keep,
             microphone: None,
         }
@@ -224,5 +277,14 @@ mod tests {
         }
         assert_eq!(FocusStyle::default(), FocusStyle::Slide);
         assert_eq!(FocusStyle::from_name("dim"), None);
+    }
+
+    #[test]
+    fn when_focus_begins_is_found_by_the_name_it_is_stored_under() {
+        for begins in FocusBegins::ALL {
+            assert_eq!(FocusBegins::from_name(begins.name()), Some(begins));
+        }
+        assert_eq!(FocusBegins::default(), FocusBegins::Pause);
+        assert_eq!(FocusBegins::from_name("later"), None);
     }
 }

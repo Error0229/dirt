@@ -127,8 +127,17 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
                 let now = *open.peek();
                 open.set(!now);
             }
-            (Some("a"), _) if shift => screen.choose_files(),
+            // Attach (7.14): the key every program opens a file with.
+            (Some("o"), _) if !shift => screen.choose_files(),
             (Some("c"), _) if shift => screen.copy_note(),
+            // Archive, in a note (7.14). Ctrl Del, which it was, deletes
+            // the next word in a text field, and is the text's again. On an
+            // archived note it does nothing: its box is "put back in the list".
+            (Some("e"), _) if !shift && at == Where::Page => {
+                if let Some(open) = screen.open_note() {
+                    screen.archive_only(open);
+                }
+            }
             // Outside the text: the text's own undo is the field's, and
             // Find's is always Find's. A blank page has nothing of its own
             // to undo, and is where the cursor is after a note is archived
@@ -139,13 +148,11 @@ pub fn on_key(screen: &Screen, app: &AppState, event: &KeyboardEvent) {
                 screen.undo(None);
             }
             (_, Key::Enter) if at == Where::Page => screen.done(emptied),
-            (_, _) if is_delete(event) && at == Where::Page => {
+            // Delete for good. Without Shift, Ctrl Del (Cmd ⌫ on a Mac) is
+            // left to the text: the next word, or the line's start.
+            (_, _) if is_delete(event) && shift && at == Where::Page => {
                 if let Some(open) = screen.open_note() {
-                    if shift {
-                        screen.delete(open);
-                    } else {
-                        screen.archive_or_delete(open);
-                    }
+                    screen.delete(open);
                 }
             }
             _ => taken = false,
@@ -193,10 +200,10 @@ const KEYS: &[(&str, &str)] = &[
     ("Enter", "In the list: edit the note"),
     ("Del", "In the list: archive (delete, if archived)"),
     ("Shift Del", "In the list: delete for good"),
-    ("Ctrl Del", "In a note: archive (delete, if archived)"),
+    ("Ctrl E", "In a note: archive"),
     ("Ctrl Shift Del", "In a note: delete for good"),
     ("Ctrl Z", "Undo the archive or the delete"),
-    ("Ctrl Shift A", "Attach a file"),
+    ("Ctrl O", "Attach a file"),
     (
         "Space",
         "On a file: preview it. \u{2190} \u{2192} for the others, Esc or Space to close",

@@ -4,7 +4,7 @@
 //! device.
 
 use dioxus::prelude::*;
-use dirt_core::models::{FocusStyle, ThemeMode};
+use dirt_core::models::{FocusBegins, FocusStyle, ThemeMode};
 
 use crate::appearance::{theme_name, Appearance, Platform};
 use crate::components::{AccentDots, Segment, Segmented, TextSizeSlider};
@@ -24,6 +24,8 @@ pub(super) fn Look(
     on_appearance: EventHandler<Appearance>,
     focus_style: Option<FocusStyle>,
     on_focus_style: EventHandler<FocusStyle>,
+    focus_begins: Option<FocusBegins>,
+    on_focus_begins: EventHandler<FocusBegins>,
     platform: Platform,
 ) -> Element {
     // On Android the theme's segments are icons alone, as the mockup has
@@ -72,6 +74,31 @@ pub(super) fn Look(
                         value: style.name(),
                         onchange: move |value: String| {
                             on_focus_style.call(FocusStyle::from_name(&value).unwrap_or_default());
+                        },
+                    }
+                }
+            }
+            // When the list goes (7.14), with what the choice does in one
+            // grey line.
+            if let Some(begins) = focus_begins {
+                div { class: "dui-set-row",
+                    div { class: "dui-set-words",
+                        div { class: "dui-set-t", "Focus begins" }
+                        div { class: "dui-set-s",
+                            if begins == FocusBegins::FirstKey {
+                                "The list goes at the first key; the words stay put"
+                            } else {
+                                "The list goes when typing pauses"
+                            }
+                        }
+                    }
+                    Segmented {
+                        label: "Focus begins",
+                        small: true,
+                        segments: FocusBegins::ALL.iter().map(|begins| Segment::new(begins.name(), begins.label())).collect::<Vec<_>>(),
+                        value: begins.name(),
+                        onchange: move |value: String| {
+                            on_focus_begins.call(FocusBegins::from_name(&value).unwrap_or_default());
                         },
                     }
                 }

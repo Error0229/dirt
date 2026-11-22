@@ -20,18 +20,43 @@
 /* ---- The page ---------------------------------------------------------- */
 .dk-main{flex:1;min-width:0;position:relative;display:flex;flex-direction:column;background:var(--surface)}
 .dk-page-wrap{flex:1;min-height:0}
-.dk-page{padding:0 44px}
-/* The note's column. Its icons are in a gutter beside its first line, just
-   outside it, so that they travel with it (6.4). At rest it is in the
-   middle of the page, the room beside the list, once the page is wider
-   than the column and its margins (7.13): in a maximised or full-screen
-   window the note and its icons are where the eye goes, not pressed
-   against the list, and focus moves it by half the list's width however
-   wide the window is past that. Narrower, it fills the page, as before. */
+/* The page scrolls from the window's top edge, but the top 52 px move
+   the window (7.6): a line the keyboard brings into sight is kept below
+   them, where a click still puts the caret, as the shelf's room keeps it
+   above the files (6.5). */
+.dk-page{padding:0 44px;scroll-padding-top:52px}
+/* The note's column. At rest it is in the middle of the page, the room
+   beside the list, once the page is wider than the column and its margins
+   (7.13): in a maximised or full-screen window the note is where the eye
+   goes, not pressed against the list, and focus moves it by half the
+   list's width however wide the window is past that. Narrower, it fills
+   the page, as before. */
+/* Below the window's top row (52 px, which moves the window), the column
+   holds its text field; the text starts at the optical centre there (the
+   field's own padding, below). */
 .dk-col{position:relative;max-width:680px;width:100%;min-height:100%;display:flex;flex-direction:column;padding-top:52px}
-.dk-gutter{position:absolute;top:58px;left:calc(100% + 6px);display:flex;flex-direction:column;gap:2px;opacity:.6;transition:opacity 200ms var(--e-std);z-index:3}
-.dk-gutter:hover,.dk-gutter:focus-within{opacity:1}
-.dk-text{flex:1 0 auto;field-sizing:content;min-height:160px;width:100%;border:0;background:transparent;resize:none;padding:6px 0 18px;font-size:var(--note-size);line-height:1.65;color:var(--text);transition:font-size var(--d-2) var(--e-std)}
+/* The note's icons, at the window's right edge, in the middle of its
+   height (6.4, 7.14): out of the text and away from the window's own
+   buttons, clear of the drawn scrollbar's 10 px. They stay there whatever
+   the column does. Their top is fixed, the first two (66 px) centred:
+   what comes with focus or an archived note goes below, and nothing
+   already there moves. At rest at 60%, full on hover. */
+.dk-acts{position:absolute;top:calc(50% - 33px);right:14px;display:flex;flex-direction:column;gap:2px;opacity:.6;transition:opacity 200ms var(--e-std);z-index:5}
+.dk-acts:hover,.dk-acts:focus-within{opacity:1}
+/* The mic's place in a build without voice, so that the paperclip keeps
+   its own. */
+.dk-slot{display:block;width:32px;height:32px;flex:none}
+/* ‹ is the pointer's way back to the list only where the page lies over
+   it, below 720 px. */
+.dk-to-list{display:none}
+/* The text starts at the optical centre (6.4, 7.14): the first line's top
+   38% down the window, on the blank page and in a note alike. The text
+   grows downward from there, so nothing written moves while typing; a
+   long note scrolls as any page does, this room scrolling away above it.
+   The room is the field's own padding, so that a click in it puts the
+   caret in the text, as the mockup's does; never less than the 6 px the
+   field had. */
+.dk-text{flex:1 0 auto;field-sizing:content;min-height:160px;width:100%;border:0;background:transparent;resize:none;padding:max(6px,calc(38vh - 52px)) 0 18px;font-size:var(--note-size);line-height:1.65;color:var(--text);transition:font-size var(--d-2) var(--e-std)}
 .dk-text::placeholder{color:var(--text-3);opacity:calc(.75 * var(--dui-placeholder,1))}
 /* A note opens from the list's side of it, 18 px (snap); its files 50 ms
    behind (5.5). */
@@ -46,22 +71,27 @@
 @keyframes dk-from-below{from{transform:translateY(18px);opacity:.4}}
 @keyframes dk-from-above{from{transform:translateY(-18px);opacity:.4}}
 @keyframes dk-fade-in{from{opacity:0}}
-/* Between the blank page and a note, the gutter's icons that come (✓ and
-   the box, or the mic) pop in from 60%; the paperclip, on both, stays. The
+/* Between the blank page and a note, the edge's icons that come (the box,
+   or the mic) pop in from 60%; the paperclip, on both, stays. The
    mockup's do the same. From one note to another nothing changes there. */
-.dk-col[data-from="blank"] .dk-gutter>:not(.dk-stays),.dk-col.blank .dk-gutter>:not(.dk-stays){animation:dk-act-in var(--d-snap) var(--sp-snap) backwards}
+.dk-acts[data-from="blank"]>:not(.dk-stays),.dk-acts.blank>:not(.dk-stays){animation:dk-act-in var(--d-snap) var(--sp-snap) backwards}
 @keyframes dk-act-in{from{opacity:0;transform:scale(.6)}}
-:root[data-motion="reduced"] .dk-col .dk-text,:root[data-motion="reduced"] .dk-col .dk-files,:root[data-motion="reduced"] .dk-col .dk-gutter>*{animation:none}
-@media (prefers-reduced-motion:reduce){.dk-col .dk-text,.dk-col .dk-files,.dk-col .dk-gutter>*{animation:none}}
+:root[data-motion="reduced"] .dk-col .dk-text,:root[data-motion="reduced"] .dk-col .dk-files,:root[data-motion="reduced"] .dk-acts>*{animation:none}
+@media (prefers-reduced-motion:reduce){.dk-col .dk-text,.dk-col .dk-files,.dk-acts>*{animation:none}}
+
+/* Typewriter (7.7, 7.14): room under the text, so that its last line can
+   come up to the optical line (the window less the optical line and one
+   line). Kept while the style is chosen, in focus or not, so that the page
+   never jumps when focus ends with the end of a long note held high. */
+.dk[data-dui-focus="typewriter"] .dk-text{padding-bottom:calc(62vh - 1.65em)}
 
 /* ---- Listening (6.18): the page itself listens. Nothing is written; the
-   grains, the timer, ✕ and ✓ are at its bottom. The mic stays in the
-   gutter while it is held; the other icons go. */
+   grains, the timer, ✕ and ✓ are at its bottom. The mic stays at the
+   edge while it is held; the other icons go. */
 .dk-listening{position:absolute;inset:0;z-index:4;background:var(--surface);display:flex;flex-direction:column;justify-content:flex-end;padding:0 0 24px}
 /* The other icons go while the page listens. By display, not visibility,
-   which the web view was seen to leave stale on what is inside (#311); the
-   mic is first in the column, so nothing moves. */
-.dk-col:has(.dk-listening) .dk-gutter>:not(.dui-mic){display:none}
+   which the web view was seen to leave stale on what is inside (#311). */
+.dk-main:has(.dk-listening) .dk-acts>:not(.dui-mic){display:none}
 .dk-voice{width:100%}
 
 /* ---- The note's files: dirt-ui's shelf at the foot of the column (6.5) - */
@@ -91,17 +121,22 @@
 
 /* ---- Focus while writing (5.5, 6.4, 7.7) ---------------------------------
    data-dui-writing="hush" is the first key: only the controls fade.
+   ="fold" is the first key with Focus begins: On the first key (7.14):
+   the controls fade and the list goes, the note's column held in place.
    ="on" is focus, laid out by the style chosen (data-dui-focus). The
    leaving is the base state: the width comes back first, then the list's
    content. The entering is the state with the attribute: the content goes
    first, then the width folds, then the note's column follows. */
-.dk-gutter,.dk-wctl,.dk-side>:not(.dk-rail){transition:opacity 200ms var(--e-std)}
-.dk[data-dui-writing] .dk-gutter{opacity:0}
+.dk-acts,.dk-wctl,.dk-side>:not(.dk-rail){transition:opacity 200ms var(--e-std)}
+.dk[data-dui-writing] .dk-acts{opacity:0}
 .dk[data-dui-writing] .dk-wctl{opacity:0}
 .dk[data-dui-writing="hush"] .dk-side>:not(.dk-rail){opacity:.5}
-/* A control comes back only when the pointer goes where it lives, and
-   always while it has the keyboard's focus. */
-.dk[data-dui-writing] .dk-gutter[data-near],.dk[data-dui-writing] .dk-gutter:focus-within{opacity:1}
+/* The note's icons come back once the hand is on the mouse (the script's
+   data-dui-hand, 7.14), and not at a pause; the window's controls only
+   when the pointer goes where they live. Both always while they have the
+   keyboard's focus. */
+.dk[data-dui-writing][data-dui-hand] .dk-acts{opacity:.6}
+.dk[data-dui-writing] .dk-acts:hover,.dk[data-dui-writing] .dk-acts:focus-within{opacity:1}
 .dk[data-dui-writing] .dk-wctl[data-near]{opacity:.6}
 .dk[data-dui-writing] .dk-wctl:hover,.dk[data-dui-writing] .dk-wctl:focus-within{opacity:1}
 
@@ -132,7 +167,10 @@
   .dk-side>:not(.dk-rail){width:343px;flex-shrink:0}
   .dk-page{padding-left:max(44px,calc((100% - 680px) / 2));padding-right:max(44px,calc((100% - 680px) / 2));transition:padding var(--d-glide) var(--sp-glide) 0ms}
   .dk-main{transition:background-color 500ms var(--e-std) 120ms}
-  .dk-text{transition:font-size var(--d-glide) var(--sp-glide) 0ms,line-height var(--d-glide) var(--sp-glide) 0ms,padding var(--d-glide) var(--sp-glide) 0ms}
+  /* No padding in the transitions: the room above the text is in vh, and
+     a window maximised or resized puts the first line in its place at
+     once rather than gliding it there. */
+  .dk-text{transition:font-size var(--d-glide) var(--sp-glide) 0ms,line-height var(--d-glide) var(--sp-glide) 0ms}
   .dk-files{transition:opacity var(--d-3) var(--e-std)}
 
   /* Every style: the note's column glides to the middle (60 ms after the
@@ -141,10 +179,11 @@
   .dk[data-dui-writing="on"] .dk-side>:not(.dk-rail){transition:opacity 140ms var(--e-in) 0ms}
   .dk[data-dui-writing="on"] .dk-page{padding-left:max(44px,calc((100% - 680px) / 2));padding-right:max(44px,calc((100% - 680px) / 2));transition:padding var(--d-glide) var(--sp-glide) 150ms}
 
-  /* Slide and Zen: the list leaves to the left; the handle waits there. */
-  .dk[data-dui-writing="on"]:is([data-dui-focus="slide"],[data-dui-focus="zen"]) .dk-side{width:0;border-right-color:transparent}
-  .dk[data-dui-writing="on"]:is([data-dui-focus="slide"],[data-dui-focus="zen"]) .dk-side>*{opacity:0}
-  .dk[data-dui-writing="on"]:is([data-dui-focus="slide"],[data-dui-focus="zen"]) .dk-edge{display:block}
+  /* Slide, Zen and Typewriter: the list leaves to the left; the handle
+     waits there. */
+  .dk[data-dui-writing="on"]:is([data-dui-focus="slide"],[data-dui-focus="zen"],[data-dui-focus="typewriter"]) .dk-side{width:0;border-right-color:transparent}
+  .dk[data-dui-writing="on"]:is([data-dui-focus="slide"],[data-dui-focus="zen"],[data-dui-focus="typewriter"]) .dk-side>*{opacity:0}
+  .dk[data-dui-writing="on"]:is([data-dui-focus="slide"],[data-dui-focus="zen"],[data-dui-focus="typewriter"]) .dk-edge{display:block}
 
   /* Rail: the list folds to 56 px, and the rail of grains shows in it. */
   .dk[data-dui-writing="on"][data-dui-focus="rail"] .dk-side{width:56px}
@@ -152,15 +191,43 @@
   .dk[data-dui-writing="on"][data-dui-focus="rail"] .dk-side>.dk-list-wrap{transition:opacity 120ms var(--e-in) 280ms}
   .dk[data-dui-writing="on"][data-dui-focus="rail"] .dk-rail{opacity:1;pointer-events:auto}
 
+  /* Focus begins: On the first key (7.14). The list goes at the first key
+     by the chosen style, its content first, and the note's column is held
+     where it was: its left margin is the room the list gives up, read from
+     the page's own width at every frame (100% less the window's 100vw, plus
+     where the column was), so no transition is needed and its edge stays
+     on its pixel while the list folds; its right margin keeps its width.
+     At the pause it glides to the middle and widens as in every style,
+     but in a window wider than 1112 px, where it already sits half the
+     list's width from there, it stays held for the whole of focus. Leaving,
+     the hold is kept until the list is back (the glide's length), then
+     gives way to the same place. */
+  .dk[data-dui-writing="fold"] .dk-side{transition:width var(--d-glide) var(--sp-glide) 90ms,background-color 400ms var(--e-std),border-color 400ms var(--e-std)}
+  .dk[data-dui-writing="fold"] .dk-side>:not(.dk-rail){transition:opacity 140ms var(--e-in) 0ms}
+  .dk[data-dui-writing="fold"]:is([data-dui-focus="slide"],[data-dui-focus="zen"],[data-dui-focus="typewriter"]) .dk-side{width:0;border-right-color:transparent}
+  .dk[data-dui-writing="fold"]:is([data-dui-focus="slide"],[data-dui-focus="zen"],[data-dui-focus="typewriter"]) .dk-side>*{opacity:0}
+  .dk[data-dui-writing="fold"]:is([data-dui-focus="slide"],[data-dui-focus="zen"],[data-dui-focus="typewriter"]) .dk-edge{display:block}
+  .dk[data-dui-writing="fold"][data-dui-focus="rail"] .dk-side{width:56px}
+  .dk[data-dui-writing="fold"][data-dui-focus="rail"] .dk-side>:not(.dk-rail){opacity:0;pointer-events:none}
+  .dk[data-dui-writing="fold"][data-dui-focus="rail"] .dk-side>.dk-list-wrap{transition:opacity 120ms var(--e-in) 280ms}
+  .dk[data-dui-writing="fold"][data-dui-focus="rail"] .dk-rail{opacity:1;pointer-events:auto}
+  .dk[data-dui-begins="key"]:not([data-dui-writing]) .dk-page{transition:padding 0s linear var(--d-glide)}
+  .dk[data-dui-writing="fold"] .dk-page{padding-left:calc(100% - 100vw + 344px + max(44px,(100vw - 1024px) / 2));padding-right:max(44px,(100vw - 1024px) / 2);transition:padding 0s}
+
   /* Zen: Slide, and the paper warms, the type grows by 4 px with more
-     line height, the text starts lower, its top and bottom fade, and the
-     files and the window's controls go. It deepens in stages. */
+     line height, its top and bottom fade, and the files and the window's
+     controls go. It deepens in stages. The text no longer starts lower:
+     it starts at the optical line already, and moving it at the pause
+     would move the words being written (7.14). */
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main{background:var(--bg);transition:background-color 600ms var(--e-std) 260ms}
-  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-text{font-size:calc(var(--note-size) + 4px);line-height:1.8;padding-top:56px;transition:font-size var(--d-glide) var(--sp-glide) 300ms,line-height var(--d-glide) var(--sp-glide) 300ms,padding var(--d-glide) var(--sp-glide) 300ms}
+  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-text{font-size:calc(var(--note-size) + 4px);line-height:1.8;transition:font-size var(--d-glide) var(--sp-glide) 300ms,line-height var(--d-glide) var(--sp-glide) 300ms}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::before,.dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::after{opacity:1;transition:opacity 500ms var(--e-std) 420ms}
-  /* The note's icons stay beside its first line, which starts lower. */
-  .dk-gutter{transition:opacity 200ms var(--e-std),top var(--d-glide) var(--sp-glide)}
-  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-gutter{top:114px;transition:opacity 200ms var(--e-std),top var(--d-glide) var(--sp-glide) 300ms}
+}
+
+/* Focus begins: On the first key, in a window wider than 1112 px: the
+   column held through the whole of focus, with no glide (7.14). */
+@media (min-width:1113px){
+  .dk[data-dui-begins="key"][data-dui-writing="on"] .dk-page{padding-left:calc(100% - 100vw + 344px + max(44px,(100vw - 1024px) / 2));padding-right:max(44px,(100vw - 1024px) / 2);transition:padding 0s}
 }
 
 /* ---- The keys (Ctrl /) ------------------------------------------------ */
@@ -180,6 +247,7 @@
   .dk-main{display:none}
   .dk[data-over] .dk-main{display:flex;position:absolute;inset:0;z-index:20}
   .dk-page{padding:0 56px 0 20px}
+  .dk-to-list{display:inline-grid}
   /* The list reaches the window's top right, where the window's own
      controls are: Find stops short of them. */
   .dk[data-dui-drag] .dk-find{padding-right:151px}

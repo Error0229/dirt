@@ -35,7 +35,7 @@
     "page": { "desktop": ".dk-col", "android": ".dui-grow.dm-page", "mockup-desktop": "#d-ed", "mockup-android": "#m-ed" },
     "text": { "desktop": ".dk-text", "android": ".dm-page-body", "mockup-desktop": "#d-text", "mockup-android": "#m-ed .m-ed-body" },
     "bar": { "android": ".dm-page-bar", "mockup-android": "#m-ed .m-ed-bar" },
-    "gutter": { "desktop": ".dk-gutter" },
+    "icons": { "desktop": ".dk-acts" },
     "card": {
       "desktop": ".dk-side [role='option'][data-key]",
       "android": ".dm-list .dui-card",
@@ -65,13 +65,15 @@
     },
     {
       "name": "close",
-      "description": "Done is pressed: back to the list.",
+      "description": "Done: Esc on the desktop, which has no ✓ (design 7.14); ⌄ on Android. Back to the list.",
       "steps": [
+        { "platforms": ["desktop"], "key": "Escape" },
+        { "platforms": ["mockup-desktop"], "click": "#d-text", "stay": true },
+        { "platforms": ["mockup-desktop"], "key": "Escape" },
         {
+          "platforms": ["android", "mockup-android"],
           "click": {
-            "desktop": ".dk-gutter button[aria-label='Done']",
             "android": ".dm-page-bar button[aria-label='Done']",
-            "mockup-desktop": "#D [data-act='settle']",
             "mockup-android": "#M [data-act='m-back']"
           }
         }

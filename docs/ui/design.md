@@ -70,19 +70,24 @@ wins.
    title field, no Save, no sign-in wall.
 2. **A thought gets a page, not a box.** Writing happens on a page that
    grows with the thought. Enter is a new line; no key saves, because the
-   page saves itself from the first word. Done with it (Esc, or ✓), it
-   settles onto the pile and a blank page is ready for the next. Finding
-   has a field of its own, one key away.
+   page saves itself from the first word. Done with it (Esc on the
+   desktop, or + to start the next; ⌄ on Android), it settles onto the
+   pile and a blank page is ready for the next. Finding has a field of its
+   own, one key away.
 3. **Act on the thing.** You archive a note by swiping it or hovering it,
    not by opening a menu. You attach a file by dropping it on the window.
    You sync by pulling the list down. A button exists only where there is
    no gesture for it, and every button is an icon with a tooltip.
 4. **Only the note you're in.** When a note is open, what is on screen is
-   that note. The list and the window's controls go while you write. A
-   control comes back only when the pointer goes to where it lives (the
-   note's icons beside its column, the window's in the top corner, the list
-   at the left edge), never just because the mouse moved. Nothing on screen
-   talks about anything else.
+   that note: its words, and as little as possible besides them. The list,
+   the window's controls and the note's own icons go while you write. A
+   control comes back when the pointer goes to where it lives (the
+   window's in the top corner, the list at the left edge), not just
+   because the mouse moved. **The one exception is the note's icons.** Once
+   a hand is back on the mouse, typing has stopped, so they are no longer
+   noise: they come back at the window's right edge, where the pointer
+   cannot miss them. Only a deliberate movement counts, never a bump
+   (7.14). Nothing on screen talks about anything else.
 5. **As few words as possible.** Words appear only when something needs
    the person: a note that can't sync, a device asking to join, a note just
    deleted. Everything that always works says nothing (saving, syncing),
@@ -107,8 +112,8 @@ wins.
 - A row of every tag. Tags are asked for, from Find (6.3).
 - A one-line box that makes a note on Enter. Thoughts are longer than a
   line, and a key that saves at once makes the person hurry.
-- Controls that come back whenever the mouse moves, or that sit in the
-  window's corner, away from the note they act on.
+- Controls that come back at a bump of the mouse, and controls beside the
+  window's own buttons, where a press meant for one lands on the other.
 - "Saved", "Synced", "Edited 4 minutes ago", key hints on screen, and
   messages under a thought being written such as "No notes match".
 
@@ -193,9 +198,10 @@ How the counts were brought down, compared with the current apps:
   pile at the end, and a footer with the sync icon, + (a new note, 7.12)
   and Settings. While a note is being written the list goes (7.7).
 - **Right:** **the page.** With no note open it is blank, with the cursor
-  in it, its placeholder and two icons in its gutter (🎙, 📎). An open note
-  is the same page, with ✓, 📎 and the archive box in the gutter (6.1,
-  6.4). An archived note has "back to the list" and 🗑 instead (6.19).
+  in it, its first line 38% down the window (6.4), its placeholder, and
+  two icons at the window's right edge (🎙, 📎). An open note is the same
+  page, with 📎 and the archive box at the edge (6.1, 6.4). An archived
+  note has "put back in the list" and 🗑 instead (6.19).
 - **Narrower than 720 px:** the list takes the whole window and a note
   opens over it, as on Android.
 - **Over everything:** Settings (a panel), quick capture (its own small
@@ -235,13 +241,13 @@ How the counts were brought down, compared with the current apps:
 
 | Feature (from feature-parity.md) | Desktop | Android |
 |---|---|---|
-| Write a note | The page, always open; it saves itself. <kbd>Esc</kbd> or ✓ when done | The bar at the bottom opens a page; it saves itself |
+| Write a note | The page, always open; it saves itself. <kbd>Esc</kbd> when done, or + for the next | The bar at the bottom opens a page; it saves itself |
 | Say a note | Hold 🎙 on the blank page; hold <kbd>Ctrl Alt N</kbd> from any app | Hold the mic in the dock; the widget's mic; a hardware key where the phone allows it (6.18) |
 | Edit a note | The open note, saved as you type | The same. No Save button |
 | Archive a note | The box on hover, <kbd>Del</kbd> in the list, the box in the note | Swipe left; the box in the note |
 | Archived notes | Found by Find, under their own line after the rest; all of them from "archived" under the pile | The same |
 | Delete a note for good | <kbd>Shift Del</kbd>; on an archived note, the bin or <kbd>Del</kbd> | On an archived note, swipe left or the bin |
-| Bring a note back | **Undo** on the toast, <kbd>Ctrl Z</kbd>; on an archived note, "back to the list" | The same, without the key |
+| Bring a note back | **Undo** on the toast, <kbd>Ctrl Z</kbd>; on an archived note, "put back in the list" | The same, without the key |
 | List notes, show older | The list loads more as it nears the end. No button | The same |
 | Search | Find, at the top of the list: <kbd>Ctrl F</kbd>, <kbd>Ctrl K</kbd> or <kbd>/</kbd> | 🔍 at the top |
 | Narrow to a tag, tag counts | `#` in Find: the six most used tags, with counts, narrowing as you type. Chosen tags are tokens in Find | `#` in Find: a strip of tags under it |
@@ -257,7 +263,7 @@ How the counts were brought down, compared with the current apps:
 | Sync now | The sync status, <kbd>Ctrl R</kbd> | Pull the list down; the sync icon |
 | Sync status, waiting notes and files, problems | The sync status (icon + word), tooltip, Settings → Sync | The sync icon (with a dot), Settings → Sync |
 | Open a note that can't sync | Settings → Sync → the note | The same |
-| Attach a file | Drop it; paperclip; <kbd>Ctrl Shift A</kbd>; paste a picture | Paperclip on a page or in a note; Share |
+| Attach a file | Drop it; paperclip; <kbd>Ctrl O</kbd>; paste a picture | Paperclip on a page or in a note; Share |
 | Look at a file | The preview, inside the app (6.16) | The same |
 | Open in another app, save a copy, remove a file | Icons on the file, on hover, and in the preview | Icons on the file, and in the preview |
 | Thumbnails | In the file, and on the note's card | The same |
@@ -458,11 +464,11 @@ run time. Fall back to the system UI font.
 |---|---|
 | magnifier | Find |
 | mic | Talk: hold to speak and let go, or tap for hands-free (6.18). On a card, "said, not typed" |
-| check ✓ | Done: put this thought on the pile; while listening, keep what was said |
+| check ✓ | Keep: while listening, keep what was said; on Android's capture sheet, keep the thought. The desktop's page has no ✓ (7.14) |
 | chevron down ⌄ | Done with a new page on Android |
 | hash `#` | Tags: shows the few most used, to narrow to or to add |
 | box | Archive: out of the list, still in the pile and in Find |
-| box with an arrow up | Back to the list, on an archived note |
+| box with an arrow up | Put back in the list, on an archived note |
 | bin | Delete for good |
 | paperclip | Attach; on a card, "has files" |
 | copy | Copy the note's text |
@@ -599,14 +605,14 @@ this document are approximate; the tokens here are the real ones.
 
 | Moment | Motion |
 |---|---|
-| The first word on the blank page | Nothing jumps: the page simply becomes a note, and the list starts to leave (focus, 7.7). The layout moves at the first pause, not the first character, on purpose (7.12) |
-| A new thought is let go (<kbd>Esc</kbd>, ✓) | **Settling**, in four beats. The words shrink toward where they began and fade (280 ms, on their own curve, 5.4), and the note's grain, in its own shade, pops out there (150 ms). The grain is tossed: up 46 px on the toss curve, then down onto the top of the list on gravity, moving across on a curve all the while (480–640 ms by distance). Where it lands the row appears (snap, from 96%), the rows below give 3 px and come back one after another, 24 ms apart, and seven specks of dust puff out and fall. The blank page is ready from the first beat; only its placeholder fades back in (300 ms from 140 ms, enter). A sync arriving mid-flight does not show the row early |
+| The first word on the blank page | Nothing jumps: the page simply becomes a note, and the list starts to leave (focus, 7.7). The layout moves at the first pause, not the first character, on purpose (7.12). With Focus begins: On the first key, the list leaves at once and the words still stay where they are (7.14) |
+| A new thought is let go (<kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd>, +) | **Settling**, in four beats. The words shrink toward where they began and fade (280 ms, on their own curve, 5.4), and the note's grain, in its own shade, pops out there (150 ms). The grain is tossed: up 46 px on the toss curve, then down onto the top of the list on gravity, moving across on a curve all the while (480–640 ms by distance). Where it lands the row appears (snap, from 96%), the rows below give 3 px and come back one after another, 24 ms apart, and seven specks of dust puff out and fall. The blank page is ready from the first beat; only its placeholder fades back in (300 ms from 140 ms, enter). A sync arriving mid-flight does not show the row early |
 | A new page is let go on Android (⌄, Back) | The page closes to a 7 px circle where its words began (300 ms, on its own curve, 5.4); the grain is tossed from there onto the top card, as above |
 | An old note is let go | No grain. Its words fade where they were (140 ms, exit), its row's highlight fades (150 ms, standard), and the blank page's placeholder fades back in (300 ms from 140 ms, enter); the list comes back if it had gone, and the note is in its place. With reduced motion the page is simply blank (7.12) |
 | A note arrives from another device | It settles into place from 8 px above (snap) and its row flashes clay-soft for 1.6 s |
 | The list narrows or reorders | Rows that stay slide to their new places (snap); new ones settle in from 8 px above (snap), staggered 24 ms, the seventh and later together |
 | Selecting a note | One highlight, with its clay bar, slides from the old row to the new one, stretching to the new row's height (snap). Nothing fades, but where no row was chosen before (the blank page): there it fades in where it lands (150 ms, standard), as it fades when the note is let go (5.8) |
-| A note opens in the editor | Its text and then its files come from the direction of the list: from below if the note is further down, from above if further up, 18 px (snap, the files 50 ms behind). From the blank page, or with no place in the list to come from, they fade in where they are (snap, the files 50 ms behind), and the gutter's icons that come with a note (✓, the box) pop in from 60% (snap); going back to the blank page the mic pops in the same way (5.8) |
+| A note opens in the editor | Its text and then its files come from the direction of the list: from below if the note is further down, from above if further up, 18 px (snap, the files 50 ms behind). From the blank page, or with no place in the list to come from, they fade in where they are (snap, the files 50 ms behind), and the edge's icon that comes with a note (the box) pops in from 60% (snap); going back to the blank page the mic pops in the same way (5.8) |
 | A note is archived | It sinks into the pile: its grain appears at the row's left edge and falls on gravity's curve, fading (720 ms), while the row folds shut and the rows below rise into its place (snap) |
 | A note is deleted | The row tears away to the left: 28 px, shrinking to 96%, fading (170 ms, exit). The rows below rise into the gap on snap, starting 110 ms after it began to tear |
 | Undo | The row drops back into its place from 90% with a bounce (pop) |
@@ -640,7 +646,7 @@ this document are approximate; the tokens here are the real ones.
 |---|---|
 | Quick capture opens | The box comes into focus: from 97% and 10 px up, blurred 10 px, to sharp (snap; the blur over 260 ms on enter), fading in over 280 ms (standard) |
 | Quick capture is put away (<kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd>, a click outside) | The page shrinks to its grain and flies to the tray on an arc: across quickly (`cubic-bezier(.25,.65,.45,1)`), down slowly then fast (`cubic-bezier(.6,0,.9,.45)`), so the path curves (600 ms). The tray icon pulses once as it lands: a ring in the accent grows from 40% to 260% and fades (560 ms, enter). With nothing written it only fades (280 ms, standard) |
-| A file is attached | Its tile grows out of the paperclip, or out of the point it was dropped on, and bounces into place (pop). Several files follow one another, 70 ms apart. A folded shelf unfolds for them first (6.5) |
+| A file is attached | The shelf stays folded (6.5). The new file's square pops into the folded line where it lands, from 30% (the pop spring, 600 ms; opaque a third of the way in), and the count changes. Several follow one another, 70 ms apart. On a shelf the person has unfolded, the tile grows out of the paperclip, or out of the point it was dropped on, and bounces into place (pop), as before. With reduced motion either only fades in (90 ms) |
 | The files fold and unfold | The tiles' room under the shelf's line closes, or opens (glide), the shelf's top edge with it, while the text above stays still. Folding, the tiles fade (120 ms, exit) and the files' squares fade in on the line (140 ms, standard); unfolding, the squares fade (120 ms, exit) and the tiles fade in (200 ms, standard, from 60 ms). The chevron turns (snap) (6.5) |
 | A preview opens and closes | The file grows out of its tile (420 ms, enter) and shrinks back into it (320 ms, standard), the backdrop, the buttons, the dots and the name fading with it both ways (280 ms, standard): the whole screen changes as one movement. With reduced motion it fades in where it is, and what is around it fades in 90 ms (6.16, 5.8) |
 | The next file in the preview | It comes in 48 px from the side it was asked for from (280 ms, enter). A file read after its thumbnail was shown fades in where the thumbnail was |
@@ -650,13 +656,15 @@ this document are approximate; the tokens here are the real ones.
 
 | Moment | Motion |
 |---|---|
-| The first key | Nothing moves. Only the controls fade: the note's icons and the window's to nothing, the list to half (200 ms, standard). The words being typed stay exactly where they were |
-| The first pause | 600 ms without a key, or the first new line, and focus comes in by the chosen style, below. Each key before that waits it out again |
+| The first key | Nothing moves. Only the controls fade: the note's icons at the edge and the window's to nothing, the list to half (200 ms, standard). The words being typed stay exactly where they were |
+| The first key, with Focus begins: On the first key (7.14) | The note's icons and the window's fade (200 ms, standard), and the list leaves at once by the chosen style: its content fades (140 ms, exit) and 90 ms later it folds (glide). The column does not move: the page's margin grows as the list shrinks, on the same curve from the same moment, so its left edge stays on its pixel and its lines do not re-wrap. Zen's paper and type, and Typewriter's line and dim, wait for the pause |
+| The first pause | 600 ms without a key, or the first new line, and focus comes in by the chosen style, below. Each key before that waits it out again. The note's icons do not come back: a pause is thinking, and icons blinking at each pause would be noise. With On the first key the list has gone already: in a window wider than 1112 px nothing moves at the pause, and narrower the column glides to the middle and widens (glide), as Slide's does |
 | Slide in | The list's content fades out (140 ms, exit); 90 ms later the list folds to nothing (glide); 60 ms after that the note's column glides to the middle (glide). Three moves, overlapping, each led by the one before |
 | Rail in | The rows fold to the left one after another, 18 ms apart; the list narrows to 56 px (glide); then the dots pop into the rail top to bottom, 24 ms apart (pop) |
 | Zen in | As Slide, then the paper warms (600 ms, standard, from 260 ms), the type grows by 4 px (glide, from 300 ms), and the top and bottom of the text fade in last (500 ms, from 420 ms). It deepens in stages |
+| Typewriter in | As Slide. Then the line being typed stays on the optical line, 38% down the window, where every note starts (6.4): each new line moves the text up by a line, the scroll made at once and the text eased up from where it was drawn on the snap spring (380 ms), so that a quick run of lines is one movement, taken up from wherever it is. At most three lines are eased; the rest of a longer move, and a paste or an undo altogether, is made at once. While typing, every paragraph but the caret's dims to 40% (200 ms, standard); 1.5 s without a key brings them all back to full (400 ms, standard). With reduced motion the text moves at once and the dim changes at once |
 | Out, any style | Reversed and quicker: the width returns first (glide) while the list's content fades in (200 ms, standard), the rows in sight arriving in a cascade from the left, 14 px, from 230 ms, 22 ms apart (snap) |
-| The pointer during focus | A control fades in (200 ms) only when the pointer comes within 64 px of it: the note's icons in the gutter, the window's controls in the top corner, the list's handle at the left edge. Moving anywhere else shows nothing, and the layout never moves |
+| The pointer during focus | The window's controls fade in (200 ms) only when the pointer comes within 64 px of their corner, and the list's handle only near the left edge. The note's icons fade back in at the window's right edge (200 ms, standard), with + while the list is folded away, once the hand is back on the mouse: the pointer has moved 40 px from where it was first seen since the last key. The layout never moves |
 
 **Voice (6.18)**
 
@@ -762,13 +770,13 @@ The most important component is the **page**: where a thought is written.
 | | Desktop | Android |
 |---|---|---|
 | Where | The right side of the window, always there. With no note open it is blank, with the cursor in it | The bar at the bottom, "What's on your mind?", grows into a full-screen page (glide) |
-| Blank | Only the placeholder "What's on your mind?", and 🎙 and 📎 in its gutter | The placeholder; the top bar has ⌄, 🎙 (8.10) and 📎 |
+| Blank | Only the placeholder "What's on your mind?", its first line 38% down the window, and 🎙 and 📎 at the window's right edge | The placeholder; the top bar has ⌄, 🎙 (8.10) and 📎 |
 | The first word | Makes the note. From then on it saves itself, as any note does, and the list leaves (7.7) | The same |
 | <kbd>Enter</kbd> | A new line. No key ever saves | The same |
-| Done | <kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd> or ✓: the thought settles onto the pile (5.5) and the page is blank again, the cursor still in it | ⌄ or Back: the page closes into a grain that drops onto the list |
+| Done | <kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd>, <kbd>Ctrl N</kbd>, or + under the list (at the edge while the list is folded away): the thought settles onto the pile (5.5) and the page is blank again, the cursor still in it. There is no ✓ (7.14) | ⌄ or Back: the page closes into a grain that drops onto the list |
 | Nothing written | Done does nothing. A note emptied again is let go without a word. Spaces and line breaks alone are nothing written; a file with no words under it is a note | The page goes back into the bar |
 | Tags | With the list narrowed to `#work`, a new page gets `#work` at its end, where it can be seen and removed | The same |
-| Files | Drop one on the page, or 📎: the page becomes a note with the file | 📎 |
+| Files | Drop one on the page, paste one, or 📎 (<kbd>Ctrl O</kbd>): the page becomes a note with the file | 📎 |
 
 Before, one field wrote and found, and a note was made the moment Enter was
 pressed. That made writing a one-line act: anything longer meant writing
@@ -860,31 +868,52 @@ rule, and what was typed after `#`. Settled when it was built:
 ### 6.4 Editor
 
 An open note is the same page (6.1): its text, its files on the shelf at
-its foot (6.5), and its icons in a **gutter beside its first line**, just outside the text
-column: ✓ (done), 📎 and the archive box. On an archived note the box
-gives way to "back to the list" and 🗑 (6.19). On the blank page the gutter
-holds 🎙 and 📎.
-Copy is in the right-click menu and <kbd>Ctrl Shift C</kbd>, not an icon.
+its foot (6.5), and on the desktop its icons at **the window's right
+edge**, in the middle of its height: 📎 and the archive box. On an
+archived note the box gives way to "put back in the list" and 🗑 (6.19). On
+the blank page the edge holds 🎙 and 📎. There is no ✓ on the desktop:
+<kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd>, <kbd>Ctrl N</kbd> and the + under
+the list put a thought away (7.14). Copy is in the right-click menu and
+<kbd>Ctrl Shift C</kbd>, not an icon.
 
-The icons belong to the note, so they sit by the note and travel with it:
-when the column glides to the middle in focus, its gutter goes with it.
-They never share the top row with the window's controls. That put two
-clusters of grey icons side by side, one for the note and one for the
-window, a few pixels apart, and far from the text when the column was in
-the middle.
+**The text starts at the optical centre.** On the desktop the first line
+of the page, blank or a note, sits 38% down the window, not at its top:
+where the eye rests on a page, a little above the middle. The text grows
+downward from there, so nothing already written moves while typing, and a
+note longer than the window scrolls as any page does. The cost is accepted:
+a long note opens with its first line 38% down, and its start is a scroll
+away from the top. Centring the whole text was weighed and left out: it
+grows both ways, so every new line would move the lines above it (7.14).
 
-At rest the icons show at 60%, full on hover. While writing they go, and
-come back only when the pointer comes within 64 px of the gutter (200 ms).
-The window's controls do the same at their corner, and the list's handle
-at the left edge. A mouse moving anywhere else brings nothing back. A
-control that has the keyboard's focus always shows, whatever the pointer
-does, and so does one touched on a touch screen.
+**Where the icons are, and when.** Beside the column, as they were, they
+moved with it into focus and sat in the reading line's margin. At the top
+right they would share the corner with the window's ✕, where a Done beside
+✕ invites closing the app by mistake. At the right edge, in the middle of
+the window's height, they are far from the window's buttons, out of the
+text, and the easiest target on the screen for a pointer: it cannot
+overshoot an edge. They stay there whatever the column does.
+
+| State | At the right edge |
+|---|---|
+| Blank page, before typing | 📎, with 🎙 above it where the build has voice (6.18). Archive has nothing to act on yet |
+| Reading an opened note | 📎 and the box, at 60%, full on hover. An archived note shows its own pair (back to the list, 🗑) in the box's place |
+| From the first key typed | Nothing |
+| A pause in typing | No change. A pause is thinking, and icons blinking at each pause would be noise |
+| The hand back on the mouse after typing | The icons come back (200 ms), at 60%, full on hover; the list and the window's buttons do not. While the list is folded away (focus), + comes with them, under the others, so that it is never shown twice. Only a deliberate movement counts: the pointer 40 px from where it was first seen since the last key. The next key sends them away again |
+| Narrower than 720 px | The page lies over the list, so the edge also holds ‹, "Show the list" (<kbd>Esc</kbd>), the pointer's way back, which puts the thought away as Esc does |
+| Keyboard focus on an icon | Always shown, whatever the pointer does; so is every icon touched on a touch screen |
+
+Each icon's tooltip gives its key: 📎 "Attach a file" <kbd>Ctrl O</kbd>,
+the box "Archive" <kbd>Ctrl E</kbd>, 🗑 "Delete for good"
+<kbd>Ctrl Shift Del</kbd>. While a note has no files, 📎's tooltip also
+says it can take a dropped or pasted file: "Attach a file, or drop or
+paste one".
 
 **At any size** the column is at most 680 px wide, the measure of a
 readable line, and on the desktop it is in the middle of the room it has:
-beside the list at rest, in the window while writing. Its icons and its
-shelf go where it goes. What a wide window, a maximised one among them,
-and a short one do is settled in 7.13.
+beside the list at rest, in the window while writing. Its shelf goes where
+it goes; its icons stay at the edge. What a wide window, a maximised one
+among them, and a short one do is settled in 7.13.
 
 No title field, no formatting, no Save, no "Saved", no "Edited 4 minutes
 ago" (the row in the list has the time, and its tooltip the full date).
@@ -963,10 +992,10 @@ very end, out of reach.
 | Why there | Directly under the text, it would move down with every line typed: a movement under the eye while writing, which 7.12 keeps out of the first character too. Docked by the editor's bar, it would sit with the controls, which go while writing (6.4, 7.7) and are actions, not things. At the foot it never splits the text, never moves as the text grows, is in reach at any scroll of a long note, and on Android is where the thumb is, as the dock is |
 | Folded | One line, 40 px high: a chevron and the count ("1 file", "3 files"), then a square for each file, 32 px (40 dp on Android), its thumbnail or its kind (a note of music for a sound, a page for anything else). As many as fit show, and the rest are a sideways scroll or swipe away, with no bar drawn, as on the tag strip. A square previews its file, so looking at a file stays one action (section 2), and the preview grows out of the square and shrinks back into it. On a kind the preview does not show, a square unfolds the shelf and gives the keyboard to its tile's first icon, as a press on the tile does (6.16); on Android, where the tile's icons always show, the keyboard stays with the text if the text had it, since taking it would put the keyboard away and resize the page under the unfolding (#322). The preview shrinks back into whichever the shelf shows, the square or the tile, never the other, which is see-through and inert; if the squares or the tiles have been scrolled away from it, they are scrolled to bring it into sight first, under the backdrop, and if it still cannot mostly be seen the file fades where it is |
 | Unfolded | The same line, its chevron turned, and under it the tiles: two to a row in the desktop's column, one on Android. At most three rows (178 px) and a third of the window (34%) high; more scroll inside it, with the drawn scrollbar (6.15). The squares go from the line: they would say again what the tiles say |
-| When a note opens | Unfolded with one or two files, folded with three or more (`dirt_ui::files::UNFOLDED_MOST`), counted once, at the first reading of its files that finds any: a note opened with none, to which a sync then brings ten, shows them folded. One or two tiles are one row on the desktop, and two on Android: little more than the line itself. It was three and more that took the room |
-| Then | Only the person folds or unfolds it, or files attached here (below). A file that a sync brings, or one removed, here or elsewhere, changes nothing: the first version counted the files again at every reading, so a third file from another device folded an open shelf by itself, with the keyboard's focus falling out of it, and removing one of three in the preview unfolded it under the preview (review, #329) |
+| When a note opens | Folded, whatever the count (7.14). One line is the least a shelf can be, and the squares on it still preview each file in one press. The first version unfolded a note of one or two files (`UNFOLDED_MOST`, gone): one row of tiles, 58 px on the desktop and more on Android, under the text the person came to read |
+| Then | Only the person folds or unfolds it. A file attached here, one that a sync brings, or one removed, here or elsewhere, changes nothing: the first version counted the files again at every reading, so a third file from another device folded an open shelf by itself, with the keyboard's focus falling out of it, and removing one of three in the preview unfolded it under the preview (review, #329) |
 | Not kept | The choice holds while the note is open, and goes with it. Kept for each note, it would be a view of the note that each device keeps for itself, since it must not sync: it is how one screen shows a note, not the note, and has no place in the note's document. Each device would also have to let go of it when the note is purged, all for thoughts that are mostly opened a few times. A rule gives the same shelf every time and on every device, and the other state is one press away |
-| Attaching | Files attached here (the paperclip, a drop, a paste, a recording said into the note on Android) unfold the shelf, so that their tiles are seen growing out of where they came from (5.5). Only if the attach added a file, by the app's own count of what it attached, not by what the next reading happens to find new (a sync's reading may list the files first): one refused (a note's twenty reached) changes nothing, and what an attach leaves to be seen belongs to the note it was made to, used up by the next reading of that note's files or by the opening of another, so that it never unfolds a later note. Files that arrive by a sync do not: nothing moves under the person for what another device did |
+| Attaching | Files attached here (the paperclip, a drop, a paste, a recording said into the note on Android) do not unfold the shelf (7.14). The new file's square pops into the folded line and the count changes (5.5), which the live region tells a screen reader as before. Unfolding for an attach took 58 px or more from the text at once, in one frame on the desktop (the motion check's `files-attach`), for files the person had just chosen and knew. On a shelf the person has unfolded, the new tile grows out of where it came from, as before. A file that arrives by a sync pops in the same way: the line is the same line, and the count changed |
 | Folding and unfolding | A press on the line, or <kbd>Enter</kbd> or <kbd>Space</kbd> while it has the keyboard. Its movement is in 5.5. With reduced motion the room and the chevron change in 90 ms (5.6) and the fades stay |
 | The keyboard | The line is one stop for <kbd>Tab</kbd>. Folded, each square is one more and the tiles are out of the order (`inert`); unfolded, the squares are out and the tiles' parts are in, as 6.16 has them. The preview gives the keyboard back to the square or the tile it was opened from. A press on the line or on a square leaves the keyboard's focus in the note's text (`data-dui-keep-focus`): the cursor stays, and Android's keyboard stays up |
 | A screen reader | The line is a button named by its count, "3 files", expanded or collapsed, which controls the tiles. The count is told by a polite live region beside the shelf, there as long as the note is open, so that the first file attached and the last removed ("No files") are told too; it says nothing until the files change, so opening a note is not told. It is one node all that while: the shelf and the region are one template, since a second template for "no shelf" made the region anew on the first file and the last, already holding its words, which a screen reader does not read (second review, #329). What it goes by (the count at the opening, and whether it has changed) is kept with the note's files and starts again at each opening, since on Android the shelf outlives a note closed and opened again. A square is "Preview: kitchen.png", or "Show its icons: install.sh" |
@@ -975,7 +1004,9 @@ very end, out of reach.
 | Tried | 1, 3, 12, 16 and 20 files of mixed kinds (pictures, PDFs, sounds, text, a `.zip`), on the desktop from its smallest window (360 × 320) to 3840 × 2160, and on the Android emulator (8.12). Forty cannot be attached: a note holds twenty (`MAX_FILES_PER_NOTE`, `docs/LIMITS.md`), and a picture's thumbnail counts as one of them, so twenty is the most a shelf holds |
 
 It is `dirt_ui::files::FileShelf`, the same for both apps; its line is
-`ShelfFrame`, which the gallery shows too, and a square `FileMini`.
+`ShelfFrame`, which the gallery shows too, and a square `FileMini`. The
+squares are a list the script watches as it watches the tiles
+(`data-dui-list`), so a new one pops in where it lands.
 
 ### 6.6 Sync status
 
@@ -1072,8 +1103,9 @@ beside the rail until something redrew it (#311). Android's WebView had
 done the same to the page that grows out of its card (5.5). So nothing
 with children is shown and hidden by toggling `visibility`, in either app:
 it goes by `display`, or by opacity with no pointer and `inert`. The
-desktop's gutter icons, which go while the page listens (7.11), go by
-`display`.
+desktop's edge icons, which go while the page listens (7.11), go by
+`display`, and so do ‹ at 720 px and wider and + while the list is
+there.
 
 ### 6.10 Buttons
 
@@ -1351,7 +1383,7 @@ the row or card a new thought lands on asks for with `data-dui-settle`.
 | | Settled |
 |---|---|
 | Which thoughts settle | A new thought with words, made on the page from a blank one, when it is let go by any of the ways 6.1 gives (on Android ⌄ or Back). A note opened from the list goes back to its place with no grain (5.5), and so does a page that was emptied again, or one with files and no words: there are no words to gather |
-| Where the grain starts (desktop) | The page is taken as the key or press that lets it go comes (<kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd>, <kbd>Ctrl N</kbd>, ✓), before the app has heard of it: its words, where they are and in which type. The script empties the page on <kbd>Esc</kbd> at once (7.9), so it is read just before |
+| Where the grain starts (desktop) | The page is taken as the key or press that lets it go comes (<kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd>, <kbd>Ctrl N</kbd>, +), before the app has heard of it: its words, where they are and in which type. The script empties the page on <kbd>Esc</kbd> at once (7.9), so it is read just before |
 | Where the grain starts (Android) | Where the page closes to its 7 px circle: the start of its text. The page closes on a circle shrinking to that point (the mockup's clip from a rounded rectangle to a circle cannot be played: a browser jumps between two shapes that differ in kind) |
 | The row it lands on | Held out of sight until the grain lands, by an animation, which a redraw of the list leaves alone, so a sync arriving mid-flight does not show it early. Brought into sight first if the list was scrolled away from it. Where the grain started is kept 1.5 s (1.2 s on Android): a row marked later only fades in |
 | The pile's drop | The note was made at its first character, so its grain was in the heap already, unseen behind the page. The newest grain is drawn on its own on top, and drops as the thought lands, if the heap is in sight. A note from another device adds its grain without a drop |
@@ -1401,7 +1433,7 @@ are made the next time it runs.
 
 | | Desktop | Android |
 |---|---|---|
-| In the app | 🎙 in the blank page's gutter. The page itself listens: the grains and the timer, ✕ and ✓ at the bottom | The mic in the dock. A sheet rises over the lower half of the screen |
+| In the app | 🎙 at the blank page's edge (6.4). The page itself listens: the grains and the timer, ✕ and ✓ at the bottom | The mic in the dock. A sheet rises over the lower half of the screen |
 | From anywhere | **Hold** <kbd>Ctrl Alt N</kbd>: quick capture opens listening, and letting go keeps it. A tap still opens it for typing | The widget's mic (hands-free, ✓ to keep). Where the phone lets a hardware key open an app (double-press the side key on Samsung; Quick Tap on Pixel), Dirt's **Talk** opens straight into listening, over the lock screen too, and ends on a pause |
 | Into a note being written | Not offered: type, or use the system's own dictation | 🎙 in the note's top bar adds what is said at the end of the note, once its words are made, and the recording to the note's files (8.10) |
 
@@ -1453,14 +1485,14 @@ not exist at all.
 | | Archive | Delete |
 |---|---|---|
 | What it does | Takes the note out of the list. It stays a grain in the pile, is found by Find, syncs, and is exported | Removes the note everywhere, as now: kept marked deleted for thirty days so the delete can sync and be undone, then purged |
-| Desktop | The box on hover, <kbd>Del</kbd> in the list, the box in the note's gutter, <kbd>Ctrl Del</kbd> in a note | <kbd>Shift Del</kbd> (<kbd>Ctrl Shift Del</kbd> in a note). On an archived note: the bin, or <kbd>Del</kbd> |
+| Desktop | The box on hover, <kbd>Del</kbd> in the list, the box at the note's edge, <kbd>Ctrl E</kbd> in a note | <kbd>Shift Del</kbd> (<kbd>Ctrl Shift Del</kbd> in a note). On an archived note: the bin, or <kbd>Del</kbd> |
 | Android | Swipe a card left; the box in the note's bar | On an archived note: swipe left, or the bin |
 | Then | Toast "Archived · **Undo**". The note sinks into the pile (5.5) | Toast "Note deleted · **Undo**" |
 | Finding it | Find shows archived matches after the rest, under a line "Archived". "3 archived" under the pile lists them all, newest first; <kbd>Esc</kbd> or ‹ goes back | Gone |
-| Bringing it back | Its "back to the list" icon (a box with an arrow up), or **Undo** | **Undo**, or <kbd>Ctrl Z</kbd> |
-| An archived note | Opens and edits as any note. Its gutter shows "back to the list" and the bin instead of the box; its title is a shade lighter in lists | |
+| Bringing it back | Its "put back in the list" icon (a box with an arrow up), or **Undo** | **Undo**, or <kbd>Ctrl Z</kbd> |
+| An archived note | Opens and edits as any note. Its edge shows "put back in the list" and the bin instead of the box; its title is a shade lighter in lists | |
 | Not an edit | Archiving, and bringing back, change neither the note's text nor its edit time, so the note keeps its layer. A note deleted on another device stays deleted: archiving does not bring it back, as an edit would | |
-| Editing an archived note | Leaves it archived. Only "back to the list" or **Undo** brings it back | |
+| Editing an archived note | Leaves it archived. Only "put back in the list" or **Undo** brings it back | |
 | Two devices choose differently | One choice holds, the same on every device, as for any single value in a note | |
 | Its tags | Narrowing to a tag is finding, so archived notes with the tag are shown, after the rest and under the same line "Archived". The count beside a tag counts them, and a tag that only archived notes carry is still offered: a thought put away can be found by its tag | |
 | Deleted, then brought back | Comes back archived, and into its place: it keeps the edit time it had (7.8) | |
@@ -1511,7 +1543,7 @@ Everything can be done without the mouse.
 | Keys | Does |
 |---|---|
 | <kbd>Ctrl Alt N</kbd> | Quick capture, from any app. **Held**: talk; letting go keeps it |
-| <kbd>Esc</kbd> or <kbd>Ctrl Enter</kbd> in a note | Done: a new thought settles onto the pile, and the page is blank again |
+| <kbd>Esc</kbd> or <kbd>Ctrl Enter</kbd> in a note | Done: a new thought settles onto the pile, and the page is blank again. There is no ✓ on the desktop (7.14) |
 | <kbd>Ctrl N</kbd> | New note: the same, from anywhere in the window; + at the foot of the list does it with the pointer (7.12) |
 | <kbd>Ctrl F</kbd>, <kbd>Ctrl K</kbd> or <kbd>/</kbd> | To Find, its text selected |
 | <kbd>Enter</kbd> in Find | Open the first note found |
@@ -1523,10 +1555,11 @@ Everything can be done without the mouse.
 | <kbd>Esc</kbd> in the list | Back to the page |
 | Any letter in the list | To Find, and type it |
 | <kbd>Enter</kbd> / <kbd>Esc</kbd> while listening | Keep / throw away |
-| <kbd>Del</kbd> in the list, <kbd>Ctrl Del</kbd> in a note | Archive (delete, if the note is already archived) |
+| <kbd>Del</kbd> in the list | Archive (delete, if the note is already archived) |
+| <kbd>Ctrl E</kbd> in a note | Archive. On an archived note it does nothing: its box is "put back in the list" there (7.14) |
 | <kbd>Shift Del</kbd> in the list, <kbd>Ctrl Shift Del</kbd> in a note | Delete for good |
 | <kbd>Ctrl Z</kbd> outside the text | Undo the archive or the delete |
-| <kbd>Ctrl Shift A</kbd> | Attach a file |
+| <kbd>Ctrl O</kbd> | Attach a file |
 | <kbd>Space</kbd> on a file | Preview it; <kbd>←</kbd> <kbd>→</kbd> for the others, <kbd>Esc</kbd> or <kbd>Space</kbd> to close |
 | <kbd>Ctrl Shift C</kbd> | Copy the note's text |
 | <kbd>Ctrl R</kbd> | Sync now |
@@ -1567,14 +1600,16 @@ system's own, is settled in 7.12.
 
 The system's title bar goes. The app reaches the top edge of the window:
 Find sits at the very top of the list, and the window's controls have the
-top row of the page to themselves; the note's icons sit beside the note
-(6.4). Nothing says "Dirt"; the window is the app.
+top row of the page to themselves; the note's icons are at the window's
+right edge, in the middle of its height (6.4). Nothing says "Dirt"; the
+window is the app.
 
 ```
 ┌──────────────────────────────────┬──────────────────────────────────────┐
 │ ( 🔍 Find                    # ) │                          │ —  ▢  ✕  │
-│  Ask Jordan about the Q3…    4m  │  Note text…                       ✓  │
-│                                  │                                   📎 │
+│  Ask Jordan about the Q3…    4m  │                                      │
+│                                  │  Note text…                       📎 │
+│                                  │                                   ▢  │
 ```
 
 | | Windows and Linux | macOS |
@@ -1585,9 +1620,14 @@ top row of the page to themselves; the note's icons sit beside the note
 | Find | Full width of the list | Starts 84 px in, after the buttons |
 | While writing | Gone. They come back when the pointer comes to the top-right corner | The same, at the top left |
 
-- **Moving the window:** any empty part of the top 52 px drags it. Find,
-  the tag list, buttons and icons are not part of it. A
-  double-click there maximises or restores, as a title bar's does.
+- **Moving the window:** any empty part of the top 52 px drags it, and so
+  does the note's text where a scrolled page passes under that row (7.14):
+  the arrow shows there, not the I-beam, and the page keeps the caret's
+  line below the row (`scroll-padding-top`). Find, the tag list, buttons
+  and icons are not part of it. A double-click there maximises or
+  restores, as a title bar's does. A Shift+click or a selection dragged
+  from inside the row moves the window instead; that is the trade for a
+  row that always moves it.
 - **Close** hides the window to the tray; Dirt keeps running so the hotkey
   works. **Quit** is in the tray menu.
 - **Resizing** from the edges still works: Windows keeps its resize border
@@ -1617,23 +1657,27 @@ the maximise button ourselves, which tao does not expose (section 11).
 ### 7.7 Focus while writing
 
 Principle 4 says that while a note is written, only the note is on screen.
-There are three ways to get there, each good at something, and the person
+There are four ways to get there, each good at something, and the person
 chooses in Settings → Appearance → **Focus while writing**. **Slide** is
 the default.
 
 Focus starts at the first pause in typing on the page (600 ms without a
 key) or the first new line, whether a new thought or an old note. On the
 first key only the controls fade; the column does not move under a word
-being typed (5.5). During focus nothing comes back just because the mouse moved: each
-control returns only when the pointer goes to where it lives (6.4), and the
-layout never jumps. The list comes back by the way each style shows, or by
-<kbd>Esc</kbd>, which ends any of them and leaves a blank page.
+being typed (5.5). Settings → Appearance → **Focus begins** can bring the
+list's leaving forward to the first key, still without moving a word
+(7.14). During focus nothing comes back just because the mouse moved: the
+window's controls and the list return only when the pointer goes to where
+they live, the note's icons when the hand is back on the mouse (6.4), and
+the layout never jumps. The list comes back by the way each style shows,
+or by <kbd>Esc</kbd>, which ends any of them and leaves a blank page.
 
 | Style | What happens | Way back | Good for |
 |---|---|---|---|
 | **Slide** (default) | The list slides out to the left and folds to nothing; the note's column glides to the middle of the window | Take the pointer to the left edge: a 4 px handle grows there as the pointer nears, and the list slides back. Or <kbd>Esc</kbd> | Quick thoughts: one motion out, one back, nothing left half-visible |
 | **Rail** | The list folds to a 56 px rail of grains in their own shades of sand (6.17): the notes the list holds, newest at the top, as many as fit, and the rail scrolls for the rest. Where a month starts, a short line with its initial. The open note's grain is a clay bar | The chevron at the top of the rail, or <kbd>Esc</kbd> | Moving between notes while writing: a dot's tooltip gives its note's title, and a click opens that note without leaving focus |
-| **Zen** | Slide, and more: the paper warms from `--surface` to `--bg`, the type grows by 4 px with more line height, the text starts lower, the top and bottom of the text fade, the files and window controls go | As Slide | Writing at length: the calmest page |
+| **Zen** | Slide, and more: the paper warms from `--surface` to `--bg`, the type grows by 4 px with more line height, the top and bottom of the text fade, the files and window controls go | As Slide | Writing at length: the calmest page |
+| **Typewriter** | Slide, and the line being typed stays on the optical line, 38% down the window, where notes start, so turning it on moves nothing: the text above scrolls up as lines are added. While typing, the other paragraphs dim to 40%; at a pause (1.5 s) everything returns to full, since a pause is when you re-read. Moving the caret into another paragraph, by the arrow keys or a click, makes it the current one. A note of one paragraph never dims. One setting: there is no separate switch for the dim | As Slide | Writing a long run of text: the eye stays on one line, and what came before keeps quiet |
 
 How each enters and leaves, step by step, is in 5.5 under "Focus while
 writing". None needs anything from the platform.
@@ -1654,7 +1698,7 @@ title bar (7.6) came after it, in step 3b, and what that settled is in 7.9.
 |---|---|
 | The chosen row | The chosen row is the note on the page. Pressing a row opens the note with the cursor in its text. <kbd>↑</kbd> <kbd>↓</kbd> in the list open each note without leaving the list; <kbd>↑</kbd> on the first row goes back to Find, and <kbd>Home</kbd> and <kbd>End</kbd> go to the ends. The list is one stop for <kbd>Tab</kbd>; the chosen row's tags and box are the stops after it, and no other row's |
 | Archive or delete from the list | <kbd>Del</kbd> and <kbd>Shift Del</kbd> in the list move the choice to the row below (above, at the end) and leave the keyboard in the list. From the note, or by a row's box, the page is blank afterwards with the cursor in it |
-| <kbd>Ctrl Z</kbd> | Outside the text, as 7.4 says, and also on a blank page, which has nothing of its own to undo and is where the cursor is after <kbd>Ctrl Del</kbd> in a note. It undoes the last archive or delete only, once |
+| <kbd>Ctrl Z</kbd> | Outside the text, as 7.4 says, and also on a blank page, which has nothing of its own to undo and is where the cursor is after <kbd>Ctrl E</kbd> in a note. It undoes the last archive or delete only, once |
 | A tag pressed on a row | Added to the tags chosen, as a token; the others stay |
 | <kbd>↓</kbd> in Find | Into the list of tags while it is open, and into the notes otherwise |
 | Layers | Only the list is in layers. While Find holds words or tags the notes are in the order found, and only the line "Archived" divides them (6.19). The list of archived notes, from "3 archived", is newest first with no layers |
@@ -1693,16 +1737,16 @@ What 7.6, 7.7 and 6.4's second half left open, settled in step 3b.
 | When focus begins | At the first key on the page only the controls fade (200 ms): the note's icons and the window's to nothing, the list to half. Focus comes after 600 ms with no key, or at the first new line. Text that changes with no key in the 400 ms before (pasted with the mouse) brings it at once, as the mockup does |
 | When focus ends | Done (Esc and the rest), a note opened from the list, the keyboard going into Find or the list, the handle at the left edge, the rail's chevron, archiving or deleting the open note. A note opened from the rail keeps it. It never ends by itself, and a mouse move alone never ends it |
 | Narrower than 720 px | Only the controls fade; the list is already under the page, so there is nothing to fold |
-| Nearness | A control is near when the pointer is within 64 px of its box: the note's gutter, and the window's controls as one group. The left edge's handle is 14 px wide, grows when the pointer is within 60 px of it and brings the list back when the pointer is on it. Only a pointer that moves counts, and only after focus began: a resting pointer, or a list sliding away under one, brings nothing back. A touch on a touch screen shows them all until the next key |
+| Nearness | A control is near when the pointer is within 64 px of its box: the window's controls as one group. The note's icons were brought back the same way, beside the column; since 7.14 they come back with the hand on the mouse, at the window's edge. The left edge's handle is 14 px wide, grows when the pointer is within 60 px of it and brings the list back when the pointer is on it. Only a pointer that moves counts, and only after focus began: a resting pointer, or a list sliding away under one, brings nothing back. A touch on a touch screen shows them all until the next key |
 | The rail | The notes the list holds, newest first, with the archived ones when Find holds something, as the list does. A month's initial, over a short line, where the month changes, not above the first. Each grain is one of four slightly irregular rounds, chosen by its note's grain (6.17). The rail scrolls; its scrollbar is not drawn |
-| Zen | The note's icons move down with its first line, which starts 56 px lower |
+| Zen | The note's icons moved down with its first line, which started 56 px lower. Since 7.14 the icons are at the window's edge and the text starts at the optical line, so neither moves in Zen |
 | The window's size | 1100 by 720 px at first, no smaller than 360 by 320. Where it was left (7.1) is not kept yet |
 | Resizing (Windows) | The system's border is outside the page on the left, the right and the bottom. At the top the web view lies over it, so the app draws a 5 px top edge and 8 px corners, and a press there hands the resizing to the system |
 | The top row | A press on an empty part of the top 52 px moves the window; a second press within 500 ms and 5 px of the first on the screen is the double-click, and maximises or restores. A pointer's press carries no count of clicks, so the script counts them; on the screen, not in the page, since after a short drag the window has moved with the pointer |
 | Close | ✕ hides the window to the tray, as the system's close did, with the tooltip "Close to tray" and <kbd>Alt F4</kbd> |
 | Linux and macOS | Keep the system's title bar for now: the window without one has not been tried there (the plan's fallback; manual checklist D44). The Linux handles and the macOS traffic lights of 7.6 come when they can be tried |
 | Snap Layouts | Built without the flyout, the default of the owner's decision (section 11). Snapping by dragging to an edge, and <kbd>Win Z</kbd>, are the system's and still work |
-| The style | Settings → Appearance → Focus while writing, kept on the device as `focus_style` |
+| The style | Settings → Appearance → Focus while writing, kept on the device as `focus_style`; Focus begins as `focus_begins` (7.14) |
 | Find beside the window's controls | Narrower than 720 px the list reaches the top right corner, where the window's controls are, so Find stops short of them there |
 
 ### 7.10 Settled when quick capture was built
@@ -1740,10 +1784,10 @@ note, Settings → Voice) holds there too.
 
 | | Settled |
 |---|---|
-| The mic on the page | In the blank page's gutter, above the paperclip; not on an open note (6.18: "Into a note being written: not offered"). Its tooltip: "Hold to talk, or tap". It is shown only where the build has the speech model, since no icon is shown that does nothing |
+| The mic on the page | At the blank page's edge, above the paperclip (6.4); not on an open note (6.18: "Into a note being written: not offered"). Its tooltip: "Hold to talk, or tap". It is shown only where the build has the speech model, since no icon is shown that does nothing |
 | The gesture's numbers | The mockup's: a press let go within 280 ms is a tap; a slide 60 px up while held listens on, hands-free; 90 px to the left throws it away. A click from the keyboard (Enter or Space on the mic) is a tap. A press the system takes away throws it away |
 | From the press | The press starts listening at once: the view shows the grains and the timer, and the microphone opens beside the window's thread. Here it was hearing 128 ms after the press, the engine's libraries loaded the first time. Released before it is open, it ends as soon as it is |
-| While the page listens | Over the page, at its bottom: the grains, the timer from the first second, ✕ and ✓. The page's other icons go; the mic stays in the gutter, grown to 132%, while it is held. ✓ has the keyboard, so <kbd>Enter</kbd> keeps and <kbd>Esc</kbd> throws away. The grains are drawn by the script from the level Rust gives twenty times a second: the sound's loudness, from −55 dBFS (still) to −15 (the loudest) |
+| While the page listens | Over the page, at its bottom: the grains, the timer from the first second, ✕ and ✓. The page's other icons go; the mic stays at the edge, grown to 132%, while it is held. ✓ has the keyboard, so <kbd>Enter</kbd> keeps and <kbd>Esc</kbd> throws away. The grains are drawn by the script from the level Rust gives twenty times a second: the sound's loudness, from −55 dBFS (still) to −15 (the loudest) |
 | Holding the hotkey | <kbd>Ctrl Alt N</kbd> opens quick capture at once for typing, as before. Once the keys have been down for 280 ms, the mic's line between a tap and a hold, and nothing has been typed, the box listens in the text's place; letting go keeps it. The microphone opens only then, so a tap never opens it. While it listens <kbd>Enter</kbd> keeps and <kbd>Esc</kbd> throws away, and a click outside keeps what was said. Kept, the box shrinks to the new note's grain and goes to the tray as a typed thought does (7.10); thrown away or with nothing heard, it fades |
 | Nothing heard | Silero's detector found no speech in the recording: the view shakes once (320 ms) and goes, and nothing is made, wherever it listened |
 | The note | Made at once, with no words, under an ID the app makes so that its grain can settle before the store has made it. Its one file is the recording, "Voice recording.opus" (`audio/ogg`), marked in its document as its voice recording. Until it has its words its row is named "Voice · 0:12", in whole seconds as the timer and the player count them, with the mic in place of the paperclip ("Said, not typed"). The mic stays once the words have come, while the recording is on the note |
@@ -1803,12 +1847,47 @@ any window of its size.
 
 | | Settled |
 |---|---|
-| The column at rest | In the middle of the page, the room beside the list, once the page is wider than the column and its 44 px margins: a window wider than 1112 px. Narrower, it fills the page between its margins, as before, so nothing changes at the first size or in the mockup, whose window is at most 1000 px. The icons stay beside the text's first line wherever the column is |
+| The column at rest | In the middle of the page, the room beside the list, once the page is wider than the column and its 44 px margins: a window wider than 1112 px. Narrower, it fills the page between its margins, as before, so nothing changes at the first size or in the mockup, whose window is at most 1000 px. The icons stayed beside the text's first line wherever the column was; since 7.14 they are at the window's edge |
 | Into focus | In a window wider than 1112 px the column glides from the middle of the page to the middle of the window: to the left, as the list leaves to the left, by half the list's width (172 px; 144 px with Rail), however wide the window. Narrower, nothing changed: the column fills the page and glides to the middle as it always did, by up to the list's width less the margins (277 px at 900 px wide). Coming back is the same glide the other way |
 | Its width | 680 px however wide the window. A longer line is harder to read, and the room left over is margin, as on paper. The text size (<kbd>Ctrl +</kbd>) changes the type, not the measure |
-| Short windows | At the smallest window (360 × 320), at 1100 × 320 and at 2560 × 400, the icons (58 px down, 100 px tall), the text and the folded shelf (62 px) all show. The unfolded shelf takes at most a third of the window (6.5) |
+| Short windows | At the smallest window (360 × 320), at 1100 × 320 and at 2560 × 400, the icons (58 px down, 100 px tall), the text and the folded shelf (62 px) all show. The unfolded shelf takes at most a third of the window (6.5). Since 7.14 the text starts 38% down (122 px at 320 high) and the icons are in the middle of the edge |
 | Tried | On a test copy of the app off the screen, laid out at each size by DevTools (a window of its own cannot be maximised without coming onto the person's screen): 1100 × 720; 720 × 720; 1536 × 816, a 1080p screen at 125%, maximised; 1920 × 1032 and 1920 × 1080; 1707 × 960, a 1440p screen at 150%; 2560 × 1440; 2560 × 1440 at 1.5×, a 2160p screen at 150%; 3840 × 2160; 2560 × 400; 1100 × 320; 360 × 320. At rest and in focus. The window really maximised, at the screen's own scaling, is the manual checklist's (D106) |
 | The motion check | `focus-wide`, at 2560 × 1440: a note opened from the list, a new line (focus), the pointer to the left edge (back). The scenario takes the window's size from DevTools (`viewport`), as the tool now can |
+
+### 7.14 Settled when the page was made quiet
+
+The owner's decision, after several rounds of design: while someone reads
+or types a note, the screen holds as little as possible besides the
+words. Six changes, on the desktop, and the shelf on both apps. Where a
+section above said otherwise it now points here.
+
+| | Settled |
+|---|---|
+| The optical start | The page's first line, blank or a note, has its top 38% down the window: under the window's top row (52 px, which moves the window), the text field's own top padding is `max(6px, calc(38vh - 52px))`. At 720 px high that is 274 px; at 320 px, 122 px. The room is the field's, not the column's, so a click in it puts the caret in the text, as in the mockup: as padding on the column it took no click, some 550 px of a maximised window (review, #331). Measured: a click 124 px above the first line of a blank page gave the field the caret at its start, and one on a note's room put it in the text. Scrolled, the text passes under the window's top row, and the field gives that row to the window (`data-dui-drag-through`): a press in the top 52 px over the column still moves the window, and two maximise it, where they had put the caret on a half-hidden line and selected a word (second review, #331). Measured with the page scrolled 540 px: at y = 20 over the column the press is the field's and the row takes it; at y = 300 it is the text's. Nothing is drawn over the text for it. The room's height is not among the field's transitions, so a window maximised or resized puts the first line in its place at once rather than gliding it there. The text grows downward, so nothing written moves while typing; a long note scrolls as any page does, the room above its first line scrolling away with it. At every width, the page over the list below 720 px included. The column's place across the window and its glide into focus are 7.13's, unchanged |
+| The edge | The note's icons are one column of 32 px buttons, 2 px apart, 14 px in from the window's right edge (clear of the drawn scrollbar's 10 px strip), the first two centred on the page's height. First the one that changes with the page (🎙 on the blank page, or its empty place in a build without voice; the box on a note; "put back in the list" on an archived one), then 📎, then what comes and goes: 🗑 on an archived note, kept apart from "put back in the list" so that a press meant for one does not land on the other, + in focus, and ‹ below 720 px. So 📎 never moves as the blank page becomes a note, and what comes is added below with nothing above it moving: centred as a whole, the column moved 17 px when + came with focus (the motion check's `quiet-page`). The page's margin below 720 px stays 56 px on the right, so the text never runs under them; above it the column's own margins (at least 44 px) leave room. They do not move with the column. While the page listens (7.11) the others go by `display` and the mic stays |
+| Done | ✓ is gone from the desktop: by the window's ✕ it invited closing the app by mistake, and beside the column it was a fourth icon for what four other ways already did. <kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd> and <kbd>Ctrl N</kbd> put a thought away, and so does + under the list (at the edge while the list is folded away), since starting the next thought puts the current one away. The script's emptying of the page on those keys (7.9) is unchanged. Android keeps ⌄ (8.12) |
+| Narrower than 720 px | The page lies over the list and + is under it, so the pointer had no way back once ✓ went. The edge holds ‹ there, "Show the list" (<kbd>Esc</kbd>), which does what Esc does. It is drawn always and shown only below 720 px (`display`) |
+| "Put back in the list" | The archived note's box with an arrow, on both apps, was named "Back to the list", which below 720 px sat on the same edge as ‹ "Show the list": a press meant to go back could take the note out of the archive (review, #331). It is named for what it does to the note |
+| The hand on the mouse | `dirt-ui`'s script marks the screen `data-dui-hand` when, after typing (`data-dui-writing`), a mouse or pen has moved 40 px or more in a straight line from where it was first seen since the last change typed. Any change the person makes in a text field takes the mark away and starts the measure again: it is the field's `input` that is heard, not its keys, so a character an input method composes (every key of Pinyin, Japanese or Korean is "Process"), an AltGr letter, <kbd>Ctrl Backspace</kbd> and a paste count as typing; the first version heard only keys that were one character, <kbd>Enter</kbd>, <kbd>Backspace</kbd> or <kbd>Del</kbd>, and the icons stayed through all such typing (review, #331). A shortcut that changes nothing (<kbd>Ctrl O</kbd>) leaves them, and so does a change the script makes itself, and so do changes made with the mouse: a paste from the app's own menu, a drop, a paste after a press (a middle click), and a slider or a box ticked (only text fields count). The pointer leaving the window only starts the measure again: the hand is still on the mouse, and what it brought back stays. Distance from a point, not a path summed: the small shakes of a hand resting on a mouse add up along a path but stay within a few pixels of where they began, and Chromium's own moves after a layout change (the list folding under a still pointer) have no distance at all. 40 px is about the width of an icon and its gap, more than a desk knocked or a palm brushing a touchpad usually gives, and a fraction of a deliberate reach for the edge (over 300 px from the column at 1100 × 720). The number is the script's `HAND_PX`. The motion check's `quiet-page` moves 80 px over the text in 8 steps, which brings them back; in the mockup, which has the same rule, 20 px did not and 60 px did. How it feels on a real mouse and touchpad is the manual checklist's (D114). A touch on a touch screen shows them too, as before |
+| What comes back | The note's icons, at 60% and full on hover, and + while the list is folded away: in focus at 720 px and wider, where the list's own + has gone with the list, and below 720 px, where it is under the page. Never the list or the window's buttons, which keep their own ways back (7.9). + is drawn only in focus, so it is never shown twice |
+| Shortcuts | <kbd>Ctrl O</kbd> attaches, in place of <kbd>Ctrl Shift A</kbd>: the key every program opens a file with, and free in the app. <kbd>Ctrl E</kbd> archives a note, in place of <kbd>Ctrl Del</kbd> there. <kbd>Ctrl Del</kbd> in a text field deletes the next word (and <kbd>Cmd ⌫</kbd> on a Mac, which stood for it, deletes to the line's start), so taking it for archive took a key from the text; it goes back to the text. <kbd>Ctrl E</kbd> is used by nothing else in 7.4 or in the app's handlers, does nothing in a text field on Windows, Linux or a Mac's web view, and is the key Gmail and others archive with. On an archived note it does nothing, since its box is "put back in the list" there; deleting keeps its own key, <kbd>Ctrl Shift Del</kbd>, and <kbd>Del</kbd> in the list still archives or deletes. The keys are in each icon's tooltip and in <kbd>Ctrl /</kbd> |
+| The shelf | Folded for every note when it opens, and attaching does not unfold it (6.5): the new square pops into the line, from 30% on the pop spring, and the count changes and is told. `UNFOLDED_MOST`, and the attach that unfolded (`NoteFiles::attached`), are gone. In place, not out of the paperclip as a tile does: the paperclip is at the window's edge now, 300 px and more from the line, and a 32 px square flying that far would be the biggest movement on a quiet page for the smallest thing on it. Both apps |
+| Typewriter | A fourth focus style. Slide's layout, and: the line being typed held on the optical line, the text scrolled at once and eased up from where it was drawn on the snap spring, so that a run of lines typed quickly is one movement, taken up from wherever it is (rule 7 of 5.2); room under the text (the window's height less the optical line and one line) so that the last line can reach the optical line; the other paragraphs at 40% while typing, by a mask on the text field, its strength a registered property that fades in over 200 ms and out over 400 ms after 1.5 s without a key. A paragraph is a line ended by <kbd>Enter</kbd>. The caret is the selection's moving end (<kbd>Shift ↑</kbd> and <kbd>Ctrl Shift Home</kbd> move its start), and that is the line held and the paragraph lit. The caret moved by keys (the arrows, Home, End, Page Up and Down) makes its paragraph the current one and brings it to the optical line; moved by a click it makes it the current one and scrolls nothing, since the text must not move under the pointer, until the next key. A note of one paragraph never dims. The eased movement is three lines at most: a longer move is made at once for the rest, and a paste (the app's own menu's among them, which reaches the field as typed text and is marked while it goes in: 20 lines pasted from it moved the page 470 px at once, with no eased movement), a drop, a cut, an undo or a redo moves at once altogether, since fifty lines eased would be 1,200 px slid in 380 ms. The page emptied or given another text (<kbd>Esc</kbd>, a note opened) or focus ended stops a movement on its way, so the blank page's placeholder never slides in. Where the caret's line is is found by laying the text out, to the end of the caret's paragraph and no further, in a copy of the field, once for each change or move of the caret: the first version laid out the whole note twice for each key, for its `input` and for the `selectionchange` after it. A key at the end of a note of 95,000 characters cost a median of 46.9 ms with Typewriter on against 14.5 ms in Slide, and now costs 25.4 ms against 16.2 ms; in the middle of it, 20.4 ms against 14.7 ms (each the time from the key to the end of the tasks it brings, the app's own copy of the text included, 25 keys, on a test copy). Over 100 000 characters the line and the dim are left out and the page scrolls as Slide's. Reduced motion: the text moves at once, and the dim changes in 1 ms. It begins at the pause, as the other styles' layouts do |
+| Focus begins | Settings → Appearance → Focus begins, kept as `focus_begins` (`pause`, `first_key`). **After a pause**, the default, is 7.9's rule: the first key fades the controls, and 600 ms without a key, or a new line, brings focus. **On the first key** folds the list at the first key by the chosen style (Rail: to its rail), with the controls fading as before, and never moves the words under the caret: the column is held where it was by growing the page's left margin as the list shrinks, on the same curve from the same moment, and its right margin keeps the column's width. In a window wider than 1112 px the column at rest is already half the list's width from where focus would put it, so it stays there for the whole of focus, with no glide. In a window from 720 to 1112 px the column fills the page and would widen and re-wrap its lines: that part waits for the pause, when it glides to the middle and widens as Slide's does. Narrower than 720 px nothing folds, as before. Zen's paper and type, and Typewriter's line and dim, wait for the pause too: the type growing re-wraps the lines, and the line moves the text. A new line, or text that came without a key, still brings all of focus at once |
+| Zen | No longer starts its text 56 px lower: the text starts at the optical line already, and moving it at the pause would move the words being written. The type still grows |
+| Typewriter's two `input`s | The page's field hears two `input` events for a change that is a new line and words (Chromium makes them two edits), and the second cut the first's movement short, so the text jumped a line instead of easing. A change already taken is not taken again, a movement still on its way is left alone when nothing more scrolls, and the line is counted in whole lines, so that an inline box's place on its line does not move the target by a pixel |
+| Tried | With the motion check on a test copy, before (on `main`'s build) and after: `quiet-page`, `focus-pause` and `focus-first-key` at 1100 × 720 against the mockup, `focus-first-key-wide` at 1600 × 900, `typewriter`, `files-attach` on the desktop and the emulator, and `focus-wide`, `note-open-close`, `files-fold` and `files-caret` again. The edge's icons fade in 200 ms at the first key and back in 200 ms with the hand on the mouse, on the mockup's curve (distance 0); before, nothing came back for the same movement. "On the first key" held the column at the same x and width on every frame while the list folded, at 1100 px (388, 668) and at 1600 px (632, 680); at 1100 px it glided at the pause, at 1600 px nothing moved. A new paragraph in Typewriter moved the page 24.75 px at once and the text eased up over 380 ms. An attached file popped into the folded line on both apps; before, the desktop's shelf unfolded by 58 px in one frame and Android's on a glide. What else the frames showed is in the pull request. A real mouse, a touchpad, a screen reader and the window maximised are the manual checklist's (D113 to D119) |
+
+**Considered and left out**
+
+| | Why not |
+|---|---|
+| Centring the whole text on the page | It grows both ways: each new line moves every line already written by half a line, the movement under the eye that 7.12 kept out of typing |
+| Pinning the caret's line for everyone | That is Typewriter. As the default it would move all the text at every new line; as a style it is chosen by those who want it |
+| Files only at an edge, as icons | A note's files are part of it, not actions on it, and the shelf at its foot is where they stay in reach at any scroll without splitting the text (6.5, "Why there"). Folded by default, it is one line |
+| A separate switch for Typewriter's dim | One setting. A switch for the dim alone would be a second setting for one style, and the dim without the line is what Zen's fades already give |
+| Done on the desktop | Beside the window's ✕ it invites closing the app by mistake, and beside the column it was one more icon for what Esc, Ctrl Enter, Ctrl N and + already do. Android keeps ⌄, where a note is a page over the list |
+| The icons back at every pause | A pause is thinking. Icons blinking in and out at each pause are noise, and the hand on the mouse says more surely that typing has stopped |
 
 ---
 
@@ -1854,7 +1933,7 @@ sheet** (8.5), not the app.
 
 Full screen, the text first. Tapping the text puts the cursor there. Top
 bar: back (⌄ on a new page), mic, attach, archive (on an archived note,
-"back to the list" and delete). Files on the shelf at the foot of the page,
+"put back in the list" and delete). Files on the shelf at the foot of the page,
 above the keyboard (6.5). It
 saves as you type; there is no Save button and no "Saved".
 
@@ -2142,6 +2221,7 @@ What the shelf (6.5, issue #324) settles for Android alone.
 | Its targets | The line and each square are 40 dp, the size of the bar's icons (6.10) |
 | While typing | The page's bar fades (8.7); the shelf stays, folded or not as it was. It is the note's, and the person may want a file while writing. The caret stays above it with the keyboard up (6.5); a press on the line or a square leaves the keyboard up |
 | Growing and shrinking | It is part of the page's body, so it grows out of the card and shrinks back into it with the text (5.5) |
+| Folded, and attaching | Since 7.14 it opens folded for every note, and a file attached (the paperclip, or a recording said into the note) pops in as a square on the folded line rather than unfolding it, as on the desktop. ⌄ stays: on Android a note is a page over the list, and ⌄ or Back is how it closes |
 
 ---
 
@@ -2342,9 +2422,9 @@ built.
 | **Drawn scrollbars** (6.15) | One look on every platform, and none of the space a system scrollbar takes. One small script shared by both apps, as the list's FLIP is | Both apps |
 | **No title bar on the desktop** (7.6) | The app reaches the top edge; one row less of chrome and one word less ("Dirt"). Windows and Linux draw their own controls; macOS keeps the system's | `dirt-desktop` |
 | **The motion system** (5): three springs as `linear()` easings, choreography from cause to destination, the View Transitions circle for theme and accent | Movement that says where things come from and go, with one feel across both apps | Both apps: one CSS file of tokens and one small animation script |
-| **Focus while writing** (7.7): Slide, Rail and Zen, chosen in Settings, Slide by default | Only the note while it is written, three ways | `dirt-desktop` |
+| **Focus while writing** (7.7): Slide, Rail, Zen and Typewriter, chosen in Settings, Slide by default; when it begins, after a pause or at the first key (7.14) | Only the note while it is written, four ways | `dirt-desktop`, `dirt-core`'s settings |
 | **The page: a new note from its first word** (6.1) | The note exists before it is "done". One emptied again, with no files, must be let go without a word: taken off the device altogether if it never reached the server, deleted like any other note if it did | `dirt-core` store, both apps |
-| **The note's icons beside its column, shown by nearness** (6.4) | The icons belong to the note; nothing comes back on a stray mouse move | `dirt-desktop` |
+| **The note's icons at the window's right edge, back with the hand on the mouse** (6.4, 7.14) | As little as possible besides the words; nothing comes back on a stray mouse move, and nothing sits by the window's ✕ | `dirt-desktop`, `dirt-ui`'s script |
 | **Grains, layers and the pile** (6.17) | 積沙成塔: the list as a pile, newest on top, and the pile drawn as a heap of sand, one grain per thought. Derived from the notes; nothing new is stored. The core gives every note in one call, each grain's shade, the layer of an edit time and the numbers of the count line since step 1 of the plan | `dirt-core` store and models, both apps |
 | **Archive** (6.19): an `archived` value in each note's CRDT document, derived into its row like the deleted flag. The list leaves archived notes out; search and export keep them | Clearing a done thought without losing it. In the note's document it syncs and merges like any edit, and the server sees nothing new | `dirt-core` notes and store, every client, the CLI (`dirt archive`, `dirt unarchive`, `dirt list --archived`), feature-parity.md. Archiving is not an edit (6.19) |
 | **Tags: counts for the notes left** (6.3): how many notes match the current words and tags plus each other tag, and "any of them" as well as "all of them" | The tag list that stays open, and never offers a tag that would empty the list. The store has it since step 1 of the plan (`Store::tags_to_narrow`, `find_notes_by_tags`) | `dirt-core` store: one grouped query, which starts at the full-text index when there are words and at the tag table when there are none |
@@ -2373,10 +2453,10 @@ built.
 - Focus is always visible: a 2 px clay ring, except in text fields, which
   show focus with their border and halo.
 - Everything has a keyboard path on the desktop (section 7.4).
-- Controls that hide (the gutter, the window's controls, the archive box
-  on a row) are never hidden from the keyboard: they stay in the tab
-  order, and show while they have focus. On a touch screen a tap on the
-  page shows them.
+- Controls that hide (the note's icons at the edge, the window's
+  controls, the archive box on a row) are never hidden from the keyboard:
+  they stay in the tab order, and show while they have focus. On a touch
+  screen a tap on the page shows them.
 - Settings, the file preview and confirmations are dialogs: focus moves
   into them as they open, <kbd>Tab</kbd> stays inside, <kbd>Esc</kbd>
   closes, and focus goes back to what opened them.
@@ -2407,7 +2487,7 @@ written here; what only a person can judge is in `docs/MANUAL_CHECKLIST.md`.
 | Icon buttons' names | Every `IconButton` takes its name from its tooltip and hides its icon (`aria-hidden`); every other button with an icon has words of its own | D35, A41 |
 | Focus always visible | `:focus-visible` gives a 2 px ring of `--focus` everywhere in the interface, text fields their border; the list shows it on its highlight, a card inside its edge | D93 |
 | A keyboard path on the desktop | The keys of 7.4, listed by Ctrl / | D32 |
-| Controls that hide | The desktop fades the gutter and the window's controls with opacity only, so they stay in the tab order, and `:focus-within` shows them; a row's box shows on `:focus-visible`. On Android the page's bar comes back at a touch, and fades only while typing | D93 |
+| Controls that hide | The desktop fades the note's icons at the edge and the window's controls with opacity only, so they stay in the tab order, and `:focus-within` shows them; a row's box shows on `:focus-visible`. On Android the page's bar comes back at a touch, and fades only while typing | D93 |
 | Dialogs | Settings, the file preview and confirmations hold the focus while open, Esc closes them, and the focus goes back to what opened them (the script's modals) | D49, D58, D14 |
 | Toasts | A polite live region; errors an alert. **Undo** has Ctrl Z on the desktop. On Android a toast did not stay while TalkBack was on: it does now. The app asks Android whether a screen reader that explores by touch is on as it starts and each time the person comes back, and a toast shown then holds, with ✕, until it is dismissed (`dirt_ui::components::set_screen_reader`). On the emulator with TalkBack on, "Archived" with **Undo** was still there after 9 s, with ✕; with it off, it went by itself | A71 |
 | Every gesture has a button | The box in the note's bar for a swipe; the sync icon for a pull | No item |

@@ -1,0 +1,85 @@
+{
+  "name": "focus-pause",
+  "title": "Focus beginning after a pause, in the window of 1100 × 720",
+  "platforms": [
+    "desktop",
+    "mockup-desktop"
+  ],
+  "description": "Design 5.5, 7.7. \"Focus begins\": After a pause, the default. The first key only fades the controls (200 ms, standard); after 600 ms with no key the list's content fades (140 ms, exit), the list folds (glide, from 90 ms) and the column glides to the middle (glide, from 150 ms). A new note is begun on the blank page.",
+  "setup": [
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "click": "[data-dui-typed]",
+      "then": 600
+    },
+    {
+      "platforms": [
+        "mockup-desktop"
+      ],
+      "eval": "(() => { leaveFocus(); document.querySelector('#d-text').focus(); return true; })()",
+      "then": 600
+    }
+  ],
+  "parts": {
+    "icons": {
+      "desktop": ".dk-acts, .dk-gutter",
+      "mockup-desktop": "#d-acts"
+    },
+    "column": {
+      "desktop": ".dk-col",
+      "mockup-desktop": "#d-col"
+    },
+    "list": {
+      "desktop": ".dk-side",
+      "mockup-desktop": "#D .dk-side"
+    },
+    "text": {
+      "desktop": ".dk-text",
+      "mockup-desktop": "#d-text"
+    }
+  },
+  "crop": {
+    "mockup-desktop": "#D"
+  },
+  "checks": {
+    "within": [],
+    "apart": [],
+    "pops": {
+      "px": 24,
+      "opacity": 0.3
+    }
+  },
+  "movements": [
+    {
+      "name": "type",
+      "description": "The first key on a blank page: the controls fade and the words stay where they are; 600 ms later, with no key since, focus comes in. One movement, as the app's own wait for the pause runs on the real clock (docs/ui/motion-check.md).",
+      "steps": [
+        {
+          "key": "a"
+        }
+      ],
+      "ms": 1800,
+      "straight": [
+        "column"
+      ]
+    }
+  ],
+  "between": [
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "key": "Escape",
+      "then": 1800
+    },
+    {
+      "platforms": [
+        "mockup-desktop"
+      ],
+      "eval": "(() => { leaveFocus(); document.querySelector('#d-text').focus(); return true; })()",
+      "then": 600
+    }
+  ]
+}

@@ -1,0 +1,142 @@
+{
+  "name": "quiet-page",
+  "title": "The note's icons at the window's right edge: going at the first key, staying through a pause, back with the hand on the mouse",
+  "platforms": [
+    "desktop",
+    "mockup-desktop"
+  ],
+  "description": "Design 1 (principle 4), 5.5, 6.4. A note opened from the list shows Attach and Archive at the window's right edge, at 60%. The first key typed fades them (200 ms, standard); the pause that brings focus changes nothing about them (Slide: the list folds and the column glides, the icons stay at the edge); a deliberate movement of the mouse, 80 px over the text, brings them back (200 ms, standard), and only them: the list and the window's buttons stay away. Before this design the icons were in a gutter beside the column's first line, travelled with the column into focus, and came back only for a pointer within 64 px of them; the same scenario measures that.",
+  "setup": [
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "click": "[data-dui-typed]"
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "type": "A note to read again"
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "wait": 900
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "key": "Escape",
+      "then": 1800
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "click": ".dk-side [role='option'][data-key]",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "mockup-desktop"
+      ],
+      "eval": "(() => { const n = S.notes.find(n => !n.deleted && !n.archived); openD(n.id); document.querySelector('#d-text').focus(); return true; })()",
+      "then": 1200
+    }
+  ],
+  "parts": {
+    "icons": {
+      "desktop": ".dk-acts, .dk-gutter",
+      "mockup-desktop": "#d-acts"
+    },
+    "column": {
+      "desktop": ".dk-col",
+      "mockup-desktop": "#d-col"
+    },
+    "list": {
+      "desktop": ".dk-side",
+      "mockup-desktop": "#D .dk-side"
+    },
+    "text": {
+      "desktop": ".dk-text",
+      "mockup-desktop": "#d-text"
+    }
+  },
+  "crop": {
+    "mockup-desktop": "#D"
+  },
+  "checks": {
+    "within": [
+      [
+        "icons",
+        "viewport"
+      ]
+    ],
+    "apart": [
+      [
+        "icons",
+        "text"
+      ]
+    ],
+    "pops": {
+      "px": 24,
+      "opacity": 0.3
+    }
+  },
+  "movements": [
+    {
+      "name": "type",
+      "description": "A key typed in the note: the icons fade (200 ms) and nothing else moves; 600 ms later, with no key since, focus comes in (Slide: the list folds, the column glides) and the icons stay as they are. One movement: the app's own wait for the pause runs on the real clock, so stepping the first key alone would take in the pause too.",
+      "steps": [
+        {
+          "key": "x"
+        }
+      ],
+      "ms": 1800
+    },
+    {
+      "name": "hand",
+      "description": "The hand back on the mouse: 80 px of movement over the text. The icons come back; the list and the window's buttons do not.",
+      "steps": [
+        {
+          "move": {
+            "on": {
+              "desktop": ".dk-text",
+              "mockup-desktop": "#d-text"
+            },
+            "dx": 80,
+            "dy": 0,
+            "steps": 8
+          }
+        }
+      ],
+      "ms": 700
+    }
+  ],
+  "between": [
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "key": "Escape",
+      "then": 1800
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "click": ".dk-side [role='option'][data-key]",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "mockup-desktop"
+      ],
+      "eval": "(() => { leaveFocus(); const n = S.notes.find(n => !n.deleted && !n.archived); openD(n.id); document.querySelector('#d-text').focus(); return true; })()",
+      "then": 1200
+    }
+  ]
+}

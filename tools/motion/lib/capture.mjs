@@ -85,6 +85,9 @@ const KEYS = {
   Backspace: { code: 'Backspace', keyCode: 8 },
 };
 
+// Where the pointer was last moved to, for a `move` that names no element.
+let lastPointer = { x: 0, y: 0 };
+
 async function centre(cdp, selector, index = 0) {
   // What a step presses may still be on its way (the page just started, or
   // the app has not answered the step before): it is waited for, a little.
@@ -148,8 +151,29 @@ export async function sendStep(target, step) {
     if (!selector) return;
     const { x, y } = await centre(cdp, selector, step.index || 0);
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    lastPointer = { x, y };
+  } else if (step.move) {
+    // The pointer moves as a hand moves it: from the centre of what `on`
+    // names (or from where it last was), `dx` and `dy` pixels further, in
+    // `steps` moves. The desktop shows the note's icons again only for a
+    // deliberate movement (design 6.4), which one `hover` cannot make.
+    const move = step.move;
+    const from = move.on ? await centre(cdp, sel(move.on), move.index || 0) : lastPointer;
+    const count = Math.max(1, move.steps || 6);
+    for (let at = 0; at <= count; at++) {
+      const x = from.x + ((move.dx || 0) * at) / count, y = from.y + ((move.dy || 0) * at) / count;
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+      lastPointer = { x, y };
+      if (at < count) await sleep(move.every || 16);
+    }
   } else if (step.key) {
-    const key = KEYS[step.key] || { code: step.key, keyCode: step.key.toUpperCase().charCodeAt(0) };
+    // A character key types its character, with its key down and up, as
+    // a hand would: the app tells a key typed from text that came without
+    // one (pasted), which brings focus at once (design 7.9).
+    const one = step.key.length === 1 && !KEYS[step.key];
+    const key = KEYS[step.key] || (one
+      ? { code: /[a-z]/i.test(step.key) ? `Key${step.key.toUpperCase()}` : '', keyCode: step.key.toUpperCase().charCodeAt(0), text: step.ctrl || step.alt ? undefined : step.key }
+      : { code: step.key, keyCode: step.key.toUpperCase().charCodeAt(0) });
     const modifiers = (step.ctrl ? 2 : 0) | (step.shift ? 8 : 0) | (step.alt ? 1 : 0);
     const base = { key: step.key, code: key.code, windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode, modifiers };
     await cdp.send('Input.dispatchKeyEvent', { type: key.text ? 'keyDown' : 'rawKeyDown', ...base, ...(key.text ? { text: key.text } : {}) });
@@ -187,6 +211,11 @@ export async function sendStep(target, step) {
     }
   } else if (step.androidKey) {
     if (platform === 'android') await adb(target.serial, 'shell', 'input', 'keyevent', String(step.androidKey));
+  } else if (step.androidTap) {
+    // A tap on the emulator's screen, outside the web view: in Android's
+    // own screen for choosing files, which the paperclip opens. In the
+    // screen's pixels, as `uiautomator dump` gives them.
+    if (platform === 'android') await adb(target.serial, 'shell', 'input', 'tap', String(step.androidTap[0]), String(step.androidTap[1]));
   } else if (step.eval) {
     const js = sel(step.eval);
     if (js) await cdp.evaluate(js);
@@ -203,7 +232,8 @@ export async function sendStep(target, step) {
  * notes are the person's and they sync.
  */
 export function writes(step) {
-  return step.type !== undefined || !!step.pastePicture || !!step.writes;
+  return step.type !== undefined || !!step.pastePicture || !!step.writes
+    || (typeof step.key === 'string' && step.key.length === 1 && !step.ctrl && !step.alt);
 }
 
 export async function sendSteps(target, steps = []) {
