@@ -142,6 +142,13 @@ pub struct NoteFiles {
     /// Files were attached here to this note: the next reading of its
     /// files unfolds the shelf if it brings one the last had not.
     unfold_new: CopyValue<Option<NoteId>>,
+    /// How many files the note had at the first reading since it was
+    /// opened, and whether a later reading found another number: what
+    /// the count's live region and the shelf's coming go by (`opened_with`,
+    /// `count_changed`). Kept here, not in the shelf, since the shelf's
+    /// own state outlives a note closed and opened again on Android.
+    opened_with: Signal<Option<usize>>,
+    count_changed: Signal<bool>,
     showing: Signal<Showing>,
     /// Raised by every load the preview starts and by its closing, so that
     /// a load that comes back late shows nothing.
@@ -183,6 +190,8 @@ pub fn use_note_files(
         open: Signal::new(false),
         folded: Signal::new(None),
         unfold_new: CopyValue::new(None),
+        opened_with: Signal::new(None),
+        count_changed: Signal::new(false),
         showing: Signal::new(Showing::Nothing),
         loads: CopyValue::new(0),
     });
@@ -200,6 +209,8 @@ pub fn use_note_files(
             files.shown.set(None);
             files.folded.set(None);
             files.unfold_new.set(None);
+            files.opened_with.set(None);
+            files.count_changed.set(false);
         }
     });
 
@@ -307,10 +318,11 @@ impl NoteFiles {
         *self.reread.write() += 1;
     }
 
-    /// Reads the note's files again after an attach to `note` here, which
-    /// may have attached some, all or none of what it was given: if the
-    /// reading brings a file the last had not, the shelf unfolds, so that
-    /// its tiles are seen arriving (5.5).
+    /// Reads the note's files again after an attach here that added at
+    /// least one file to `note`: the shelf unfolds when they are read, so
+    /// that their tiles are seen arriving (5.5). An app calls it only when
+    /// files were added, so that whichever reading lists them first, this
+    /// one or a sync's, the shelf unfolds.
     pub fn attached(mut self, note: NoteId) {
         self.unfold_new.set(Some(note));
         self.reread();
@@ -331,36 +343,44 @@ impl NoteFiles {
         (*self.folded.read()).unwrap_or(true)
     }
 
+    /// How many files the note had when its files were first read since it
+    /// was opened; `None` before that.
+    pub fn opened_with(self) -> Option<usize> {
+        *self.opened_with.read()
+    }
+
+    /// Whether the number of the note's files has changed since it was
+    /// opened: until it has, the count's live region says nothing.
+    pub fn count_changed(self) -> bool {
+        *self.count_changed.read()
+    }
+
     /// Folds or unfolds the shelf, for as long as the note is open.
     pub fn set_folded(mut self, folded: bool) {
         self.folded.set(Some(folded));
     }
 
     /// What the shelf does as `found`, the files of `note`, is read: see
-    /// [`Self::folded`]. An attach waiting to be seen is used up by the
-    /// first reading after it, whatever that reading brings, and by a
-    /// reading of another note, so that it never unfolds a later one.
+    /// [`Self::folded`]. An attach waiting to be shown is used up by the
+    /// first reading of its note's files after it, and by a reading of
+    /// another note, so that it never unfolds a later one.
     fn settle_fold(mut self, note: NoteId, found: &[AttachedFile]) {
-        let before = match self.listed.peek().as_ref() {
-            Some((held, before)) if *held == note => Some(
-                before
-                    .iter()
-                    .map(|file| file.attachment.file_id)
-                    .collect::<HashSet<Uuid>>(),
-            ),
-            _ => None,
-        };
+        let same_note = matches!(self.listed.peek().as_ref(), Some((held, _)) if *held == note);
         let attached_here = self.unfold_new.peek().is_some_and(|to| to == note);
         self.unfold_new.set(None);
-        let folded = shelf_after_reading(
-            *self.folded.peek(),
-            before.as_ref(),
-            found.iter().map(|file| file.attachment.file_id),
-            found.len(),
-            attached_here,
-        );
-        if *self.folded.peek() != Some(folded) {
-            self.folded.set(Some(folded));
+        let now = if same_note { *self.folded.peek() } else { None };
+        let opened_with = *self.opened_with.peek();
+        match opened_with {
+            Some(first) if same_note => {
+                if first != found.len() && !*self.count_changed.peek() {
+                    self.count_changed.set(true);
+                }
+            }
+            _ => self.opened_with.set(Some(found.len())),
+        }
+        let folded = shelf_after_reading(now, found.len(), attached_here);
+        if *self.folded.peek() != folded {
+            self.folded.set(folded);
         }
     }
 
@@ -638,24 +658,20 @@ impl NoteFiles {
 }
 
 /// Whether the shelf is folded after a reading of a note's files (see
-/// [`NoteFiles::folded`]). `now` is what it was, `before` the files of the
-/// last reading of the same note (`None` at the first reading of it),
-/// `found` and `count` the files just read, and `attached_here` whether an
-/// attach here to this note came before this reading.
-fn shelf_after_reading(
-    now: Option<bool>,
-    before: Option<&HashSet<Uuid>>,
-    mut found: impl Iterator<Item = Uuid>,
-    count: usize,
-    attached_here: bool,
-) -> bool {
-    let brought_new = before.map_or(count > 0, |known| found.any(|file| !known.contains(&file)));
-    if attached_here && brought_new {
-        return false;
+/// [`NoteFiles::folded`]): `None` until a reading has found files. `now`
+/// is what it was for this note, `count` the files just read, and
+/// `attached_here` whether an attach here added files to this note since
+/// the last reading. The default is counted at the first reading that
+/// finds files, not at one that finds none: a note opened with no files,
+/// to which a sync then brings ten, shows them folded.
+const fn shelf_after_reading(now: Option<bool>, count: usize, attached_here: bool) -> Option<bool> {
+    if attached_here && count > 0 {
+        return Some(false);
     }
-    match (before, now) {
-        (Some(_), Some(folded)) => folded,
-        _ => count > UNFOLDED_MOST,
+    match now {
+        Some(folded) => Some(folded),
+        None if count == 0 => None,
+        None => Some(count > UNFOLDED_MOST),
     }
 }
 
@@ -663,84 +679,30 @@ fn shelf_after_reading(
 mod tests {
     use super::*;
 
-    fn ids(n: u128) -> Vec<Uuid> {
-        (1..=n).map(Uuid::from_u128).collect()
-    }
-
-    /// The default is counted once, at the first reading: a third file
-    /// from a sync does not fold an open shelf, and a remove from three
-    /// to two does not unfold one.
+    /// The default is counted once, at the first reading that finds
+    /// files: a third file from a sync does not fold an open shelf, a
+    /// remove from three to two does not unfold one, and files a sync
+    /// brings to a note opened with none are counted as they come.
     #[test]
     fn the_shelf_folds_by_its_count_once() {
-        let two: HashSet<Uuid> = ids(2).into_iter().collect();
-        let three: HashSet<Uuid> = ids(3).into_iter().collect();
-        assert!(!shelf_after_reading(
-            None,
-            None,
-            ids(2).into_iter(),
-            2,
-            false
-        ));
-        assert!(shelf_after_reading(
-            None,
-            None,
-            ids(3).into_iter(),
-            3,
-            false
-        ));
+        assert_eq!(shelf_after_reading(None, 2, false), Some(false));
+        assert_eq!(shelf_after_reading(None, 3, false), Some(true));
         // A sync brings a third: still unfolded.
-        assert!(!shelf_after_reading(
-            Some(false),
-            Some(&two),
-            ids(3).into_iter(),
-            3,
-            false
-        ));
+        assert_eq!(shelf_after_reading(Some(false), 3, false), Some(false));
         // A remove takes one of three: still folded.
-        assert!(shelf_after_reading(
-            Some(true),
-            Some(&three),
-            ids(2).into_iter(),
-            2,
-            false
-        ));
-        // The person's choice holds.
-        assert!(!shelf_after_reading(
-            Some(false),
-            Some(&three),
-            ids(3).into_iter(),
-            3,
-            false
-        ));
+        assert_eq!(shelf_after_reading(Some(true), 2, false), Some(true));
+        // Opened with none: nothing is decided until files come.
+        assert_eq!(shelf_after_reading(None, 0, false), None);
+        assert_eq!(shelf_after_reading(None, 10, false), Some(true));
     }
 
-    /// Files attached here unfold it; an attach that attached nothing does
-    /// not, and the first reading of a note made of files attached here
-    /// shows them.
+    /// Files attached here unfold it, on a folded shelf and on a note
+    /// made of the files just attached.
     #[test]
-    fn an_attach_here_unfolds_only_what_it_brought() {
-        let three: HashSet<Uuid> = ids(3).into_iter().collect();
-        assert!(!shelf_after_reading(
-            Some(true),
-            Some(&three),
-            ids(4).into_iter(),
-            4,
-            true
-        ));
-        assert!(shelf_after_reading(
-            Some(true),
-            Some(&three),
-            ids(3).into_iter(),
-            3,
-            true
-        ));
-        assert!(!shelf_after_reading(
-            None,
-            None,
-            ids(5).into_iter(),
-            5,
-            true
-        ));
+    fn an_attach_here_unfolds() {
+        assert_eq!(shelf_after_reading(Some(true), 4, true), Some(false));
+        assert_eq!(shelf_after_reading(None, 5, true), Some(false));
+        assert_eq!(shelf_after_reading(None, 0, true), None);
     }
 
     fn read(name: &str, kind: PreviewKind) -> Loaded {

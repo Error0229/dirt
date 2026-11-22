@@ -932,8 +932,11 @@ impl Screen {
                 };
                 id
             };
+            let tried = files.len();
             let failed = attach(&self.app, id, files).await;
-            self.files.attached(id);
+            if failed.len() < tried {
+                self.files.attached(id);
+            }
             self.app.note_changed();
             if !failed.is_empty() {
                 let words = if failed.len() == 1 {

@@ -287,7 +287,12 @@ pub enum Done {
         kept: bool,
     },
     /// Files were attached, but for those named in `failed`, with why.
-    Attached { note: NoteId, failed: Vec<String> },
+    Attached {
+        note: NoteId,
+        /// How many of the files given were attached.
+        added: usize,
+        failed: Vec<String>,
+    },
     /// What was said is a note now; its words are on their way.
     KeptVoice(NoteId),
     /// The note as the store has it, read again after the work before.
@@ -396,8 +401,13 @@ pub async fn run(store: &Arc<Store>, work: Work) -> Done {
             }
         }
         Work::Attach { note, files } => {
+            let tried = files.len();
             let failed = attach_all(Arc::clone(store), note, files).await;
-            Done::Attached { note, failed }
+            Done::Attached {
+                note,
+                added: tried.saturating_sub(failed.len()),
+                failed,
+            }
         }
         Work::KeepVoice {
             note,
@@ -447,6 +457,7 @@ fn not_done(work: Work, why: &str, made: bool) -> Done {
         },
         Work::Attach { note, files } => Done::Attached {
             note,
+            added: 0,
             failed: files
                 .iter()
                 .map(|file| format!("{}: {why}", file.name()))
@@ -826,6 +837,7 @@ mod tests {
         let done = run_all(&store, work).await;
         assert!(done.contains(&Done::Attached {
             note,
+            added: 1,
             failed: Vec::new()
         }));
         assert_eq!(texts(&store).await, ["shopping"]);

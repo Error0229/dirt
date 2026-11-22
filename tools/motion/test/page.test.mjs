@@ -35,7 +35,11 @@ const PAGE = `<!doctype html><meta charset="utf-8"><style>
 <div id="calc"><div id="calced"></div></div>
 <div class="box" id="a"></div><div class="box" id="b"></div>
 <div class="box" id="c"></div><div class="box" id="d"></div><div id="cover"></div>
-<script>window.started = document.getElementById('running').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 1000 });</script>`;
+<script>window.started = document.getElementById('running').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600000 });</script>`;
+// The animation runs for ten minutes from the page's loading, so that it
+// is still running when the clock freezes it however slowly the browser
+// starts. At one second it had ended on a cold first run, and both the
+// freeze and the thaw failed (review, #329).
 
 test('the clock and the probe in a real page', { skip: !browserFound && 'no Edge or Chrome here' }, async t => {
   const browser = await launchHeadless({ width: 800, height: 600 });

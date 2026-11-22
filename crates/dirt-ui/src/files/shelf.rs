@@ -101,65 +101,54 @@ pub fn FileShelf(
     let count = files
         .listed()
         .and_then(|(held, found)| (held == note).then_some(found.len()));
-    let mut first_count = use_signal(|| None::<usize>);
-    let mut changed = use_signal(|| false);
-    use_effect(move || {
-        let Some(now) = files
-            .listed()
-            .and_then(|(held, found)| (held == note).then_some(found.len()))
-        else {
-            return;
-        };
-        let first = *first_count.peek();
-        match first {
-            None => first_count.set(Some(now)),
-            Some(first) if first != now && !*changed.peek() => changed.set(true),
-            Some(_) => {}
-        }
-    });
-    let told = if changed() {
+    let told = if files.count_changed() {
         count.map(count_told).unwrap_or_default()
     } else {
         String::new()
     };
-    let live = rsx! {
-        span { class: "dui-sr", "aria-live": "polite", "{told}" }
-    };
-    let Some(found) = files
+    // Whether the shelf came with the note (its first reading since the
+    // note was opened found files), rather than with a file attached
+    // later: the script lets a page ride up as the shelf comes only in the
+    // second case.
+    let came_with_note = files.opened_with().is_none_or(|first| first > 0);
+    let found = files
         .listed()
         .and_then(|(held, found)| (held == note).then_some(found))
-    else {
-        return live;
-    };
-    if found.is_empty() {
-        return live;
-    }
+        .filter(|found| !found.is_empty());
     let folded = files.folded();
+    // One template, whether or not there is a shelf: the live region is
+    // the same node from the note's opening to its closing, so a change
+    // in it is told, the first file and the last among them. Two returns
+    // would be two templates, and the region made anew, already holding
+    // its words, which a screen reader does not read.
     rsx! {
-        {live}
-        ShelfFrame {
-            note: note.to_string(),
-            count: found.len(),
-            folded,
-            class,
-            hidden,
-            on_fold: move |fold: bool| files.set_folded(fold),
-            minis: rsx! {
-                for file in found {
-                    FileMini {
-                        key: "{file.attachment.file_id}",
-                        thumbnail: files.thumbnail(file.attachment.file_id),
-                        fetching: files.is_fetching(file.attachment.file_id),
-                        file,
-                        on_preview: move |file: AttachedFile| files.preview(&file),
-                        on_show: move |file: AttachedFile| {
-                            files.set_folded(false);
-                            show_tile.set(Some(file.attachment.file_id));
-                        },
+        span { class: "dui-sr", "aria-live": "polite", "{told}" }
+        if let Some(found) = found {
+            ShelfFrame {
+                note: note.to_string(),
+                count: found.len(),
+                folded,
+                class,
+                hidden,
+                came_with_note,
+                on_fold: move |fold: bool| files.set_folded(fold),
+                minis: rsx! {
+                    for file in found {
+                        FileMini {
+                            key: "{file.attachment.file_id}",
+                            thumbnail: files.thumbnail(file.attachment.file_id),
+                            fetching: files.is_fetching(file.attachment.file_id),
+                            file,
+                            on_preview: move |file: AttachedFile| files.preview(&file),
+                            on_show: move |file: AttachedFile| {
+                                files.set_folded(false);
+                                show_tile.set(Some(file.attachment.file_id));
+                            },
+                        }
                     }
-                }
-            },
-            FileTiles { files, note, can_send, on_open, on_save }
+                },
+                FileTiles { files, note, can_send, on_open, on_save }
+            }
         }
     }
 }
@@ -180,6 +169,10 @@ pub fn ShelfFrame(
     /// Out of sight, and inert (see [`FileShelf`]).
     #[props(default)]
     hidden: bool,
+    /// It came with the note, rather than with a file attached later (see
+    /// [`FileShelf`]).
+    #[props(default)]
+    came_with_note: bool,
 ) -> Element {
     let body = format!("dui-shelf-{note}");
     let words = count_words(count);
@@ -189,7 +182,7 @@ pub fn ShelfFrame(
             "data-folded": folded.then_some(""),
             // The script keeps room for it at the foot of what scrolls,
             // so that the caret is never revealed behind it.
-            "data-dui-shelf": "",
+            "data-dui-shelf": if came_with_note { "with-note" } else { "" },
             "inert": hidden.then_some(""),
             div { class: "dui-shelf-head",
                 button {

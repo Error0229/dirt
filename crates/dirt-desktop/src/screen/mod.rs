@@ -413,8 +413,12 @@ impl Screen {
                 };
                 self.toasts.show(toast.undo(undo));
             }
-            Done::Attached { note, ref failed } => {
-                if self.open_note() == Some(note) {
+            Done::Attached {
+                note,
+                added,
+                ref failed,
+            } => {
+                if added > 0 && self.open_note() == Some(note) {
                     self.files.attached(note);
                 }
                 if !failed.is_empty() {

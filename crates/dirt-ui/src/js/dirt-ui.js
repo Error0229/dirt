@@ -3117,18 +3117,30 @@
   // Android's web view both honour it when they bring the caret into
   // sight (measured, #329).
   const SHELF_FADE = 18;
+  // The shelves in the page, and whether their room is off for a moment
+  // (below).
+  const shelves = new Set();
+  let roomOff = false;
   const shelfRoom = new ResizeObserver(entries => entries.forEach(entry => keepShelfRoom(entry.target)));
   // A page read to its end (the end in sight, or no further from it than
   // the room the shelf kept) scrolls on by as much as the shelf grows (it
   // comes, it unfolds, or a file comes): the end of the note, and a caret there,
   // ride up with the shelf instead of going under it. Shrinking, the page
   // keeps its end by itself. A page read elsewhere is left where it is.
+  // A shelf out of sight (Zen, inert) keeps no room: the caret may go to
+  // the bottom edge. A shelf that came with its note (`with-note`) is
+  // measured as it is, with no ride: the page has only just opened, on
+  // Android while it grows out of its card, and its lines stay with it.
   function keepShelfRoom(shelf) {
     const page = shelf._duiPage;
     if (!page) return;
+    if (shelf.inert) {
+      page.style.scrollPaddingBottom = '';
+      return;
+    }
     const height = shelf.offsetHeight, was = shelf._duiHeight;
     shelf._duiHeight = height;
-    page.style.scrollPaddingBottom = (height + SHELF_FADE) + 'px';
+    if (!roomOff) page.style.scrollPaddingBottom = (height + SHELF_FADE) + 'px';
     // The room is the shelf and its fade; a shelf just come (the first
     // file attached, or a note opened) had none. The slack is the text's
     // own room under its last line.
@@ -3142,11 +3154,54 @@
     const page = shelf.parentElement && shelf.parentElement.closest('[data-dui-scroll]');
     if (!page) return;
     shelf._duiPage = page;
+    if (shelf.dataset.duiShelf === 'with-note') shelf._duiHeight = shelf.offsetHeight;
+    shelf._duiHidden = new MutationObserver(() => keepShelfRoom(shelf));
+    shelf._duiHidden.observe(shelf, { attributes: true, attributeFilter: ['inert'] });
     shelfRoom.observe(shelf);
     keepShelfRoom(shelf);
+    shelves.add(shelf);
+    page._duiSeen = page.scrollTop;
+    if (!page._duiSeenSet) {
+      page._duiSeenSet = true;
+      page.addEventListener('scroll', () => { page._duiSeen = page.scrollTop; }, { passive: true });
+    }
+    // A focus that came with no key or press (a screen reader's cursor)
+    // and scrolled the page anyway: the page goes back to where its last
+    // scroll left it, before the frame is drawn.
+    shelf._duiFocusIn = event => {
+      if (event.target === shelf || !shelf.contains(event.target) || roomOff) return;
+      const before = page._duiSeen;
+      if (Math.abs(page.scrollTop - before) > 0.5) page.scrollTop = before;
+    };
+    shelf.addEventListener('focusin', shelf._duiFocusIn);
   }
+  // The room the page keeps for the shelf lies over the shelf itself, so
+  // the browser, bringing a control on the shelf into sight as it takes
+  // the focus, scrolled the page up by as much at each Tab (review, #329).
+  // The shelf is always in sight. So as a Tab or a press is about to move
+  // the focus, the pages keep no room, and the browser finds nothing to
+  // scroll; the room is back by the next frame. (The browser scrolls
+  // before it tells of the focus, so this cannot wait for `focusin`.)
+  function shelfRoomOffForAMoment() {
+    if (!shelves.size || roomOff) return;
+    roomOff = true;
+    shelves.forEach(shelf => { if (shelf._duiPage) shelf._duiPage.style.scrollPaddingBottom = '0px'; });
+    requestAnimationFrame(() => {
+      roomOff = false;
+      shelves.forEach(keepShelfRoom);
+    });
+  }
+  document.addEventListener('keydown', event => { if (event.key === 'Tab') shelfRoomOffForAMoment(); }, true);
+  document.addEventListener('pointerdown', event => {
+    if (event.target && event.target.closest && event.target.closest('[data-dui-shelf]')) shelfRoomOffForAMoment();
+  }, true);
   function forgetShelf(shelf) {
     shelfRoom.unobserve(shelf);
+    if (shelf._duiHidden) shelf._duiHidden.disconnect();
+    shelf._duiHidden = null;
+    if (shelf._duiFocusIn) shelf.removeEventListener('focusin', shelf._duiFocusIn);
+    shelf._duiFocusIn = null;
+    shelves.delete(shelf);
     const page = shelf._duiPage;
     shelf._duiPage = null;
     if (page && !page.querySelector('[data-dui-shelf]')) page.style.scrollPaddingBottom = '';
