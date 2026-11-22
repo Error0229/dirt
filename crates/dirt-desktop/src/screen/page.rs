@@ -4,8 +4,9 @@
 //! itself as it is typed.
 //!
 //! The note's icons sit in a gutter beside its first line, just outside
-//! its column, so that they travel with it. The note's files are tiles
-//! under its text (6.5); files dropped anywhere on the window come to it
+//! its column, so that they travel with it. The note's files are on the
+//! shelf at the foot of its column (6.5), held at the bottom of the window
+//! while the text scrolls; files dropped anywhere on the window come to it
 //! (the screen takes the drop).
 //!
 //! The blank page has the mic in its gutter (6.18). While it listens the
@@ -16,7 +17,7 @@ use dioxus::prelude::*;
 use dirt_core::sync::overview::SyncIndicator;
 use dirt_ui::components::{IconButton, Listening, MicButton, ScrollArea};
 use dirt_ui::dom::{self, Caret};
-use dirt_ui::files::FileTiles;
+use dirt_ui::files::FileShelf;
 use dirt_ui::typing::use_typing;
 use dirt_ui::Icon;
 
@@ -55,6 +56,9 @@ pub fn Page() -> Element {
     let mic = open.is_none() && crate::voice::offered();
     // A file not yet sent says "uploading" while it can be sent, and "on
     // this device only" while it cannot (6.5).
+    // In Zen the files go (7.7): out of sight, and out of reach.
+    let zen = *screen.writing.read() == super::Writing::Focused
+        && screen.focus_style() == dirt_core::models::FocusStyle::Zen;
     let can_send = matches!(
         screen.sync_indicator(),
         SyncIndicator::Synced { .. } | SyncIndicator::Syncing | SyncIndicator::JustSynced
@@ -167,12 +171,13 @@ pub fn Page() -> Element {
                         }
                     }
                     if let Some(note) = open {
-                        FileTiles {
+                        FileShelf {
                             key: "{note}",
                             files: screen.files,
                             note,
                             can_send,
                             class: "dk-files",
+                            hidden: zen,
                             on_open: move |file| screen.open_file(file),
                             on_save: move |file| screen.save_file(file),
                         }

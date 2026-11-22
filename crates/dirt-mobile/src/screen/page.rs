@@ -5,8 +5,9 @@
 //! The top bar has ⌄ on a new page and ‹ on a note, the mic where the
 //! build has voice, the paperclip, and the archive box (on an archived
 //! note, "back to the list" and the bin). It fades while the person types,
-//! and comes back when the page is touched. The note's files are tiles
-//! under its text (6.5), `dirt-ui`'s, with the preview over the screen.
+//! and comes back when the page is touched. The note's files are on the
+//! shelf at the foot of the page (6.5), `dirt-ui`'s, held above the
+//! keyboard while the text scrolls, with the preview over the screen.
 //!
 //! The mic listens under the bar, with the keyboard down: the grains, the
 //! timer, ✕ and ✓, as the dock's sheet has them. What is said is added at
@@ -21,7 +22,7 @@ use dioxus::prelude::*;
 use dirt_core::sync::overview::SyncIndicator;
 use dirt_ui::components::{GrowFrom, GrowPage, IconButton, Listening, MicButton, ScrollArea};
 use dirt_ui::events::{use_outcome, Outcome};
-use dirt_ui::files::FileTiles;
+use dirt_ui::files::FileShelf;
 use dirt_ui::typing::use_typing;
 use dirt_ui::Icon;
 
@@ -176,7 +177,7 @@ pub fn Page() -> Element {
                         }
                         {field.carrier()}
                         if let Some(note) = note {
-                            FileTiles {
+                            FileShelf {
                                 key: "{note}",
                                 files: screen.files,
                                 note,

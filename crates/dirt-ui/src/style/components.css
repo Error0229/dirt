@@ -539,6 +539,42 @@
 :root[data-motion="reduced"] .dui-file-line{animation:none;width:100%;opacity:.6}
 @media (prefers-reduced-motion:reduce){.dui-file-line{animation:none;width:100%;opacity:.6}}
 
+/* ---- The shelf: a note's files at the foot of its page (6.5) -------------
+   Held at the bottom of what scrolls (sticky), so the text scrolls above it
+   and it never moves as the text grows. One line, "3 files", folds and
+   unfolds the tiles under it; folded, the line holds a square for each
+   file. Unfolded, the tiles take at most three rows, and a third of the
+   window; more scroll inside. The tiles' room opens and closes on glide,
+   as the tag list does; the squares and the tiles cross-fade over it. */
+.dui-shelf{position:sticky;bottom:0;z-index:2;display:flex;flex-direction:column;background:var(--surface);padding:4px 0 14px}
+/* The text that scrolls under it fades into it, rather than being cut. */
+.dui-shelf::before{content:"";position:absolute;left:0;right:0;bottom:100%;height:18px;background:linear-gradient(transparent,var(--surface));pointer-events:none}
+.dui-shelf-head{display:flex;align-items:center;gap:6px;min-height:40px;min-width:0}
+.dui-shelf-fold{flex:none;display:inline-flex;align-items:center;gap:5px;height:32px;margin-left:-8px;padding:0 10px 0 7px;border-radius:var(--r-b);font-size:12.5px;font-weight:550;color:var(--text-2);font-variant-numeric:tabular-nums;white-space:nowrap;transition:background var(--d-1),color var(--d-1)}
+.dui-shelf-fold:hover{background:var(--surface-2);color:var(--text)}
+.dui-shelf-fold .dui-i{transition:transform var(--d-snap) var(--sp-snap)}
+.dui-shelf:not([data-folded]) .dui-shelf-fold .dui-i{transform:rotate(180deg)}
+.dui-shelf-minis{flex:1;min-width:0;display:flex;align-items:center;gap:6px;padding:3px 2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;transition:opacity 140ms var(--e-std)}
+.dui-shelf-minis::-webkit-scrollbar{display:none}
+.dui-shelf:not([data-folded]) .dui-shelf-minis{opacity:0;pointer-events:none;transition:opacity 120ms var(--e-in)}
+.dui-mini-at{display:contents}
+.dui-mini{position:relative;flex:none;width:32px;height:32px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);display:grid;place-items:center;overflow:hidden;color:var(--text-2);transition:border-color var(--d-1),transform var(--d-1)}
+.dui-mini img{width:100%;height:100%;object-fit:cover;display:block}
+.dui-mini:hover{border-color:var(--border-strong)}
+.dui-mini:active{transform:scale(.94)}
+.dui-mini:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.dui-mini.fetching>img,.dui-mini.fetching>.dui-i{opacity:.45}
+.dui-shelf-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows var(--d-glide) var(--sp-glide)}
+.dui-shelf[data-folded] .dui-shelf-body{grid-template-rows:0fr}
+.dui-shelf-clip{min-height:0;overflow:hidden}
+.dui-shelf-scroll{max-height:min(var(--dui-shelf-most,178px),34vh)}
+.dui-shelf-scroll .dui-scroll{padding:2px 0}
+.dui-shelf-body .dui-files{transition:opacity 200ms var(--e-std) 60ms}
+.dui-shelf[data-folded] .dui-shelf-body .dui-files{opacity:0;transition:opacity 120ms var(--e-in)}
+.android .dui-shelf-fold{height:40px}
+.android .dui-mini{width:40px;height:40px;border-radius:9px}
+.android .dui-shelf{padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}
+
 /* ---- The file preview (6.16) --------------------------------------------- */
 .dui-preview{position:fixed;inset:0;z-index:700;display:none;color:#EDE8E1;outline:none}
 .dui-preview.on,.dui-preview.leaving{display:block}

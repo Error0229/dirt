@@ -1,0 +1,43 @@
+{
+  "name": "files-caret",
+  "title": "Typing at the end of a long note above its unfolded shelf (#329)",
+  "issue": 324,
+  "platforms": ["desktop", "android"],
+  "description": "Design 6.5: the shelf lies at the bottom of the note's scrolling page, and the page keeps its height as scroll padding, so that the caret is brought into sight above it, never behind it. Lines are typed at the end of a long note with the shelf unfolded, and after each the caret's box is checked, as it is once the shelf has unfolded under a caret at the note's end (the page rides up with it, 6.5), against the shelf's top (`caretAbove`, which stops the run if it is behind). Desktop: a new note of forty lines and three pictures pasted onto it, which unfolds the shelf. Android: the newest note must have three files or more (docs/ui/motion-check.md); it is opened, made long and unfolded, with the keyboard up all the while. The mockup has no long notes, so it is not compared.",
+  "setup": [
+    {"platforms": ["desktop"], "click": "[data-dui-typed]"},
+    {"platforms": ["desktop"], "type": "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10\nLine 11\nLine 12\nLine 13\nLine 14\nLine 15\nLine 16\nLine 17\nLine 18\nLine 19\nLine 20\nLine 21\nLine 22\nLine 23\nLine 24\nLine 25\nLine 26\nLine 27\nLine 28\nLine 29\nLine 30\nLine 31\nLine 32\nLine 33\nLine 34\nLine 35\nLine 36\nLine 37\nLine 38\nLine 39\nLine 40"},
+    {"platforms": ["desktop"], "wait": 900},
+    {"platforms": ["desktop"], "pastePicture": "[data-dui-typed]", "name": "beans.png", "then": 2000},
+    {"platforms": ["desktop"], "pastePicture": "[data-dui-typed]", "name": "shed.png", "then": 2000},
+    {"platforms": ["desktop"], "pastePicture": "[data-dui-typed]", "name": "gate.png", "then": 2500},
+    {"platforms": ["desktop"], "waitFor": ".dk-files.dui-shelf:not([data-folded])", "ms": 15000},
+    {"platforms": ["android"], "tap": ".dm-list .dui-card-in", "then": 2500},
+    {"platforms": ["android"], "waitFor": ".dm-page .dui-shelf-fold", "ms": 15000},
+    {"platforms": ["android"], "type": "\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10\nLine 11\nLine 12\nLine 13\nLine 14\nLine 15\nLine 16\nLine 17\nLine 18\nLine 19\nLine 20", "then": 1500},
+    {"platforms": ["android"], "tap": ".dm-page .dui-shelf[data-folded] .dui-shelf-fold", "repeatUntilGone": ".dm-page .dui-shelf[data-folded]", "then": 1500},
+    {"caretAbove": {"field": "[data-dui-typed]", "above": {"desktop": ".dk-files.dui-shelf", "android": ".dm-page .dui-shelf"}}}
+  ],
+  "parts": {
+    "shelf": {"desktop": ".dk-files.dui-shelf", "android": ".dm-page .dui-shelf"},
+    "text": {"desktop": ".dk-text", "android": ".dm-text"}
+  },
+  "checks": {"within": [], "apart": [], "pops": {"px": 24, "opacity": 0.3}},
+  "movements": [
+    {
+      "name": "type-at-end",
+      "description": "Four new lines typed at the end of the note, the caret checked above the shelf after each.",
+      "steps": [
+        {"type": "\nOne more line", "then": 300},
+        {"caretAbove": {"field": "[data-dui-typed]", "above": {"desktop": ".dk-files.dui-shelf", "android": ".dm-page .dui-shelf"}}},
+        {"type": "\nAnd another", "then": 300},
+        {"caretAbove": {"field": "[data-dui-typed]", "above": {"desktop": ".dk-files.dui-shelf", "android": ".dm-page .dui-shelf"}}},
+        {"type": "\nA third", "then": 300},
+        {"caretAbove": {"field": "[data-dui-typed]", "above": {"desktop": ".dk-files.dui-shelf", "android": ".dm-page .dui-shelf"}}},
+        {"type": "\nAnd the last", "then": 300},
+        {"caretAbove": {"field": "[data-dui-typed]", "above": {"desktop": ".dk-files.dui-shelf", "android": ".dm-page .dui-shelf"}}}
+      ],
+      "ms": 900
+    }
+  ]
+}

@@ -22,7 +22,12 @@
 .dk-page-wrap{flex:1;min-height:0}
 .dk-page{padding:0 44px}
 /* The note's column. Its icons are in a gutter beside its first line, just
-   outside it, so that they travel with it (6.4). */
+   outside it, so that they travel with it (6.4). At rest it is in the
+   middle of the page, the room beside the list, once the page is wider
+   than the column and its margins (7.13): in a maximised or full-screen
+   window the note and its icons are where the eye goes, not pressed
+   against the list, and focus moves it by half the list's width however
+   wide the window is past that. Narrower, it fills the page, as before. */
 .dk-col{position:relative;max-width:680px;width:100%;min-height:100%;display:flex;flex-direction:column;padding-top:52px}
 .dk-gutter{position:absolute;top:58px;left:calc(100% + 6px);display:flex;flex-direction:column;gap:2px;opacity:.6;transition:opacity 200ms var(--e-std);z-index:3}
 .dk-gutter:hover,.dk-gutter:focus-within{opacity:1}
@@ -59,8 +64,11 @@
 .dk-col:has(.dk-listening) .dk-gutter>:not(.dui-mic){display:none}
 .dk-voice{width:100%}
 
-/* ---- The note's files, under its text: dirt-ui's tiles (6.5) ---------- */
-.dk-files{padding:0 0 22px;flex:none}
+/* ---- The note's files: dirt-ui's shelf at the foot of the column (6.5) - */
+.dk-files{flex:none;padding-bottom:18px}
+/* Zen: the files go, at any width, and the shelf is inert while they are
+   gone (Rust sets it), so that Tab passes it by. */
+.dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-files{opacity:0;pointer-events:none}
 
 /* ---- The window's own controls (7.6): Windows, with no title bar -------- */
 .dk-wctl{position:absolute;top:0;right:0;height:44px;display:flex;z-index:30;opacity:.55;transition:opacity 200ms var(--e-std)}
@@ -122,7 +130,7 @@
      off, so that its rows are not laid out again at every step. */
   .dk-side{position:relative;overflow:hidden;transition:width var(--d-glide) var(--sp-glide) 0ms,background-color 400ms var(--e-std),border-color 400ms var(--e-std)}
   .dk-side>:not(.dk-rail){width:343px;flex-shrink:0}
-  .dk-page{transition:padding var(--d-glide) var(--sp-glide) 0ms}
+  .dk-page{padding-left:max(44px,calc((100% - 680px) / 2));padding-right:max(44px,calc((100% - 680px) / 2));transition:padding var(--d-glide) var(--sp-glide) 0ms}
   .dk-main{transition:background-color 500ms var(--e-std) 120ms}
   .dk-text{transition:font-size var(--d-glide) var(--sp-glide) 0ms,line-height var(--d-glide) var(--sp-glide) 0ms,padding var(--d-glide) var(--sp-glide) 0ms}
   .dk-files{transition:opacity var(--d-3) var(--e-std)}
@@ -150,7 +158,6 @@
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main{background:var(--bg);transition:background-color 600ms var(--e-std) 260ms}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-text{font-size:calc(var(--note-size) + 4px);line-height:1.8;padding-top:56px;transition:font-size var(--d-glide) var(--sp-glide) 300ms,line-height var(--d-glide) var(--sp-glide) 300ms,padding var(--d-glide) var(--sp-glide) 300ms}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::before,.dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::after{opacity:1;transition:opacity 500ms var(--e-std) 420ms}
-  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-files{opacity:0}
   /* The note's icons stay beside its first line, which starts lower. */
   .dk-gutter{transition:opacity 200ms var(--e-std),top var(--d-glide) var(--sp-glide)}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-gutter{top:114px;transition:opacity 200ms var(--e-std),top var(--d-glide) var(--sp-glide) 300ms}

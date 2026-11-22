@@ -26,14 +26,20 @@ const PAGE = `<!doctype html><meta charset="utf-8"><style>
   #a{left:500px;top:0;background:#aaa}#b{left:550px;top:50px;background:#bbb}
   #c{left:500px;top:300px;background:#ccc}#d{left:550px;top:350px;background:#ddd}
   #cover{position:absolute;left:480px;top:280px;width:200px;height:200px;background:#000;z-index:5}
+  #field{position:absolute;left:0;top:520px;width:200px;height:60px;margin:0;padding:0;border:0;font:16px/20px monospace;resize:none;overflow:hidden}
 </style>
+<textarea id="field">one\ntwo\nthree</textarea>
 <div id="running"></div>
 <div id="scroller"><div id="fixed"></div><div id="inner"></div></div>
 <div id="shape"><div id="shaped"></div></div>
 <div id="calc"><div id="calced"></div></div>
 <div class="box" id="a"></div><div class="box" id="b"></div>
 <div class="box" id="c"></div><div class="box" id="d"></div><div id="cover"></div>
-<script>window.started = document.getElementById('running').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 1000 });</script>`;
+<script>window.started = document.getElementById('running').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600000 });</script>`;
+// The animation runs for ten minutes from the page's loading, so that it
+// is still running when the clock freezes it however slowly the browser
+// starts. At one second it had ended on a cold first run, and both the
+// freeze and the thaw failed (review, #329).
 
 test('the clock and the probe in a real page', { skip: !browserFound && 'no Edge or Chrome here' }, async t => {
   const browser = await launchHeadless({ width: 800, height: 600 });
@@ -81,6 +87,16 @@ test('the clock and the probe in a real page', { skip: !browserFound && 'no Edge
     await t.test('a clip whose edges are calc() of the box and pixels cuts too', async () => {
       const { parts } = await cdp.evaluate(`__motion.probe({ calced: '#calced' })`);
       assert.equal(parts.calced[0].seen, 0.25);
+    });
+
+    await t.test('the caret of a field is found on the line it is on', async () => {
+      await cdp.evaluate(`(() => { const f = document.getElementById('field'); f.setSelectionRange(f.value.length, f.value.length); })()`);
+      const end = await cdp.evaluate(`__motion.caret('#field')`);
+      assert.equal(Math.round(end.top), 560);
+      assert.equal(Math.round(end.bottom), 580);
+      await cdp.evaluate(`document.getElementById('field').setSelectionRange(0, 0)`);
+      const start = await cdp.evaluate(`__motion.caret('#field')`);
+      assert.equal(Math.round(start.top), 520);
     });
 
     await t.test('two parts are seen over one another unless something covers both', async () => {

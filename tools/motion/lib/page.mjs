@@ -386,11 +386,39 @@ function install(version) {
     return true;
   }
 
-  window.__motion = { version, probe, record, stopRecording, frameRate, freeze, settle, step, seen, thaw, pastePicture, realNow: real.now };
+  // Where a text field's caret is drawn, on the screen. A field gives no
+  // box for its caret, so a copy of its text up to the caret is laid out
+  // in a div styled as the field, off the screen, and the line it ends on
+  // is read: the usual way, for a field that wraps (pre-wrap).
+  function caret(selector) {
+    const field = document.querySelector(selector) || document.activeElement;
+    if (!field || !('selectionEnd' in field)) return null;
+    const style = getComputedStyle(field);
+    const copy = document.createElement('div');
+    for (const name of ['boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+      'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'fontFamily', 'fontSize',
+      'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'textTransform', 'wordSpacing', 'tabSize',
+      'overflowWrap', 'wordBreak']) copy.style[name] = style[name];
+    Object.assign(copy.style, { position: 'absolute', visibility: 'hidden', whiteSpace: 'pre-wrap', top: '0', left: '-9999px', borderStyle: 'solid' });
+    const at = field.selectionEnd;
+    copy.textContent = field.value.slice(0, at);
+    const mark = document.createElement('span');
+    mark.textContent = field.value.slice(at, at + 1) === '\n' || !field.value.slice(at) ? '.' : field.value.slice(at, at + 1);
+    copy.append(mark);
+    document.body.append(copy);
+    const line = parseFloat(style.lineHeight) || mark.offsetHeight;
+    const top = mark.offsetTop;
+    copy.remove();
+    const box = field.getBoundingClientRect();
+    const y = box.top + top - field.scrollTop;
+    return { top: y, bottom: y + line };
+  }
+
+  window.__motion = { version, probe, record, stopRecording, frameRate, freeze, settle, step, seen, thaw, pastePicture, caret, realNow: real.now };
   return 'installed';
 }
 
 // Changed whenever what runs in the page changes, so that a page that kept
 // an older one takes this one.
-const VERSION = 5;
+const VERSION = 6;
 export const installSource = `(${install.toString()})(${VERSION})`;

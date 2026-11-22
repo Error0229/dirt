@@ -284,6 +284,12 @@ mockups) and `default`.
   line up (`.dui-panel` alone also matches the panel of keys).
 - **`crop`**: the part of the page the frames show, by a selector (the
   mockup's device frame, a panel). Default: the whole page.
+- **`viewport`**: a window of another size, for the desktop only:
+  `{ "desktop": { "width": 2560, "height": 1440, "scale": 1 } }`. The test
+  copy stays off the screen, where it cannot be maximised, so its page is
+  laid out at that size by DevTools' device metrics, before the setup runs,
+  and the report gives the size. `focus-wide.json` uses it (#325). Android's
+  page is the screen's and takes none.
 - **`movements`**: captured in order, all of them stepped, then all of them
   in real time. So they should end where they began (open, then close), or
   `between` lists steps that reset the app between the two passes. Each
@@ -313,7 +319,13 @@ mockups) and `default`.
     another program; the app's own paste handler takes it);
   - `androidKey` (an Android key code, on the emulator: 4 is Back);
   - `eval` (for a mockup's start state only, never for the input of a
-    movement).
+    movement);
+  - `caretAbove` (a check, not an input: `{ "field": …, "above": … }`;
+    the caret of the field, or of whichever field has the keyboard, must
+    be drawn above the top of the element `above` names, or the run stops
+    and says where each was). The page has no box for a caret, so it is
+    measured by laying out the field's text up to it in a copy of the
+    field (`__motion.caret`). `files-caret.json` uses it (#329).
 
   Any step can carry `then` (ms to wait after it), `platforms`,
   `repeatUntilGone` (press again until a selector has gone: Android's page
@@ -339,6 +351,29 @@ adb -s emulator-5554 shell am start -W -a android.intent.action.SEND -t image/pn
 ```
 
 (In Git Bash, set `MSYS_NO_PATHCONV=1` and give `push` a Windows path.)
+
+**Several files on one note on the emulator.** `files-fold` on Android
+needs its newest note to hold three files or more. A share brings one file
+to a note of its own, and `am` cannot send the list of addresses a share
+of several needs, so they are chosen with the note's paperclip, in
+Android's own screen for choosing files. Name the emulator in every adb
+command: with a phone plugged in as well, a command without `-s` would
+run on the phone.
+
+```bash
+adb -s emulator-5554 shell mkdir -p /sdcard/Download/dirt
+adb -s emulator-5554 push "f01 Picture 1.png" /sdcard/Download/dirt/
+adb -s emulator-5554 shell content call --uri content://media --method scan_volume --arg external_primary
+adb -s emulator-5554 shell uiautomator dump /sdcard/ui.xml
+adb -s emulator-5554 shell cat /sdcard/ui.xml
+```
+
+Then on the page press the paperclip and, in that screen, switch to the
+list, long-press the first file and tap the others, and press **Select**.
+The dump says where each is (`uiautomator` may end with code 137 after
+writing its file; the file is there). The screen shows about nine at a
+time; press the paperclip again for more. Share the picture for
+`file-preview` after, so that it is the newest note again.
 
 **Never press a file tile's buttons.** The first opens the file in another
 app, on the person's screen. Open the preview by `.dui-file-main`.

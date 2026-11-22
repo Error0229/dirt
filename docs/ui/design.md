@@ -137,7 +137,7 @@ for the person.
 | Delete a note for good | **1**: <kbd>Shift Del</kbd>. On an archived note, the bin or <kbd>Del</kbd> | **2**: on an archived note (Find, or "archived" under the pile), swipe left or the bin |
 | Undo an archive or a delete | **1**: **Undo** or <kbd>Ctrl Z</kbd> | **1**: **Undo** |
 | Attach a file | **1**: drop it on the window | **2**: paperclip, choose |
-| Look at a file | **1**: click it, or <kbd>Space</kbd>. <kbd>←</kbd> <kbd>→</kbd> for the next | **1**: tap it. Swipe for the next |
+| Look at a file | **1**: click it (its tile, or its square on a folded shelf, 6.5), or <kbd>Space</kbd>. <kbd>←</kbd> <kbd>→</kbd> for the next | **1**: tap it, or its square. Swipe for the next |
 | Open, save or remove a file | **1**: the icon on hover, or in the preview | **1** |
 | Sync now | **1**: click the sync status, or <kbd>Ctrl R</kbd> | **1**: pull the list down |
 | See why a note won't sync | **1**: click the warning | **1**: tap the warning |
@@ -640,7 +640,8 @@ this document are approximate; the tokens here are the real ones.
 |---|---|
 | Quick capture opens | The box comes into focus: from 97% and 10 px up, blurred 10 px, to sharp (snap; the blur over 260 ms on enter), fading in over 280 ms (standard) |
 | Quick capture is put away (<kbd>Esc</kbd>, <kbd>Ctrl Enter</kbd>, a click outside) | The page shrinks to its grain and flies to the tray on an arc: across quickly (`cubic-bezier(.25,.65,.45,1)`), down slowly then fast (`cubic-bezier(.6,0,.9,.45)`), so the path curves (600 ms). The tray icon pulses once as it lands: a ring in the accent grows from 40% to 260% and fades (560 ms, enter). With nothing written it only fades (280 ms, standard) |
-| A file is attached | Its tile grows out of the paperclip, or out of the point it was dropped on, and bounces into place (pop). Several files follow one another, 70 ms apart |
+| A file is attached | Its tile grows out of the paperclip, or out of the point it was dropped on, and bounces into place (pop). Several files follow one another, 70 ms apart. A folded shelf unfolds for them first (6.5) |
+| The files fold and unfold | The tiles' room under the shelf's line closes, or opens (glide), the shelf's top edge with it, while the text above stays still. Folding, the tiles fade (120 ms, exit) and the files' squares fade in on the line (140 ms, standard); unfolding, the squares fade (120 ms, exit) and the tiles fade in (200 ms, standard, from 60 ms). The chevron turns (snap) (6.5) |
 | A preview opens and closes | The file grows out of its tile (420 ms, enter) and shrinks back into it (320 ms, standard), the backdrop, the buttons, the dots and the name fading with it both ways (280 ms, standard): the whole screen changes as one movement. With reduced motion it fades in where it is, and what is around it fades in 90 ms (6.16, 5.8) |
 | The next file in the preview | It comes in 48 px from the side it was asked for from (280 ms, enter). A file read after its thumbnail was shown fades in where the thumbnail was |
 | Files dragged over the window | A clay dashed edge and the words of what a drop would do fade in over the window (200 ms, standard) |
@@ -858,8 +859,8 @@ rule, and what was typed after `#`. Settled when it was built:
 
 ### 6.4 Editor
 
-An open note is the same page (6.1): its text, its files under it, and
-its icons in a **gutter beside its first line**, just outside the text
+An open note is the same page (6.1): its text, its files on the shelf at
+its foot (6.5), and its icons in a **gutter beside its first line**, just outside the text
 column: ✓ (done), 📎 and the archive box. On an archived note the box
 gives way to "back to the list" and 🗑 (6.19). On the blank page the gutter
 holds 🎙 and 📎.
@@ -878,6 +879,12 @@ The window's controls do the same at their corner, and the list's handle
 at the left edge. A mouse moving anywhere else brings nothing back. A
 control that has the keyboard's focus always shows, whatever the pointer
 does, and so does one touched on a touch screen.
+
+**At any size** the column is at most 680 px wide, the measure of a
+readable line, and on the desktop it is in the middle of the room it has:
+beside the list at rest, in the window while writing. Its icons and its
+shelf go where it goes. What a wide window, a maximised one among them,
+and a short one do is settled in 7.13.
 
 No title field, no formatting, no Save, no "Saved", no "Edited 4 minutes
 ago" (the row in the list has the time, and its tooltip the full date).
@@ -934,6 +941,41 @@ is shown without **Open**. A click or tap anywhere else on the tile, or
 What this left open is settled under 6.16. The size is in the core's words,
 which count in binary units ("1.8 MiB", "214 KiB"); the first version of
 this section said "MB".
+
+**The shelf** (issue #324). A note's tiles sit on a shelf at the foot of
+its page: one line, "3 files", that folds and unfolds them. Lists that can
+grow are never laid out in full (principle 5), and a note's files are such
+a list.
+
+Before, the tiles sat under the text, and the text field was stretched to
+fill the page above them: on the desktop they began at the window's foot,
+two to a row; on Android after 55% of the screen, one to a row, in the
+middle of it. Nothing folded them. Twelve files took 386 px of the
+desktop's 720 px window, more than all of a window 320 px high, and about
+740 dp on Android. And in a note longer than the screen they were at its
+very end, out of reach.
+
+| | Settled |
+|---|---|
+| Where | At the foot of the note's page, under its text, held at the bottom of the screen while the text scrolls above it (`position: sticky`), on both apps. On the desktop it is as wide as the note's column and travels with it (6.4); on Android it spans the page, just above the keyboard when the keyboard is up. The text scrolls under it and fades into it over 18 px rather than being cut |
+| The caret | Never behind it. A browser brings the caret into sight at the bottom edge of what scrolls and takes no account of a sticky box, so each new line typed at the end of a long note, or Enter near the bottom, went under the shelf (found in review, #329). The page keeps the shelf's height and its fade as scroll padding, kept current as the shelf changes size (`dirt-ui.js`, a `ResizeObserver`); WebView2 and Android's web view both honour it when they bring the caret into sight. Measured: at 1100 × 720 with the shelf unfolded, the caret went to 700–725 px under a shelf whose top was at 538, and now stops at 500–525; on the emulator with the keyboard up, 302 against a shelf at 314, and 328 with the padding taken away. A page read to its end, the end in sight or no further from it than the shelf's room, scrolls on by as much as the shelf grows (as it comes with the first file, unfolds, or takes another file), so that the end of the note and a caret there ride up with it; a page read elsewhere is left where it is. A shelf that comes with its note, as the note opens, does not ride: on Android the page is still growing out of its card then, and its first lines stay with the card (second review, #329). Out of sight in Zen, the shelf keeps no room. The motion check's `files-caret` types at the end of a long note with the shelf unfolded and stops if the caret is ever behind it |
+| The focus | The room lies over the shelf itself, so the browser, bringing a control on the shelf into sight as it took the focus, scrolled the page up by as much at every Tab (second review, #329: 759, 1110, 1461 px). The shelf is always in sight, so as a Tab or a press is about to move the focus the page keeps no room, back by the next frame; the browser scrolls before it tells of the focus, so this cannot wait for it. A focus that comes with neither (a screen reader's cursor) and scrolls the page anyway puts the page back where its last scroll left it. Tabbed through, and focused with no key, the page stays at 759 |
+| Why there | Directly under the text, it would move down with every line typed: a movement under the eye while writing, which 7.12 keeps out of the first character too. Docked by the editor's bar, it would sit with the controls, which go while writing (6.4, 7.7) and are actions, not things. At the foot it never splits the text, never moves as the text grows, is in reach at any scroll of a long note, and on Android is where the thumb is, as the dock is |
+| Folded | One line, 40 px high: a chevron and the count ("1 file", "3 files"), then a square for each file, 32 px (40 dp on Android), its thumbnail or its kind (a note of music for a sound, a page for anything else). As many as fit show, and the rest are a sideways scroll or swipe away, with no bar drawn, as on the tag strip. A square previews its file, so looking at a file stays one action (section 2), and the preview grows out of the square and shrinks back into it. On a kind the preview does not show, a square unfolds the shelf and gives the keyboard to its tile's first icon, as a press on the tile does (6.16); on Android, where the tile's icons always show, the keyboard stays with the text if the text had it, since taking it would put the keyboard away and resize the page under the unfolding (#322). The preview shrinks back into whichever the shelf shows, the square or the tile, never the other, which is see-through and inert; if the squares or the tiles have been scrolled away from it, they are scrolled to bring it into sight first, under the backdrop, and if it still cannot mostly be seen the file fades where it is |
+| Unfolded | The same line, its chevron turned, and under it the tiles: two to a row in the desktop's column, one on Android. At most three rows (178 px) and a third of the window (34%) high; more scroll inside it, with the drawn scrollbar (6.15). The squares go from the line: they would say again what the tiles say |
+| When a note opens | Unfolded with one or two files, folded with three or more (`dirt_ui::files::UNFOLDED_MOST`), counted once, at the first reading of its files that finds any: a note opened with none, to which a sync then brings ten, shows them folded. One or two tiles are one row on the desktop, and two on Android: little more than the line itself. It was three and more that took the room |
+| Then | Only the person folds or unfolds it, or files attached here (below). A file that a sync brings, or one removed, here or elsewhere, changes nothing: the first version counted the files again at every reading, so a third file from another device folded an open shelf by itself, with the keyboard's focus falling out of it, and removing one of three in the preview unfolded it under the preview (review, #329) |
+| Not kept | The choice holds while the note is open, and goes with it. Kept for each note, it would be a view of the note that each device keeps for itself, since it must not sync: it is how one screen shows a note, not the note, and has no place in the note's document. Each device would also have to let go of it when the note is purged, all for thoughts that are mostly opened a few times. A rule gives the same shelf every time and on every device, and the other state is one press away |
+| Attaching | Files attached here (the paperclip, a drop, a paste, a recording said into the note on Android) unfold the shelf, so that their tiles are seen growing out of where they came from (5.5). Only if the attach added a file, by the app's own count of what it attached, not by what the next reading happens to find new (a sync's reading may list the files first): one refused (a note's twenty reached) changes nothing, and what an attach leaves to be seen belongs to the note it was made to, used up by the next reading of that note's files or by the opening of another, so that it never unfolds a later note. Files that arrive by a sync do not: nothing moves under the person for what another device did |
+| Folding and unfolding | A press on the line, or <kbd>Enter</kbd> or <kbd>Space</kbd> while it has the keyboard. Its movement is in 5.5. With reduced motion the room and the chevron change in 90 ms (5.6) and the fades stay |
+| The keyboard | The line is one stop for <kbd>Tab</kbd>. Folded, each square is one more and the tiles are out of the order (`inert`); unfolded, the squares are out and the tiles' parts are in, as 6.16 has them. The preview gives the keyboard back to the square or the tile it was opened from. A press on the line or on a square leaves the keyboard's focus in the note's text (`data-dui-keep-focus`): the cursor stays, and Android's keyboard stays up |
+| A screen reader | The line is a button named by its count, "3 files", expanded or collapsed, which controls the tiles. The count is told by a polite live region beside the shelf, there as long as the note is open, so that the first file attached and the last removed ("No files") are told too; it says nothing until the files change, so opening a note is not told. It is one node all that while: the shelf and the region are one template, since a second template for "no shelf" made the region anew on the first file and the last, already holding its words, which a screen reader does not read (second review, #329). What it goes by (the count at the opening, and whether it has changed) is kept with the note's files and starts again at each opening, since on Android the shelf outlives a note closed and opened again. A square is "Preview: kitchen.png", or "Show its icons: install.sh" |
+| Zen | The shelf goes, as the files did (7.7), at any width, and is inert while it is gone, so that <kbd>Tab</kbd> and a screen reader pass it by. Its room is still kept for the caret |
+| None | A note with no files has no shelf |
+| Tried | 1, 3, 12, 16 and 20 files of mixed kinds (pictures, PDFs, sounds, text, a `.zip`), on the desktop from its smallest window (360 × 320) to 3840 × 2160, and on the Android emulator (8.12). Forty cannot be attached: a note holds twenty (`MAX_FILES_PER_NOTE`, `docs/LIMITS.md`), and a picture's thumbnail counts as one of them, so twenty is the most a shelf holds |
+
+It is `dirt_ui::files::FileShelf`, the same for both apps; its line is
+`ShelfFrame`, which the gallery shows too, and a square `FileMini`.
 
 ### 6.6 Sync status
 
@@ -1738,6 +1780,36 @@ one cell (8.11) in the next. Each can be undone on its own.
 | No window of its own for the tray | A small window styled from the tokens was weighed and not made. It would be a third web view kept ready, as quick capture's is, with the memory that costs; placed beside the icon, whose place Linux does not give (7.10); closed when a click or the keyboard goes elsewhere, the focus handling that took most of quick capture's work (7.10); and made reachable by the keyboard and screen readers, which the system's menu already is. For three choices that is the most complexity for the least gain. The menu stays the system's, and fits by being short; the icon and the tooltip carry the look |
 | The tray's icon | The logo, the sprout on its rounded square, in the accent chosen in Settings, drawn again when it changes. It was an indigo square from before the design. Its light-scheme colours, the deeper accent with a white sprout, which read on a light taskbar and a dark one alike. On a Mac it is the sprout alone, as a template image, which the system colours as the menu bar's other icons, light or dark. Drawn in code from the logo's own shapes (`tray::logo_pixels`), 32 px and smoothed, so no picture file is added; the system scales it to the tray. Its tooltip says what a click does, on Windows: "Dirt", then "Click to open. Ctrl+Alt+N for a new note"; elsewhere "Dirt" |
 
+### 7.13 Settled when the editor was laid out for large windows
+
+The owner's note (issue #325): in a full-screen window the note's icons,
+✓, the paperclip and the box, were out of place.
+
+**What was wrong.** The note's column is at most 680 px wide, and it sat at
+the left of the page, 44 px from the list. Its icons are just outside its
+right edge (6.4). In the window of 1100 px the design was drawn for, that is
+the right of the page, and the icons are by the window's edge. Maximised,
+the column stayed against the list and the icons floated in the middle of
+the screen with nothing beside them: at 2560 × 1440 they were 1074 px from
+the left and 1450 px from the right, and the files lay at the window's foot
+under the column. Then, at the first pause in typing, focus moved the column
+to the middle of the window, and how far grew with the window: 233 px at
+1920 px wide, 552 px at 2560, 1193 px at 3840. The icons the person had just
+looked at slid across half the screen. Nothing was out of place at the
+size the design shows; the design had not said what the page does with
+more room. The app has no full screen of its own: full screen is the window
+maximised (▢, or a double-click on the top row, 7.6), which is laid out as
+any window of its size.
+
+| | Settled |
+|---|---|
+| The column at rest | In the middle of the page, the room beside the list, once the page is wider than the column and its 44 px margins: a window wider than 1112 px. Narrower, it fills the page between its margins, as before, so nothing changes at the first size or in the mockup, whose window is at most 1000 px. The icons stay beside the text's first line wherever the column is |
+| Into focus | In a window wider than 1112 px the column glides from the middle of the page to the middle of the window: to the left, as the list leaves to the left, by half the list's width (172 px; 144 px with Rail), however wide the window. Narrower, nothing changed: the column fills the page and glides to the middle as it always did, by up to the list's width less the margins (277 px at 900 px wide). Coming back is the same glide the other way |
+| Its width | 680 px however wide the window. A longer line is harder to read, and the room left over is margin, as on paper. The text size (<kbd>Ctrl +</kbd>) changes the type, not the measure |
+| Short windows | At the smallest window (360 × 320), at 1100 × 320 and at 2560 × 400, the icons (58 px down, 100 px tall), the text and the folded shelf (62 px) all show. The unfolded shelf takes at most a third of the window (6.5) |
+| Tried | On a test copy of the app off the screen, laid out at each size by DevTools (a window of its own cannot be maximised without coming onto the person's screen): 1100 × 720; 720 × 720; 1536 × 816, a 1080p screen at 125%, maximised; 1920 × 1032 and 1920 × 1080; 1707 × 960, a 1440p screen at 150%; 2560 × 1440; 2560 × 1440 at 1.5×, a 2160p screen at 150%; 3840 × 2160; 2560 × 400; 1100 × 320; 360 × 320. At rest and in focus. The window really maximised, at the screen's own scaling, is the manual checklist's (D106) |
+| The motion check | `focus-wide`, at 2560 × 1440: a note opened from the list, a new line (focus), the pointer to the left edge (back). The scenario takes the window's size from DevTools (`viewport`), as the tool now can |
+
 ---
 
 ## 8. Android
@@ -1782,7 +1854,8 @@ sheet** (8.5), not the app.
 
 Full screen, the text first. Tapping the text puts the cursor there. Top
 bar: back (⌄ on a new page), mic, attach, archive (on an archived note,
-"back to the list" and delete). Files under the text. It
+"back to the list" and delete). Files on the shelf at the foot of the page,
+above the keyboard (6.5). It
 saves as you type; there is no Save button and no "Saved".
 
 ### 8.4 What changes from today
@@ -2059,6 +2132,17 @@ The owner's note on the bar widget from trying the app on a phone (issue
 | The pencil | Lucide's, as every icon is (4.4), and the widget's alone: "write" beside the mic's "talk". Its name for TalkBack is the bar's, "Write a thought" |
 | Its colours | The layout names only the colours made from the tokens, as every layout and drawable of the native module does; a test now holds them to that (`layouts_and_drawables_name_only_the_tokens`), besides the test that the colours are the tokens |
 
+### 8.12 Settled when a note's files were put on the shelf
+
+What the shelf (6.5, issue #324) settles for Android alone.
+
+| | Settled |
+|---|---|
+| Where | At the foot of the page, across it, under the text; just above the keyboard while it is up, since the page is the room the keyboard leaves. The text field no longer takes 55% of the screen before the files begin, which was what put them in its middle: it fills the page down to the shelf, so a tap anywhere on the page above it still puts the cursor in the text |
+| Its targets | The line and each square are 40 dp, the size of the bar's icons (6.10) |
+| While typing | The page's bar fades (8.7); the shelf stays, folded or not as it was. It is the note's, and the person may want a file while writing. The caret stays above it with the keyboard up (6.5); a press on the line or a square leaves the keyboard up |
+| Growing and shrinking | It is part of the page's body, so it grows out of the card and shrinks back into it with the text (5.5) |
+
 ---
 
 ## 9. Flows
@@ -2327,6 +2411,7 @@ written here; what only a person can judge is in `docs/MANUAL_CHECKLIST.md`.
 | Dialogs | Settings, the file preview and confirmations hold the focus while open, Esc closes them, and the focus goes back to what opened them (the script's modals) | D49, D58, D14 |
 | Toasts | A polite live region; errors an alert. **Undo** has Ctrl Z on the desktop. On Android a toast did not stay while TalkBack was on: it does now. The app asks Android whether a screen reader that explores by touch is on as it starts and each time the person comes back, and a toast shown then holds, with ✕, until it is dismissed (`dirt_ui::components::set_screen_reader`). On the emulator with TalkBack on, "Archived" with **Undo** was still there after 9 s, with ✕; with it off, it went by itself | A71 |
 | Every gesture has a button | The box in the note's bar for a swipe; the sync icon for a pull | No item |
+| The shelf | Its line is a button named by its count, with `aria-expanded` and `aria-controls`; the count is told by a polite live region beside it that outlives it, when files are attached or removed, the first and the last among them. What is folded away is `inert`, and so is the whole shelf while Zen hides it, so <kbd>Tab</kbd> and a screen reader skip it (6.5) | D109, D110, A85 |
 | Voice is never the only way | Every mic has a page or a field to type on beside it, and a tap listens hands-free | No item |
 | A screen reader told of listening | "Listening", "Kept", "Thrown away", "Nothing heard" in the listening view's status, and "Words arrived: …" for a thought said or added to a note in this run; the grains are a canvas hidden from it | D87, A62 |
 | Text size | 13 to 20 px (`TextSize`). Android's web view takes the system's font scale as its text zoom when it is made, and the activity is made again when the scale changes (`fontScale` is not among the changes it takes itself), so the app follows it: on the emulator, at a font scale of 1.3 the dock's words went from 16 px to 20.8 px | A72 |
