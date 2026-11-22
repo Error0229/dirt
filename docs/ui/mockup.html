@@ -973,6 +973,64 @@ input[type=range]{accent-color:var(--accent);width:150px}
 .win .ed-bar,.win .wctl,.win .dk-side>*{transition:opacity 200ms var(--e-std)}
 .win.writing .ed-bar:focus-within,.m-ed.writing .m-ed-bar:focus-within,.win.writing .wctl:focus-within,.win.hush .ed-bar:focus-within{opacity:1}
 .row .row-del:focus-visible{opacity:1;scale:1}
+/* =====================================================================
+   THE QUIET PAGE (design.md 1, 6.4, 6.5, 7.7, 7.14)
+   While a note is read or typed, as little as possible besides the words.
+   ===================================================================== */
+/* The text starts at the optical centre: its first line 38% down the
+   window, blank page and note alike. It grows downward, so nothing
+   written moves; the room above scrolls away with a long note. */
+.win{container-type:size}
+.ed textarea,.win.writing[data-focus="zen"] .ed textarea{padding-top:max(6px,calc(38cqh - 52px))}
+/* The note's icons at the window's right edge, in the middle of its
+   height, away from the window's own buttons. They stay there whatever
+   the column does. */
+.ed>.ed-bar,.win[data-os="mac"] .ed>.ed-bar{top:50%;left:auto;right:14px;transform:translateY(-50%)}
+.ed-bar .when-narrow{display:none}
+.win:not(.writing) .ed-bar .when-focus{display:none}
+/* From the first key nothing shows; a pause changes nothing; the hand
+   back on the mouse (40 px of travel since the last key) brings the
+   icons back, and only them. */
+.win.writing.near-acts:not(.hand) .ed-bar,.win.writing.chrome:not(.hand) .ed-bar{opacity:0}
+.win.hush.hand .ed-bar,.win.writing.hand .ed-bar{opacity:.6}
+.win.hush.hand .ed-bar:hover,.win.writing.hand .ed-bar:hover{opacity:1}
+/* Typewriter: Slide's layout. */
+.win.writing[data-focus="typewriter"] .dk-side{opacity:1;width:0;border-right-color:transparent;transition:width var(--d-glide) var(--sp-glide) 90ms,opacity 200ms var(--e-std),background-color 400ms var(--e-std),border-color 400ms var(--e-std)}
+.win.writing[data-focus="typewriter"] .dk-side>*{opacity:0;transition:opacity 140ms var(--e-in) 0ms}
+.win.writing[data-focus="typewriter"] .ed{padding-left:max(44px,calc((100% - 680px) / 2));padding-right:max(44px,calc((100% - 680px) / 2));transition:padding var(--d-glide) var(--sp-glide) 150ms}
+.win.writing[data-focus="typewriter"] .edge{display:block}
+/* Room under the text, so that its last line can reach the optical line. */
+.win[data-focus="typewriter"] .ed textarea{padding-bottom:calc(62cqh - 1.65em)}
+/* The other paragraphs at 40% while typing: a mask whose band follows
+   the caret's paragraph, and whose strength fades. */
+@property --tw-dim{syntax:'<number>';inherits:false;initial-value:1}
+@property --tw-a{syntax:'<length>';inherits:false;initial-value:0px}
+@property --tw-b{syntax:'<length-percentage>';inherits:false;initial-value:100%}
+.ed textarea.tw{--tw-dim:1;-webkit-mask-image:linear-gradient(to bottom,rgba(0,0,0,var(--tw-dim)) var(--tw-a),#000 var(--tw-a),#000 var(--tw-b),rgba(0,0,0,var(--tw-dim)) var(--tw-b));mask-image:linear-gradient(to bottom,rgba(0,0,0,var(--tw-dim)) var(--tw-a),#000 var(--tw-a),#000 var(--tw-b),rgba(0,0,0,var(--tw-dim)) var(--tw-b));transition:--tw-dim 400ms var(--e-std),--tw-a 200ms var(--e-std),--tw-b 200ms var(--e-std),font-size var(--d-glide) var(--sp-glide) 0ms,padding var(--d-glide) var(--sp-glide) 0ms}
+.ed textarea.tw.dim{--tw-dim:.4;transition:--tw-dim 200ms var(--e-std),--tw-a 200ms var(--e-std),--tw-b 200ms var(--e-std),font-size var(--d-glide) var(--sp-glide) 0ms,padding var(--d-glide) var(--sp-glide) 0ms}
+:root[data-motion="reduced"] .ed textarea.tw,:root[data-motion="reduced"] .ed textarea.tw.dim{transition:none}
+@media (prefers-reduced-motion:reduce){.ed textarea.tw,.ed textarea.tw.dim{transition:none}}
+/* Focus begins: On the first key. The list leaves at the first key and
+   the column is held where it was. Its left margin is the room the list
+   gives up, read from the page's own width at every frame (100% less the
+   window's 100cqw, plus where the column was), so no transition is needed
+   and the column's edge stays on its pixel while the list folds by any
+   style; its right margin keeps its width. Wider than 1112 px it stays
+   held for the whole of focus. Leaving, the hold is kept until the list
+   is back (the glide's length), then gives way to the same place. */
+.win.fold:is([data-focus="slide"],[data-focus="zen"],[data-focus="typewriter"]) .dk-side{width:0;border-right-color:transparent}
+.win.fold[data-focus="rail"] .dk-side{width:56px}
+.win.fold .dk-side{opacity:1;transition:width var(--d-glide) var(--sp-glide) 90ms,background-color 400ms var(--e-std),border-color 400ms var(--e-std)}
+.win.fold:is([data-focus="slide"],[data-focus="zen"],[data-focus="typewriter"]) .dk-side>*,.win.fold[data-focus="rail"] .dk-side>*:not(.frail){opacity:0;pointer-events:none;transition:opacity 140ms var(--e-in) 0ms}
+.win.fold[data-focus="rail"] .frail{opacity:1;pointer-events:auto}
+.win.fold:is([data-focus="slide"],[data-focus="zen"],[data-focus="typewriter"]) .edge{display:block}
+.win.begins-key .ed{transition:padding 0s linear var(--d-glide)}
+.win.fold .ed{padding-left:calc(100% - 100cqw + 344px + max(44px,(100cqw - 1024px) / 2));padding-right:max(44px,(100cqw - 1024px) / 2);transition:padding 0s}
+@container (min-width:1113px){
+  .win.begins-key.writing .ed{padding-left:calc(100% - 100cqw + 344px + max(44px,(100cqw - 1024px) / 2));padding-right:max(44px,(100cqw - 1024px) / 2);transition:padding 0s}
+}
+/* The shelf's new square pops into the folded line. */
+@keyframes miniIn{from{opacity:0;transform:scale(.3)}30%{opacity:1}}
 </style>
 </head>
 <body>
@@ -1079,7 +1137,8 @@ input[type=range]{accent-color:var(--accent);width:150px}
   <div id="wrap-d">
     <div class="caption"><b>Desktop</b>
       <div class="seg sm" id="os-seg" style="--n:2;--i:0"><button data-act="os" data-v="win" class="on">Windows</button><button data-act="os" data-v="mac">macOS</button><span class="seg-thumb"></span></div>
-      <div class="seg sm" id="focus-seg" style="--n:3;--i:0" data-tip="Focus style: type in a note to see it"><button data-act="focus-v" data-v="slide" class="on">Slide</button><button data-act="focus-v" data-v="rail">Rail</button><button data-act="focus-v" data-v="zen">Zen</button><span class="seg-thumb"></span></div>
+      <div class="seg sm" id="focus-seg" style="--n:4;--i:0" data-tip="Focus style: type in a note to see it"><button data-act="focus-v" data-v="slide" class="on">Slide</button><button data-act="focus-v" data-v="rail">Rail</button><button data-act="focus-v" data-v="zen">Zen</button><button data-act="focus-v" data-v="typewriter">Typewriter</button><span class="seg-thumb"></span></div>
+      <div class="seg sm" id="begins-seg" style="--n:2;--i:0" data-tip="Focus begins"><button data-act="begins-v" data-v="pause" class="on">After a pause</button><button data-act="begins-v" data-v="key">On the first key</button><span class="seg-thumb"></span></div>
       · <kbd>Ctrl</kbd><kbd>/</kbd> for keys</div>
     <button class="restore" id="d-restore" data-act="win-restore" data-tip="Open Dirt"><svg class="logo"><use href="#logo"/></svg></button>
     <div class="win" id="D" data-dev="d" data-focus="slide">
@@ -1120,12 +1179,13 @@ input[type=range]{accent-color:var(--accent);width:150px}
                  first line and travel with it (design.md 6.4). -->
             <div class="col" id="d-col">
               <div class="ed-bar" id="d-acts">
-                <button class="icon-btn when-note" data-act="settle" data-tip="Done" data-kbd="Esc"><svg class="i"><use href="#i-check"/></svg></button>
+                <button class="icon-btn when-narrow" data-act="new-note" data-tip="Show the list" data-kbd="Esc"><svg class="i"><use href="#i-chevron-left"/></svg></button>
                 <button class="icon-btn when-blank" id="d-mic" data-tip="Talk" data-kbd="hold Ctrl Alt N"><svg class="i"><use href="#i-mic"/></svg></button>
-                <button class="icon-btn" data-act="attach" data-tip="Attach a file" data-kbd="Ctrl Shift A"><svg class="i"><use href="#i-paperclip"/></svg></button>
-                <button class="icon-btn when-note when-live" data-act="archive-open" data-tip="Archive" data-kbd="Ctrl Del"><svg class="i"><use href="#i-archive"/></svg></button>
+                <button class="icon-btn" id="d-attach" data-act="attach" data-tip="Attach a file, or drop or paste one" data-kbd="Ctrl O"><svg class="i"><use href="#i-paperclip"/></svg></button>
+                <button class="icon-btn when-note when-live" data-act="archive-open" data-tip="Archive" data-kbd="Ctrl E"><svg class="i"><use href="#i-archive"/></svg></button>
                 <button class="icon-btn when-arch" data-act="unarchive" data-tip="Back to the list"><svg class="i"><use href="#i-unarchive"/></svg></button>
                 <button class="icon-btn danger when-arch" data-act="del-open" data-tip="Delete for good" data-kbd="Ctrl Shift Del"><svg class="i"><use href="#i-trash"/></svg></button>
+                <button class="icon-btn when-focus" data-act="new-note" data-tip="New note" data-kbd="Ctrl N"><svg class="i"><use href="#i-plus"/></svg></button>
               </div>
               <textarea id="d-text" aria-label="Note" placeholder="What’s on your mind?" spellcheck="false"></textarea>
               <div class="shelf" id="d-shelf" data-folded hidden>
@@ -1864,7 +1924,8 @@ function settingsBody(dev) {
   <section class="sec" id="${dev}-sec-look"><h3>Appearance</h3><div class="card">
     <div class="srow"><div class="grow t">Theme</div>${seg('theme', [['system', ICON('monitor', 's') + (dev === 'd' ? 'Auto' : '')], ['light', ICON('sun', 's') + (dev === 'd' ? 'Light' : '')], ['dark', ICON('moon', 's') + (dev === 'd' ? 'Dark' : '')]], S.theme)}</div>
     <div class="srow"><div class="grow t">Accent</div><div class="swatches">${ACCENTS.map(([k, name]) => `<button class="sw ${S.accent === k ? 'on' : ''}" data-act="accent" data-v="${k}" data-tip="${name}${k === 'clay' ? ' (default)' : ''}" aria-label="${name}" aria-pressed="${S.accent === k}"></button>`).join('')}</div></div>
-    ${dev === 'd' ? `<div class="srow"><div class="grow t">Focus while writing</div>${seg('focus-v', [['slide', 'Slide'], ['rail', 'Rail'], ['zen', 'Zen']], S.focus, 'sm')}</div>` : ''}
+    ${dev === 'd' ? `<div class="srow"><div class="grow t">Focus while writing</div>${seg('focus-v', [['slide', 'Slide'], ['rail', 'Rail'], ['zen', 'Zen'], ['typewriter', 'Typewriter']], S.focus, 'sm')}</div>
+    <div class="srow"><div class="grow"><div class="t">Focus begins</div><div class="s">${S.begins === 'key' ? 'The list goes at the first key; the words stay put' : 'The list goes when typing pauses'}</div></div>${seg('begins-v', [['pause', 'After a pause'], ['key', 'On the first key']], S.begins || 'pause', 'sm')}</div>` : ''}
     <div class="srow"><div class="grow t">Text size</div><span style="font-size:12px;color:var(--text-3)">A</span><input type="range" min="13" max="20" step="1" value="${S.size}" data-input="size" aria-label="Text size"><span style="font-size:17px;color:var(--text-3)">A</span></div>
     ${dev === 'd' ? `<div class="srow"><div class="grow"><div class="t">Quick capture</div><div class="s">Works from any app</div></div><span style="display:flex;gap:3px"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>N</kbd></span></div>` : ''}
   </div></section>
@@ -2884,11 +2945,12 @@ document.addEventListener('keydown', e => {
   else if (mod && k === 'z' && !inText) { if (undoDelete()) e.preventDefault(); }
   else if (mod && (k === '=' || k === '+')) { e.preventDefault(); setSize(S.size + 1); }
   else if (mod && k === '-') { e.preventDefault(); setSize(S.size - 1); }
-  else if (mod && e.shiftKey && k === 'a' && S.dsel) { e.preventDefault(); attach('d'); }
-  else if (mod && e.key === 'Delete' && S.dsel) { e.preventDefault(); deleteNote(S.dsel, 'd'); }
+  else if (mod && !e.shiftKey && k === 'o') { e.preventDefault(); ACT.attach($('#d-attach'), 'd', e); }
+  else if (mod && !e.shiftKey && k === 'e' && S.dsel && !get(S.dsel)?.archived) { e.preventDefault(); ACT['archive-open'](null, 'd'); }
+  else if (mod && e.shiftKey && e.key === 'Delete' && S.dsel) { e.preventDefault(); deleteNote(S.dsel, 'd'); }
   else if (mod && k === '/') {
     e.preventDefault();
-    toast('d', `<span style="display:grid;grid-template-columns:auto auto;gap:4px 12px;padding:4px 0"><span>New note</span><kbd>Ctrl N</kbd><span>Find</span><kbd>Ctrl F</kbd><span>Done, back to a blank page</span><kbd>Esc</kbd><span>Write from any app</span><kbd>Ctrl Alt N</kbd><span>Talk from any app</span><kbd>hold Ctrl Alt N</kbd><span>Move / open</span><kbd>↑ ↓ ↵</kbd><span>Archive</span><kbd>Del</kbd><span>Delete for good</span><kbd>Shift Del</kbd><span>Undo</span><kbd>Ctrl Z</kbd><span>Sync now</span><kbd>Ctrl R</kbd><span>Settings</span><kbd>Ctrl ,</kbd></span>`, { ms: 5000 });
+    toast('d', `<span style="display:grid;grid-template-columns:auto auto;gap:4px 12px;padding:4px 0"><span>New note</span><kbd>Ctrl N</kbd><span>Find</span><kbd>Ctrl F</kbd><span>Done, back to a blank page</span><kbd>Esc</kbd><span>Write from any app</span><kbd>Ctrl Alt N</kbd><span>Talk from any app</span><kbd>hold Ctrl Alt N</kbd><span>Move / open</span><kbd>↑ ↓ ↵</kbd><span>Archive</span><kbd>Del</kbd><span>Archive, in a note</span><kbd>Ctrl E</kbd><span>Delete for good</span><kbd>Shift Del</kbd><span>Attach a file</span><kbd>Ctrl O</kbd><span>Undo</span><kbd>Ctrl Z</kbd><span>Sync now</span><kbd>Ctrl R</kbd><span>Settings</span><kbd>Ctrl ,</kbd></span>`, { ms: 5000 });
   }
 });
 
@@ -4250,11 +4312,12 @@ $('#d-list').addEventListener('keydown', e => {
     setTimeout(() => $('#d-list').focus(), 300);
   } else if (e.key === 'Escape' && S.darch) { e.stopImmediatePropagation(); S.darch = false; renderD(); }
 }, true);
+/* Ctrl Shift Del in a note deletes it. Ctrl Del is the text's own again
+   (the next word), and Ctrl E archives (design.md 7.14). */
 window.addEventListener('keydown', e => {
-  if (activeDev !== 'd' || !(e.ctrlKey || e.metaKey) || e.key !== 'Delete' || !S.dsel) return;
+  if (activeDev !== 'd' || !(e.ctrlKey || e.metaKey) || !e.shiftKey || e.key !== 'Delete' || !S.dsel) return;
   e.preventDefault(); e.stopImmediatePropagation();
-  const n = get(S.dsel);
-  (e.shiftKey || n?.archived) ? ACT['del-open'](null, 'd') : ACT['archive-open'](null, 'd');
+  ACT['del-open'](null, 'd');
 }, true);
 /* Swipe left on a card archives it. */
 function pointerUp() {
@@ -4432,6 +4495,174 @@ setTimeout(() => { if (activeDev === 'd' && !document.activeElement?.closest('[d
     else if (e.shiftKey && at === a) { e.preventDefault(); z.focus(); }
     else if (!e.shiftKey && at === z) { e.preventDefault(); a.focus(); }
   });
+}
+/* =====================================================================
+   THE QUIET PAGE (design.md 1, 6.4, 6.5, 7.7, 7.14)
+   The note's icons at the window's right edge; no Done; the hand back on
+   the mouse; the shelf always folded; Typewriter; Focus begins.
+   ===================================================================== */
+{
+  const D = $('#D'), ed = $('#d-ed'), t = $('#d-text');
+  // The note's icons leave the column for the window's right edge.
+  ed.appendChild($('#d-acts'));
+
+  // + starts the next thought, which puts this one away; ‹ (a window
+  // narrower than 720 px) goes back to the list the same way.
+  ACT['new-note'] = () => { if (S.dsel) settleD(); else { leaveFocus(); } t.focus({ preventScroll: true }); };
+
+  // While a note has no files, the paperclip's tooltip says it takes a
+  // dropped or pasted file too.
+  const attachTip = () => {
+    const n = get(S.dsel), b = $('#d-attach'), tip = n && n.files.length ? 'Attach a file' : 'Attach a file, or drop or paste one';
+    b.dataset.tip = tip; b.setAttribute('aria-label', tip);
+  };
+
+  /* The hand back on the mouse: 40 px from where the pointer was first
+     seen since the last key brings the note's icons back, and only them.
+     A bump stays within a few pixels; a pause changes nothing. */
+  let from = null;
+  D.addEventListener('mousemove', e => {
+    if (!D.classList.contains('writing') && !D.classList.contains('hush')) { from = null; return; }
+    if (D.classList.contains('hand')) return;
+    if (!from) { from = [e.clientX, e.clientY]; return; }
+    if (Math.hypot(e.clientX - from[0], e.clientY - from[1]) >= 40) D.classList.add('hand');
+  });
+  D.addEventListener('mouseleave', () => { from = null; });
+  t.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key.length === 1 || e.key === 'Enter' || e.key === 'Backspace' || e.key === 'Delete') { D.classList.remove('hand'); from = null; }
+  }, true);
+
+  /* The shelf opens folded for every note, and attaching does not unfold
+     it: the new square pops into the folded line where it lands. */
+  shelfFolded = function (dev, n) {
+    if (SHELF[dev].note !== n.id || SHELF[dev].folded === null) SHELF[dev] = { note: n.id, folded: true };
+    return SHELF[dev].folded;
+  };
+  const renderFilesBefore = renderFiles;
+  renderFiles = function (dev) {
+    const n = get(dev === 'd' ? S.dsel : S.msel);
+    let popped = [];
+    if (n && shelfFolded(dev, n)) {
+      popped = n.files.filter(f => f.fresh).map(f => f.id);
+      n.files.forEach(f => { f.fresh = false; });
+    }
+    renderFilesBefore(dev);
+    if (dev === 'd') attachTip();
+    // After the attach has drawn the list again, which draws the shelf too.
+    if (popped.length) queueMicrotask(() => popped.forEach((id, k) => {
+      const el = $(`#${dev}-minis [data-fid="${id}"]`);
+      if (!el) return;
+      if (reduced()) { el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 90 }); return; }
+      const p = sp('pop');
+      el.animate([{ opacity: 0, transform: 'scale(.3)' }, { opacity: 1, offset: 0.3 }, { transform: 'none', opacity: 1 }], { duration: p.d, easing: p.e, delay: k * 70, fill: 'backwards' });
+    }));
+  };
+
+  /* Focus begins (Settings → Appearance). On the first key the list leaves
+     at once (.fold) while the column is held where it was; the rest waits
+     for the pause, as After a pause does. */
+  S.begins = 'pause';
+  ACT['begins-v'] = a => {
+    S.begins = a.dataset.v;
+    D.classList.toggle('begins-key', S.begins === 'key');
+    $$('[data-act="begins-v"]').forEach(b => {
+      const on = b.dataset.v === S.begins;
+      b.classList.toggle('on', on);
+      if (on) b.parentElement.style.setProperty('--i', [...b.parentElement.children].indexOf(b));
+    });
+    ['d', 'm'].forEach(dev => { if (settingsOpen[dev]) lastSettings[dev] = settingsBody(dev); });
+  };
+  const enterBefore = enterFocus, leaveBefore = leaveFocus;
+  enterFocus = function () {
+    if (S.begins === 'key' && !D.classList.contains('writing') && !D.classList.contains('fold')) {
+      if (S.focus === 'rail') renderRail();
+      D.classList.add('fold');
+    }
+    enterBefore();
+  };
+  leaveFocus = function () { D.classList.remove('fold', 'hand'); leaveBefore(); };
+  // At the pause focus takes over from the fold: narrower than 1112 px the
+  // column glides to the middle then; wider it stays held (.begins-key).
+  new MutationObserver(() => {
+    if (D.classList.contains('writing') && D.classList.contains('fold')) D.classList.remove('fold');
+    if (D.classList.contains('writing') && S.focus === 'typewriter' && !D._twWas) { D._twWas = true; setTimeout(() => typewriter(false, true), 0); setTimeout(() => typewriter(false, true), 950); }
+    if (!D.classList.contains('writing')) { D._twWas = false; undim(true); }
+  }).observe(D, { attributes: true, attributeFilter: ['class'] });
+
+  /* Typewriter (design.md 7.7, 7.14): the line being typed stays on the
+     optical line; the other paragraphs dim while typing, and come back
+     after 1.5 s without a key. A note of one paragraph never dims. */
+  const MOST = 100000;
+  const twOn = () => S.focus === 'typewriter' && D.classList.contains('writing') && document.activeElement === t;
+  let mirror = null, dimTimer = 0, offTimer = 0, by = 'key';
+  function geometry() {
+    if (!mirror) { mirror = document.createElement('div'); mirror.setAttribute('aria-hidden', 'true'); document.body.append(mirror); }
+    const cs = getComputedStyle(t), v = t.value, at = t.selectionEnd;
+    Object.assign(mirror.style, {
+      position: 'absolute', left: '-9999px', top: '0', visibility: 'hidden', whiteSpace: 'pre-wrap', overflowWrap: 'break-word',
+      boxSizing: 'content-box', width: (t.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)) + 'px',
+      font: cs.font, letterSpacing: cs.letterSpacing, lineHeight: cs.lineHeight, paddingTop: cs.paddingTop, paddingLeft: '0', paddingRight: '0', border: '0', tabSize: cs.tabSize,
+    });
+    const a = v.lastIndexOf('\n', at - 1) + 1;
+    let b = v.indexOf('\n', at); if (b < 0) b = v.length;
+    mirror.textContent = '';
+    const para = document.createElement('span'), mark = document.createElement('span');
+    mark.textContent = '​';
+    para.append(document.createTextNode(v.slice(a, at)), mark, document.createTextNode(v.slice(at, b)));
+    mirror.append(document.createTextNode(v.slice(0, a)), para, document.createTextNode(v.slice(b) + '​'));
+    const top = mirror.getBoundingClientRect().top, rects = [...para.getClientRects()];
+    return {
+      a: rects[0].top - top, b: rects[rects.length - 1].bottom - top, caret: mark.getBoundingClientRect().top - top,
+      last: b === v.length, one: v.indexOf('\n') < 0, pad: parseFloat(cs.paddingTop),
+    };
+  }
+  function band(g) {
+    t.style.setProperty('--tw-a', (g.a - t.scrollTop) + 'px');
+    t.style.setProperty('--tw-b', g.last ? '100%' : (g.b - t.scrollTop) + 'px');
+  }
+  function undim(now) {
+    clearTimeout(dimTimer); clearTimeout(offTimer);
+    t.classList.remove('dim');
+    if (now) t.classList.remove('tw'); else offTimer = setTimeout(() => t.classList.remove('tw'), 450);
+  }
+  // The text scrolled at once so that the caret's line is on the optical
+  // line, and eased up from where it was drawn (snap): a quick run of lines
+  // is one movement, taken up from wherever it is.
+  function pin(g) {
+    const target = Math.max(0, g.caret - g.pad), delta = target - t.scrollTop;
+    if (Math.abs(delta) < 1) return;
+    let off = 0;
+    if (t._tw && t._tw.playState === 'running') { off = new DOMMatrixReadOnly(getComputedStyle(t).transform).m42; t._tw.cancel(); }
+    t.scrollTop = target;
+    if (reduced()) return;
+    const s = sp('snap');
+    t._tw = t.animate([{ transform: `translateY(${delta + off}px)` }, { transform: 'none' }], { duration: s.d, easing: s.e });
+  }
+  function typewriter(typed, move) {
+    if (!twOn() || t.value.length > MOST) { undim(true); return; }
+    const g = geometry();
+    if (move) pin(g);
+    band(g);
+    if (!typed) return;
+    if (g.one) { undim(true); return; }
+    clearTimeout(offTimer);
+    t.classList.add('tw', 'dim');
+    clearTimeout(dimTimer);
+    dimTimer = setTimeout(() => undim(false), 1500);
+  }
+  t.addEventListener('input', () => typewriter(true, true));
+  t.addEventListener('keydown', () => { by = 'key'; });
+  t.addEventListener('pointerdown', () => { by = 'pointer'; });
+  // The caret moved into another paragraph: it becomes the current one. By
+  // the keys it also comes to the optical line; by a click nothing scrolls,
+  // since the text must not move under the pointer.
+  document.addEventListener('selectionchange', () => { if (twOn()) typewriter(false, by === 'key'); });
+  t.addEventListener('scroll', () => { if (t.classList.contains('tw')) band(geometry()); });
+
+  const showBefore = showEditorD;
+  showEditorD = function (animate) { showBefore(animate); attachTip(); };
+  attachTip();
 }
 </script>
 </body>
