@@ -2909,10 +2909,12 @@ Object.assign(ACT, {
   },
 });
 /* The empty parts of the top row move the window; a double-click there
-   maximises. Controls, the field and the icons are not part of it. */
+   maximises. Controls and the icons are not part of it; the note's field
+   is, where a scrolled page passes under the row (7.6, 7.14). */
 const inDragRow = e => {
   const D = $('#D'), r = D.getBoundingClientRect();
   if (e.clientY - r.top > 52) return false;
+  if (e.target.id === 'd-text') return true;
   return !e.target.closest('button, textarea, input, label.omni, .tok, .wctl, .lights, .tag-pop, .pv, .modal, .qc-layer, .banner, .scrim');
 };
 $('#D').addEventListener('dblclick', e => { if (inDragRow(e)) setMax(!$('#D').classList.contains('max')); });

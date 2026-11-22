@@ -20,7 +20,11 @@
 /* ---- The page ---------------------------------------------------------- */
 .dk-main{flex:1;min-width:0;position:relative;display:flex;flex-direction:column;background:var(--surface)}
 .dk-page-wrap{flex:1;min-height:0}
-.dk-page{padding:0 44px}
+/* The page scrolls from the window's top edge, but the top 52 px move
+   the window (7.6): a line the keyboard brings into sight is kept below
+   them, where a click still puts the caret, as the shelf's room keeps it
+   above the files (6.5). */
+.dk-page{padding:0 44px;scroll-padding-top:52px}
 /* The note's column. At rest it is in the middle of the page, the room
    beside the list, once the page is wider than the column and its margins
    (7.13): in a maximised or full-screen window the note is where the eye

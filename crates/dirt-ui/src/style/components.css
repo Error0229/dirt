@@ -686,3 +686,6 @@
 [data-dui-typewriter][data-dui-tw][data-dui-dim]{--dui-tw-dim:.4;transition:--dui-tw-dim var(--d-2) var(--e-std),--dui-tw-a var(--d-2) var(--e-std),--dui-tw-b var(--d-2) var(--e-std)}
 :root[data-motion="reduced"] [data-dui-typewriter][data-dui-tw]{transition:none}
 @media (prefers-reduced-motion:reduce){[data-dui-typewriter][data-dui-tw]{transition:none}}
+/* A field's part under the window's top row moves the window (7.6), so it
+   shows the arrow there (dirt-ui.js). */
+.dui-drag-row{cursor:default}

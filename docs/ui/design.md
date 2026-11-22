@@ -1620,9 +1620,14 @@ window is the app.
 | Find | Full width of the list | Starts 84 px in, after the buttons |
 | While writing | Gone. They come back when the pointer comes to the top-right corner | The same, at the top left |
 
-- **Moving the window:** any empty part of the top 52 px drags it. Find,
-  the tag list, buttons and icons are not part of it. A
-  double-click there maximises or restores, as a title bar's does.
+- **Moving the window:** any empty part of the top 52 px drags it, and so
+  does the note's text where a scrolled page passes under that row (7.14):
+  the arrow shows there, not the I-beam, and the page keeps the caret's
+  line below the row (`scroll-padding-top`). Find, the tag list, buttons
+  and icons are not part of it. A double-click there maximises or
+  restores, as a title bar's does. A Shift+click or a selection dragged
+  from inside the row moves the window instead; that is the trade for a
+  row that always moves it.
 - **Close** hides the window to the tray; Dirt keeps running so the hotkey
   works. **Quit** is in the tray menu.
 - **Resizing** from the edges still works: Windows keeps its resize border

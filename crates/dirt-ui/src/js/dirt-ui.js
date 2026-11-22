@@ -1915,7 +1915,8 @@
     if (!event.isTrusted || menuPasting) return;
     const target = event.target;
     if (!target || !target.matches || !target.matches(TEXT_FIELDS)) return;
-    if (event.inputType === 'insertFromDrop' || (event.inputType === 'insertFromPaste' && twBy === 'pointer')) return;
+    if (event.inputType === 'insertFromDrop' || event.inputType === 'deleteByDrag'
+      || (event.inputType === 'insertFromPaste' && twBy === 'pointer')) return;
     handAway();
   }, true);
 
@@ -2142,6 +2143,16 @@
   // top rows to the window: scrolled, its text passes under them, and a
   // press there still moves the window, and two maximise it, rather than
   // putting the caret on a line half under the window's buttons.
+  // Over that strip the field shows the arrow, not the text's I-beam: a
+  // press there moves the window, so it must look like a title bar.
+  document.addEventListener('pointermove', event => {
+    if (event.pointerType !== 'mouse' || !event.target || !event.target.closest) return;
+    const field = event.target.closest('[data-dui-drag-through]');
+    if (!field) return;
+    const area = field.closest('[data-dui-drag]');
+    const inRow = !!area && event.clientY - area.getBoundingClientRect().top <= (Number(area.dataset.duiDrag) || 0);
+    field.classList.toggle('dui-drag-row', inRow);
+  }, { passive: true });
   let lastDragPress = null;
   document.addEventListener('pointerdown', event => {
     if (event.button !== 0 || event.pointerType !== 'mouse' || !event.target.closest) return;
