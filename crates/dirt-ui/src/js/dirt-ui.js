@@ -2284,14 +2284,64 @@
   const unfinished = run => !!run && (run.playState === 'running' || run.playState === 'paused');
   const stageOf = modal => modal.querySelector('[data-dui-pv-stage]');
   // The tile, or while the shelf is folded the file's square on its line
-  // (6.5), which carries the tile's ID with `-mini` after it.
+  // (6.5), which carries the tile's ID with `-mini` after it: the one the
+  // shelf shows, never the other, which is see-through and inert. Brought
+  // into sight within the shelf first, if the squares or the tiles have
+  // been scrolled away from it (under the preview's backdrop, so nobody
+  // sees the shelf scroll), and given up on if it still cannot be seen:
+  // the file then fades where it is rather than shrinking into nothing.
   const tileOf = modal => {
     const id = modal.dataset.duiFrom || '';
     const tile = document.getElementById(id);
-    if (tile && onScreen(tile) && !tile.closest('.dui-shelf[data-folded]')) return tile.querySelector('.dui-file-thumb') || tile;
-    const mini = id && document.getElementById(id + '-mini');
-    return mini && onScreen(mini) ? mini : null;
+    if (!tile) return null;
+    const shelf = tile.closest('.dui-shelf');
+    const folded = !!shelf && shelf.hasAttribute('data-folded');
+    const target = folded ? document.getElementById(id + '-mini') : (tile.querySelector('.dui-file-thumb') || tile);
+    if (!target) return null;
+    if (shelf) bringIntoShelf(target, shelf);
+    return mostlySeen(target) ? target : null;
   };
+  // The scrolling boxes between an element and the page's own.
+  function scrollersOf(element, upTo) {
+    const found = [];
+    for (let at = element.parentElement; at && at !== upTo && at !== document.body; at = at.parentElement) {
+      const style = getComputedStyle(at);
+      if (/(auto|scroll|hidden)/.test(style.overflowX + style.overflowY)) found.push(at);
+    }
+    return found;
+  }
+  // Scrolls the shelf's squares or its tiles, and nothing else, so that
+  // `element` is in sight in them.
+  function bringIntoShelf(element, shelf) {
+    for (const box of scrollersOf(element, shelf)) {
+      const outer = box.getBoundingClientRect(), inner = element.getBoundingClientRect();
+      if (box.scrollWidth > box.clientWidth) {
+        if (inner.left < outer.left) box.scrollLeft -= outer.left - inner.left + 4;
+        else if (inner.right > outer.right) box.scrollLeft += inner.right - outer.right + 4;
+      }
+      if (box.scrollHeight > box.clientHeight) {
+        if (inner.top < outer.top) box.scrollTop -= outer.top - inner.top + 4;
+        else if (inner.bottom > outer.bottom) box.scrollTop += inner.bottom - outer.bottom + 4;
+      }
+    }
+  }
+  // Whether most of `element` can be seen (three quarters of it), both
+  // ways: in the window, and inside every box that clips it. The last row
+  // of tiles can stay cut by a few pixels at the foot of their room.
+  function mostlySeen(element) {
+    if (!onScreen(element)) return false;
+    const box = element.getBoundingClientRect();
+    if (!box.width || !box.height) return false;
+    let left = Math.max(box.left, 0), right = Math.min(box.right, innerWidth);
+    let top = Math.max(box.top, 0), bottom = Math.min(box.bottom, innerHeight);
+    for (const clip of scrollersOf(element, null)) {
+      const outer = clip.getBoundingClientRect();
+      left = Math.max(left, outer.left); right = Math.min(right, outer.right);
+      top = Math.max(top, outer.top); bottom = Math.min(bottom, outer.bottom);
+    }
+    const seen = Math.max(0, right - left) * Math.max(0, bottom - top);
+    return seen >= 0.75 * box.width * box.height;
+  }
   // The box of what the stage shows, or a part of the stage's middle.
   function shownBox(stage) {
     const item = stage.querySelector('.dui-pv-item');
@@ -3058,9 +3108,54 @@
     });
   }
 
+  // ---- The shelf: room kept for it at the foot of what scrolls (6.5) -----
+  // The shelf lies at the bottom of the note's scrolling page (sticky). A
+  // browser brings the caret into sight at the page's bottom edge, behind
+  // the shelf, so the page keeps the shelf's height, and the 18 px its top
+  // fades over, as scroll padding: then the caret stops above it, as text
+  // is typed, as Enter is pressed and as the shelf grows. WebView2 and
+  // Android's web view both honour it when they bring the caret into
+  // sight (measured, #329).
+  const SHELF_FADE = 18;
+  const shelfRoom = new ResizeObserver(entries => entries.forEach(entry => keepShelfRoom(entry.target)));
+  // A page read to its end (the end in sight, or no further from it than
+  // the room the shelf kept) scrolls on by as much as the shelf grows (it
+  // comes, it unfolds, or a file comes): the end of the note, and a caret there,
+  // ride up with the shelf instead of going under it. Shrinking, the page
+  // keeps its end by itself. A page read elsewhere is left where it is.
+  function keepShelfRoom(shelf) {
+    const page = shelf._duiPage;
+    if (!page) return;
+    const height = shelf.offsetHeight, was = shelf._duiHeight;
+    shelf._duiHeight = height;
+    page.style.scrollPaddingBottom = (height + SHELF_FADE) + 'px';
+    // The room is the shelf and its fade; a shelf just come (the first
+    // file attached, or a note opened) had none. The slack is the text's
+    // own room under its last line.
+    const before = was ? was + SHELF_FADE : 0;
+    const grew = height - (was || 0);
+    if (grew <= 0) return;
+    const fromEnd = page.scrollHeight - grew - (page.scrollTop + page.clientHeight);
+    if (fromEnd <= before + 32) page.scrollTop += height + SHELF_FADE - before;
+  }
+  function watchShelf(shelf) {
+    const page = shelf.parentElement && shelf.parentElement.closest('[data-dui-scroll]');
+    if (!page) return;
+    shelf._duiPage = page;
+    shelfRoom.observe(shelf);
+    keepShelfRoom(shelf);
+  }
+  function forgetShelf(shelf) {
+    shelfRoom.unobserve(shelf);
+    const page = shelf._duiPage;
+    shelf._duiPage = null;
+    if (page && !page.querySelector('[data-dui-shelf]')) page.style.scrollPaddingBottom = '';
+  }
+
   // ---- Finding what Rust renders -----------------------------------------
-  const WATCHED = '[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],[data-dui-grow],[data-dui-bars],[data-dui-audio],[data-dui-pdf],[data-dui-capture],[data-dui-voice],[data-dui-let-go],.dui-confirm';
+  const WATCHED = '[data-dui-shelf],[data-dui-list],[data-dui-modal],[data-dui-scroll],[data-dui-toast],[data-dui-more],[data-dui-focus],[data-dui-grow],[data-dui-bars],[data-dui-audio],[data-dui-pdf],[data-dui-capture],[data-dui-voice],[data-dui-let-go],.dui-confirm';
   function arrived(element) {
+    if (element.matches('[data-dui-shelf]')) watchShelf(element);
     if (element.matches('[data-dui-list]')) watchList(element);
     if (element.matches('[data-dui-modal]')) watchModal(element);
     if (element.matches('[data-dui-scroll]')) watchScroll(element);
@@ -3077,6 +3172,7 @@
     if (element.matches('[data-dui-let-go]')) letGo(element);
   }
   function left(element, parent) {
+    if (element.matches('[data-dui-shelf]')) forgetShelf(element);
     if (element.matches('[data-dui-list]')) forgetList(element);
     if (element.matches('[data-dui-modal]')) forgetModal(element);
     if (element.matches('[data-dui-scroll]')) forgetScroll(element);

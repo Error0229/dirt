@@ -171,6 +171,20 @@ export async function sendStep(target, step) {
   } else if (step.pastePicture) {
     const selector = sel(step.pastePicture);
     await cdp.evaluate(`__motion.pastePicture(${JSON.stringify(selector)}, ${JSON.stringify(step.name || 'motion.png')})`);
+  } else if (step.caretAbove) {
+    // A check, not an input: the caret of the field that has the keyboard
+    // (or the one named) is drawn above the element named, by its bottom
+    // edge, or the run stops and says where each was.
+    const { field, above } = step.caretAbove;
+    const where = await cdp.evaluate(`(() => {
+      const caret = __motion.caret(${JSON.stringify(sel(field) || '')});
+      const other = document.querySelector(${JSON.stringify(sel(above))});
+      return { caret, top: other ? other.getBoundingClientRect().top : null };
+    })()`);
+    if (!where.caret || where.top === null) throw new Error(`caretAbove: no field with a caret, or nothing at ${sel(above)}`);
+    if (where.caret.bottom > where.top + 0.5) {
+      throw new Error(`caretAbove: the caret is drawn from ${Math.round(where.caret.top)} to ${Math.round(where.caret.bottom)} px, behind ${sel(above)}, whose top is at ${Math.round(where.top)} px`);
+    }
   } else if (step.androidKey) {
     if (platform === 'android') await adb(target.serial, 'shell', 'input', 'keyevent', String(step.androidKey));
   } else if (step.eval) {

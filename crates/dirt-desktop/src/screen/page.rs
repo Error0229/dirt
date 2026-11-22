@@ -56,6 +56,9 @@ pub fn Page() -> Element {
     let mic = open.is_none() && crate::voice::offered();
     // A file not yet sent says "uploading" while it can be sent, and "on
     // this device only" while it cannot (6.5).
+    // In Zen the files go (7.7): out of sight, and out of reach.
+    let zen = *screen.writing.read() == super::Writing::Focused
+        && screen.focus_style() == dirt_core::models::FocusStyle::Zen;
     let can_send = matches!(
         screen.sync_indicator(),
         SyncIndicator::Synced { .. } | SyncIndicator::Syncing | SyncIndicator::JustSynced
@@ -174,6 +177,7 @@ pub fn Page() -> Element {
                             note,
                             can_send,
                             class: "dk-files",
+                            hidden: zen,
                             on_open: move |file| screen.open_file(file),
                             on_save: move |file| screen.save_file(file),
                         }

@@ -49,6 +49,19 @@ pub fn focus(selectors: &[&str], caret: Caret) {
     ));
 }
 
+/// Gives the keyboard's focus as [`focus`] does, unless a text field has
+/// it.
+///
+/// Then it stays there. On Android that keeps the keyboard up for the
+/// text, rather than putting it away for a button the person did not
+/// reach by the keyboard.
+pub fn focus_unless_typing(selectors: &[&str]) {
+    let selectors = serde_json::json!(selectors);
+    document::eval(&format!(
+        "(() => {{ const at = document.activeElement; if (at && at.matches && at.matches('textarea, input')) return; window.DirtUi && DirtUi.focus({selectors}, 'kept'); }})();"
+    ));
+}
+
 /// Takes the keyboard's focus from whatever has it. On a phone that puts
 /// the keyboard away.
 pub fn blur() {

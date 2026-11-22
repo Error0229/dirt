@@ -26,8 +26,8 @@
    middle of the page, the room beside the list, once the page is wider
    than the column and its margins (7.13): in a maximised or full-screen
    window the note and its icons are where the eye goes, not pressed
-   against the list, and focus moves it by half the list's width at any
-   size. */
+   against the list, and focus moves it by half the list's width however
+   wide the window is past that. Narrower, it fills the page, as before. */
 .dk-col{position:relative;max-width:680px;width:100%;min-height:100%;display:flex;flex-direction:column;padding-top:52px}
 .dk-gutter{position:absolute;top:58px;left:calc(100% + 6px);display:flex;flex-direction:column;gap:2px;opacity:.6;transition:opacity 200ms var(--e-std);z-index:3}
 .dk-gutter:hover,.dk-gutter:focus-within{opacity:1}
@@ -66,6 +66,9 @@
 
 /* ---- The note's files: dirt-ui's shelf at the foot of the column (6.5) - */
 .dk-files{flex:none;padding-bottom:18px}
+/* Zen: the files go, at any width, and the shelf is inert while they are
+   gone (Rust sets it), so that Tab passes it by. */
+.dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-files{opacity:0;pointer-events:none}
 
 /* ---- The window's own controls (7.6): Windows, with no title bar -------- */
 .dk-wctl{position:absolute;top:0;right:0;height:44px;display:flex;z-index:30;opacity:.55;transition:opacity 200ms var(--e-std)}
@@ -155,7 +158,6 @@
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main{background:var(--bg);transition:background-color 600ms var(--e-std) 260ms}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-text{font-size:calc(var(--note-size) + 4px);line-height:1.8;padding-top:56px;transition:font-size var(--d-glide) var(--sp-glide) 300ms,line-height var(--d-glide) var(--sp-glide) 300ms,padding var(--d-glide) var(--sp-glide) 300ms}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::before,.dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::after{opacity:1;transition:opacity 500ms var(--e-std) 420ms}
-  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-files{opacity:0;pointer-events:none}
   /* The note's icons stay beside its first line, which starts lower. */
   .dk-gutter{transition:opacity 200ms var(--e-std),top var(--d-glide) var(--sp-glide)}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-gutter{top:114px;transition:opacity 200ms var(--e-std),top var(--d-glide) var(--sp-glide) 300ms}

@@ -3168,8 +3168,10 @@ function renderFiles(dev) {
    kept. */
 const SHELF = { d: { note: null, folded: null }, m: { note: null, folded: null } };
 function shelfFolded(dev, n) {
-  if (SHELF[dev].note !== n.id) SHELF[dev] = { note: n.id, folded: null };
-  return SHELF[dev].folded ?? n.files.length > 2;
+  // Counted once, as the note is first shown; a file that comes or goes
+  // later changes nothing.
+  if (SHELF[dev].note !== n.id || SHELF[dev].folded === null) SHELF[dev] = { note: n.id, folded: n.files.length > 2 };
+  return SHELF[dev].folded;
 }
 function renderShelf(dev, n) {
   const shelf = $(`#${dev}-shelf`);
