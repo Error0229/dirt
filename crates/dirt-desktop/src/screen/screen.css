@@ -27,7 +27,13 @@
    goes, not pressed against the list, and focus moves it by half the
    list's width however wide the window is past that. Narrower, it fills
    the page, as before. */
-.dk-col{position:relative;max-width:680px;width:100%;min-height:100%;display:flex;flex-direction:column;padding-top:52px}
+/* Its text starts at the optical centre (6.4, 7.14): the first line's top
+   38% down the window, on the blank page and in a note alike, the 6 px
+   being the text field's own. The text grows downward from there, so
+   nothing written moves while typing; a long note scrolls as any page
+   does, this room scrolling away above it. Never less than the 52 px of
+   the window's top row. */
+.dk-col{position:relative;max-width:680px;width:100%;min-height:100%;display:flex;flex-direction:column;padding-top:max(52px,calc(38vh - 6px))}
 /* The note's icons, at the window's right edge, in the middle of its
    height (6.4, 7.14): out of the text and away from the window's own
    buttons, clear of the drawn scrollbar's 10 px. They stay there whatever
@@ -161,10 +167,12 @@
   .dk[data-dui-writing="on"][data-dui-focus="rail"] .dk-rail{opacity:1;pointer-events:auto}
 
   /* Zen: Slide, and the paper warms, the type grows by 4 px with more
-     line height, the text starts lower, its top and bottom fade, and the
-     files and the window's controls go. It deepens in stages. */
+     line height, its top and bottom fade, and the files and the window's
+     controls go. It deepens in stages. The text no longer starts lower:
+     it starts at the optical line already, and moving it at the pause
+     would move the words being written (7.14). */
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main{background:var(--bg);transition:background-color 600ms var(--e-std) 260ms}
-  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-text{font-size:calc(var(--note-size) + 4px);line-height:1.8;padding-top:56px;transition:font-size var(--d-glide) var(--sp-glide) 300ms,line-height var(--d-glide) var(--sp-glide) 300ms,padding var(--d-glide) var(--sp-glide) 300ms}
+  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-text{font-size:calc(var(--note-size) + 4px);line-height:1.8;transition:font-size var(--d-glide) var(--sp-glide) 300ms,line-height var(--d-glide) var(--sp-glide) 300ms,padding var(--d-glide) var(--sp-glide) 300ms}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::before,.dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::after{opacity:1;transition:opacity 500ms var(--e-std) 420ms}
 }
 
