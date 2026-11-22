@@ -3,7 +3,7 @@
 use rusqlite::{Connection, OptionalExtension};
 
 use super::schema::write_transaction;
-use crate::models::{Accent, FocusStyle, Settings, VoiceRecording};
+use crate::models::{Accent, FocusBegins, FocusStyle, Settings, VoiceRecording};
 use crate::{Error, Result};
 
 fn get(connection: &Connection, key: &str) -> Result<Option<String>> {
@@ -43,6 +43,9 @@ pub(super) fn load(connection: &Connection) -> Result<Settings> {
     if let Some(value) = get(connection, "focus_style")? {
         settings.focus_style = FocusStyle::from_name(&value).unwrap_or_default();
     }
+    if let Some(value) = get(connection, "focus_begins")? {
+        settings.focus_begins = FocusBegins::from_name(&value).unwrap_or_default();
+    }
     if let Some(value) = get(connection, "voice_recording")? {
         settings.voice_recording = VoiceRecording::from_name(&value).unwrap_or_default();
     }
@@ -66,6 +69,7 @@ pub(super) fn save(connection: &mut Connection, settings: &Settings) -> Result<(
         ("accent", settings.accent.name().to_owned()),
         ("capture_hotkey", settings.capture_hotkey.clone()),
         ("focus_style", settings.focus_style.name().to_owned()),
+        ("focus_begins", settings.focus_begins.name().to_owned()),
         (
             "voice_recording",
             settings.voice_recording.name().to_owned(),

@@ -1,0 +1,110 @@
+{
+  "name": "focus-first-key",
+  "title": "Focus beginning on the first key, in the window of 1100 × 720",
+  "platforms": [
+    "desktop",
+    "mockup-desktop"
+  ],
+  "description": "Design 5.5, 7.7 and 7.14. Focus begins: On the first key. At the first key the note's icons and the window's controls fade (200 ms), the list's content fades (140 ms, exit) and the list folds (glide, from 90 ms), while the note's column is held where it was: its left margin grows as the list shrinks, so its box should not move on x or change width in the first part. At the pause, 600 ms later in real time, the column glides to the middle and widens (glide), as in a window of this width it would re-wrap. The app's own wait runs on the real clock, so in the stepped frames the pause comes earlier than 600 ms (docs/ui/motion-check.md).",
+  "setup": [
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "click": "button[aria-label='Settings']",
+      "then": 900
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "eval": "(() => { document.querySelector(\"[aria-label='Focus begins']\").scrollIntoView({ block: 'center' }); return true; })()",
+      "then": 600
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "click": "[aria-label='Focus begins'] button:nth-of-type(2)",
+      "then": 400
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "key": "Escape",
+      "then": 900
+    },
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "click": "[data-dui-typed]",
+      "then": 600
+    },
+    {
+      "platforms": [
+        "mockup-desktop"
+      ],
+      "eval": "(() => { leaveFocus(); ACT['begins-v']({ dataset: { v: 'key' } }); document.querySelector('#d-text').focus(); return true; })()",
+      "then": 600
+    }
+  ],
+  "parts": {
+    "column": {
+      "desktop": ".dk-col",
+      "mockup-desktop": "#d-col"
+    },
+    "text": {
+      "desktop": ".dk-text",
+      "mockup-desktop": "#d-text"
+    },
+    "list": {
+      "desktop": ".dk-side",
+      "mockup-desktop": "#D .dk-side"
+    },
+    "icons": {
+      "desktop": ".dk-acts",
+      "mockup-desktop": "#d-acts"
+    }
+  },
+  "checks": {
+    "within": [],
+    "apart": [],
+    "pops": {
+      "px": 24,
+      "opacity": 0.3
+    }
+  },
+  "movements": [
+    {
+      "name": "type",
+      "description": "The first key on the blank page: the list goes at once and the column stays where it is; 600 ms later, with no key since, the pause. The column glides to the middle and widens.",
+      "steps": [
+        {
+          "key": "a"
+        }
+      ],
+      "ms": 1900
+    }
+  ],
+  "between": [
+    {
+      "platforms": [
+        "desktop"
+      ],
+      "key": "Escape",
+      "then": 1800
+    },
+    {
+      "platforms": [
+        "mockup-desktop"
+      ],
+      "eval": "(() => { leaveFocus(); document.querySelector('#d-text').focus(); return true; })()",
+      "then": 1200
+    }
+  ],
+  "crop": {
+    "mockup-desktop": "#D"
+  }
+}

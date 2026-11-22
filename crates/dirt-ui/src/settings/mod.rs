@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use dioxus::prelude::*;
 use dirt_core::export::ExportFormat;
-use dirt_core::models::{FocusStyle, VoiceRecording};
+use dirt_core::models::{FocusBegins, FocusStyle, VoiceRecording};
 use dirt_core::session::{Session, SessionError, SessionState};
 use dirt_core::sync::worker::SyncStatus;
 use dirt_core::NoteId;
@@ -322,6 +322,10 @@ pub fn SettingsPage(
     #[props(default)]
     focus_style: Option<FocusStyle>,
     #[props(default)] on_focus_style: EventHandler<FocusStyle>,
+    /// When focus while writing begins, on the desktop; nothing on Android.
+    #[props(default)]
+    focus_begins: Option<FocusBegins>,
+    #[props(default)] on_focus_begins: EventHandler<FocusBegins>,
     /// What is kept of a thought said aloud, in an app that has voice;
     /// nothing in one that has not, which shows no Voice section.
     #[props(default)]
@@ -388,7 +392,7 @@ pub fn SettingsPage(
                         Section::Devices => rsx! { devices::Devices { linked, copy, save_phrase } },
                         Section::Sync => rsx! { sync::Sync { linked, open_note, platform } },
                         Section::Appearance => rsx! {
-                            look::Look { appearance, on_appearance, focus_style, on_focus_style, platform }
+                            look::Look { appearance, on_appearance, focus_style, on_focus_style, focus_begins, on_focus_begins, platform }
                         },
                         Section::Voice => rsx! {
                             voice::Voice {

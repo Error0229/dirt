@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use dirt_core::export::ExportFormat;
-use dirt_core::models::{FocusStyle, VoiceRecording};
+use dirt_core::models::{FocusBegins, FocusStyle, VoiceRecording};
 use dirt_core::session::Session;
 use dirt_core::Store;
 use dirt_ui::components::Panel;
@@ -154,6 +154,7 @@ pub fn SettingsPanel() -> Element {
     let settings = app.settings.read().clone();
     let appearance = Appearance::from_settings(&settings);
     let focus_style = settings.focus_style;
+    let focus_begins = settings.focus_begins;
     // Voice, where this build has it (6.18).
     let voice = crate::voice::offered().then_some(settings.voice_recording);
 
@@ -186,6 +187,11 @@ pub fn SettingsPanel() -> Element {
     let change_focus = move |style: FocusStyle| {
         let mut settings = app.settings;
         settings.write().focus_style = style;
+        app.save_settings();
+    };
+    let change_begins = move |begins: FocusBegins| {
+        let mut settings = app.settings;
+        settings.write().focus_begins = begins;
         app.save_settings();
     };
     let change_voice = move |kept: VoiceRecording| {
@@ -240,6 +246,8 @@ pub fn SettingsPanel() -> Element {
                     on_appearance: change_appearance,
                     focus_style,
                     on_focus_style: change_focus,
+                    focus_begins: Some(focus_begins),
+                    on_focus_begins: change_begins,
                     voice,
                     on_voice: change_voice,
                     microphones,

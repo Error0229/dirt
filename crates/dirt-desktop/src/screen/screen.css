@@ -108,6 +108,8 @@
 
 /* ---- Focus while writing (5.5, 6.4, 7.7) ---------------------------------
    data-dui-writing="hush" is the first key: only the controls fade.
+   ="fold" is the first key with Focus begins: On the first key (7.14):
+   the controls fade and the list goes, the note's column held in place.
    ="on" is focus, laid out by the style chosen (data-dui-focus). The
    leaving is the base state: the width comes back first, then the list's
    content. The entering is the state with the attribute: the content goes
@@ -173,6 +175,29 @@
   .dk[data-dui-writing="on"][data-dui-focus="rail"] .dk-side>.dk-list-wrap{transition:opacity 120ms var(--e-in) 280ms}
   .dk[data-dui-writing="on"][data-dui-focus="rail"] .dk-rail{opacity:1;pointer-events:auto}
 
+  /* Focus begins: On the first key (7.14). The list goes at the first key
+     by the chosen style, its content first, and the note's column is held
+     where it was: its left margin is the room the list gives up, read from
+     the page's own width at every frame (100% less the window's 100vw, plus
+     where the column was), so no transition is needed and its edge stays
+     on its pixel while the list folds; its right margin keeps its width.
+     At the pause it glides to the middle and widens as in every style,
+     but in a window wider than 1112 px, where it already sits half the
+     list's width from there, it stays held for the whole of focus. Leaving,
+     the hold is kept until the list is back (the glide's length), then
+     gives way to the same place. */
+  .dk[data-dui-writing="fold"] .dk-side{transition:width var(--d-glide) var(--sp-glide) 90ms,background-color 400ms var(--e-std),border-color 400ms var(--e-std)}
+  .dk[data-dui-writing="fold"] .dk-side>:not(.dk-rail){transition:opacity 140ms var(--e-in) 0ms}
+  .dk[data-dui-writing="fold"]:is([data-dui-focus="slide"],[data-dui-focus="zen"],[data-dui-focus="typewriter"]) .dk-side{width:0;border-right-color:transparent}
+  .dk[data-dui-writing="fold"]:is([data-dui-focus="slide"],[data-dui-focus="zen"],[data-dui-focus="typewriter"]) .dk-side>*{opacity:0}
+  .dk[data-dui-writing="fold"]:is([data-dui-focus="slide"],[data-dui-focus="zen"],[data-dui-focus="typewriter"]) .dk-edge{display:block}
+  .dk[data-dui-writing="fold"][data-dui-focus="rail"] .dk-side{width:56px}
+  .dk[data-dui-writing="fold"][data-dui-focus="rail"] .dk-side>:not(.dk-rail){opacity:0;pointer-events:none}
+  .dk[data-dui-writing="fold"][data-dui-focus="rail"] .dk-side>.dk-list-wrap{transition:opacity 120ms var(--e-in) 280ms}
+  .dk[data-dui-writing="fold"][data-dui-focus="rail"] .dk-rail{opacity:1;pointer-events:auto}
+  .dk[data-dui-begins="key"]:not([data-dui-writing]) .dk-page{transition:padding 0s linear var(--d-glide)}
+  .dk[data-dui-writing="fold"] .dk-page{padding-left:calc(100% - 100vw + 344px + max(44px,(100vw - 1024px) / 2));padding-right:max(44px,(100vw - 1024px) / 2);transition:padding 0s}
+
   /* Zen: Slide, and the paper warms, the type grows by 4 px with more
      line height, its top and bottom fade, and the files and the window's
      controls go. It deepens in stages. The text no longer starts lower:
@@ -181,6 +206,12 @@
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main{background:var(--bg);transition:background-color 600ms var(--e-std) 260ms}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-text{font-size:calc(var(--note-size) + 4px);line-height:1.8;transition:font-size var(--d-glide) var(--sp-glide) 300ms,line-height var(--d-glide) var(--sp-glide) 300ms,padding var(--d-glide) var(--sp-glide) 300ms}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::before,.dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::after{opacity:1;transition:opacity 500ms var(--e-std) 420ms}
+}
+
+/* Focus begins: On the first key, in a window wider than 1112 px: the
+   column held through the whole of focus, with no glide (7.14). */
+@media (min-width:1113px){
+  .dk[data-dui-begins="key"][data-dui-writing="on"] .dk-page{padding-left:calc(100% - 100vw + 344px + max(44px,(100vw - 1024px) / 2));padding-right:max(44px,(100vw - 1024px) / 2);transition:padding 0s}
 }
 
 /* ---- The keys (Ctrl /) ------------------------------------------------ */

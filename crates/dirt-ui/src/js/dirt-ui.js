@@ -2325,6 +2325,9 @@
       return box.height && box.bottom > view.top && box.top < view.bottom;
     }).slice(0, 12);
   }
+  // The list is folded away in focus, and at the first key with Focus
+  // begins: On the first key (`fold`, 7.14).
+  const folded = state => state === 'on' || state === 'fold';
   function writingChanged(scope, was, now) {
     forgetNear();
     // Out of writing, the icons are shown at rest; the next writing starts
@@ -2333,7 +2336,7 @@
     if (now === 'on') typewriterBegins(scope);
     else $$('[data-dui-typewriter]', scope).forEach(field => twUndim(field, true));
     if (reduced() || was === now) return;
-    if (now === 'on' && scope.dataset.duiFocus === 'rail') {
+    if (folded(now) && !folded(was) && scope.dataset.duiFocus === 'rail') {
       const rows = rowsInSight(scope);
       rows.forEach((row, index) => row.animate(
         [{ transform: 'none', opacity: 1, transformOrigin: 'left center' },
@@ -2350,7 +2353,7 @@
           .forEach((stop, index) => stop.animate([{ transform: 'scale(0)', opacity: 0 }, { transform: 'none', opacity: 1 }],
             { duration: pop.ms, easing: pop.easing, delay: 280 + index * 24, fill: 'backwards' }));
       }
-    } else if (was === 'on' && now !== 'on') {
+    } else if (folded(was) && !folded(now)) {
       const snap = spring('snap');
       // A new thought's row waits for its grain.
       rowsInSight(scope).filter(row => row.dataset.duiSettle === undefined).forEach((row, index) => row.animate(
