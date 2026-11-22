@@ -1409,7 +1409,13 @@
       // It goes 0.9 s after the last scroll, unless the pointer is on it.
       hideTimer = setTimeout(() => { if (!drag && !bar.matches(':hover')) bar.classList.remove('on'); }, 900);
     }
-    area.addEventListener('scroll', show, { passive: true });
+    // A scroll the script makes itself to hold a line in place (Typewriter)
+    // marks the area `_duiQuiet` first: the bar keeps its place and does
+    // not come for each line typed.
+    area.addEventListener('scroll', () => {
+      if (area._duiQuiet) { area._duiQuiet = false; layout(); return; }
+      show();
+    }, { passive: true });
     // The pointer on the bar's own strip shows it, so that it can be taken.
     // Only there: a row's box and the time sit a few pixels further in,
     // and the bar is not to come and go while the pointer works on them.
@@ -1892,6 +1898,123 @@
     if (event.key.length === 1 || event.key === 'Enter' || event.key === 'Backspace' || event.key === 'Delete') handAway();
   }, true);
 
+  // ---- Typewriter (sections 5.5, 7.7, 7.14) -------------------------------
+  // A text field `[data-dui-typewriter]`, while its screen's
+  // `data-dui-writing` is `on`, holds the line the caret is on where the
+  // field's first line sits with the page at its top: the optical line.
+  // The page that scrolls (`[data-dui-scroll]`) is scrolled at once, and
+  // the field eased up from where it was drawn (snap), so that a quick run
+  // of lines is one movement, taken up from wherever it is. While typing,
+  // the paragraphs but the caret's dim (`data-dui-dim`, by a mask the
+  // style sheet draws from `--dui-tw-a` and `--dui-tw-b`, the caret's
+  // paragraph's top and foot in the field), and 1.5 s without a key brings
+  // them back. A paragraph is a line ended by Enter; a field of one never
+  // dims. The caret moved by a key comes to the optical line; moved by a
+  // press it only becomes the current paragraph, since the text must not
+  // move under the pointer. Where the caret's line is is found by laying
+  // the text out to it in a copy of the field, so a field longer than
+  // `TW_MOST` characters is left as it is.
+  const TW_MOST = 100000, TW_PAUSE = 1500, TW_OFF = 450;
+  let twBy = 'key', twMirror = null, twDimTimer = 0, twOffTimer = 0;
+  function typewriterOf(field) {
+    if (!field || !field.matches || !field.matches('[data-dui-typewriter]')) return false;
+    const scope = field.closest('[data-dui-writing]');
+    return !!scope && scope.dataset.duiWriting === 'on';
+  }
+  function twGeometry(field) {
+    if (!twMirror) {
+      twMirror = document.createElement('div');
+      twMirror.setAttribute('aria-hidden', 'true');
+      document.body.append(twMirror);
+    }
+    const style = getComputedStyle(field), text = field.value, at = field.selectionEnd;
+    Object.assign(twMirror.style, {
+      position: 'absolute', left: '-9999px', top: '0', visibility: 'hidden', pointerEvents: 'none',
+      whiteSpace: 'pre-wrap', overflowWrap: 'break-word', wordBreak: style.wordBreak, boxSizing: 'content-box',
+      width: (field.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) + 'px',
+      fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight, fontStyle: style.fontStyle,
+      letterSpacing: style.letterSpacing, lineHeight: style.lineHeight, tabSize: style.tabSize,
+      paddingTop: style.paddingTop, paddingLeft: '0', paddingRight: '0', paddingBottom: '0', border: '0',
+    });
+    const start = text.lastIndexOf('\n', at - 1) + 1;
+    let end = text.indexOf('\n', at);
+    if (end < 0) end = text.length;
+    const paragraph = document.createElement('span'), caret = document.createElement('span');
+    caret.textContent = '\u200b';
+    paragraph.append(document.createTextNode(text.slice(start, at)), caret, document.createTextNode(text.slice(at, end)));
+    twMirror.textContent = '';
+    twMirror.append(document.createTextNode(text.slice(0, start)), paragraph, document.createTextNode(text.slice(end) + '\u200b'));
+    const top = twMirror.getBoundingClientRect().top, boxes = [...paragraph.getClientRects()];
+    const geometry = {
+      top: boxes[0].top - top, bottom: boxes[boxes.length - 1].bottom - top, caret: caret.getBoundingClientRect().top - top,
+      last: end === text.length, one: text.indexOf('\n') < 0, pad: parseFloat(style.paddingTop),
+    };
+    twMirror.textContent = '';
+    return geometry;
+  }
+  function twUndim(field, now) {
+    clearTimeout(twDimTimer); clearTimeout(twOffTimer);
+    if (field.dataset.duiDim !== undefined) delete field.dataset.duiDim;
+    const off = () => { if (field.dataset.duiTw !== undefined) delete field.dataset.duiTw; };
+    if (now || reduced()) off(); else twOffTimer = setTimeout(off, TW_OFF);
+  }
+  // Where a field eased by an earlier line is drawn now, from where it is
+  // laid out: the next line takes the movement up from there.
+  function twOffset(field) {
+    const run = field._duiLine;
+    if (!run || run.playState !== 'running') return 0;
+    const matrix = new DOMMatrixReadOnly(getComputedStyle(field).transform);
+    run.cancel();
+    return matrix.m42;
+  }
+  function twPin(field, geometry) {
+    const page = field.closest('[data-dui-scroll]');
+    if (!page) return;
+    const target = Math.max(0, Math.round(geometry.caret - geometry.pad)), before = page.scrollTop;
+    if (Math.abs(target - before) < 1) return;
+    const offset = twOffset(field);
+    page._duiQuiet = true;
+    page.scrollTop = target;
+    const moved = page.scrollTop - before;
+    if (!moved) { page._duiQuiet = false; return; }
+    if (reduced()) return;
+    const snap = spring('snap');
+    field._duiLine = field.animate([{ transform: `translateY(${moved + offset}px)` }, { transform: 'none' }],
+      { duration: snap.ms, easing: snap.easing });
+  }
+  // `typed`: the text changed, so the others dim. `move`: the caret's line
+  // comes to the optical line.
+  function typewriter(field, typed, move) {
+    if (!field || !field.matches || !field.matches('[data-dui-typewriter]')) return;
+    if (!typewriterOf(field) || field.value.length > TW_MOST) { twUndim(field, true); return; }
+    const geometry = twGeometry(field);
+    if (move) twPin(field, geometry);
+    field.style.setProperty('--dui-tw-a', geometry.top + 'px');
+    field.style.setProperty('--dui-tw-b', geometry.last ? '100%' : geometry.bottom + 'px');
+    if (!typed) return;
+    if (geometry.one) { twUndim(field, true); return; }
+    clearTimeout(twOffTimer);
+    if (field.dataset.duiTw === undefined) field.dataset.duiTw = '';
+    if (field.dataset.duiDim === undefined) field.dataset.duiDim = '';
+    clearTimeout(twDimTimer);
+    twDimTimer = setTimeout(() => twUndim(field, false), TW_PAUSE);
+  }
+  document.addEventListener('input', event => typewriter(event.target, true, true), true);
+  document.addEventListener('keydown', () => { twBy = 'key'; }, true);
+  document.addEventListener('pointerdown', () => { twBy = 'pointer'; }, true);
+  document.addEventListener('selectionchange', () => {
+    const field = document.activeElement;
+    if (typewriterOf(field)) typewriter(field, false, twBy === 'key');
+  });
+  // Focus coming in brings the caret's line to the optical line, and again
+  // once a column that widened as it came has laid its lines out anew.
+  function typewriterBegins(scope) {
+    const field = scope.querySelector('[data-dui-typewriter]');
+    if (!field || document.activeElement !== field) return;
+    typewriter(field, false, true);
+    setTimeout(() => typewriter(field, false, true), 950);
+  }
+
   // ---- A press that leaves the cursor where it is (section 7.7) -----------
   // Inside `data-dui-keep-focus` (the rail's grains), a press does not take
   // the keyboard's focus from the note being written. The click still
@@ -2207,6 +2330,8 @@
     // Out of writing, the icons are shown at rest; the next writing starts
     // with the hand on the keys.
     if (!now) { handFrom = null; delete scope.dataset.duiHand; }
+    if (now === 'on') typewriterBegins(scope);
+    else $$('[data-dui-typewriter]', scope).forEach(field => twUndim(field, true));
     if (reduced() || was === now) return;
     if (now === 'on' && scope.dataset.duiFocus === 'rail') {
       const rows = rowsInSight(scope);

@@ -47,6 +47,7 @@
 //! | `data-dui-drag` | a window's root | A press on an empty part of its top rows (the height in pixels) says [`events::Outcome::Drag`], a double-click [`events::Outcome::Maximize`] |
 //! | `data-dui-resize` | an edge of the window | A press on it says [`events::Outcome::Resize`] |
 //! | `data-dui-focus`, `data-dui-writing` | the desktop's screen | Focus while writing: the style, and `hush` or `on`. The rows of its list fold away and come back, and the grains of `data-dui-rail` pop in. While it has a `data-dui-writing`, the script marks it `data-dui-hand` once a mouse or pen has moved 40 px from where it was first seen since the last key typed in a text field, and takes the mark away at the next such key: the hand is back on the mouse |
+//! | `data-dui-typewriter` | the desktop's page | While its screen's `data-dui-writing` is `on`, the line the caret is on is held where the field's first line sits with the page at its top: the page scrolled at once and the field eased up from where it was drawn. While typing, the paragraphs but the caret's dim (`data-dui-tw`, `data-dui-dim`), until 1.5 s without a key |
 //! | `data-dui-press` | an element that is not a button | <kbd>Space</kbd> and <kbd>Enter</kbd> press it: a file's tile |
 //! | `data-dui-enter="grow"`, `data-dui-enter-first` | a row; its list | The row grows out of the point last pressed or dropped on; with the list's mark, also when the list was empty |
 //! | `data-dui-drop` | a screen | Has the class `dropping` while files are dragged over the window |

@@ -93,11 +93,14 @@ pub enum FocusStyle {
     Rail,
     /// Slide, and a calmer page: warmer paper, larger type.
     Zen,
+    /// Slide, and the line being typed held at the optical line, the
+    /// other paragraphs dimmed while typing.
+    Typewriter,
 }
 
 impl FocusStyle {
     /// Every style, in the order the interface offers them.
-    pub const ALL: [Self; 3] = [Self::Slide, Self::Rail, Self::Zen];
+    pub const ALL: [Self; 4] = [Self::Slide, Self::Rail, Self::Zen, Self::Typewriter];
 
     /// The name the style is stored under and the style sheet knows it by.
     #[must_use]
@@ -106,6 +109,7 @@ impl FocusStyle {
             Self::Slide => "slide",
             Self::Rail => "rail",
             Self::Zen => "zen",
+            Self::Typewriter => "typewriter",
         }
     }
 
@@ -116,6 +120,7 @@ impl FocusStyle {
             Self::Slide => "Slide",
             Self::Rail => "Rail",
             Self::Zen => "Zen",
+            Self::Typewriter => "Typewriter",
         }
     }
 

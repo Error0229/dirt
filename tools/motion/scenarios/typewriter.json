@@ -1,0 +1,38 @@
+{
+  "name": "typewriter",
+  "title": "Typewriter: the line being typed held at the optical line, and the other paragraphs dimmed while typing",
+  "platforms": ["desktop", "mockup-desktop"],
+  "description": "Design 5.5, 7.7 and 7.14. With Focus while writing set to Typewriter, a note of two paragraphs is written, which brings focus at once (text that came without a key). A new paragraph is typed: the page scrolls at once by a line and the text is eased up from where it was drawn on the snap spring (380 ms), the line being typed staying 38% down the window; the other paragraphs dim to 40% (200 ms, standard) and, 1.5 s after the last key, come back to full (400 ms, standard). Then ↑: the paragraph above becomes the current one and comes to the optical line.",
+  "setup": [
+    {"platforms": ["desktop"], "click": "button[aria-label='Settings']", "then": 900},
+    {"platforms": ["desktop"], "eval": "(() => { document.querySelector(\"[aria-label='Focus while writing']\").scrollIntoView({ block: 'center' }); return true; })()", "then": 600},
+    {"platforms": ["desktop"], "click": "[aria-label='Focus while writing'] button:nth-of-type(4)", "then": 400},
+    {"platforms": ["desktop"], "key": "Escape", "then": 900},
+    {"platforms": ["desktop"], "click": "[data-dui-typed]", "then": 400},
+    {"platforms": ["desktop"], "type": "A first paragraph, long enough to wrap onto a second line in a column of six hundred and eighty pixels, which is the measure of a readable line.\nA second paragraph", "then": 2400},
+    {"platforms": ["mockup-desktop"], "eval": "(() => { ACT['focus-v']({ dataset: { v: 'typewriter' } }); const t = document.querySelector('#d-text'); t.focus(); t.value = ''; return true; })()", "then": 400},
+    {"platforms": ["mockup-desktop"], "type": "A first paragraph, long enough to wrap onto a second line in a column of six hundred and eighty pixels, which is the measure of a readable line.\nA second paragraph", "then": 2400}
+  ],
+  "parts": {
+    "text": {"desktop": ".dk-text", "mockup-desktop": "#d-text"},
+    "column": {"desktop": ".dk-col", "mockup-desktop": "#d-col"},
+    "list": {"desktop": ".dk-side", "mockup-desktop": "#D .dk-side"}
+  },
+  "crop": {"mockup-desktop": "#D"},
+  "checks": {"within": [], "apart": [], "pops": {"px": 24, "opacity": 0.3}},
+  "movements": [
+    {
+      "name": "line",
+      "description": "A new paragraph typed: the text moves up a line on the snap spring; the others dim, and come back 1.5 s later.",
+      "steps": [{"type": "\nA third paragraph"}],
+      "straight": ["text"],
+      "ms": 2400
+    },
+    {
+      "name": "up",
+      "description": "↑: the paragraph above becomes the current one and comes to the optical line.",
+      "steps": [{"key": "ArrowUp"}],
+      "ms": 800
+    }
+  ]
+}

@@ -63,6 +63,7 @@ pub fn Page() -> Element {
     // In Zen the files go (7.7): out of sight, and out of reach.
     let zen = *screen.writing.read() == super::Writing::Focused
         && screen.focus_style() == dirt_core::models::FocusStyle::Zen;
+    let typewriter = screen.focus_style() == dirt_core::models::FocusStyle::Typewriter;
     let can_send = matches!(
         screen.sync_indicator(),
         SyncIndicator::Synced { .. } | SyncIndicator::Syncing | SyncIndicator::JustSynced
@@ -102,6 +103,10 @@ pub fn Page() -> Element {
                         // command key (`keys::empties_page`).
                         "data-dui-page": done_keys.then_some(super::keys::COMMAND_KEY),
                         "data-dui-typed": typing.id(),
+                        // Typewriter (7.7, 7.14): while focus is on, the
+                        // script holds the caret's line at the optical line
+                        // and dims the other paragraphs while typing.
+                        "data-dui-typewriter": typewriter.then_some(""),
                         // A note was just let go: the script draws it
                         // going (5.5).
                         "data-dui-let-go": view.let_go.map(super::LetGo::mark),
