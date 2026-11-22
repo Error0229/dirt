@@ -70,7 +70,10 @@ pub fn Page() -> Element {
     );
     // While the list is folded away (focus), + comes to the edge with the
     // note's icons, so that it is never shown twice (7.14).
-    let focused = *screen.writing.read() == super::Writing::Focused;
+    let focused = matches!(
+        *screen.writing.read(),
+        super::Writing::Focused | super::Writing::Folded
+    );
     // While the note has no files, the paperclip says it takes a dropped or
     // pasted one too.
     let no_files = open.is_none_or(|note| {
@@ -157,27 +160,39 @@ pub fn Page() -> Element {
             // The note's icons, at the window's right edge. Made again with
             // each page, as the column is, so that those that come with a
             // note (or the mic, with the blank page) pop in (5.5). After
-            // the text in the order Tab goes in.
+            // the text in the order Tab goes in. The paperclip is always
+            // second, after the one icon that changes with the page (the
+            // mic, the box, or "back to the list"), so that it never moves
+            // as the page becomes a note; what comes and goes with focus or
+            // an archived note is below it, and the edge keeps its top
+            // where it is (7.14).
             div {
                 key: "acts {view.serial}",
                 class: if open.is_some() { "dk-acts" } else { "dk-acts blank" },
                 role: "toolbar",
                 "aria-label": if open.is_some() { "The note" } else { "The page" },
                 "data-from": from,
-                // Below 720 px the page lies over the list: the pointer's
-                // way back to it (shown there only).
-                IconButton {
-                    icon: Icon::ChevronLeft,
-                    label: "Show the list",
-                    shortcut: "Esc",
-                    class: "dk-stays dk-to-list",
-                    onclick: move |_| screen.done(false),
-                }
                 if mic {
                     MicButton {
                         label: mic_label,
                         refused: unheard.is_some(),
                         on_talk: move |talk| screen.talk(talk),
+                    }
+                }
+                if let Some(note) = open {
+                    if view.archived {
+                        IconButton {
+                            icon: Icon::Unarchive,
+                            label: "Back to the list",
+                            onclick: move |_| screen.unarchive(note),
+                        }
+                    } else {
+                        IconButton {
+                            icon: Icon::Archive,
+                            label: "Archive",
+                            shortcut: "Ctrl E",
+                            onclick: move |_| screen.archive(note),
+                        }
                     }
                 }
                 IconButton {
@@ -189,27 +204,15 @@ pub fn Page() -> Element {
                     class: "dk-stays",
                     onclick: move |_| screen.choose_files(),
                 }
-                if let Some(note) = open {
-                    if view.archived {
-                        IconButton {
-                            icon: Icon::Unarchive,
-                            label: "Back to the list",
-                            onclick: move |_| screen.unarchive(note),
-                        }
-                        IconButton {
-                            icon: Icon::Trash,
-                            label: "Delete for good",
-                            shortcut: "Ctrl Shift Del",
-                            danger: true,
-                            onclick: move |_| screen.delete(note),
-                        }
-                    } else {
-                        IconButton {
-                            icon: Icon::Archive,
-                            label: "Archive",
-                            shortcut: "Ctrl E",
-                            onclick: move |_| screen.archive(note),
-                        }
+                if let Some(note) = open.filter(|_| view.archived) {
+                    // Apart from "back to the list", so that a press meant
+                    // for one does not land on the other.
+                    IconButton {
+                        icon: Icon::Trash,
+                        label: "Delete for good",
+                        shortcut: "Ctrl Shift Del",
+                        danger: true,
+                        onclick: move |_| screen.delete(note),
                     }
                 }
                 if focused {
@@ -220,6 +223,15 @@ pub fn Page() -> Element {
                         class: "dk-stays",
                         onclick: move |_| screen.done(false),
                     }
+                }
+                // Below 720 px the page lies over the list: the pointer's
+                // way back to it (shown there only).
+                IconButton {
+                    icon: Icon::ChevronLeft,
+                    label: "Show the list",
+                    shortcut: "Esc",
+                    class: "dk-stays dk-to-list",
+                    onclick: move |_| screen.done(false),
                 }
             }
         }

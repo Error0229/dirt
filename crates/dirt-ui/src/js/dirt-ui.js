@@ -1948,6 +1948,7 @@
     const geometry = {
       top: boxes[0].top - top, bottom: boxes[boxes.length - 1].bottom - top, caret: caret.getBoundingClientRect().top - top,
       last: end === text.length, one: text.indexOf('\n') < 0, pad: parseFloat(style.paddingTop),
+      line: parseFloat(style.lineHeight) || 0,
     };
     twMirror.textContent = '';
     return geometry;
@@ -1970,13 +1971,18 @@
   function twPin(field, geometry) {
     const page = field.closest('[data-dui-scroll]');
     if (!page) return;
-    const target = Math.max(0, Math.round(geometry.caret - geometry.pad)), before = page.scrollTop;
+    // Whole lines: an inline box's top is a little below its line's, by
+    // how much depends on what is on the line.
+    const lines = geometry.line ? Math.round((geometry.caret - geometry.pad) / geometry.line) * geometry.line : geometry.caret - geometry.pad;
+    const target = Math.max(0, Math.round(lines)), before = page.scrollTop;
     if (Math.abs(target - before) < 1) return;
-    const offset = twOffset(field);
     page._duiQuiet = true;
     page.scrollTop = target;
     const moved = page.scrollTop - before;
+    // Nothing scrolled (the page at its end): a movement still on its way
+    // is left to finish.
     if (!moved) { page._duiQuiet = false; return; }
+    const offset = twOffset(field);
     if (reduced()) return;
     const snap = spring('snap');
     field._duiLine = field.animate([{ transform: `translateY(${moved + offset}px)` }, { transform: 'none' }],
@@ -1999,7 +2005,17 @@
     clearTimeout(twDimTimer);
     twDimTimer = setTimeout(() => twUndim(field, false), TW_PAUSE);
   }
-  document.addEventListener('input', event => typewriter(event.target, true, true), true);
+  // The page's field hears more than one `input` for one change (its own,
+  // and the one the typing carrier passes on): a change already taken is
+  // not taken again, so that the second does not cut the first's movement.
+  document.addEventListener('input', event => {
+    const field = event.target;
+    if (!field || !field.matches || !field.matches('[data-dui-typewriter]')) return;
+    if (field._duiTwValue === field.value && field._duiTwAt === field.selectionEnd) return;
+    field._duiTwValue = field.value;
+    field._duiTwAt = field.selectionEnd;
+    typewriter(field, true, true);
+  }, true);
   document.addEventListener('keydown', () => { twBy = 'key'; }, true);
   document.addEventListener('pointerdown', () => { twBy = 'pointer'; }, true);
   document.addEventListener('selectionchange', () => {

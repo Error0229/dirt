@@ -984,10 +984,12 @@ input[type=range]{accent-color:var(--accent);width:150px}
 .ed textarea,.win.writing[data-focus="zen"] .ed textarea{padding-top:max(6px,calc(38cqh - 52px))}
 /* The note's icons at the window's right edge, in the middle of its
    height, away from the window's own buttons. They stay there whatever
-   the column does. */
-.ed>.ed-bar,.win[data-os="mac"] .ed>.ed-bar{top:50%;left:auto;right:14px;transform:translateY(-50%)}
+   the column does. The top is fixed, the first two centred: what comes
+   with focus or an archived note goes below, and nothing moves. The
+   paperclip is always second. */
+.ed>.ed-bar,.win[data-os="mac"] .ed>.ed-bar{top:calc(50% - 33px);left:auto;right:14px;transform:none}
 .ed-bar .when-narrow{display:none}
-.win:not(.writing) .ed-bar .when-focus{display:none}
+.win:not(.writing):not(.fold) .ed-bar .when-focus{display:none}
 /* From the first key nothing shows; a pause changes nothing; the hand
    back on the mouse (40 px of travel since the last key) brings the
    icons back, and only them. */
@@ -1179,13 +1181,13 @@ input[type=range]{accent-color:var(--accent);width:150px}
                  first line and travel with it (design.md 6.4). -->
             <div class="col" id="d-col">
               <div class="ed-bar" id="d-acts">
-                <button class="icon-btn when-narrow" data-act="new-note" data-tip="Show the list" data-kbd="Esc"><svg class="i"><use href="#i-chevron-left"/></svg></button>
                 <button class="icon-btn when-blank" id="d-mic" data-tip="Talk" data-kbd="hold Ctrl Alt N"><svg class="i"><use href="#i-mic"/></svg></button>
-                <button class="icon-btn" id="d-attach" data-act="attach" data-tip="Attach a file, or drop or paste one" data-kbd="Ctrl O"><svg class="i"><use href="#i-paperclip"/></svg></button>
                 <button class="icon-btn when-note when-live" data-act="archive-open" data-tip="Archive" data-kbd="Ctrl E"><svg class="i"><use href="#i-archive"/></svg></button>
                 <button class="icon-btn when-arch" data-act="unarchive" data-tip="Back to the list"><svg class="i"><use href="#i-unarchive"/></svg></button>
+                <button class="icon-btn" id="d-attach" data-act="attach" data-tip="Attach a file, or drop or paste one" data-kbd="Ctrl O"><svg class="i"><use href="#i-paperclip"/></svg></button>
                 <button class="icon-btn danger when-arch" data-act="del-open" data-tip="Delete for good" data-kbd="Ctrl Shift Del"><svg class="i"><use href="#i-trash"/></svg></button>
                 <button class="icon-btn when-focus" data-act="new-note" data-tip="New note" data-kbd="Ctrl N"><svg class="i"><use href="#i-plus"/></svg></button>
+                <button class="icon-btn when-narrow" data-act="new-note" data-tip="Show the list" data-kbd="Esc"><svg class="i"><use href="#i-chevron-left"/></svg></button>
               </div>
               <textarea id="d-text" aria-label="Note" placeholder="What’s on your mind?" spellcheck="false"></textarea>
               <div class="shelf" id="d-shelf" data-folded hidden>
