@@ -163,7 +163,10 @@
   .dk-side>:not(.dk-rail){width:343px;flex-shrink:0}
   .dk-page{padding-left:max(44px,calc((100% - 680px) / 2));padding-right:max(44px,calc((100% - 680px) / 2));transition:padding var(--d-glide) var(--sp-glide) 0ms}
   .dk-main{transition:background-color 500ms var(--e-std) 120ms}
-  .dk-text{transition:font-size var(--d-glide) var(--sp-glide) 0ms,line-height var(--d-glide) var(--sp-glide) 0ms,padding var(--d-glide) var(--sp-glide) 0ms}
+  /* No padding in the transitions: the room above the text is in vh, and
+     a window maximised or resized puts the first line in its place at
+     once rather than gliding it there. */
+  .dk-text{transition:font-size var(--d-glide) var(--sp-glide) 0ms,line-height var(--d-glide) var(--sp-glide) 0ms}
   .dk-files{transition:opacity var(--d-3) var(--e-std)}
 
   /* Every style: the note's column glides to the middle (60 ms after the
@@ -213,7 +216,7 @@
      it starts at the optical line already, and moving it at the pause
      would move the words being written (7.14). */
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main{background:var(--bg);transition:background-color 600ms var(--e-std) 260ms}
-  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-text{font-size:calc(var(--note-size) + 4px);line-height:1.8;transition:font-size var(--d-glide) var(--sp-glide) 300ms,line-height var(--d-glide) var(--sp-glide) 300ms,padding var(--d-glide) var(--sp-glide) 300ms}
+  .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-text{font-size:calc(var(--note-size) + 4px);line-height:1.8;transition:font-size var(--d-glide) var(--sp-glide) 300ms,line-height var(--d-glide) var(--sp-glide) 300ms}
   .dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::before,.dk[data-dui-writing="on"][data-dui-focus="zen"] .dk-main::after{opacity:1;transition:opacity 500ms var(--e-std) 420ms}
 }
 

@@ -1776,9 +1776,16 @@
     }
   });
   // The clipboard's text, read by the app, put where the caret was.
+  // A paste from the app's own menu reaches the field as typed text
+  // (`execCommand('insertText')`): it is marked while it goes in, so that
+  // Typewriter moves at once for it and the hand rule does not take it for
+  // typing (the hand is on the mouse).
+  let menuPasting = false;
   function paste(text) {
     const field = menuFor && menuFor.isConnected && isField(menuFor) ? menuFor : null;
-    if (field && text) insertText(field, text);
+    if (!field || !text) return;
+    menuPasting = true;
+    try { insertText(field, text); } finally { menuPasting = false; }
   }
 
   // ---- More rows as a list nears its end (section 3) -----------------------
@@ -1899,10 +1906,16 @@
   // is on the keys. A shortcut that changes nothing (Ctrl O) leaves the
   // icons as they are, and so does a change the script makes itself (the
   // typing carrier's, which is not trusted).
+  // A slider or a box ticked with the mouse is not typing, nor is a paste
+  // from the app's menu, a drop, or a paste after a press (a middle
+  // click): the hand is on the mouse.
+  const TEXT_FIELDS = 'textarea, [contenteditable], input:not([type]), input[type="text"], input[type="search"], '
+    + 'input[type="email"], input[type="url"], input[type="tel"], input[type="password"], input[type="number"]';
   document.addEventListener('input', event => {
-    if (!event.isTrusted) return;
+    if (!event.isTrusted || menuPasting) return;
     const target = event.target;
-    if (!target || !target.matches || !target.matches('textarea, input, [contenteditable]')) return;
+    if (!target || !target.matches || !target.matches(TEXT_FIELDS)) return;
+    if (event.inputType === 'insertFromDrop' || (event.inputType === 'insertFromPaste' && twBy === 'pointer')) return;
     handAway();
   }, true);
 
@@ -2045,7 +2058,7 @@
     const field = event.target;
     if (!field || !field.matches || !field.matches('[data-dui-typewriter]')) return;
     if (field._duiTwValue === field.value && field._duiTwAt === caretOf(field)) return;
-    typewriter(field, true, true, TW_JUMPS.has(event.inputType));
+    typewriter(field, true, true, menuPasting || TW_JUMPS.has(event.inputType));
   }, true);
   document.addEventListener('keydown', () => { twBy = 'key'; }, true);
   document.addEventListener('pointerdown', () => { twBy = 'pointer'; }, true);
@@ -2125,11 +2138,16 @@
     event.preventDefault();
     tell(edge, 'resize');
   }, true);
+  // A field marked `data-dui-drag-through` (the desktop's page) gives the
+  // top rows to the window: scrolled, its text passes under them, and a
+  // press there still moves the window, and two maximise it, rather than
+  // putting the caret on a line half under the window's buttons.
   let lastDragPress = null;
   document.addEventListener('pointerdown', event => {
     if (event.button !== 0 || event.pointerType !== 'mouse' || !event.target.closest) return;
     const area = event.target.closest('[data-dui-drag]');
-    if (!area || event.target.closest(NOT_DRAG)) return;
+    const through = event.target.closest('[data-dui-drag-through]');
+    if (!area || (!through && event.target.closest(NOT_DRAG))) return;
     const box = area.getBoundingClientRect();
     if (event.clientY - box.top > (Number(area.dataset.duiDrag) || 0)) return;
     event.preventDefault();

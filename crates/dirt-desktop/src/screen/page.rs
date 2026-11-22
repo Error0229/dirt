@@ -110,6 +110,9 @@ pub fn Page() -> Element {
                         // script holds the caret's line at the optical line
                         // and dims the other paragraphs while typing.
                         "data-dui-typewriter": typewriter.then_some(""),
+                        // The window's top row keeps moving the window when
+                        // the text has scrolled under it (7.6, 7.14).
+                        "data-dui-drag-through": "",
                         // A note was just let go: the script draws it
                         // going (5.5).
                         "data-dui-let-go": view.let_go.map(super::LetGo::mark),
