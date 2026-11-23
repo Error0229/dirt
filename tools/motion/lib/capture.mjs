@@ -184,6 +184,22 @@ export async function sendStep(target, step) {
     const selector = sel(step.wheel.on || step.wheel);
     const { x, y } = await centre(cdp, selector);
     await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: step.wheel.dy || 300 });
+  } else if (step.viewport !== undefined) {
+    // The page's layout viewport made shorter (as a keyboard rising does),
+    // or given back its own size with "reset" (as the keyboard going does),
+    // through DevTools' device metrics. A run that stops part way gives it
+    // back too.
+    // A size for every platform, or per platform.
+    const v = step.viewport;
+    const size = v && typeof v === 'object' && ('height' in v || 'width' in v) ? v : sel(v);
+    if (size === 'reset') {
+      await cdp.send('Emulation.clearDeviceMetricsOverride');
+      if (target.undoViewport) { target.undoViewport(); target.undoViewport = null; }
+    } else if (size) {
+      const now = await cdp.evaluate('({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })');
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: size.width || now.width, height: size.height || now.height, deviceScaleFactor: now.dpr, mobile: platform !== 'desktop' });
+      if (!target.undoViewport) target.undoViewport = onCleanup('the viewport size of the page', () => cdp.send('Emulation.clearDeviceMetricsOverride').catch(() => {}));
+    }
   } else if (step.wait !== undefined) {
     await sleep(step.wait);
   } else if (step.waitFor) {

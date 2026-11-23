@@ -1503,8 +1503,9 @@ function trailingTags(text) {
 }
 const split = n => {
   const { clean, tags } = trailingTags(n.text);
-  const [first, ...rest] = clean.split('\n');
-  return { title: first.trim() || n.files[0]?.name || 'Empty note', body: rest.join(' ').trim(), tags };
+  // The title is the first line that holds anything, as the app's is.
+  const lines = clean.split('\n'), at = Math.max(0, lines.findIndex(line => line.trim()));
+  return { title: (lines[at] || '').trim() || n.files[0]?.name || 'Empty note', body: lines.slice(at + 1).join(' ').trim(), tags };
 };
 const tagLabel = tags => !tags.length ? '' : esc(tags.slice(0, 2).join(' ')) + (tags.length > 2 ? ` +${tags.length - 2}` : '');
 
@@ -2028,21 +2029,36 @@ function clipFor(el) {
   return `inset(${r.top - sr.top}px ${sr.right - r.right}px ${sr.bottom - r.bottom}px ${r.left - sr.left}px round 16px)`;
 }
 // Closing into its card, the page's words ride with it (340 ms, standard),
-// their first line onto the card's title, so that they stay inside the
-// shrinking clip and land on the card's (#322). Only when they are the same
-// words, seen to the end: the field scrolled to its top (a long note opens
-// at its end), and the title wholly in sight in the list. Otherwise they
-// fade, from 140 ms, in 80 ms (linear).
+// from the first line that holds anything onto the card's title, which is
+// that line, so that they stay inside the shrinking clip and land on the
+// card's (#322). Only when that line is in sight in the field (a long note
+// opens at its end) and the title wholly in sight in the list. Otherwise
+// they fade, from 140 ms, in 80 ms (linear).
+function firstWordsOf(t) {
+  const at = t.value.search(/\S/);
+  if (at < 0) return null;
+  const ts = getComputedStyle(t), copy = document.createElement('div');
+  for (const k of ['boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'fontFamily', 'fontSize', 'fontWeight', 'letterSpacing', 'lineHeight', 'wordSpacing', 'overflowWrap', 'wordBreak']) copy.style[k] = ts[k];
+  Object.assign(copy.style, { position: 'fixed', visibility: 'hidden', whiteSpace: 'pre-wrap', top: '0', left: '-9999px', border: '0' });
+  copy.textContent = t.value.slice(0, at);
+  const mark = document.createElement('span');
+  mark.textContent = t.value[at];
+  copy.append(mark); document.body.append(copy);
+  const line = parseFloat(ts.lineHeight) || mark.offsetHeight;
+  const top = mark.offsetTop - (line - mark.offsetHeight) / 2, left = mark.offsetLeft;
+  copy.remove();
+  const tr = t.getBoundingClientRect();
+  return { top: tr.top + top - t.scrollTop, left: tr.left + left, height: line };
+}
 function rideInto(ed, card) {
-  const t = $('#m-text'), tr = t.getBoundingClientRect(), ts = getComputedStyle(t);
+  const t = $('#m-text'), tr = t.getBoundingClientRect(), first = firstWordsOf(t);
   const into = $('.row-t', card).getBoundingClientRect(), list = $('#m-list').getBoundingClientRect();
   const body = $('.m-ed-body', ed);
-  if (t.scrollTop > 1 || into.top < list.top - 1 || into.bottom > list.bottom + 1) {
+  if (!first || first.top < tr.top - 1 || first.top + first.height > tr.bottom + 1 || into.top < list.top - 1 || into.bottom > list.bottom + 1) {
     body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 80, delay: 140, easing: 'linear', fill: 'forwards' });
     return;
   }
-  const top = Math.max(tr.top + parseFloat(ts.paddingTop), $('.m-ed-bar', ed).getBoundingClientRect().bottom);
-  body.animate([{ transform: 'none' }, { transform: `translate(${into.left - tr.left - parseFloat(ts.paddingLeft)}px, ${into.top - top}px)` }], { duration: 340, easing: ESTD, fill: 'forwards' });
+  body.animate([{ transform: 'none' }, { transform: `translate(${into.left - first.left}px, ${into.top - first.top}px)` }], { duration: 340, easing: ESTD, fill: 'forwards' });
 }
 function openM(id) {
   const n = get(id); if (!n) return;

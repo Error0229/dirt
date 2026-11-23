@@ -349,9 +349,9 @@ test('stops: a part that halts on the way and sets off again, not one that eases
 
 // A page shrinking from the screen onto the second of two cards at y 200,
 // its words fading by `words(t)` and the page itself by `page(t)`.
-function closing({ words, page }) {
+function closing({ words, page, phase = 0 }) {
   const frames = [{ t: -1, before: true, parts: { page: [box(0, 0, 400, 800)], text: [box(0, 60, 400, 740)], card: [box(10, 100, 380, 80), box(10, 200, 380, 80)] } }];
-  for (let t = 0; t <= 340; t += 17) {
+  for (let t = phase; t <= 340; t += 17) {
     const k = Math.min(1, t / 200);
     const shape = { x: 10 * k, y: 200 * k, w: 400 - 20 * k, h: 800 - 720 * k };
     const p = page(t), w = words(t) * p;
@@ -466,8 +466,25 @@ test('doubled: other words riding over the card\'s linger as a ghost once the ca
   assert.ok(run.worst.pageWords >= 0.4, `the ghost at ${run.worst.pageWords}`);
   // Not said unless the scenario says the words differ.
   assert.deepEqual(findDoubled(riding, { page: 'page', words: 'text', onto: 'card', index: 1 }), []);
-  // Fading on their own from 140 ms in 80 ms (linear).
-  const early = closing({ words: t => Math.max(0, Math.min(1, 1 - (t - 140) / 80)), page: fade });
-  assert.deepEqual(findDoubled(early, { page: 'page', words: 'text', onto: 'card', index: 1, otherWords: true }), []);
-  assert.deepEqual(findBlankSlot(early, { page: 'page', words: 'text', onto: 'card', index: 1 }), []);
+  // Fading on their own from 140 ms in 80 ms (linear), at every phase of
+  // the frames: the design's 0.25 holds.
+  const fadeIn = ms => t => Math.max(0, Math.min(1, 1 - (t - 140) / ms));
+  for (const phase of [0, 4, 8, 12]) {
+    const early = closing({ words: fadeIn(80), page: fade, phase });
+    assert.deepEqual(findDoubled(early, { page: 'page', words: 'text', onto: 'card', index: 1, otherWords: true }), [], `phase ${phase}`);
+    assert.deepEqual(findBlankSlot(early, { page: 'page', words: 'text', onto: 'card', index: 1 }), [], `phase ${phase}`);
+    // Slowed to 100 ms they are about 0.29 as the card's cross half strength.
+    const slow = closing({ words: fadeIn(100), page: fade, phase });
+    assert.equal(findDoubled(slow, { page: 'page', words: 'text', onto: 'card', index: 1, otherWords: true }).length, 1, `phase ${phase}`);
+  }
+});
+
+test('blank slot and landing: a negative index counts from the end, as the index of a step does', () => {
+  const frames = closing({ words: t => Math.max(0, 1 - t / 200), page: () => 1 });
+  const [run] = findBlankSlot(frames, { page: 'page', words: 'text', onto: 'card', index: -1 });
+  assert.ok(run, 'the old close is blank with index -1');
+  assert.equal(run.key, 'card[-1]');
+  const moved = closing({ words: () => 1, page: () => 1 });
+  for (const f of moved) if (f.t >= 100) f.parts.card = [box(10, 180, 380, 80), box(10, 280, 380, 80)];
+  assert.equal(findLanding(moved, { page: 'page', onto: 'card', index: -1 })[0].off, 80);
 });

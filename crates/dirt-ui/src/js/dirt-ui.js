@@ -729,8 +729,8 @@
   // rectangle to the screen.
   //
   // Closing, the page becomes what it closes into (#322). Its words ride
-  // with it onto a card's title when they are its first line (else they
-  // fade, from 140 ms, 80 ms), and in the later part the whole page
+  // with it onto a card's title when its first words are in sight (else
+  // they fade, from 140 ms, 80 ms), and in the later part the whole page
   // fades (from 140 ms, 200 ms, standard; into the bar 180 ms), so that
   // what is under it, the card with its own words or the bar, shows
   // through, and when the clip lands that is all there is. Its text had
@@ -798,30 +798,66 @@
       if (!moved && !pressed) focus([selector], 'end');
     });
   }
-  // A closing page's words ride onto its card's title (`.dui-card-t`, the
-  // note's first line) only when they are the same words, and the ride can
-  // be seen to its end:
-  // - the line in sight at the top of the page is the note's first line:
-  //   its field is scrolled to its top. A long note opens scrolled to its
-  //   end, where the caret is, and its line in sight is another line, which
-  //   would lie over the title, both half drawn, for the rest of the close;
-  // - the title is wholly in sight, in the list and in the page's own
-  //   scroller: a card partly under the top bar has its title above where
-  //   the page's words can be drawn, and the riding words would be cut off,
-  //   leaving the box empty.
+  // A closing page's words ride onto its card's title (`.dui-card-t`) only
+  // when they are the same words, and the ride can be seen to its end:
+  // - they ride from the note's first line that holds anything, which is
+  //   what the card's title is (`Outline::of`, trimmed), not from an empty
+  //   line above it, which would have put the first words over the card's
+  //   preview;
+  // - that line is in sight in the page's own scroller. A long note opens
+  //   scrolled to its end, where the caret is, and the line in sight is
+  //   another, which would lie over the title, both half drawn, for the
+  //   rest of the close;
+  // - the title is wholly in sight, in the list and in the page's scroller
+  //   (`wordsShift`, as the close begins only).
   // Measured as the close begins (the body then moves). Otherwise null, and
-  // the words fade instead (`WORDS_FADE`).
+  // the words fade instead (`WORDS_FADE`); so does a note with no words.
   function wordsFrom(page) {
     const body = page.querySelector('[data-dui-grow-body]');
     if (!body) return null;
-    const field = body.querySelector('textarea') || body;
-    const box = field.getBoundingClientRect(), style = getComputedStyle(field);
-    const top = box.top + (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.paddingTop) || 0);
     const region = clipperOf(body, page).getBoundingClientRect();
-    if (top < region.top - 1) return null;
+    const field = body.querySelector('textarea');
+    let at;
+    if (field) {
+      at = firstWordsOf(field);
+      if (!at) return null;
+    } else {
+      const box = body.getBoundingClientRect(), style = getComputedStyle(body);
+      at = { top: box.top + (parseFloat(style.paddingTop) || 0), left: box.left + (parseFloat(style.paddingLeft) || 0), height: 0 };
+    }
+    if (at.top < region.top - 1 || at.top + at.height > region.bottom + 1) return null;
+    return { body, top: at.top, left: at.left, region };
+  }
+  // Where the line holding a field's first character that is not white
+  // space begins, on the screen: its top (the line's, not the glyphs'),
+  // its first character's left and the line's height. A field gives no box
+  // for its text, so its text up to there is laid out in a copy of the
+  // field, a div off the screen, as `motion`'s caret does. Null for a field
+  // with nothing in it but white space.
+  function firstWordsOf(field) {
+    const text = field.value || '';
+    const at = text.search(/\S/);
+    if (at < 0) return null;
+    const style = getComputedStyle(field);
+    const copy = document.createElement('div');
+    for (const name of ['boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+      'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'fontFamily', 'fontSize',
+      'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'textTransform', 'wordSpacing', 'tabSize',
+      'overflowWrap', 'wordBreak']) copy.style[name] = style[name];
+    Object.assign(copy.style, { position: 'fixed', visibility: 'hidden', pointerEvents: 'none', whiteSpace: 'pre-wrap', top: '0', left: '-9999px', borderStyle: 'solid' });
+    copy.textContent = text.slice(0, at);
+    const mark = document.createElement('span');
+    mark.textContent = text[at];
+    copy.append(mark);
+    document.body.append(copy);
+    const line = parseFloat(style.lineHeight) || mark.offsetHeight;
+    const top = mark.offsetTop - (line - mark.offsetHeight) / 2, left = mark.offsetLeft;
+    copy.remove();
+    const box = field.getBoundingClientRect();
     return {
-      body, top, region,
-      left: box.left + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.paddingLeft) || 0),
+      top: box.top + (parseFloat(style.borderTopWidth) || 0) + top - field.scrollTop,
+      left: box.left + (parseFloat(style.borderLeftWidth) || 0) + left - field.scrollLeft,
+      height: line,
     };
   }
   // The nearest ancestor of `element` below `last` that cuts what overflows
@@ -844,11 +880,18 @@
     }
     return true;
   }
-  function wordsShift(words, to) {
+  // Where the words go: onto the card's title. Whether they ride at all is
+  // decided as the close begins (`deciding`), with the title wholly in
+  // sight; after that they follow the title wherever it goes. The page's
+  // scroller was measured as the close began, and the keyboard going on the
+  // way (Back pressed twice) grows the web view and moves the card down past
+  // where its bottom was: checked again, the words had stopped there while
+  // the clip followed the card, and were cut off above it (#322).
+  function wordsShift(words, to, deciding) {
     const onto = words && to && to.isConnected ? to.querySelector('.dui-card-t') : null;
     if (!onto) return null;
     const box = onto.getBoundingClientRect();
-    if (box.top < words.region.top - 1 || box.bottom > words.region.bottom + 1 || !wholly(onto, box)) return null;
+    if (deciding && (box.top < words.region.top - 1 || box.bottom > words.region.bottom + 1 || !wholly(onto, box))) return null;
     return `translate(${Math.round(box.left - words.left)}px, ${Math.round(box.top - words.top)}px)`;
   }
   function growOpened(page, state) {
@@ -949,8 +992,8 @@
       // by its top edge long before it landed on a card lower down, leaving
       // the box empty.
       const words = wordsFrom(page);
-      const shift = () => wordsShift(words, to);
-      let moved = shift();
+      const shift = () => wordsShift(words, to, false);
+      let moved = wordsShift(words, to, true);
       const riding = moved ? words.body.animate([{ transform: 'none' }, { transform: moved }], { duration: ms, easing: tokens.standard, fill: 'forwards' }) : null;
       if (riding) state.runs.push(riding);
       const body = page.querySelector('[data-dui-grow-body]');
@@ -975,7 +1018,6 @@
             target = now;
             going.effect.setKeyframes([{ clipPath: whole }, { clipPath: now }]);
           }
-          // A title that has gone partly out of sight keeps the last place.
           const next = riding ? shift() : null;
           if (next && next !== moved) {
             moved = next;

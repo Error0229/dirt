@@ -148,11 +148,13 @@ From that, `tools/motion/lib/analyse.mjs` finds:
   - **other words over the card's** (with `otherWords`, where the page's
     words in sight are not its card's: a long note opened at its end):
     once the card's words are drawn at half strength, the page's must be
-    under 0.3 (`strength`). Its last lines had ridden onto the title as a
-    ghost.
+    at 0.28 or less (`strength`: the design's 0.25, and 0.03 for reading
+    between frames), read at every such frame and at the moment the card's
+    cross half strength, between the frames around it. Its last lines had
+    ridden onto the title as a ghost.
 
   The card is the `index`-th of the part `onto`, the one the scenario
-  opened; without `index`, the one the page's smallest box covers most,
+  opened (from the end if negative, as a step's `index` is); without `index`, the one the page's smallest box covers most,
   which is wrong for a page that lands on the place of its card's
   neighbour;
 - **a closing against the opening it is meant to mirror** (`mirrors`),
@@ -361,6 +363,15 @@ mockups) and `default`.
   - `type` (inserted as typed text);
   - `wheel`;
   - `wait` (ms), `waitFor` / `waitGone` (a selector);
+  - `viewport` (`{ "height": 530 }`: the page's layout made that size by
+    DevTools' device metrics, as a keyboard rising makes it; `"reset"`
+    gives it back its own, as the keyboard going does). The emulator's own
+    keyboard shows on some boots and not on others, so a scenario that
+    needs the web view to change size under a movement makes it change.
+    It changes on the real clock: in stepped frames it lands a few frames
+    in. A run that stops part way gives the size back.
+    `note-close-view-grows` uses it (A78). Not on a desktop scenario that
+    has a `viewport` of its own: `"reset"` would undo it;
   - `pastePicture` (a picture pasted into the page, as one copied from
     another program; the app's own paste handler takes it);
   - `androidKey` (an Android key code, on the emulator: 4 is Back);

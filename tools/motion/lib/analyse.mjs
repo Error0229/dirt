@@ -295,7 +295,8 @@ export function findStops(frames, parts, { slow = 0.3, again = 0.25, rise = 3, m
  * card as drawn and not cut, under what of the page covers it, which is
  * the share of the card the page's box covers times the page's opacity
  * (its surface hides what is under it). The card is the `index`-th of
- * `onto` when the scenario says which it opened, or else the one the
+ * `onto` when the scenario says which it opened (from the end if
+ * negative, as a step's `index` is), or else the one the
  * page's smallest drawn box covers most, the one it shrinks onto or grows
  * out of.
  * With `line`, the page's words are only the first line of them, a band
@@ -323,18 +324,31 @@ export function findBlankSlot(frames, spec = {}) {
 /**
  * A page whose words in sight are not its card's (`handsOver` with
  * `otherWords`: a long note scrolled to its end) must have let them go by
- * the time the card's can be read: frames where the card's words are drawn
- * at half strength or more and the page's other words still at `strength`
- * (0.3) or more are a finding, one after another as one run. Riding onto
- * the card's title, such a note's last lines lay over the title as a ghost,
- * at half strength as the title came through and fading only with the
- * page (#322).
+ * the time the card's can be read: once the card's words are drawn at half
+ * strength, the page's other words must be at `strength` or less: 0.28,
+ * the design's 0.25 (5.5, "Android's note becoming its card") and 0.03 for
+ * reading between frames. They are read at every frame where the card's
+ * are at half strength or more, and at the moment the card's cross half
+ * strength, between the two frames around it, since that moment, where
+ * the design's number holds, rarely falls on a frame. Over is a finding,
+ * frames one after another as one run. Riding onto the card's title, such
+ * a note's last lines lay over the title as a ghost, at half strength as
+ * the title came through and fading only with the page (#322).
  */
 export function findDoubled(frames, spec = {}) {
   if (!spec.otherWords) return [];
-  const { strength = 0.3 } = spec;
-  const found = slotFrames(frames, spec).filter(f => f.cardWords >= 0.5 && f.pageWords >= strength)
-    .map(f => ({ ...f, shown: -f.pageWords }));
+  const { strength = 0.28 } = spec;
+  const slots = slotFrames(frames, spec);
+  const found = [];
+  slots.forEach((f, i) => {
+    const before = slots[i - 1];
+    if (before && before.at === f.at - 1 && before.cardWords < 0.5 && f.cardWords >= 0.5) {
+      const k = (0.5 - before.cardWords) / (f.cardWords - before.cardWords);
+      const pageWords = round(before.pageWords + k * (f.pageWords - before.pageWords), 3);
+      if (pageWords > strength) found.push({ ...f, t: round(before.t + k * (f.t - before.t), 1), pageWords, cardWords: 0.5, shown: -pageWords });
+    }
+    if (f.cardWords >= 0.5 && f.pageWords > strength) found.push({ ...f, shown: -f.pageWords });
+  });
   return runsOf(found).map(run => ({
     ...run,
     detail: `other words are drawn over those of \`${run.key}\` from ${when(run.from)} to ${when(run.until)} (${run.frames} frame${run.frames === 1 ? '' : 's'}): at worst, at ${when(run.worst.t)}, the page's at ${run.worst.pageWords} and the card's at ${run.worst.cardWords}`,
@@ -344,11 +358,12 @@ export function findDoubled(frames, spec = {}) {
 /** For each frame with the card: how strongly the page's words and the card's are drawn in the card's slot. */
 function slotFrames(frames, { page, words, onto, line = null, index: given = null } = {}) {
   const live = frames.filter(f => !f.before);
+  // Given, it may count from the end (-1, the last); found, -1 is none.
   const index = given ?? coveredMost(live, page, onto);
-  if (index < 0) return [];
+  if (given === null && index < 0) return [];
   const out = [];
   live.forEach((frame, at) => {
-    const c = (frame.parts?.[onto] || [])[index];
+    const c = (frame.parts?.[onto] || []).at(index);
     if (!c || !(area(c) > 0)) return;
     const p = (frame.parts?.[page] || [])[0], w = (frame.parts?.[words] || [])[0];
     const cover = shownOf(p) ? Math.min(1, overlap(p, c) / area(c)) * p.o : 0;
@@ -374,10 +389,10 @@ function runsOf(found) {
   const runs = [];
   for (const f of found) {
     const run = runs[runs.length - 1];
-    if (run && f.at === run.last + 1) {
-      run.last = f.at;
-      run.until = f.t;
-      run.frames++;
+    if (run && f.at <= run.last + 1) {
+      if (f.at > run.last) run.frames++;
+      run.last = Math.max(run.last, f.at);
+      run.until = Math.max(run.until, f.t);
       if (f.shown < run.worst.shown) run.worst = f;
     } else runs.push({ key: f.key, t: f.t, from: f.t, until: f.t, last: f.at, frames: 1, worst: f });
   }
@@ -419,7 +434,7 @@ export function findLanding(frames, { page, onto, index = null, tolerance = 6 } 
     if (p && p.o > 0 && p.w > 0.5 && p.h > 0.5 && p.seen > 0) last = { frame, p };
   }
   if (!last) return [];
-  let card = index === null ? null : (last.frame.parts?.[onto] || [])[index] || null, most = 0;
+  let card = index === null ? null : (last.frame.parts?.[onto] || []).at(index) || null, most = 0;
   if (!card) for (const c of last.frame.parts?.[onto] || []) {
     const shared = c && area(c) > 0 ? overlap(last.p, c) / area(c) : 0;
     if (shared > most) { most = shared; card = c; }
