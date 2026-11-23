@@ -290,53 +290,87 @@ export function findStops(frames, parts, { slow = 0.3, again = 0.25, rise = 3, m
  * A page that hands over to the card it closes onto (`handsOver`): at
  * every frame, words must be seen in the card's slot, the page's or the
  * card's own. The page's are its `words` part as drawn (the page's own
- * opacity included) where its box meets the card; the card's are the
+ * opacity included) where its box meets the card (none, in a frame that
+ * lacks the part); the card's are the
  * card as drawn and not cut, under what of the page covers it, which is
  * the share of the card the page's box covers times the page's opacity
- * (its surface hides what is under it). The card is the one the page's
- * smallest drawn box covers most, the one it shrinks onto or grows out of.
+ * (its surface hides what is under it). The card is the `index`-th of
+ * `onto` when the scenario says which it opened, or else the one the
+ * page's smallest drawn box covers most, the one it shrinks onto or grows
+ * out of.
  * With `line`, the page's words are only the first line of them, a band
  * that high at the top of the words part, and count while half of it or
- * more is inside the page's clip, wherever that is: words left at the top
- * of a page that shrinks onto a card lower down are cut off by the clip's
- * top edge before it lands, and the box over the card is empty.
+ * more is inside the page's clip, wherever the clip is, not only over the
+ * card: words left at the top of a page that shrinks onto a card lower
+ * down are cut off by the clip's top edge before it lands, and the box over
+ * the card is empty. (Over the card would fail the first frames of every
+ * close, a short note's first line being at the top of the page, nowhere
+ * near its card; where the page lands is `findLanding`'s.)
  * Android's note page had faded its words in 200 ms and then covered its
  * card, empty, until it had gone 140 ms later, when the card's words came
  * back at once (#322). Runs of frames where neither reaches `least` are
  * returned, with the worst.
  */
-export function findBlankSlot(frames, { page, words, onto, least = 0.35, line = null } = {}) {
+export function findBlankSlot(frames, spec = {}) {
+  const { least = 0.35 } = spec;
+  const found = slotFrames(frames, spec).filter(f => f.shown < least);
+  return runsOf(found).map(run => ({
+    ...run,
+    detail: `the slot of \`${run.key}\` shows no words from ${when(run.from)} to ${when(run.until)} (${run.frames} frame${run.frames === 1 ? '' : 's'}): at worst, at ${when(run.worst.t)}, the page's words are drawn at ${run.worst.pageWords} and the page covers the card at ${run.worst.cover}`,
+  }));
+}
+
+/**
+ * A page whose words in sight are not its card's (`handsOver` with
+ * `otherWords`: a long note scrolled to its end) must have let them go by
+ * the time the card's can be read: frames where the card's words are drawn
+ * at half strength or more and the page's other words still at `strength`
+ * (0.3) or more are a finding, one after another as one run. Riding onto
+ * the card's title, such a note's last lines lay over the title as a ghost,
+ * at half strength as the title came through and fading only with the
+ * page (#322).
+ */
+export function findDoubled(frames, spec = {}) {
+  if (!spec.otherWords) return [];
+  const { strength = 0.3 } = spec;
+  const found = slotFrames(frames, spec).filter(f => f.cardWords >= 0.5 && f.pageWords >= strength)
+    .map(f => ({ ...f, shown: -f.pageWords }));
+  return runsOf(found).map(run => ({
+    ...run,
+    detail: `other words are drawn over those of \`${run.key}\` from ${when(run.from)} to ${when(run.until)} (${run.frames} frame${run.frames === 1 ? '' : 's'}): at worst, at ${when(run.worst.t)}, the page's at ${run.worst.pageWords} and the card's at ${run.worst.cardWords}`,
+  }));
+}
+
+/** For each frame with the card: how strongly the page's words and the card's are drawn in the card's slot. */
+function slotFrames(frames, { page, words, onto, line = null, index: given = null } = {}) {
   const live = frames.filter(f => !f.before);
-  // Where the page is smallest, and the card it covers most there.
-  let smallest = null;
-  for (const frame of live) {
-    const p = (frame.parts?.[page] || [])[0];
-    if (shownOf(p) && area(p) > 0 && (!smallest || area(p) < area(smallest.p))) smallest = { frame, p };
-  }
-  if (!smallest) return [];
-  let index = -1, most = 0;
-  (smallest.frame.parts?.[onto] || []).forEach((c, i) => {
-    const shared = c && area(c) > 0 ? overlap(smallest.p, c) / area(c) : 0;
-    if (shared > most) { most = shared; index = i; }
-  });
+  const index = given ?? coveredMost(live, page, onto);
   if (index < 0) return [];
-  const found = [];
+  const out = [];
   live.forEach((frame, at) => {
     const c = (frame.parts?.[onto] || [])[index];
     if (!c || !(area(c) > 0)) return;
     const p = (frame.parts?.[page] || [])[0], w = (frame.parts?.[words] || [])[0];
     const cover = shownOf(p) ? Math.min(1, overlap(p, c) / area(c)) * p.o : 0;
-    const band = w && line ? { x: w.x, y: w.y, w: w.w, h: line } : w;
-    const there = line
-      ? shownOf(p) && clipTo(band, p).h >= line / 2 && clipTo(band, p).w > 0
-      : overlap(w, c) > 0;
-    const pageWords = shownOf(w) && w.seen > 0 && there ? w.o : 0;
+    let pageWords = 0;
+    if (shownOf(w) && w.seen > 0) {
+      const band = line ? { x: w.x, y: w.y, w: w.w, h: line } : w;
+      const there = line
+        ? shownOf(p) && clipTo(band, p).h >= line / 2 && clipTo(band, p).w > 0
+        : overlap(w, c) > 0;
+      if (there) pageWords = w.o;
+    }
     const cardWords = shownOf(c) ? c.o * Math.min(1, c.seen) * (1 - cover) : 0;
-    const shown = Math.max(pageWords, cardWords);
-    if (shown < least) found.push({ at, t: frame.t, shown: round(shown, 2), pageWords: round(pageWords, 2), cover: round(cover, 2), key: `${onto}[${index}]` });
+    out.push({ at, t: frame.t, shown: round(Math.max(pageWords, cardWords), 2), pageWords: round(pageWords, 2), cardWords: round(cardWords, 2), cover: round(cover, 2), key: `${onto}[${index}]` });
   });
-  // A run is blank frames one after another, however far apart they came
-  // (a slow device in real time).
+  return out;
+}
+
+/**
+ * Runs of frames one after another, however far apart they came (a slow
+ * device in real time), each with its worst (the least `shown`).
+ */
+function runsOf(found) {
   const runs = [];
   for (const f of found) {
     const run = runs[runs.length - 1];
@@ -347,10 +381,64 @@ export function findBlankSlot(frames, { page, words, onto, least = 0.35, line = 
       if (f.shown < run.worst.shown) run.worst = f;
     } else runs.push({ key: f.key, t: f.t, from: f.t, until: f.t, last: f.at, frames: 1, worst: f });
   }
-  return runs.map(({ last, ...run }) => ({
-    ...run,
-    detail: `the slot of \`${run.key}\` shows no words from ${when(run.from)} to ${when(run.until)} (${run.frames} frame${run.frames === 1 ? '' : 's'}): at worst, at ${when(run.worst.t)}, the page's words are drawn at ${run.worst.pageWords} and the page covers the card at ${run.worst.cover}`,
-  }));
+  return runs.map(({ last, ...run }) => run);
+}
+
+/** Where the page is smallest, the index of the card it covers most there, or -1. */
+function coveredMost(live, page, onto) {
+  let smallest = null;
+  for (const frame of live) {
+    const p = (frame.parts?.[page] || [])[0];
+    if (shownOf(p) && area(p) > 0 && (!smallest || area(p) < area(smallest.p))) smallest = { frame, p };
+  }
+  if (!smallest) return -1;
+  let index = -1, most = 0;
+  (smallest.frame.parts?.[onto] || []).forEach((c, i) => {
+    const shared = c && area(c) > 0 ? overlap(smallest.p, c) / area(c) : 0;
+    if (shared > most) { most = shared; index = i; }
+  });
+  return index;
+}
+
+/**
+ * Where a page that closes onto a card lands (`handsOver`): its last box
+ * on the screen, at any opacity, against the card's in that frame. The
+ * card is the `index`-th of `onto`, the one the scenario opened: the one
+ * the page covers most would be wrong for a page that lands on the place
+ * of the card's neighbour. Without `index`, it is that one all the same,
+ * or the nearest. A page that lands more than
+ * `tolerance` px from its card on any edge is a finding: Android's note
+ * page had its target measured once, as the close began, and landed on
+ * the card's old place when the card moved under it (#322).
+ */
+export function findLanding(frames, { page, onto, index = null, tolerance = 6 } = {}) {
+  const live = frames.filter(f => !f.before);
+  let last = null;
+  for (const frame of live) {
+    const p = (frame.parts?.[page] || [])[0];
+    if (p && p.o > 0 && p.w > 0.5 && p.h > 0.5 && p.seen > 0) last = { frame, p };
+  }
+  if (!last) return [];
+  let card = index === null ? null : (last.frame.parts?.[onto] || [])[index] || null, most = 0;
+  if (!card) for (const c of last.frame.parts?.[onto] || []) {
+    const shared = c && area(c) > 0 ? overlap(last.p, c) / area(c) : 0;
+    if (shared > most) { most = shared; card = c; }
+  }
+  // Nothing covered: the nearest card.
+  if (!card) {
+    const centre = s => [s.x + s.w / 2, s.y + s.h / 2];
+    const [px, py] = centre(last.p);
+    for (const c of last.frame.parts?.[onto] || []) {
+      if (!c || !(area(c) > 0)) continue;
+      const [cx, cy] = centre(c);
+      if (!card || Math.hypot(cx - px, cy - py) < Math.hypot(centre(card)[0] - px, centre(card)[1] - py)) card = c;
+    }
+  }
+  if (!card) return [];
+  const p = last.p;
+  const off = Math.max(Math.abs(p.x - card.x), Math.abs(p.y - card.y), Math.abs(p.x + p.w - card.x - card.w), Math.abs(p.y + p.h - card.y - card.h));
+  if (off <= tolerance) return [];
+  return [{ t: last.frame.t, off: round(off, 1), detail: `the page lands ${round(off, 1)} px from its card: last seen at ${when(last.frame.t)} at y ${round(p.y, 1)} to ${round(p.y + p.h, 1)}, the card at y ${round(card.y, 1)} to ${round(card.y + card.h, 1)}` }];
 }
 
 /** The part of box `a` inside box `b`. */

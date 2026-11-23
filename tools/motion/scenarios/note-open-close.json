@@ -81,8 +81,8 @@
       "leaves": { "android": ["page"], "mockup-android": ["page"] },
       "ms": 1200,
       "handsOver": {
-        "android": { "page": "page", "words": "text", "onto": "card", "line": 30 },
-        "mockup-android": { "page": "page", "words": "text", "onto": "card", "line": 30 },
+        "android": { "page": "page", "words": "text", "onto": "card", "index": 1, "line": 30 },
+        "mockup-android": { "page": "page", "words": "text", "onto": "card", "index": 1, "line": 30 },
         "because": "design 5.5: the note becomes its card; its words ride with the page onto the card's, the whole page fades into the card from 140 ms, and it lands as the card (#322)"
       },
       "mirrors": {

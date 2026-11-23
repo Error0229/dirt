@@ -124,16 +124,37 @@ From that, `tools/motion/lib/analyse.mjs` finds:
   is judged on the stepped frames and in real time, since a smooth
   scroll, which a part may follow, runs only on the real clock. Settings'
   rail highlight walked through every section the scroll passed (#321);
-- **a slot left blank** (`handsOver`): a page that closes onto a card
-  must show words in the card's slot at every frame, its own or the
-  card's. The page's are its words part as drawn where it meets the card;
-  the card's are the card as drawn, under what the page covers of it
-  (the share of the card under the page's box times the page's opacity:
-  its surface hides what is under it). The card is the one the page's
-  smallest box covers most. Frames where neither reaches 0.35 (`least`)
-  are a finding, one after another as one run. Android's note page faded
-  its text in 200 ms and then covered its card, empty, for 140 ms, until
-  the card's words came back at once (#322);
+- **a page that closes onto a card** (`handsOver`), three ways (#322):
+  - **a slot left blank**: words must be seen in the card's slot at every
+    frame, the page's or the card's. The card's are the card as drawn,
+    under what the page covers of it (the share of the card under the
+    page's box times the page's opacity: its surface hides what is under
+    it). The page's are its words part as drawn where its box meets the
+    card. With `line`, they are only the first line of them, a band that
+    high at the top of the words part, and they count while half of it or
+    more is inside the page's clip, **wherever the clip is**, not only over
+    the card: so words left at the top of a page that shrinks onto a card
+    lower down are caught, cut off by the clip's top edge, but a page that
+    lands beside its card with its words is not (that is the landing's).
+    Over the card would fail the first frames of every close, a short
+    note's first line being at the top of the page, nowhere near its card.
+    A frame without the words part has none. Frames where neither reaches
+    0.35 (`least`) are a finding, one after another as one run. Android's
+    note page faded its text in 200 ms and then covered its card, empty,
+    for 140 ms, until the card's words came back at once;
+  - **where it lands**: its last box on the screen, at any opacity, must
+    be within 6 px of its card's in that frame. It landed on the card's
+    old place when the card moved under it;
+  - **other words over the card's** (with `otherWords`, where the page's
+    words in sight are not its card's: a long note opened at its end):
+    once the card's words are drawn at half strength, the page's must be
+    under 0.3 (`strength`). Its last lines had ridden onto the title as a
+    ghost.
+
+  The card is the `index`-th of the part `onto`, the one the scenario
+  opened; without `index`, the one the page's smallest box covers most,
+  which is wrong for a page that lands on the place of its card's
+  neighbour;
 - **a closing against the opening it is meant to mirror** (`mirrors`),
   only where the scenario declares it from the design, for the parts and
   channels it names. For each, it gives how long each took, and where the
@@ -312,8 +333,8 @@ mockups) and `default`.
   - `leaves` and `arrives`, as above;
   - `straight`: the parts that should go straight to where they end, as above;
   - `handsOver`: `page`, `words` and `onto` (the page, its words and the
-    card it closes onto, by part name, or per platform), `least` and
-    `because`, as above;
+    card it closes onto, by part name, or per platform), `index`, `line`,
+    `least`, `otherWords`, `strength` and `because`, as above;
   - `mirrors`: `of` (the opening), `parts` (part → channels, or per platform),
     `curve` (whether the curve too is meant to be the opening's reversed, or
     only where it goes) and `because` (the design's words, with the section);

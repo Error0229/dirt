@@ -2028,13 +2028,21 @@ function clipFor(el) {
   return `inset(${r.top - sr.top}px ${sr.right - r.right}px ${sr.bottom - r.bottom}px ${r.left - sr.left}px round 16px)`;
 }
 // Closing into its card, the page's words ride with it (340 ms, standard),
-// their first line in sight onto the card's title, the same words, so that
-// they stay inside the shrinking clip and land on the card's (#322).
+// their first line onto the card's title, so that they stay inside the
+// shrinking clip and land on the card's (#322). Only when they are the same
+// words, seen to the end: the field scrolled to its top (a long note opens
+// at its end), and the title wholly in sight in the list. Otherwise they
+// fade, from 140 ms, in 80 ms (linear).
 function rideInto(ed, card) {
   const t = $('#m-text'), tr = t.getBoundingClientRect(), ts = getComputedStyle(t);
+  const into = $('.row-t', card).getBoundingClientRect(), list = $('#m-list').getBoundingClientRect();
+  const body = $('.m-ed-body', ed);
+  if (t.scrollTop > 1 || into.top < list.top - 1 || into.bottom > list.bottom + 1) {
+    body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 80, delay: 140, easing: 'linear', fill: 'forwards' });
+    return;
+  }
   const top = Math.max(tr.top + parseFloat(ts.paddingTop), $('.m-ed-bar', ed).getBoundingClientRect().bottom);
-  const into = $('.row-t', card).getBoundingClientRect();
-  $('.m-ed-body', ed).animate([{ transform: 'none' }, { transform: `translate(${into.left - tr.left - parseFloat(ts.paddingLeft)}px, ${into.top - top}px)` }], { duration: 340, easing: ESTD, fill: 'forwards' });
+  body.animate([{ transform: 'none' }, { transform: `translate(${into.left - tr.left - parseFloat(ts.paddingLeft)}px, ${into.top - top}px)` }], { duration: 340, easing: ESTD, fill: 'forwards' });
 }
 function openM(id) {
   const n = get(id); if (!n) return;
@@ -2061,9 +2069,10 @@ function closeM() {
     const a = card && !reduced()
       ? ed.animate([{ clipPath: 'inset(0px 0px 0px 0px round 42px)' }, { clipPath: clipFor(card) }], { duration: 340, easing: ESTD })
       : anim(ed, [{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: ESTD });
-    // It becomes its card: its words ride with it onto the card's, and
-    // from 140 ms the whole page fades, the card showing through, so that
-    // it lands as the card with nothing to pop (#322).
+    // It becomes its card: its words ride with it onto the card's (or
+    // fade, `rideInto`), and from 140 ms the whole page fades, the card
+    // showing through, so that it lands as the card with nothing to pop
+    // (#322).
     if (card && !reduced()) {
       rideInto(ed, card);
       ed.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, delay: 140, easing: ESTD, fill: 'forwards' });
@@ -3742,9 +3751,10 @@ function closeM() {
     const a = card && !reduced()
       ? ed.animate([{ clipPath: 'inset(0px 0px 0px 0px round 42px)' }, { clipPath: clipFor(card) }], { duration: 340, easing: ESTD })
       : anim(ed, [{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: ESTD });
-    // It becomes its card: its words ride with it onto the card's, and
-    // from 140 ms the whole page fades, the card showing through, so that
-    // it lands as the card with nothing to pop (#322).
+    // It becomes its card: its words ride with it onto the card's (or
+    // fade, `rideInto`), and from 140 ms the whole page fades, the card
+    // showing through, so that it lands as the card with nothing to pop
+    // (#322).
     if (card && !reduced()) {
       rideInto(ed, card);
       ed.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, delay: 140, easing: ESTD, fill: 'forwards' });

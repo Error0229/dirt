@@ -729,7 +729,8 @@
   // rectangle to the screen.
   //
   // Closing, the page becomes what it closes into (#322). Its words ride
-  // with it onto a card's title, and in the later part the whole page
+  // with it onto a card's title when they are its first line (else they
+  // fade, from 140 ms, 80 ms), and in the later part the whole page
   // fades (from 140 ms, 200 ms, standard; into the bar 180 ms), so that
   // what is under it, the card with its own words or the bar, shows
   // through, and when the clip lands that is all there is. Its text had
@@ -751,6 +752,12 @@
   // When a closing page begins to fade into what it closes into: by then
   // the clip (standard) has gone four fifths of the way.
   const CROSSFADE_FROM = 140;
+  // Words that do not ride onto the card's fade on their own, from then and
+  // faster (linear): the card's words, coming through the page, pass a
+  // third of their strength at about 170 ms, and by then the page's are at
+  // that too and going, so that the slot always shows words at 0.38 or
+  // more and another line never lies over the card's at strength.
+  const WORDS_FADE = 80;
   // The right and bottom edges are measured from the page's own size as it
   // is at each frame (`100%`), not from the window's as it was when the
   // movement began: if the window changes size on the way (the keyboard
@@ -791,27 +798,57 @@
       if (!moved && !pressed) focus([selector], 'end');
     });
   }
-  // A closing page's words: its body, and where the first line of them in
-  // sight begins, under its bar, measured as the close begins (the body
-  // then moves). Closing into a card, they go onto its title (`.dui-card-t`,
-  // the note's first line), which is the same words.
+  // A closing page's words ride onto its card's title (`.dui-card-t`, the
+  // note's first line) only when they are the same words, and the ride can
+  // be seen to its end:
+  // - the line in sight at the top of the page is the note's first line:
+  //   its field is scrolled to its top. A long note opens scrolled to its
+  //   end, where the caret is, and its line in sight is another line, which
+  //   would lie over the title, both half drawn, for the rest of the close;
+  // - the title is wholly in sight, in the list and in the page's own
+  //   scroller: a card partly under the top bar has its title above where
+  //   the page's words can be drawn, and the riding words would be cut off,
+  //   leaving the box empty.
+  // Measured as the close begins (the body then moves). Otherwise null, and
+  // the words fade instead (`WORDS_FADE`).
   function wordsFrom(page) {
     const body = page.querySelector('[data-dui-grow-body]');
     if (!body) return null;
     const field = body.querySelector('textarea') || body;
     const box = field.getBoundingClientRect(), style = getComputedStyle(field);
-    const bar = page.querySelector('[data-dui-grow-bar]');
     const top = box.top + (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.paddingTop) || 0);
+    const region = clipperOf(body, page).getBoundingClientRect();
+    if (top < region.top - 1) return null;
     return {
-      body,
-      top: Math.max(top, bar ? bar.getBoundingClientRect().bottom : 0),
+      body, top, region,
       left: box.left + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.paddingLeft) || 0),
     };
+  }
+  // The nearest ancestor of `element` below `last` that cuts what overflows
+  // it, or `last`.
+  function clipperOf(element, last) {
+    for (let at = element.parentElement; at && at !== last; at = at.parentElement) {
+      const style = getComputedStyle(at);
+      if (style.overflowX !== 'visible' || style.overflowY !== 'visible') return at;
+    }
+    return last;
+  }
+  // Whether a box is wholly inside every ancestor of `element` that cuts
+  // what overflows it.
+  function wholly(element, box) {
+    for (let at = element.parentElement; at && at !== document.documentElement; at = at.parentElement) {
+      const style = getComputedStyle(at);
+      if (style.overflowX === 'visible' && style.overflowY === 'visible') continue;
+      const cut = at.getBoundingClientRect();
+      if (box.top < cut.top - 1 || box.bottom > cut.bottom + 1) return false;
+    }
+    return true;
   }
   function wordsShift(words, to) {
     const onto = words && to && to.isConnected ? to.querySelector('.dui-card-t') : null;
     if (!onto) return null;
     const box = onto.getBoundingClientRect();
+    if (box.top < words.region.top - 1 || box.bottom > words.region.bottom + 1 || !wholly(onto, box)) return null;
     return `translate(${Math.round(box.left - words.left)}px, ${Math.round(box.top - words.top)}px)`;
   }
   function growOpened(page, state) {
@@ -906,15 +943,20 @@
       const whole = 'inset(0px 0px 0px 0px round 0px)';
       let target = clipOf(to);
       going = page.animate([{ clipPath: whole }, { clipPath: target }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
-      // Its words ride with it, their first line onto the card's (the same
-      // words), so that they are inside the shrinking clip all the way: left
-      // where they were, they were cut off by its top edge long before it
-      // landed on a card lower down, leaving the box empty.
+      // Its words ride with it, their first line onto the card's title
+      // (`wordsFrom` says when), so that they are inside the shrinking clip
+      // all the way: left where they were, a short note's words were cut off
+      // by its top edge long before it landed on a card lower down, leaving
+      // the box empty.
       const words = wordsFrom(page);
       const shift = () => wordsShift(words, to);
       let moved = shift();
       const riding = moved ? words.body.animate([{ transform: 'none' }, { transform: moved }], { duration: ms, easing: tokens.standard, fill: 'forwards' }) : null;
       if (riding) state.runs.push(riding);
+      const body = page.querySelector('[data-dui-grow-body]');
+      if (!riding && body) {
+        state.runs.push(body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: WORDS_FADE, delay: CROSSFADE_FROM, easing: 'linear', fill: 'forwards' }));
+      }
       // It becomes what it closes into: the whole page fades in the later
       // part of the shrink, ending as the clip lands.
       state.runs.push(page.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms - CROSSFADE_FROM, delay: CROSSFADE_FROM, easing: tokens.standard, fill: 'forwards' }));
@@ -933,6 +975,7 @@
             target = now;
             going.effect.setKeyframes([{ clipPath: whole }, { clipPath: now }]);
           }
+          // A title that has gone partly out of sight keeps the last place.
           const next = riding ? shift() : null;
           if (next && next !== moved) {
             moved = next;

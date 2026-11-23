@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { launchDesktop, launchAndroid, launchMockup, launchHeadless, runCleanups, onCleanup, dirtIsRunning } from './lib/targets.mjs';
 import { prepare, sendSteps, partsFor, cropFor, scaleFor, captureStepped, captureRealtime, measureFrameRate, pick, writes } from './lib/capture.mjs';
 import {
-  findPops, findOutside, findOverlaps, findLingering, findMissing, findStops, findBlankSlot, compareMirror, compareWithMockup,
+  findPops, findOutside, findOverlaps, findLingering, findMissing, findStops, findBlankSlot, findDoubled, findLanding, compareMirror, compareWithMockup,
   frameIntervals, activeSpans, traceTiming, tracksOf, movingWindow, CHANNELS, round, when, contradictedInRealTime,
 } from './lib/analyse.mjs';
 import { contactSheets, sideBySide, video, nearest, removeFrames } from './lib/sheets.mjs';
@@ -113,7 +113,7 @@ function handsOverFor(movement, platform) {
   if (!spec) return null;
   const parts = spec.page ? spec : pick(spec, platform);
   if (!parts?.page) return null;
-  return { page: parts.page, words: parts.words, onto: parts.onto, least: spec.least ?? parts.least, line: spec.line ?? parts.line, because: spec.because };
+  return { page: parts.page, words: parts.words, onto: parts.onto, least: spec.least ?? parts.least, line: spec.line ?? parts.line, index: spec.index ?? parts.index ?? null, otherWords: spec.otherWords ?? parts.otherWords, because: spec.because };
 }
 
 /** Every step a run would send on this platform. */
@@ -226,6 +226,8 @@ function summarise(movements, { platform, trust }) {
       for (const s of f.realtimeStops || []) add(2, `**${m.name}** in real time: \`${s.key}\` should go straight to where it ends, but ${s.detail}`);
       for (const b of f.blank || []) add(1, `**${m.name}**: ${b.detail} (meant to hand over: ${m.handsOverBecause}) (${sheetAt(b.from)})`);
       for (const b of f.realtimeBlank || []) add(1, `**${m.name}** in real time: ${b.detail}`);
+      for (const l of f.landing || []) add(1, `**${m.name}**: ${l.detail} (meant to land on it: ${m.handsOverBecause}) (${sheetAt(l.t)})`);
+      for (const d of f.doubled || []) add(2, `**${m.name}**: ${d.detail} (${sheetAt(d.from)})`);
     }
     for (const r of m.mirror || []) {
       if (r.note) add(2, `**${m.name}** against **${m.mirrorOf}**: \`${r.key}\` ${r.channel} ${r.note} (meant to mirror: ${m.mirrorBecause})`);
@@ -337,6 +339,8 @@ async function runScenario(args) {
           missing: findMissing(frames, listFor(movement.arrives, platform)),
           stops: findStops(frames, listFor(movement.straight, platform)),
           blank: handsOver ? findBlankSlot(frames, handsOver) : [],
+          landing: handsOver ? findLanding(frames, handsOver) : [],
+          doubled: handsOver ? findDoubled(frames, handsOver) : [],
         };
         for (const p of findings.pops) flag(frames, p.t, `pop: ${p.key} ${p.channel || p.kind}${p.atInput ? ' at the input' : ''}`);
         for (const o of findings.outside) flag(frames, o.from, `${o.part} outside ${o.container} by ${o.worst}px until ${o.until}`);
@@ -344,6 +348,8 @@ async function runScenario(args) {
         for (const l of findings.lingering) if (!l.ok) flag(frames, l.t, `${l.part}: ${l.kind}`);
         for (const s of findings.stops) flag(frames, s.t, `${s.key} stops on the way`);
         for (const b of findings.blank) flag(frames, b.from, `${b.key}'s slot blank until ${b.until}`);
+        for (const l of findings.landing) flag(frames, l.t, `lands ${l.off}px off its card`);
+        for (const d of findings.doubled) flag(frames, d.from, `other words over ${d.key}'s until ${d.until}`);
         for (const a of stepped.seen || []) if (a.born > 0) flag(frames, a.born, `starts: ${a.what.replace('CSSTransition ', '').replace('Animation', 'anim')} on ${a.on.split('.').slice(0, 2).join('.')}`, 'notes');
         out.findings = findings;
         const scrolled = [...tracksOf(frames).values()].some(track => movingWindow(track, 'scroll'));

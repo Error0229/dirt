@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   tracksOf, valueOf, findPops, findOutside, findOverlaps, findLingering, findMissing, beyond,
   movingWindow, progressCurve, sampleCurve, curveDistance, compareMirror, compareWithMockup,
-  frameIntervals, activeSpans, traceTiming, parseFramestats, parseShowinfo, indexedParts, when, contradictedInRealTime, findStops, findBlankSlot,
+  frameIntervals, activeSpans, traceTiming, parseFramestats, parseShowinfo, indexedParts, when, contradictedInRealTime, findStops, findBlankSlot, findLanding, findDoubled,
 } from '../lib/analyse.mjs';
 import { mergeRows, trustOf } from '../lib/report.mjs';
 import { columnsFor } from '../lib/sheets.mjs';
@@ -418,4 +418,56 @@ test('blank slot: with `line`, words that ride with the clip onto the card hand 
     if (p.visible && w.visible) w.y = p.y + 4;
   }
   assert.deepEqual(findBlankSlot(frames, { page: 'page', words: 'text', onto: 'card', line: 30 }), []);
+});
+
+test('blank slot: a frame with the card but no words part counts as no page words, and does not throw', () => {
+  for (const line of [null, 30]) {
+    const frames = closing({ words: () => 1, page: () => 1 });
+    frames[5].parts.text = [];
+    const runs = findBlankSlot(frames, { page: 'page', words: 'text', onto: 'card', line });
+    const hit = runs.find(r => r.from <= frames[5].t && r.until >= frames[5].t);
+    assert.ok(hit, `line ${line}: the frame without words is blank`);
+    assert.equal(hit.worst.pageWords, 0);
+  }
+});
+
+test('landing: a page that ends on its card lands; one that ends on the card\'s old place does not', () => {
+  const on = closing({ words: () => 1, page: () => 1 });
+  assert.deepEqual(findLanding(on, { page: 'page', onto: 'card' }), []);
+  // The card moves 80 px down while the page closes onto where it was.
+  const moved = closing({ words: () => 1, page: () => 1 });
+  for (const f of moved) if (f.t >= 100) f.parts.card = [box(10, 180, 380, 80), box(10, 280, 380, 80)];
+  const [miss] = findLanding(moved, { page: 'page', onto: 'card', index: 1 });
+  assert.equal(miss.off, 80);
+  // Without the index, the card it covers most is taken: here the wrong one.
+  assert.equal(findLanding(moved, { page: 'page', onto: 'card' })[0].off, 20);
+});
+
+test('doubled: other words riding over the card\'s linger as a ghost once the card can be read; fading early they do not', () => {
+  // The page fades from 140 ms over 200 ms on the standard curve,
+  // cubic-bezier(.2, 0, 0, 1), as the app's does.
+  const standard = x => {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    let lo = 0, hi = 1, u = 0.5;
+    for (let i = 0; i < 40; i++) {
+      u = (lo + hi) / 2;
+      const at = 3 * 0.2 * u * (1 - u) ** 2 + u ** 3;
+      if (at < x) lo = u; else hi = u;
+    }
+    return 3 * u * u * (1 - u) + u ** 3;
+  };
+  const fade = t => 1 - standard((t - 140) / 200);
+  // Riding: the page's words stay as strong as the page.
+  const riding = closing({ words: () => 1, page: fade });
+  for (const f of riding) { const p = f.parts.page[0], w = f.parts.text[0]; if (p.visible && w.visible) w.y = p.y + 4; }
+  const [run] = findDoubled(riding, { page: 'page', words: 'text', onto: 'card', index: 1, otherWords: true });
+  assert.ok(run, 'a ghost');
+  assert.ok(run.worst.pageWords >= 0.4, `the ghost at ${run.worst.pageWords}`);
+  // Not said unless the scenario says the words differ.
+  assert.deepEqual(findDoubled(riding, { page: 'page', words: 'text', onto: 'card', index: 1 }), []);
+  // Fading on their own from 140 ms in 80 ms (linear).
+  const early = closing({ words: t => Math.max(0, Math.min(1, 1 - (t - 140) / 80)), page: fade });
+  assert.deepEqual(findDoubled(early, { page: 'page', words: 'text', onto: 'card', index: 1, otherWords: true }), []);
+  assert.deepEqual(findBlankSlot(early, { page: 'page', words: 'text', onto: 'card', index: 1 }), []);
 });
