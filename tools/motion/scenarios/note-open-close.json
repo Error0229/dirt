@@ -101,9 +101,9 @@
     },
     {
       "name": "done-then-bar",
-      "description": "Done, and at once the bar, for the next thought (design 5.8, checklist A31). No wait between the two taps: the driver's own round trips on the emulator already put the second about 130 ms after the first, and a further 120 ms had put it at about 350 ms, after the 340 ms close, when the page had gone and the keyboard (on a boot that shows one) was going and moving the bar 312 px down from where it was found. The page on its way out lets the tap through, and a new page opens out of the bar. It is then let go empty.",
+      "description": "Done, and at once the bar, for the next thought (design 5.8, checklist A31). The second tap waits only for the page to start leaving (Rust has taken Done and the page lets taps through), with no fixed wait: a tap before that lands on the page still open, and a further 120 ms after the driver's own round trips had put it at about 350 ms, after the 340 ms close, when the page had gone and the keyboard (on a boot that shows one) was going and moving the bar 312 px down from where it was found. The page on its way out lets the tap through, and a new page opens out of the bar. It is then let go empty.",
       "platforms": ["android"],
-      "steps": [{ "tap": ".dm-page-bar button[aria-label='Done']" }, { "tap": ".dm-bar" }],
+      "steps": [{ "tap": ".dm-page-bar button[aria-label='Done']" }, { "waitFor": ".dui-grow.dm-page.leaving", "ms": 2000 }, { "tap": ".dm-bar" }],
       "arrives": ["page"],
       "after": [{ "tap": ".dm-page-bar button[aria-label='Done']", "then": 1200 }],
       "ms": 1400
@@ -117,9 +117,9 @@
     },
     {
       "name": "done-then-card",
-      "description": "Done, and at once another card (design 5.8), with no wait between the taps, as above: the tap goes through the page on its way out, and the third note grows out of its own card, afresh, not out of the second's. It is then let go.",
+      "description": "Done, and at once another card (design 5.8), the second tap waiting only for the page to start leaving, as above: the tap goes through the page on its way out, and the third note grows out of its own card, afresh, not out of the second's. It is then let go.",
       "platforms": ["android"],
-      "steps": [{ "tap": ".dm-page-bar button[aria-label='Done']" }, { "tap": ".dm-list .dui-card-in", "index": 2 }],
+      "steps": [{ "tap": ".dm-page-bar button[aria-label='Done']" }, { "waitFor": ".dui-grow.dm-page.leaving", "ms": 2000 }, { "tap": ".dm-list .dui-card-in", "index": 2 }],
       "arrives": ["page"],
       "after": [{ "tap": ".dm-page-bar button[aria-label='Done']", "then": 1200 }],
       "ms": 1400

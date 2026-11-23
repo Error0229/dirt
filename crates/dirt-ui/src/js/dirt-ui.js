@@ -834,9 +834,15 @@
   // for its text, so its text up to there is laid out in a copy of the
   // field, a div off the screen, as `motion`'s caret does. Null for a field
   // with nothing in it but white space.
+  function wordFrom(text, at) {
+    const rest = text.slice(at, at + 200), end = rest.search(/[\s]/);
+    return end < 0 ? rest : rest.slice(0, end);
+  }
   function firstWordsOf(field) {
     const text = field.value || '';
-    const at = text.search(/\S/);
+    // Rust's white space (`char::is_whitespace`, which `Outline::of`
+    // trims), not the script's `\s`: they differ in U+FEFF and U+0085.
+    const at = text.search(/[^\s]|﻿/);
     if (at < 0) return null;
     const style = getComputedStyle(field);
     const copy = document.createElement('div');
@@ -847,7 +853,9 @@
     Object.assign(copy.style, { position: 'fixed', visibility: 'hidden', pointerEvents: 'none', whiteSpace: 'pre-wrap', top: '0', left: '-9999px', borderStyle: 'solid' });
     copy.textContent = text.slice(0, at);
     const mark = document.createElement('span');
-    mark.textContent = text[at];
+    // The whole first word, not its first letter: a word too long for what
+    // is left of the line after leading spaces goes to the next line.
+    mark.textContent = wordFrom(text, at);
     copy.append(mark);
     document.body.append(copy);
     const line = parseFloat(style.lineHeight) || mark.offsetHeight;

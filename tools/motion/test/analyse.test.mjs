@@ -473,7 +473,7 @@ test('doubled: other words riding over the card\'s linger as a ghost once the ca
     const early = closing({ words: fadeIn(80), page: fade, phase });
     assert.deepEqual(findDoubled(early, { page: 'page', words: 'text', onto: 'card', index: 1, otherWords: true }), [], `phase ${phase}`);
     assert.deepEqual(findBlankSlot(early, { page: 'page', words: 'text', onto: 'card', index: 1 }), [], `phase ${phase}`);
-    // Slowed to 100 ms they are about 0.29 as the card's cross half strength.
+    // Slowed to 100 ms they are about 0.30 as the card's cross half strength.
     const slow = closing({ words: fadeIn(100), page: fade, phase });
     assert.equal(findDoubled(slow, { page: 'page', words: 'text', onto: 'card', index: 1, otherWords: true }).length, 1, `phase ${phase}`);
   }
