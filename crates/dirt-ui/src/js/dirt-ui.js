@@ -835,14 +835,14 @@
   // field, a div off the screen, as `motion`'s caret does. Null for a field
   // with nothing in it but white space.
   function wordFrom(text, at) {
-    const rest = text.slice(at, at + 200), end = rest.search(/[\s]/);
+    const rest = text.slice(at, at + 200), end = rest.search(/[^\S\uFEFF]|\u0085/);
     return end < 0 ? rest : rest.slice(0, end);
   }
   function firstWordsOf(field) {
     const text = field.value || '';
     // Rust's white space (`char::is_whitespace`, which `Outline::of`
     // trims), not the script's `\s`: they differ in U+FEFF and U+0085.
-    const at = text.search(/[^\s]|﻿/);
+    const at = text.search(/[^\s\u0085]|\uFEFF/);
     if (at < 0) return null;
     const style = getComputedStyle(field);
     const copy = document.createElement('div');
@@ -853,10 +853,14 @@
     Object.assign(copy.style, { position: 'fixed', visibility: 'hidden', pointerEvents: 'none', whiteSpace: 'pre-wrap', top: '0', left: '-9999px', borderStyle: 'solid' });
     copy.textContent = text.slice(0, at);
     const mark = document.createElement('span');
-    // The whole first word, not its first letter: a word too long for what
-    // is left of the line after leading spaces goes to the next line.
-    mark.textContent = wordFrom(text, at);
-    copy.append(mark);
+    // Its first character is measured, with the rest of its first word laid
+    // out after it: a word too long for what is left of the line after
+    // leading spaces goes to the next line. Only the first character is in
+    // the span, since a span that wraps is as tall as all its lines.
+    const word = wordFrom(text, at);
+    const first = String.fromCodePoint(word.codePointAt(0));
+    mark.textContent = first;
+    copy.append(mark, word.slice(first.length));
     document.body.append(copy);
     const line = parseFloat(style.lineHeight) || mark.offsetHeight;
     const top = mark.offsetTop - (line - mark.offsetHeight) / 2, left = mark.offsetLeft;

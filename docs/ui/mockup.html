@@ -2035,16 +2035,18 @@ function clipFor(el) {
 // opens at its end) and the title wholly in sight in the list. Otherwise
 // they fade, from 140 ms, in 80 ms (linear).
 function firstWordsOf(t) {
-  const at = t.value.search(/[^\s]|﻿/);
+  const at = t.value.search(/[^\s\u0085]|\uFEFF/);
   if (at < 0) return null;
   const ts = getComputedStyle(t), copy = document.createElement('div');
   for (const k of ['boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'fontFamily', 'fontSize', 'fontWeight', 'letterSpacing', 'lineHeight', 'wordSpacing', 'overflowWrap', 'wordBreak']) copy.style[k] = ts[k];
   Object.assign(copy.style, { position: 'fixed', visibility: 'hidden', whiteSpace: 'pre-wrap', top: '0', left: '-9999px', border: '0' });
   copy.textContent = t.value.slice(0, at);
   const mark = document.createElement('span');
-  const rest = t.value.slice(at, at + 200), end = rest.search(/[\s]/);
-  mark.textContent = end < 0 ? rest : rest.slice(0, end);
-  copy.append(mark); document.body.append(copy);
+  const rest = t.value.slice(at, at + 200), end = rest.search(/[^\S\uFEFF]|\u0085/);
+  const word = end < 0 ? rest : rest.slice(0, end);
+  const first = String.fromCodePoint(word.codePointAt(0));
+  mark.textContent = first;
+  copy.append(mark, word.slice(first.length)); document.body.append(copy);
   const line = parseFloat(ts.lineHeight) || mark.offsetHeight;
   const top = mark.offsetTop - (line - mark.offsetHeight) / 2, left = mark.offsetLeft;
   copy.remove();
