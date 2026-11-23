@@ -1503,8 +1503,9 @@ function trailingTags(text) {
 }
 const split = n => {
   const { clean, tags } = trailingTags(n.text);
-  const [first, ...rest] = clean.split('\n');
-  return { title: first.trim() || n.files[0]?.name || 'Empty note', body: rest.join(' ').trim(), tags };
+  // The title is the first line that holds anything, as the app's is.
+  const lines = clean.split('\n'), at = Math.max(0, lines.findIndex(line => line.trim()));
+  return { title: (lines[at] || '').trim() || n.files[0]?.name || 'Empty note', body: lines.slice(at + 1).join(' ').trim(), tags };
 };
 const tagLabel = tags => !tags.length ? '' : esc(tags.slice(0, 2).join(' ')) + (tags.length > 2 ? ` +${tags.length - 2}` : '');
 
@@ -2027,6 +2028,41 @@ function clipFor(el) {
   const sr = $('#M').getBoundingClientRect(), r = el.getBoundingClientRect();
   return `inset(${r.top - sr.top}px ${sr.right - r.right}px ${sr.bottom - r.bottom}px ${r.left - sr.left}px round 16px)`;
 }
+// Closing into its card, the page's words ride with it (340 ms, standard),
+// from the first line that holds anything onto the card's title, which is
+// that line, so that they stay inside the shrinking clip and land on the
+// card's (#322). Only when that line is in sight in the field (a long note
+// opens at its end) and the title wholly in sight in the list. Otherwise
+// they fade, from 140 ms, in 80 ms (linear).
+function firstWordsOf(t) {
+  const at = t.value.search(/[^\s\u0085]|\uFEFF/);
+  if (at < 0) return null;
+  const ts = getComputedStyle(t), copy = document.createElement('div');
+  for (const k of ['boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'fontFamily', 'fontSize', 'fontWeight', 'letterSpacing', 'lineHeight', 'wordSpacing', 'overflowWrap', 'wordBreak']) copy.style[k] = ts[k];
+  Object.assign(copy.style, { position: 'fixed', visibility: 'hidden', whiteSpace: 'pre-wrap', top: '0', left: '-9999px', border: '0' });
+  copy.textContent = t.value.slice(0, at);
+  const mark = document.createElement('span');
+  const rest = t.value.slice(at, at + 200), end = rest.search(/[^\S\uFEFF]|\u0085/);
+  const word = end < 0 ? rest : rest.slice(0, end);
+  const first = String.fromCodePoint(word.codePointAt(0));
+  mark.textContent = first;
+  copy.append(mark, word.slice(first.length)); document.body.append(copy);
+  const line = parseFloat(ts.lineHeight) || mark.offsetHeight;
+  const top = mark.offsetTop - (line - mark.offsetHeight) / 2, left = mark.offsetLeft;
+  copy.remove();
+  const tr = t.getBoundingClientRect();
+  return { top: tr.top + top - t.scrollTop, left: tr.left + left, height: line };
+}
+function rideInto(ed, card) {
+  const t = $('#m-text'), tr = t.getBoundingClientRect(), first = firstWordsOf(t);
+  const into = $('.row-t', card).getBoundingClientRect(), list = $('#m-list').getBoundingClientRect();
+  const body = $('.m-ed-body', ed);
+  if (!first || first.top < tr.top - 1 || first.top + first.height > tr.bottom + 1 || into.top < list.top - 1 || into.bottom > list.bottom + 1) {
+    body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 80, delay: 140, easing: 'linear', fill: 'forwards' });
+    return;
+  }
+  body.animate([{ transform: 'none' }, { transform: `translate(${into.left - first.left}px, ${into.top - first.top}px)` }], { duration: 340, easing: ESTD, fill: 'forwards' });
+}
 function openM(id) {
   const n = get(id); if (!n) return;
   S.msel = id;
@@ -2052,7 +2088,14 @@ function closeM() {
     const a = card && !reduced()
       ? ed.animate([{ clipPath: 'inset(0px 0px 0px 0px round 42px)' }, { clipPath: clipFor(card) }], { duration: 340, easing: ESTD })
       : anim(ed, [{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: ESTD });
-    if (card && !reduced()) $('.m-ed-body', ed).animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: ESTD, fill: 'forwards' });
+    // It becomes its card: its words ride with it onto the card's (or
+    // fade, `rideInto`), and from 140 ms the whole page fades, the card
+    // showing through, so that it lands as the card with nothing to pop
+    // (#322).
+    if (card && !reduced()) {
+      rideInto(ed, card);
+      ed.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, delay: 140, easing: ESTD, fill: 'forwards' });
+    }
     a.finished.then(() => {
       ed.classList.remove('open');
       ed.getAnimations({ subtree: true }).forEach(x => x.cancel());
@@ -3704,6 +3747,8 @@ function closeM() {
         renderM();
         const a = reduced() ? anim(ed, [{ opacity: 1 }, { opacity: 0 }], { duration: 90 })
           : ed.animate([{ clipPath: 'inset(0px 0px 0px 0px round 42px)' }, { clipPath: clipFor($('.m-write')).replace('round 16px', 'round 26px') }], { duration: 320, easing: ESTD, fill: 'forwards' });
+        // And it becomes the bar, fading from 140 ms as it lands.
+        if (!reduced()) ed.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, delay: 140, easing: ESTD, fill: 'forwards' });
         a.finished.then(finish);
         return;
       }
@@ -3725,7 +3770,14 @@ function closeM() {
     const a = card && !reduced()
       ? ed.animate([{ clipPath: 'inset(0px 0px 0px 0px round 42px)' }, { clipPath: clipFor(card) }], { duration: 340, easing: ESTD })
       : anim(ed, [{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: ESTD });
-    if (card && !reduced()) $('.m-ed-body', ed).animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: ESTD, fill: 'forwards' });
+    // It becomes its card: its words ride with it onto the card's (or
+    // fade, `rideInto`), and from 140 ms the whole page fades, the card
+    // showing through, so that it lands as the card with nothing to pop
+    // (#322).
+    if (card && !reduced()) {
+      rideInto(ed, card);
+      ed.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, delay: 140, easing: ESTD, fill: 'forwards' });
+    }
     a.finished.then(finish);
   });
 }

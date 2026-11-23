@@ -1,0 +1,207 @@
+{
+  "name": "note-close-blank-first",
+  "title": "A note that starts with empty lines, closed into its card (#322)",
+  "issue": 322,
+  "platforms": [
+    "android",
+    "mockup-android"
+  ],
+  "description": "Design 5.5. A card's title is the note's first line that holds anything (Outline::of). Closing a note whose first two lines are empty, its words ride from that line onto the title, not from the field's top, which would put an empty line on the title and the first words on the card's preview. The probe sees the page's body, not where its glyphs are: the body's last translation in the trace says where the words went (from the field's top, two lines further down), and the mockup's frames show the words.",
+  "setup": [
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "type": "A thought about the garden, first of three",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1800
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "type": "\n\nBuy string for the bean poles, second of three\nand ask about the allotment",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1800
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "type": "Ask about the allotment waiting list, third of three",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 2200
+    },
+    {
+      "platforms": [
+        "mockup"
+      ],
+      "wait": 500
+    },
+    {
+      "platforms": [
+        "mockup"
+      ],
+      "click": "#M [data-act='m-write']",
+      "then": 700
+    },
+    {
+      "platforms": [
+        "mockup"
+      ],
+      "type": "\n\nBuy string for the bean poles, second of three\nand ask about the allotment",
+      "then": 300
+    },
+    {
+      "platforms": [
+        "mockup"
+      ],
+      "click": "#M [data-act='m-back']",
+      "then": 1500
+    }
+  ],
+  "parts": {
+    "page": {
+      "android": ".dui-grow.dm-page",
+      "mockup-android": "#m-ed"
+    },
+    "text": {
+      "android": ".dm-page-body",
+      "mockup-android": "#m-ed .m-ed-body"
+    },
+    "card": {
+      "android": ".dm-list .dui-card",
+      "mockup-android": "#m-list .card-n"
+    },
+    "title": {
+      "android": ".dm-list .dui-card-t",
+      "mockup-android": "#m-list .row-t"
+    }
+  },
+  "crop": {
+    "mockup-android": "#M"
+  },
+  "checks": {
+    "pops": {
+      "px": 24,
+      "opacity": 0.3
+    }
+  },
+  "movements": [
+    {
+      "name": "open",
+      "description": "The note with the empty first lines is pressed.",
+      "steps": [
+        {
+          "platforms": [
+            "android"
+          ],
+          "click": ".dm-list .dui-card-in",
+          "index": 1
+        },
+        {
+          "platforms": [
+            "mockup-android"
+          ],
+          "click": "#m-list .card-in",
+          "index": 0
+        }
+      ],
+      "ms": 1200
+    },
+    {
+      "name": "close",
+      "description": "Done (‹), back to the list.",
+      "steps": [
+        {
+          "click": {
+            "android": ".dm-page-bar button[aria-label='Done']",
+            "mockup-android": "#M [data-act='m-back']"
+          }
+        }
+      ],
+      "leaves": [
+        "page"
+      ],
+      "ms": 1200,
+      "handsOver": {
+        "android": {
+          "page": "page",
+          "words": "text",
+          "onto": "card",
+          "index": 1
+        },
+        "mockup-android": {
+          "page": "page",
+          "words": "text",
+          "onto": "card",
+          "index": 0
+        },
+        "because": "design 5.5: the words ride from the first line that holds anything onto the card's title. Judged without `line`, whose band is the top of the words part: here that is the empty lines"
+      }
+    }
+  ]
+}

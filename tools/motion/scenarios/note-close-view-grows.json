@@ -1,0 +1,281 @@
+{
+  "name": "note-close-view-grows",
+  "title": "Closing a note while the keyboard goes, the list scrolled to its end (#322, checklist A78)",
+  "issue": 322,
+  "platforms": [
+    "android"
+  ],
+  "description": "Design 5.5 and 5.8, A78's Back pressed twice: the keyboard is still going as the page closes. The emulator's own keyboard comes and goes as it likes, so the web view's layout is made shorter by the keyboard's height (312 px on the emulator) with DevTools' device metrics once the note has grown, and given its height back as the close begins. The list is scrolled to its end and its last card opened: closing, the app brings the card into sight above the 'keyboard', and as the view grows the list scrolls back and the card moves down by about the keyboard's height. The page must shrink onto the card where it is at each frame, with its words, and land on it.",
+  "setup": [
+    {
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "type": "Thought number 01 about the garden and its beans",
+      "then": 1000
+    },
+    {
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1600
+    },
+    {
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "type": "Thought number 02 about the garden and its beans",
+      "then": 1000
+    },
+    {
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1600
+    },
+    {
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "type": "Thought number 03 about the garden and its beans",
+      "then": 1000
+    },
+    {
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1600
+    },
+    {
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "type": "Thought number 04 about the garden and its beans",
+      "then": 1000
+    },
+    {
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1600
+    },
+    {
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "type": "Thought number 05 about the garden and its beans",
+      "then": 1000
+    },
+    {
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1600
+    },
+    {
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "type": "Thought number 06 about the garden and its beans",
+      "then": 1000
+    },
+    {
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1600
+    },
+    {
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "type": "Thought number 07 about the garden and its beans",
+      "then": 1000
+    },
+    {
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1600
+    },
+    {
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "type": "Thought number 08 about the garden and its beans",
+      "then": 1000
+    },
+    {
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1600
+    },
+    {
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "type": "Thought number 09 about the garden and its beans",
+      "then": 1000
+    },
+    {
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1600
+    },
+    {
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "type": "Thought number 10 about the garden and its beans",
+      "then": 1000
+    },
+    {
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1600
+    },
+    {
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "type": "Thought number 11 about the garden and its beans",
+      "then": 1000
+    },
+    {
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1600
+    },
+    {
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "type": "Thought number 12 about the garden and its beans",
+      "then": 1000
+    },
+    {
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1600
+    },
+    {
+      "wheel": {
+        "on": ".dm-list",
+        "dy": 6000
+      },
+      "then": 1200
+    }
+  ],
+  "parts": {
+    "page": ".dui-grow.dm-page",
+    "text": ".dm-page-body",
+    "card": ".dm-list .dui-card"
+  },
+  "checks": {
+    "pops": {
+      "px": 24,
+      "opacity": 0.3
+    }
+  },
+  "movements": [
+    {
+      "name": "open",
+      "description": "The last card is pressed; once the note has grown, the 'keyboard' rises.",
+      "steps": [
+        {
+          "tap": ".dm-list .dui-card-in",
+          "index": -1
+        }
+      ],
+      "after": [
+        {
+          "viewport": {
+            "height": 530
+          },
+          "then": 900
+        }
+      ],
+      "ms": 1200
+    },
+    {
+      "name": "close",
+      "description": "Done; as the page starts on its way out, the 'keyboard' goes.",
+      "steps": [
+        {
+          "tap": ".dm-page-bar button[aria-label='Done']"
+        },
+        {
+          "waitFor": ".dui-grow.dm-page.leaving"
+        },
+        {
+          "viewport": "reset"
+        }
+      ],
+      "leaves": [
+        "page"
+      ],
+      "ms": 1200,
+      "handsOver": {
+        "page": "page",
+        "words": "text",
+        "onto": "card",
+        "index": -1,
+        "line": 30,
+        "because": "design 5.5: the note shrinks onto its card wherever the card is at each frame, its words riding onto the card's title, and lands on it (#322, A78)"
+      }
+    }
+  ]
+}

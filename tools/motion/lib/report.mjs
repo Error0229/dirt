@@ -122,6 +122,12 @@ export function writeReport({ scenario, platform, describe, viewport, trust, mov
       for (const p of f.realtimePops || []) lines.push(`- In real time, a **pop** of \`${p.key}\` at ${ms(p.t)}: ${p.detail}.`);
       for (const s of f.stops || []) lines.push(`- **Stops on the way**, \`${s.key}\`: ${s.detail}.`);
       for (const s of f.realtimeStops || []) lines.push(`- In real time, **stops on the way**, \`${s.key}\`: ${s.detail}.`);
+      for (const b of f.blank || []) lines.push(`- **A blank slot**: ${b.detail}.`);
+      for (const b of f.realtimeBlank || []) lines.push(`- In real time, **a blank slot**: ${b.detail}.`);
+      for (const l of f.landing || []) lines.push(`- **Lands off its card**: ${l.detail}.`);
+      for (const d of f.doubled || []) lines.push(`- **Other words over the card's**: ${d.detail}.`);
+      if (m.handsOverBecause !== undefined && !(f.blank || []).length && !(f.realtimeBlank || []).length) lines.push(`- Handed over: words were seen in the card's slot at every frame (${m.handsOverBecause}).`);
+      if (m.handsOverBecause !== undefined && f.landing && !f.landing.length) lines.push('- Landed on its card.');
       out += lines.length ? `${lines.join('\n')}\n\n` : 'Nothing the checks look for.\n\n';
     }
     if (m.mirror) {

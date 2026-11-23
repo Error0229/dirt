@@ -3,7 +3,7 @@
   "title": "A note opened from the list and closed with Done (#322)",
   "issue": 322,
   "platforms": ["desktop", "android", "mockup-desktop", "mockup-android"],
-  "description": "Design 5.5. Desktop: the note's text comes from the direction of the list, 18 px (snap); let go, its words fade where they were (140 ms, exit) and the row's highlight fades (150 ms). Android: the note grows out of its card (440 ms, enter; its text rises 14 px behind it, 380 ms from 60 ms) and shrinks back into it (340 ms, standard).",
+  "description": "Design 5.5. Desktop: the note's text comes from the direction of the list, 18 px (snap); let go, its words fade where they were (140 ms, exit) and the row's highlight fades (150 ms). Android: the note grows out of its card (440 ms, enter; its text rises 14 px behind it, 380 ms from 60 ms) and shrinks back into it (340 ms, standard), its words riding with it onto the card's, fading as a whole into the card from 140 ms (200 ms, standard), so that it lands as the card (#322).",
   "setup": [
     { "platforms": ["desktop"], "click": "[data-dui-typed]" },
     { "platforms": ["desktop"], "type": "A thought about the garden, first of three" },
@@ -80,6 +80,11 @@
       ],
       "leaves": { "android": ["page"], "mockup-android": ["page"] },
       "ms": 1200,
+      "handsOver": {
+        "android": { "page": "page", "words": "text", "onto": "card", "index": 1, "line": 30 },
+        "mockup-android": { "page": "page", "words": "text", "onto": "card", "index": 1, "line": 30 },
+        "because": "design 5.5: the note becomes its card; its words ride with the page onto the card's, the whole page fades into the card from 140 ms, and it lands as the card (#322)"
+      },
       "mirrors": {
         "of": "open",
         "parts": { "android": { "page": ["x", "y", "w", "h"] }, "mockup-android": { "page": ["x", "y", "w", "h"] } },
@@ -96,9 +101,9 @@
     },
     {
       "name": "done-then-bar",
-      "description": "Done, and at once the bar, for the next thought (design 5.8, checklist A31): the page on its way out lets the tap through, and a new page opens out of the bar. It is then let go empty.",
+      "description": "Done, and at once the bar, for the next thought (design 5.8, checklist A31). The second tap waits only for the page to start leaving (Rust has taken Done and the page lets taps through), with no fixed wait: a tap before that lands on the page still open, and a further 120 ms after the driver's own round trips had put it at about 350 ms, after the 340 ms close, when the page had gone and the keyboard (on a boot that shows one) was going and moving the bar 312 px down from where it was found. The page on its way out lets the tap through, and a new page opens out of the bar. It is then let go empty.",
       "platforms": ["android"],
-      "steps": [{ "tap": ".dm-page-bar button[aria-label='Done']", "then": 120 }, { "tap": ".dm-bar" }],
+      "steps": [{ "tap": ".dm-page-bar button[aria-label='Done']" }, { "waitFor": ".dui-grow.dm-page.leaving", "ms": 2000 }, { "tap": ".dm-bar" }],
       "arrives": ["page"],
       "after": [{ "tap": ".dm-page-bar button[aria-label='Done']", "then": 1200 }],
       "ms": 1400
@@ -112,9 +117,9 @@
     },
     {
       "name": "done-then-card",
-      "description": "Done, and at once another card (design 5.8): the tap goes through the page on its way out, and the third note grows out of its own card, afresh, not out of the second's. It is then let go.",
+      "description": "Done, and at once another card (design 5.8), the second tap waiting only for the page to start leaving, as above: the tap goes through the page on its way out, and the third note grows out of its own card, afresh, not out of the second's. It is then let go.",
       "platforms": ["android"],
-      "steps": [{ "tap": ".dm-page-bar button[aria-label='Done']", "then": 120 }, { "tap": ".dm-list .dui-card-in", "index": 2 }],
+      "steps": [{ "tap": ".dm-page-bar button[aria-label='Done']" }, { "waitFor": ".dui-grow.dm-page.leaving", "ms": 2000 }, { "tap": ".dm-list .dui-card-in", "index": 2 }],
       "arrives": ["page"],
       "after": [{ "tap": ".dm-page-bar button[aria-label='Done']", "then": 1200 }],
       "ms": 1400

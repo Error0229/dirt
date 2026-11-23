@@ -1,0 +1,218 @@
+{
+  "name": "note-close-long",
+  "title": "A long note, opened at its end, closed into its card (#322)",
+  "issue": 322,
+  "platforms": [
+    "android",
+    "mockup-android"
+  ],
+  "description": "Design 5.5. A note of 40 lines opens with its caret at its end, scrolled there, so the line in sight at the top of the page is not its first. Closing, its words do not ride onto the card's title, which is another line: they fade from 140 ms in 80 ms (linear) while the page fades into the card from 140 ms (200 ms, standard). The card's slot shows words at every frame, and the page lands on its card.",
+  "setup": [
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "type": "A thought about the garden, first of three",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1800
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "type": "Line 01 of a long note about the garden, the beans and the poles\nLine 02 of a long note about the garden, the beans and the poles\nLine 03 of a long note about the garden, the beans and the poles\nLine 04 of a long note about the garden, the beans and the poles\nLine 05 of a long note about the garden, the beans and the poles\nLine 06 of a long note about the garden, the beans and the poles\nLine 07 of a long note about the garden, the beans and the poles\nLine 08 of a long note about the garden, the beans and the poles\nLine 09 of a long note about the garden, the beans and the poles\nLine 10 of a long note about the garden, the beans and the poles\nLine 11 of a long note about the garden, the beans and the poles\nLine 12 of a long note about the garden, the beans and the poles\nLine 13 of a long note about the garden, the beans and the poles\nLine 14 of a long note about the garden, the beans and the poles\nLine 15 of a long note about the garden, the beans and the poles\nLine 16 of a long note about the garden, the beans and the poles\nLine 17 of a long note about the garden, the beans and the poles\nLine 18 of a long note about the garden, the beans and the poles\nLine 19 of a long note about the garden, the beans and the poles\nLine 20 of a long note about the garden, the beans and the poles\nLine 21 of a long note about the garden, the beans and the poles\nLine 22 of a long note about the garden, the beans and the poles\nLine 23 of a long note about the garden, the beans and the poles\nLine 24 of a long note about the garden, the beans and the poles\nLine 25 of a long note about the garden, the beans and the poles\nLine 26 of a long note about the garden, the beans and the poles\nLine 27 of a long note about the garden, the beans and the poles\nLine 28 of a long note about the garden, the beans and the poles\nLine 29 of a long note about the garden, the beans and the poles\nLine 30 of a long note about the garden, the beans and the poles\nLine 31 of a long note about the garden, the beans and the poles\nLine 32 of a long note about the garden, the beans and the poles\nLine 33 of a long note about the garden, the beans and the poles\nLine 34 of a long note about the garden, the beans and the poles\nLine 35 of a long note about the garden, the beans and the poles\nLine 36 of a long note about the garden, the beans and the poles\nLine 37 of a long note about the garden, the beans and the poles\nLine 38 of a long note about the garden, the beans and the poles\nLine 39 of a long note about the garden, the beans and the poles\nLine 40 of a long note about the garden, the beans and the poles",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 1800
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-bar",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-text",
+      "then": 400
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "type": "Ask about the allotment waiting list, third of three",
+      "then": 1200
+    },
+    {
+      "platforms": [
+        "android"
+      ],
+      "tap": ".dm-page-bar button[aria-label='Done']",
+      "repeatUntilGone": ".dui-grow.dm-page.on",
+      "then": 2200
+    },
+    {
+      "platforms": [
+        "mockup"
+      ],
+      "wait": 500
+    },
+    {
+      "platforms": [
+        "mockup"
+      ],
+      "click": "#M [data-act='m-write']",
+      "then": 700
+    },
+    {
+      "platforms": [
+        "mockup"
+      ],
+      "type": "Line 01 of a long note about the garden, the beans and the poles\nLine 02 of a long note about the garden, the beans and the poles\nLine 03 of a long note about the garden, the beans and the poles\nLine 04 of a long note about the garden, the beans and the poles\nLine 05 of a long note about the garden, the beans and the poles\nLine 06 of a long note about the garden, the beans and the poles\nLine 07 of a long note about the garden, the beans and the poles\nLine 08 of a long note about the garden, the beans and the poles\nLine 09 of a long note about the garden, the beans and the poles\nLine 10 of a long note about the garden, the beans and the poles\nLine 11 of a long note about the garden, the beans and the poles\nLine 12 of a long note about the garden, the beans and the poles\nLine 13 of a long note about the garden, the beans and the poles\nLine 14 of a long note about the garden, the beans and the poles\nLine 15 of a long note about the garden, the beans and the poles\nLine 16 of a long note about the garden, the beans and the poles\nLine 17 of a long note about the garden, the beans and the poles\nLine 18 of a long note about the garden, the beans and the poles\nLine 19 of a long note about the garden, the beans and the poles\nLine 20 of a long note about the garden, the beans and the poles\nLine 21 of a long note about the garden, the beans and the poles\nLine 22 of a long note about the garden, the beans and the poles\nLine 23 of a long note about the garden, the beans and the poles\nLine 24 of a long note about the garden, the beans and the poles\nLine 25 of a long note about the garden, the beans and the poles\nLine 26 of a long note about the garden, the beans and the poles\nLine 27 of a long note about the garden, the beans and the poles\nLine 28 of a long note about the garden, the beans and the poles\nLine 29 of a long note about the garden, the beans and the poles\nLine 30 of a long note about the garden, the beans and the poles\nLine 31 of a long note about the garden, the beans and the poles\nLine 32 of a long note about the garden, the beans and the poles\nLine 33 of a long note about the garden, the beans and the poles\nLine 34 of a long note about the garden, the beans and the poles\nLine 35 of a long note about the garden, the beans and the poles\nLine 36 of a long note about the garden, the beans and the poles\nLine 37 of a long note about the garden, the beans and the poles\nLine 38 of a long note about the garden, the beans and the poles\nLine 39 of a long note about the garden, the beans and the poles\nLine 40 of a long note about the garden, the beans and the poles",
+      "then": 300
+    },
+    {
+      "platforms": [
+        "mockup"
+      ],
+      "click": "#M [data-act='m-back']",
+      "then": 1500
+    }
+  ],
+  "parts": {
+    "page": {
+      "android": ".dui-grow.dm-page",
+      "mockup-android": "#m-ed"
+    },
+    "text": {
+      "android": ".dm-page-body",
+      "mockup-android": "#m-ed .m-ed-body"
+    },
+    "field": {
+      "android": "#dm-text",
+      "mockup-android": "#m-text"
+    },
+    "card": {
+      "android": ".dm-list .dui-card",
+      "mockup-android": "#m-list .card-n"
+    }
+  },
+  "crop": {
+    "mockup-android": "#M"
+  },
+  "checks": {
+    "pops": {
+      "px": 24,
+      "opacity": 0.3
+    }
+  },
+  "movements": [
+    {
+      "name": "open",
+      "description": "The long note's card is pressed. On the mockup, which places no caret, its field is then scrolled to its end, where the app's caret puts it.",
+      "steps": [
+        {
+          "platforms": [
+            "android"
+          ],
+          "click": ".dm-list .dui-card-in",
+          "index": 1
+        },
+        {
+          "platforms": [
+            "mockup-android"
+          ],
+          "click": "#m-list .card-in",
+          "index": 0
+        }
+      ],
+      "after": [
+        {
+          "platforms": [
+            "mockup-android"
+          ],
+          "eval": "document.getElementById('m-text').scrollTop = 1e6",
+          "then": 200
+        }
+      ],
+      "ms": 1200
+    },
+    {
+      "name": "close",
+      "description": "Done (‹), back to the list.",
+      "steps": [
+        {
+          "click": {
+            "android": ".dm-page-bar button[aria-label='Done']",
+            "mockup-android": "#M [data-act='m-back']"
+          }
+        }
+      ],
+      "leaves": [
+        "page"
+      ],
+      "ms": 1200,
+      "handsOver": {
+        "android": {
+          "page": "page",
+          "words": "text",
+          "onto": "card",
+          "index": 1,
+          "otherWords": true
+        },
+        "mockup-android": {
+          "page": "page",
+          "words": "text",
+          "onto": "card",
+          "index": 0,
+          "otherWords": true
+        },
+        "because": "design 5.5: a long note, scrolled to its end, does not ride onto its card's title, which is another line; its words fade from 140 ms in 80 ms as the page fades into the card. Judged without `line`: such a note fills its page with words, so the words part's box is words wherever the clip is, and its first line, which `line` follows, is scrolled out of sight"
+      }
+    }
+  ]
+}

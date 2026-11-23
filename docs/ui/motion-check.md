@@ -62,7 +62,9 @@ What cannot be stepped:
   ranks the finding as about the capture, not the app.
 - **`requestAnimationFrame` in `dirt-ui.js`** is not stepped. It is used
   only to measure (the list's positions after a resize, the nearness of
-  controls, the gallery's frame counter), to wait one frame before a grain
+  controls, the gallery's frame counter, where the card a closing page
+  shrinks onto is now: it only moves while something else moves the card,
+  and the clip's time stays stepped), to wait one frame before a grain
   is tossed, and to draw the voice grains, which follow the microphone and
   not time. None of the movements the scenarios cover is driven by it.
 
@@ -122,11 +124,45 @@ From that, `tools/motion/lib/analyse.mjs` finds:
   is judged on the stepped frames and in real time, since a smooth
   scroll, which a part may follow, runs only on the real clock. Settings'
   rail highlight walked through every section the scroll passed (#321);
+- **a page that closes onto a card** (`handsOver`), three ways (#322):
+  - **a slot left blank**: words must be seen in the card's slot at every
+    frame, the page's or the card's. The card's are the card as drawn,
+    under what the page covers of it (the share of the card under the
+    page's box times the page's opacity: its surface hides what is under
+    it). The page's are its words part as drawn where its box meets the
+    card. With `line`, they are only the first line of them, a band that
+    high at the top of the words part, and they count while half of it or
+    more is inside the page's clip, **wherever the clip is**, not only over
+    the card: so words left at the top of a page that shrinks onto a card
+    lower down are caught, cut off by the clip's top edge, but a page that
+    lands beside its card with its words is not (that is the landing's).
+    Over the card would fail the first frames of every close, a short
+    note's first line being at the top of the page, nowhere near its card.
+    A frame without the words part has none. Frames where neither reaches
+    0.35 (`least`) are a finding, one after another as one run. Android's
+    note page faded its text in 200 ms and then covered its card, empty,
+    for 140 ms, until the card's words came back at once;
+  - **where it lands**: its last box on the screen, at any opacity, must
+    be within 6 px of its card's in that frame. It landed on the card's
+    old place when the card moved under it;
+  - **other words over the card's** (with `otherWords`, where the page's
+    words in sight are not its card's: a long note opened at its end):
+    once the card's words are drawn at half strength, the page's must be
+    at 0.28 or less (`strength`: the design's 0.25, and 0.03 for reading
+    between frames), read at every such frame and at the moment the card's
+    cross half strength, between the frames around it. Its last lines had
+    ridden onto the title as a ghost.
+
+  The card is the `index`-th of the part `onto`, the one the scenario
+  opened (from the end if negative, as a step's `index` is); without `index`, the one the page's smallest box covers most,
+  which is wrong for a page that lands on the place of its card's
+  neighbour;
 - **a closing against the opening it is meant to mirror** (`mirrors`),
   only where the scenario declares it from the design, for the parts and
   channels it names. For each, it gives how long each took, and where the
   closing last showed the part against where the opening first showed it
-  (for opacity, where each began and ended). With `curve: true`, it also
+  (for opacity, where each began and ended; a closing that fades as it
+  lands is last shown where it last had any opacity). With `curve: true`, it also
   gives how far the closing's curve is from the opening's played backwards.
   Where the design means a closing to differ (the desktop's note only fades
   as it is let go), nothing is declared and it is compared with the mockup
@@ -298,6 +334,9 @@ mockups) and `default`.
   - `ms`: the longest it may take;
   - `leaves` and `arrives`, as above;
   - `straight`: the parts that should go straight to where they end, as above;
+  - `handsOver`: `page`, `words` and `onto` (the page, its words and the
+    card it closes onto, by part name, or per platform), `index`, `line`,
+    `least`, `otherWords`, `strength` and `because`, as above;
   - `mirrors`: `of` (the opening), `parts` (part → channels, or per platform),
     `curve` (whether the curve too is meant to be the opening's reversed, or
     only where it goes) and `because` (the design's words, with the section);
@@ -324,6 +363,15 @@ mockups) and `default`.
   - `type` (inserted as typed text);
   - `wheel`;
   - `wait` (ms), `waitFor` / `waitGone` (a selector);
+  - `viewport` (`{ "height": 530 }`: the page's layout made that size by
+    DevTools' device metrics, as a keyboard rising makes it; `"reset"`
+    gives it back its own, as the keyboard going does). The emulator's own
+    keyboard shows on some boots and not on others, so a scenario that
+    needs the web view to change size under a movement makes it change.
+    It changes on the real clock: in stepped frames it lands a few frames
+    in. A run that stops part way gives the size back.
+    `note-close-view-grows` uses it (A78). Not on a desktop scenario that
+    has a `viewport` of its own: `"reset"` would undo it;
   - `pastePicture` (a picture pasted into the page, as one copied from
     another program; the app's own paste handler takes it);
   - `androidKey` (an Android key code, on the emulator: 4 is Back);
