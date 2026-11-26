@@ -1108,6 +1108,25 @@ desktop's edge icons, which go while the page listens (7.11), go by
 `display`, and so do ‹ at 720 px and wider and + while the list is
 there.
 
+The same engines kept a stale style a second way. Settings' sections
+rise as it opens, each by a Web Animation, and Chromium starts an
+element's animation from the style it kept for that element's last
+animations when nothing else about the element is to be worked out
+again. Once the page had collected those animations, which it does some
+while after they end, the kept style could be the one from while Settings
+was closed. The sections rose with no pointer and inert, though the
+panel or sheet around them took both again: no button in Settings did
+anything, the close excepted, which does not rise, while the page still
+scrolled. It lasted until Settings was closed and opened again. Opened
+now and then, it happened every time; opened and closed in a row, about
+one opening in twenty. So every Web Animation `dirt-ui`'s script starts
+goes through one function, which first touches the element's own style
+attribute and leaves it as it was: the next style pass then works the
+element's whole style out again, from its parent as it is now, with the
+animation on it. `crates/dirt-ui/tests/js/modal.test.mjs` opens a panel
+and a sheet again after the page has collected their animations, in a
+headless Edge or Chrome.
+
 ### 6.10 Buttons
 
 | Kind | Look | Used for |

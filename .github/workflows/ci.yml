@@ -261,6 +261,11 @@ jobs:
       - name: Test the analysis and the page script
         run: node --test tools/motion/test/analyse.test.mjs tools/motion/test/page.test.mjs
 
+      # dirt-ui's own script in a real browser: Settings opened again
+      # takes the pointer (design 6.9)
+      - name: Test dirt-ui's script
+        run: node --test crates/dirt-ui/tests/js/modal.test.mjs
+
   build:
     name: Build
     runs-on: ${{ matrix.os }}
