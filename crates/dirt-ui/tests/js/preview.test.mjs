@@ -1003,6 +1003,19 @@ test('the desktop: pictures read ahead and kept decoded (6.16)', { skip: !browse
       assert.deepEqual(staged, { file: 'b', at: true, out: true, layer: 'transform' });
     });
 
+    await t.test("a window made wider stages it again a window's width away, out of sight (Codex, #338)", async () => {
+      const where = `(() => {
+        const stands = [...document.querySelectorAll('.dui-pv-ghost > .dui-pv-stand.sharp')];
+        return stands.map(stand => { const box = stand.getBoundingClientRect(); return { file: stand.dataset.file, at: stand.duiAt === innerWidth + 16, out: box.left >= innerWidth }; });
+      })()`;
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 800, deviceScaleFactor: 1, mobile: false });
+      await sleep(300);
+      assert.deepEqual(await cdp.evaluate(where), [{ file: 'b', at: true, out: true }]);
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1000, height: 700, deviceScaleFactor: 1, mobile: false });
+      await sleep(300);
+      assert.deepEqual(await cdp.evaluate(where), [{ file: 'b', at: true, out: true }]);
+    });
+
     await t.test('a step to it brings the picture itself in, sharp, and Rust\'s item takes it, never asked for again', async () => {
       await cdp.evaluate(`window.keptB = ${KEPT_IMGS}[0]; told.length = 0; true`);
       await cdp.evaluate(WATCH);

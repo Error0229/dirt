@@ -109,6 +109,11 @@ impl Holding {
             }
             return Some(found);
         }
+        // Read ahead, a file larger than the whole budget would only push
+        // out everything else before going itself: it is not held.
+        if !shown && Some(file) != self.shown && bytes.len() > self.budget {
+            return None;
+        }
         let used = self.tick();
         self.held.insert(
             key.clone(),
@@ -583,7 +588,7 @@ mod tests {
 
     /// A file larger than the budget is held only while it is the one
     /// shown; read ahead, it does not fit, and nothing else is let go of
-    /// for it but what is older.
+    /// for it.
     #[test]
     fn a_file_past_the_budget_is_held_only_as_the_one_shown() {
         let (mut holding, files) = holding(30);
@@ -599,6 +604,7 @@ mod tests {
         assert_eq!(put(&mut holding, ahead, 31), None);
         assert!(!holds(&holding, ahead));
         assert!(holds(&holding, shown));
+        assert!(holds(&holding, other), "nothing is let go of for it");
     }
 
     /// The address of a file stays the same for as long as it is held,

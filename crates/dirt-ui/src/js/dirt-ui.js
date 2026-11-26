@@ -1262,8 +1262,10 @@
       state.slideRun = null;
       // A window that changes size (turned, or resized) moves where the
       // picture fits: a zoomed one is kept within its new edges.
+      // What is staged beside it, a window's width away, is staged again
+      // at the new width, or it would come into sight (Codex, #338).
       if (stage && window.ResizeObserver) {
-        state.resized = new ResizeObserver(() => refit(modal));
+        state.resized = new ResizeObserver(() => { refit(modal); restageBeside(modal, state); });
         state.resized.observe(stage);
       }
     }
@@ -3484,6 +3486,20 @@
       sharpStand(modal, file, dir * slideDistance());
     }
   }
+  // The window has changed size: what is staged beside the file shown, a
+  // window's width away, is taken back and staged again at the new width,
+  // once the track is at rest; while it moves, its landing does that.
+  function restageBeside(modal, state) {
+    const D = slideDistance();
+    if (state.stagedAt === undefined) { state.stagedAt = D; return; }
+    if (state.stagedAt === D) return;
+    state.stagedAt = D;
+    if (state.slideRun || state.to) { state.restage = true; return; }
+    const layer = ghostLayer(modal);
+    if (!layer) return;
+    [...layer.querySelectorAll(':scope > .dui-pv-stand.sharp')].filter(one => atOf(one) !== 0).forEach(one => retire(modal, one));
+    stillNow(modal, state);
+  }
   // Whether a picture staged, `at` px along the track once it rests, is
   // still staged beside the file shown, and stays.
   function stagedBeside(modal, state, element, at) {
@@ -3614,7 +3630,13 @@
       }
       setTimeout(() => stillNow(modal, state), 0);
     };
-    img.addEventListener('load', () => { if (state.keeping === run) img.decode().then(() => done(true), () => done(false)); }, { once: true });
+    // A decoding that never ends gives the picture up after 4 s, as
+    // `whenReady` does, so that keeping goes on with the next.
+    img.addEventListener('load', () => {
+      if (state.keeping !== run) return;
+      img.decode().then(() => done(true), () => done(false));
+      setTimeout(() => done(false), DECODE_WAIT_MS);
+    }, { once: true });
     img.addEventListener('error', () => done(false), { once: true });
     keep.appendChild(img);
     img.src = address;
@@ -3697,7 +3719,11 @@
         const at = atOf(kept) - to;
         if (Math.abs(at) >= D - 1 && !stagedBeside(modal, state, kept, at)) retire(modal, kept); else placeAt(kept, at);
       });
+      // The window changed size while it moved: what was placed by the old
+      // width goes (a decoded picture back to be kept), and is staged again.
+      if (state.restage) [...layer.children].filter(kept => Math.abs(atOf(kept)) >= 1).forEach(kept => retire(modal, kept));
     }
+    state.restage = false;
     const item = currentItem(modal);
     if (item) {
       if (item.dataset.file === state.file) placeAt(item, atOf(item) - to);
