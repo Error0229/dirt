@@ -232,7 +232,10 @@ async fn the_one_of(
     }
     let more = notes.len() > CHOICES;
     notes.truncate(CHOICES);
-    remember_list(store, &format!("the notes {which}"), &notes);
+    // The choice is said where errors go.
+    if read_by_a_person(&io::stderr()) {
+        remember_list(store, &format!("the notes {which}"), &notes);
+    }
     let mut said = format!("{} notes {which}:\n", if more { "Many" } else { "Several" });
     for line in listing_lines(&notes, store).await? {
         said.push_str(&line);
@@ -322,6 +325,13 @@ pub fn list_file(store: &Store) -> PathBuf {
     let mut path = store.path().as_os_str().to_owned();
     path.push("-list");
     PathBuf::from(path)
+}
+
+/// Whether what is written to `stream` is read by a person, at a terminal,
+/// and so whether a list written there is the one their numbers name. The
+/// tests stand in for that person.
+pub fn read_by_a_person(stream: &impl IsTerminal) -> bool {
+    cfg!(test) || stream.is_terminal()
 }
 
 /// Keeps `notes` as the last list. A list that cannot be kept is said,

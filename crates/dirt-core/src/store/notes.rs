@@ -789,21 +789,37 @@ pub(super) fn ids_by_prefix(
     Ok(ids)
 }
 
+/// The live notes' IDs either side of one, read on the IDs' own index.
+/// The `+` keeps SQLite off the list's index, which begins with `deleted`:
+/// taken by it, each lookup read and sorted every live note.
+const NEIGHBOURS_LIVE_SQL: &str =
+    "SELECT (SELECT id FROM notes WHERE +deleted = 0 AND id < ?1 ORDER BY id DESC LIMIT 1), \
+            (SELECT id FROM notes WHERE +deleted = 0 AND id > ?1 ORDER BY id LIMIT 1)";
+
+/// The deleted notes' IDs either side of one. They are few, and read on
+/// the list's index: on the IDs' index a lookup would step over every live
+/// note between two deleted ones.
+const NEIGHBOURS_DELETED_SQL: &str =
+    "SELECT (SELECT id FROM notes WHERE deleted = 1 AND id < ?1 ORDER BY id DESC LIMIT 1), \
+            (SELECT id FROM notes WHERE deleted = 1 AND id > ?1 ORDER BY id LIMIT 1)";
+
 /// For each of `ids`, the shortest start of it that is the start of no
 /// other note's ID: among the live notes, or with `deleted` among the
 /// deleted ones. At least `at_least` characters long, and never ending in
-/// a hyphen. Two queries on the IDs' index for each ID: its neighbours in
-/// order are the only IDs that can share more of its start than any other.
+/// a hyphen. Its neighbours in order are the only IDs that can share more
+/// of its start than any other, so two lookups find it: see
+/// [`NEIGHBOURS_LIVE_SQL`] and [`NEIGHBOURS_DELETED_SQL`].
 pub(super) fn shortest_prefixes(
     connection: &Connection,
     ids: &[NoteId],
     deleted: bool,
     at_least: usize,
 ) -> Result<Vec<String>> {
-    let mut statement = connection.prepare(
-        "SELECT (SELECT id FROM notes WHERE deleted = ?2 AND id < ?1 ORDER BY id DESC LIMIT 1), \
-                (SELECT id FROM notes WHERE deleted = ?2 AND id > ?1 ORDER BY id LIMIT 1)",
-    )?;
+    let mut statement = connection.prepare(if deleted {
+        NEIGHBOURS_DELETED_SQL
+    } else {
+        NEIGHBOURS_LIVE_SQL
+    })?;
     let shared = |one: &str, other: Option<String>| {
         other.map_or(0, |other| {
             one.bytes()
@@ -816,7 +832,7 @@ pub(super) fn shortest_prefixes(
     for id in ids {
         let id = id.as_str();
         let (before, after): (Option<String>, Option<String>) =
-            statement.query_row(params![id, deleted], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            statement.query_row(params![id], |row| Ok((row.get(0)?, row.get(1)?)))?;
         let mut length = (shared(&id, before).max(shared(&id, after)) + 1)
             .max(at_least)
             .min(id.len());
@@ -1095,6 +1111,26 @@ mod tests {
         assert_eq!(
             read_order(&connection, PILE_SQL, 0),
             ["SEARCH notes USING INDEX notes_by_edit (deleted=?)"]
+        );
+    }
+
+    /// A short ID is found from the live notes either side of it, each
+    /// read on the IDs' index: nothing is read from end to end or sorted.
+    #[test]
+    fn a_live_notes_neighbours_are_read_on_the_ids_index() {
+        let (_folder, connection) = empty_database();
+        let plan = read_order(&connection, NEIGHBOURS_LIVE_SQL, 1);
+        // The outer SELECT reads no table: SQLite calls it a constant row.
+        let lookups: Vec<_> = plan
+            .iter()
+            .filter(|step| step.as_str() != "SCAN CONSTANT ROW")
+            .collect();
+        assert_eq!(lookups.len(), 2, "{plan:?}");
+        assert!(
+            lookups
+                .iter()
+                .all(|step| step.starts_with("SEARCH notes USING INDEX sqlite_autoindex_notes")),
+            "{plan:?}"
         );
     }
 

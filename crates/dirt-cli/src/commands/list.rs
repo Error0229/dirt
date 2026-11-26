@@ -2,7 +2,7 @@ use dirt_core::{Note, Store};
 
 use crate::commands::common::{list_notes, listing_lines, note_to_list_item, NoteListItem};
 use crate::error::CliError;
-use crate::naming::remember_list;
+use crate::naming::{read_by_a_person, remember_list};
 
 pub async fn run_list(
     limit: usize,
@@ -38,11 +38,15 @@ pub fn listing_name(tag: Option<&str>, archived: bool) -> String {
     name
 }
 
-/// Prints a numbered list and keeps it as the last list, so that the next
-/// command can name a note by its number. An empty list is said where
-/// errors go, so that standard output stays empty.
+/// Prints a numbered list and, when a person reads it, keeps it as the
+/// last list, so that the next command can name a note by its number. A
+/// list read by a program (a status bar, a script) leaves the person's
+/// numbers as they were. An empty list is said where errors go, so that
+/// standard output stays empty.
 pub async fn print_listing(notes: &[Note], what: &str, db: &Store) -> Result<(), CliError> {
-    remember_list(db, what, notes);
+    if read_by_a_person(&std::io::stdout()) {
+        remember_list(db, what, notes);
+    }
     if notes.is_empty() {
         eprintln!("No notes.");
     }

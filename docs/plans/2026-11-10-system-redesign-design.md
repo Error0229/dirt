@@ -649,12 +649,16 @@ whole note.
   what was shown under it even after the list has changed, so `dirt edit 2`
   twice edits one note. A number the list did not have, a note since
   deleted (`dirt restore 2` brings it back) and a note no longer on the
-  device are each said in words. A list as `--json` is not numbered and
-  leaves the last list alone, so that a script does not change what the
-  person's numbers mean.
+  device are each said in words. Only a list a person reads at a terminal
+  becomes the last list: one as `--json` (which is not numbered), or piped
+  to a program such as a status bar or a script, leaves the last list
+  alone, so that it does not change what the person's numbers mean. A
+  script that reads a list reads `--json`: the numbered lines are for
+  people.
 - **Short IDs.** A list shows the shortest start of each ID that no other
   note's ID shares, at least 8 characters and never ending in a hyphen
-  (`Store::shortest_id_prefixes`, two lookups on the ID index per note).
+  (`Store::shortest_id_prefixes`: for each note, the IDs either side of it,
+  read on the ID index, or for deleted notes, which are few, on the list's).
   The number comes first and is the handle; the ID is for later.
 - **What is said.** A command that changes a note says, to a terminal,
   what it did and the note's first words ("Saved: …", "Deleted: … `dirt
@@ -667,12 +671,18 @@ whole note.
   `dirt files --json` gives them.
 - **`dirt edit`** writes the note to `<its first words>.txt` (plain text,
   as a note is) in a new folder only the user can open, and removes the
-  folder afterwards. What the editor leaves is saved as changes from what
+  folder afterwards. Lines ending in CR LF, as Notepad writes them, are
+  kept ending in LF. What the editor leaves is saved as changes from what
   it was given (`Store::update_note_from`), so an edit made meanwhile in
-  the desktop app or on another device is kept. An editor that cannot be
+  the desktop app or on another device is kept. If it cannot be saved (the
+  note deleted, or the store signed out of, meanwhile), the text is kept in
+  a file of its own in a private folder, and the command says where. An
+  editor that cannot be
   started says which variable named it, or, for the default (Notepad on
   Windows, `vi` elsewhere), how to set `EDITOR`. An editor back within a
-  second with nothing changed is told to wait, as in `code --wait`:
+  second with nothing changed is told to wait, as in `code --wait`
+  (`code.cmd --wait` on Windows, where a program named without its
+  extension is found only as an `.exe`):
   Windows 11's Notepad, already open, hands the file to its window and
   returns at once.
 - **No terminal interface.** `dirt tui` printed "Opening TUI..." and did

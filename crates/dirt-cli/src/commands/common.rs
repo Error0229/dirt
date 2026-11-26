@@ -252,9 +252,15 @@ pub struct Edited {
 pub const AT_ONCE: Duration = Duration::from_secs(1);
 
 /// What to say when the editor came back at once with nothing changed.
-pub const RETURNED_AT_ONCE: &str = "The editor returned at once. If it opens a window \
-    and does not wait for it to close, set EDITOR to a command that waits, as in \
-    `code --wait`";
+/// On Windows VS Code's command is `code.cmd`: a program named without its
+/// extension is found only as an `.exe`.
+pub const RETURNED_AT_ONCE: &str = if cfg!(windows) {
+    "The editor returned at once. If it opens a window and does not wait for it to \
+     close, set EDITOR to a command that waits, as in `code.cmd --wait`"
+} else {
+    "The editor returned at once. If it opens a window and does not wait for it to \
+     close, set EDITOR to a command that waits, as in `code --wait`"
+};
 
 /// The name of the file a note is edited in, which the editor shows: the
 /// note's first words, or `new-note.txt` for a note not written yet. Plain
@@ -308,7 +314,8 @@ pub fn edit_in_editor(editor: &Editor, initial: &str, file_name: &str) -> Result
     let launched = launch_editor(&editor.command, &file);
     let at_once = started.elapsed() < AT_ONCE;
     launched.map_err(|error| editor.failed(error))?;
-    let text = std::fs::read_to_string(&file)?;
+    // Notepad ends each line it adds with CR LF; a note's lines end in LF.
+    let text = std::fs::read_to_string(&file)?.replace("\r\n", "\n");
     Ok(Edited {
         text: normalize_content(&text),
         at_once,
@@ -346,7 +353,7 @@ impl Editor {
 
 /// How to choose an editor.
 pub const SET_EDITOR: &str = if cfg!(windows) {
-    "Set EDITOR to the editor to use, as in `$env:EDITOR = \"code --wait\"` in PowerShell"
+    "Set EDITOR to the editor to use, as in `$env:EDITOR = \"code.cmd --wait\"` in PowerShell"
 } else {
     "Set EDITOR to the editor to use, as in `export EDITOR=nano`"
 };

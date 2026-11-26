@@ -64,9 +64,34 @@ pub async fn edit_with(
     // The changes from the text the editor was given, made to the text the
     // note has now: what another device or the desktop app wrote while the
     // editor was open is kept.
-    let updated = context
+    let updated = match context
         .store
         .update_note_from(&note.id, &note.content, &edited_content)
-        .await?;
+        .await
+    {
+        Ok(updated) => updated,
+        Err(error) => {
+            // The note was deleted, or the store signed out of, while the
+            // editor was open: what the person wrote is kept for them.
+            keep_unsaved(&edited_content);
+            return Err(error.into());
+        }
+    };
     Ok(EditOutcome::Saved(updated))
+}
+
+/// Keeps text an edit could not save in a file of its own, in a folder
+/// only this user can open, and says where.
+fn keep_unsaved(text: &str) {
+    let kept = tempfile::Builder::new()
+        .prefix("dirt-unsaved-")
+        .tempdir()
+        .and_then(|folder| {
+            let file = folder.keep().join("note.txt");
+            std::fs::write(&file, text).map(|()| file)
+        });
+    match kept {
+        Ok(file) => eprintln!("What you wrote was not saved. It is in {}", file.display()),
+        Err(error) => eprintln!("What you wrote was not saved, nor could it be kept: {error}"),
+    }
 }
