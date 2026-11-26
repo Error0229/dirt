@@ -3,13 +3,13 @@
   "title": "The file preview opened from a picture's tile and closed with Esc (#323)",
   "issue": 323,
   "platforms": ["desktop", "android", "mockup-desktop"],
-  "description": "Design 5.5 and 6.16: the file grows out of its tile (420 ms, enter) and shrinks back into it (320 ms, standard), the backdrop fading with it (280 ms, standard). The preview is opened by its tile's picture (.dui-file-main), on an unfolded shelf (6.5), never by the tile's buttons: the first of those opens the file in another app. On Android the newest note must already have a picture (one shared to the app: docs/ui/motion-check.md, Writing a scenario); the scenario opens that note first.",
+  "description": "Design 5.5 and 6.16: the file grows out of its tile (420 ms, enter) and shrinks back into it (320 ms, standard), the backdrop fading with it (280 ms, standard). The preview is opened by the file's square on the folded shelf (.dui-mini; a note opens folded, 7.14), never by a tile's buttons: the first of those opens the file in another app. On Android the newest note must already have a picture (one shared to the app: docs/ui/motion-check.md, Writing a scenario); the scenario opens that note first.",
   "setup": [
     { "platforms": ["desktop"], "click": "[data-dui-typed]" },
     { "platforms": ["desktop"], "pastePicture": "[data-dui-typed]", "name": "garden.png", "then": 3000 },
-    { "platforms": ["desktop"], "waitFor": ".dk-files .dui-file-main", "ms": 15000 },
+    { "platforms": ["desktop"], "waitFor": ".dk-files .dui-mini", "ms": 15000 },
     { "platforms": ["android"], "tap": ".dm-list .dui-card-in", "then": 1500 },
-    { "platforms": ["android"], "waitFor": ".dm-page .dui-file-main", "ms": 15000 },
+    { "platforms": ["android"], "waitFor": ".dm-page .dui-mini", "ms": 15000 },
     {
       "platforms": ["mockup"],
       "eval": "(() => { const n = S.notes.find(n => !n.deleted && !n.archived && n.files.some(f => f.src || f.thumb)); document.querySelector('#d-list .row[data-id=\"' + n.id + '\"]').click(); return true; })()",
@@ -29,7 +29,7 @@
     "name": { "desktop": ".dui-pv-name", "android": ".dui-pv-name", "mockup-desktop": "#D .pv-name" },
     "find": { "desktop": ".dk-side .dui-find", "mockup-desktop": "#d-omni" },
     "bar": { "desktop": ".dui-pv-bar", "android": ".dui-pv-bar", "mockup-desktop": "#D .pv-bar" },
-    "tile": { "desktop": ".dk-files .dui-file", "android": ".dm-page .dui-file", "mockup-desktop": "#d-files .file" },
+    "tile": { "desktop": ".dk-files .dui-mini", "android": ".dm-page .dui-mini", "mockup-desktop": "#d-files .file" },
     "page": { "desktop": ".dk-col", "android": ".dui-grow.dm-page", "mockup-desktop": "#d-ed" },
     "list": { "desktop": ".dk-side", "mockup-desktop": "#D .dk-side" }
   },
@@ -39,7 +39,7 @@
     {
       "name": "open",
       "description": "The picture on the note's tile is pressed.",
-      "steps": [{ "click": { "desktop": ".dk-files .dui-file-main", "android": ".dm-page .dui-file-main", "mockup-desktop": "#d-files .file .file-thumb" } }],
+      "steps": [{ "click": { "desktop": ".dk-files .dui-mini", "android": ".dm-page .dui-mini", "mockup-desktop": "#d-files .file .file-thumb" } }],
       "arrives": ["file", "picture"],
       "ms": 1200
     },
@@ -61,7 +61,7 @@
       "description": "Opened and closed again straight away: the backdrop fades back from where it had got to, and never turns dark first (design 5.8).",
       "platforms": ["desktop", "android"],
       "steps": [
-        { "click": { "desktop": ".dk-files .dui-file-main", "android": ".dm-page .dui-file-main" }, "then": 120 },
+        { "click": { "desktop": ".dk-files .dui-mini", "android": ".dm-page .dui-mini" }, "then": 120 },
         { "platforms": ["desktop"], "key": "Escape" },
         { "platforms": ["android"], "tap": ".dui-preview button[aria-label='Close']" }
       ],

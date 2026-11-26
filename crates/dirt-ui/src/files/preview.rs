@@ -18,7 +18,7 @@
 //! does the keys, the gestures and the movement, and tells Rust only how
 //! they ended: the next file sliding in as the one shown slides out, and a
 //! picture zoomed (a pinch that follows the fingers, a double click or a
-//! double tap, Ctrl and the wheel), all of it there. A PDF's pages are
+//! double tap, the wheel), all of it there. A PDF's pages are
 //! drawn there by the bundled renderer (`crate::pdf`), and a sound's card
 //! plays there.
 //!
@@ -27,6 +27,7 @@
 
 use dioxus::prelude::*;
 use dirt_core::files::runs_as_a_program;
+use dirt_core::files::thumbnail::EDGE;
 use dirt_core::store::AttachedFile;
 
 use super::kind::{preview_kind, PreviewKind};
@@ -68,6 +69,7 @@ pub fn FilePreview(
     let thumbnail = current
         .as_ref()
         .and_then(|file| files.thumbnail(file.attachment.file_id));
+    let bytes = current.as_ref().map_or(0, |file| file.attachment.size);
     let can_open = !runs_as_a_program(&name);
     let several = all.len() > 1;
     let (for_open, for_save, for_remove) = (current.clone(), current.clone(), current.clone());
@@ -79,11 +81,11 @@ pub fn FilePreview(
         .map(|file| file.attachment.file_id.to_string())
         .unwrap_or_default();
     let item_key = format!("{file_id}-{}", item_name(&showing));
-    // The files either side, which a finger dragging sideways brings into
-    // sight, and which a step slides in (going round at the ends, as the
-    // step does).
-    let peek = |place: usize| {
-        let file = &all[place];
+    // What stands in for each file while it slides in or is dragged into
+    // sight, in the order the step goes through them: its thumbnail, or
+    // its kind. The script takes its copies from here, so that a step
+    // begun before Rust has drawn the last one still brings the right file.
+    let deck = all.iter().map(|file| {
         let id = file.attachment.file_id;
         (
             id.to_string(),
@@ -93,13 +95,6 @@ pub fn FilePreview(
                 &file.attachment.media_type,
             )),
         )
-    };
-    let neighbours = several.then(|| {
-        let count = all.len();
-        [
-            ("prev", peek((index + count - 1) % count)),
-            ("next", peek((index + 1) % count)),
-        ]
     });
 
     rsx! {
@@ -121,27 +116,35 @@ pub fn FilePreview(
             }
             div { class: "dui-pv-name", "aria-hidden": "true", "{name}" }
             div { class: "dui-pv-stage", "data-dui-pv-stage": "",
-                // A list of one, so that its key is kept: a new key is a new
-                // element, which the script sees come and brings in. Keyed
-                // alone, in place, the element stayed and only what was in
-                // it changed, so nothing came in at all.
-                for key in std::iter::once(item_key) {
-                    div { key: "{key}", class: "dui-pv-item", "data-file": "{file_id}",
-                        PreviewItem { showing: showing.clone(), name: name.clone(), thumbnail: thumbnail.clone() }
+                // What the script moves as one, sideways, as a step slides
+                // or a finger drags: the file, and beside it in the ghost
+                // layer what the script keeps there.
+                div { class: "dui-pv-track",
+                    // A list of one, so that its key is kept: a new key is a
+                    // new element, which the script sees come and brings in.
+                    // Keyed alone, in place, the element stayed and only what
+                    // was in it changed, so nothing came in at all.
+                    for key in std::iter::once(item_key) {
+                        div { key: "{key}", class: "dui-pv-item", "data-file": "{file_id}",
+                            PreviewItem {
+                                showing: showing.clone(),
+                                name: name.clone(),
+                                thumbnail: thumbnail.clone(),
+                                bytes,
+                            }
+                        }
                     }
+                    // The script's: the files either side, what was shown
+                    // while it slides away, and what stands in for a file
+                    // until it can be drawn.
+                    div { class: "dui-pv-ghost", "aria-hidden": "true", "inert": "" }
                 }
-                // What was shown, kept here by the script while it slides
-                // away, or until what replaces it can be drawn.
-                div { class: "dui-pv-ghost", "aria-hidden": "true", "inert": "" }
-                if let Some(sides) = neighbours {
-                    for (side , (peek_id , peek_thumbnail , peek_icon)) in sides {
-                        div {
-                            key: "{side}",
-                            class: "dui-pv-peek",
-                            "data-side": side,
-                            "data-file": "{peek_id}",
-                            "aria-hidden": "true",
-                            if let Some(picture) = peek_thumbnail {
+                // Never drawn. A thumbnail smaller than `EDGE` a side is the
+                // picture's own size: it stands in at that size.
+                div { class: "dui-pv-deck", "aria-hidden": "true", "data-edge": "{EDGE}",
+                    for (deck_id , deck_thumbnail , deck_icon) in deck {
+                        div { key: "{deck_id}", class: "dui-pv-stand", "data-file": "{deck_id}",
+                            if let Some(picture) = deck_thumbnail {
                                 img {
                                     class: "dui-pv-picture dui-pv-standin",
                                     src: "{picture}",
@@ -150,7 +153,7 @@ pub fn FilePreview(
                                 }
                             } else {
                                 span { class: "dui-pv-peek-kind",
-                                    IconSvg { icon: peek_icon, size: IconSize::Large }
+                                    IconSvg { icon: deck_icon, size: IconSize::Large }
                                 }
                             }
                         }
@@ -236,9 +239,16 @@ const fn item_name(showing: &Showing) -> &'static str {
     }
 }
 
-/// What the stage shows.
+/// A picture larger than this is asked for by the script, once nothing in
+/// the preview moves (`data-dui-src`), not as it is drawn here: the web
+/// view takes a picture's bytes on its main thread in one piece, and on the
+/// desktop drew no frame for as long, 15 to 25 ms for 9 MB, which a slide
+/// to it showed as a stutter (design 6.16, the slide again).
+const ASKED_FOR_WHEN_STILL: u64 = 2 * 1024 * 1024;
+
+/// What the stage shows. `bytes` is the file's size.
 #[component]
-fn PreviewItem(showing: Showing, name: String, thumbnail: Option<String>) -> Element {
+fn PreviewItem(showing: Showing, name: String, thumbnail: Option<String>, bytes: u64) -> Element {
     match showing {
         Showing::Nothing => rsx! {},
         Showing::Loading => rsx! {
@@ -266,15 +276,19 @@ fn PreviewItem(showing: Showing, name: String, thumbnail: Option<String>) -> Ele
             }
         },
         Showing::Media { kind, address } => match kind {
-            PreviewKind::Picture => rsx! {
-                img {
-                    class: "dui-pv-picture",
-                    src: "{address}",
-                    alt: "{name}",
-                    draggable: "false",
-                    "data-dui-zoom": "",
+            PreviewKind::Picture => {
+                let later = bytes > ASKED_FOR_WHEN_STILL;
+                rsx! {
+                    img {
+                        class: "dui-pv-picture",
+                        src: (!later).then(|| address.clone()),
+                        "data-dui-src": later.then(|| address.clone()),
+                        alt: "{name}",
+                        draggable: "false",
+                        "data-dui-zoom": "",
+                    }
                 }
-            },
+            }
             PreviewKind::Video => rsx! {
                 // The web view's own controls, without the ones that write
                 // a copy of the video or send it to another screen.

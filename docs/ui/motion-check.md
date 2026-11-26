@@ -385,7 +385,11 @@ mockups) and `default`.
     has a `viewport` of its own: `"reset"` would undo it;
   - `pastePicture` (a picture pasted into the page, as one copied from
     another program; the app's own paste handler takes it; `colour` and
-    `size` (`{ "width", "height" }`) draw another, 640 × 420 by default);
+    `size` (`{ "width", "height" }`) draw another, 640 × 420 by default;
+    `noise` (0 to 255) scatters grain over it, as a photograph has, so
+    that a large one is megabytes and not kilobytes, and `format: "jpeg"`
+    pastes a JPEG. The run says the size of any over 1 MB.
+    `preview-slide.json` pastes two 6000 × 4000 JPEGs of 9 MB);
   - `androidKey` (an Android key code, on the emulator: 4 is Back);
   - `androidTap` (`[x, y]`, a tap on the emulator's screen outside the web
     view, in the screen's pixels as `uiautomator dump` gives them: in
@@ -452,6 +456,20 @@ The dump says where each is (`uiautomator` may end with code 137 after
 writing its file; the file is there). The screen shows about nine at a
 time; press the paperclip again for more. Share the picture for
 `file-preview` after, so that it is the newest note again.
+
+**Large pictures on the emulator.** `preview-slide` on Android needs its
+newest note to hold, in this order, a small picture and two photographs of
+several megabytes, chosen with the paperclip as above (long-press the
+small one first, then tap the others). ffmpeg makes them:
+
+```bash
+ffmpeg -f lavfi -i "color=c=0x6b8f71:s=640x420" -vf "drawbox=x=40:y=40:w=256:h=340:color=0xf4efe6:t=fill" -frames:v 1 garden.png
+ffmpeg -f lavfi -i "color=c=0x4f6d8a:s=6000x4000" -vf "drawbox=x=375:y=380:w=2400:h=3240:color=0xf4efe6:t=fill,noise=alls=24:allf=u" -frames:v 1 -q:v 4 field.jpg
+ffmpeg -f lavfi -i "color=c=0x8a6f9e:s=4000x6000" -vf "drawbox=x=250:y=570:w=1600:h=4860:color=0xf4efe6:t=fill,noise=alls=24:allf=u" -frames:v 1 -q:v 4 tower.jpg
+```
+
+The two JPEGs are about 5 MB each. A note opened again has read none of
+them yet.
 
 **Never press a file tile's buttons.** The first opens the file in another
 app, on the person's screen. Open the preview by `.dui-file-main`.

@@ -383,4 +383,37 @@ mod tests {
             before = now;
         }
     }
+
+    /// The script is one function, and a name declared twice in it at the
+    /// top is quietly the later one everywhere: the preview's `reveal` and
+    /// `land` once took the place of the look change's and the pile's.
+    #[test]
+    fn no_name_is_declared_twice_at_the_top_of_the_script() {
+        let mut seen = std::collections::HashSet::new();
+        for line in SCRIPT.lines() {
+            let Some(rest) = line.strip_prefix("  ") else {
+                continue;
+            };
+            if rest.starts_with(' ') {
+                continue;
+            }
+            let rest = rest.strip_prefix("async ").unwrap_or(rest);
+            let name = ["function ", "const ", "let ", "var ", "class "]
+                .iter()
+                .find_map(|word| rest.strip_prefix(word))
+                .map(|after| {
+                    after
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+                        .collect::<String>()
+                });
+            if let Some(name) = name.filter(|name| !name.is_empty()) {
+                assert!(
+                    seen.insert(name.clone()),
+                    "`{name}` is declared twice at the top of dirt-ui.js"
+                );
+            }
+        }
+        assert!(seen.contains("reveal") && seen.contains("landTrack"));
+    }
 }
