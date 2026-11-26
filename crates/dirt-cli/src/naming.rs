@@ -343,12 +343,17 @@ pub fn remember_list(store: &Store, what: &str, notes: &[Note]) {
     let written = serde_json::to_vec(&list)
         .map_err(io::Error::other)
         .and_then(|bytes| {
-            // Written whole and then put in place, so that a command run
-            // meanwhile reads the old list or the new one.
-            let mut partial = path.as_os_str().to_owned();
-            partial.push(".partial");
-            std::fs::write(&partial, bytes)?;
-            std::fs::rename(&partial, &path)
+            // Written whole to a file of its own and then put in place, so
+            // that a command run meanwhile reads the old list or the new
+            // one, and two commands writing at once each put a whole list
+            // in place: the last to finish is the list.
+            let folder = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+            let mut partial = tempfile::NamedTempFile::new_in(folder)?;
+            partial.write_all(&bytes)?;
+            partial
+                .persist(&path)
+                .map(drop)
+                .map_err(|error| error.error)
         });
     if let Err(error) = written {
         eprintln!("The list's numbers could not be kept for the next command: {error}");

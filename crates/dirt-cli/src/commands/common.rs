@@ -274,9 +274,26 @@ pub fn note_file_name(note: Option<&Note>) -> String {
     let name = name.trim_end_matches('-');
     if name.is_empty() {
         "note.txt".to_owned()
+    } else if is_reserved_on_windows(name) {
+        // `con.txt` is the console on Windows, not a file.
+        format!("note-{name}.txt")
     } else {
         format!("{name}.txt")
     }
+}
+
+/// Whether Windows takes `name`, with any extension, for a device rather
+/// than a file: CON, PRN, AUX, NUL, COM1 to COM9 and LPT1 to LPT9. The
+/// name is held to it on every system, so that a note is edited in a file
+/// of the same name everywhere.
+fn is_reserved_on_windows(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    matches!(name.as_str(), "con" | "prn" | "aux" | "nul")
+        || ["com", "lpt"].iter().any(|device| {
+            name.strip_prefix(device).is_some_and(|digit| {
+                digit.len() == 1 && digit.chars().all(|c| ('1'..='9').contains(&c))
+            })
+        })
 }
 
 /// Opens `initial` in `editor`, in a file called `file_name`

@@ -1371,6 +1371,42 @@ fn a_note_is_edited_in_a_file_named_after_its_first_words() {
 }
 
 #[test]
+fn a_note_named_like_a_windows_device_is_edited_in_a_file() {
+    for (text, file) in [
+        ("CON", "note-con.txt"),
+        ("nul", "note-nul.txt"),
+        ("Com1", "note-com1.txt"),
+        ("LPT9", "note-lpt9.txt"),
+        ("com0", "com0.txt"),
+        ("com10", "com10.txt"),
+        ("console", "console.txt"),
+        ("aux cable", "aux-cable.txt"),
+    ] {
+        let note = dirt_core::Note::new(text);
+        assert_eq!(note_file_name(Some(&note)), file, "{text}");
+    }
+}
+
+#[tokio::test]
+async fn lists_kept_at_once_leave_one_whole_list() {
+    let (_dir, store, _context, _id) = a_note("one").await;
+    let notes = store.list_notes(10, 0).await.unwrap();
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            scope.spawn(|| remember_list(&store, "list", &notes));
+        }
+    });
+    assert_eq!(last_list(&store).unwrap().ids.len(), notes.len());
+    let folder = list_file(&store).parent().unwrap().to_owned();
+    let left: Vec<_> = std::fs::read_dir(folder)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with(".tmp"))
+        .collect();
+    assert!(left.is_empty(), "temporary files left: {left:?}");
+}
+
+#[test]
 fn the_editor_is_visual_then_editor_then_the_default() {
     let some = |text: &str| Some(text.to_owned());
     assert_eq!(
