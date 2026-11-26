@@ -3403,17 +3403,17 @@
     const track = trackOf(modal);
     const from = holdTrack(modal, state);
     const to = -state.to;
-    if (!track || reduced() || Math.abs(from - to) < 0.5) { land(modal, state); return; }
+    if (!track || reduced() || Math.abs(from - to) < 0.5) { landTrack(modal, state); return; }
     const run = startAnimation(track, [{ transform: `translateX(${from}px)` }, { transform: `translateX(${to}px)` }],
       { duration: ms, easing: spring('glide').easing, fill: 'forwards' });
     track.style.transform = '';
     state.slideRun = run;
-    after(run, ms, () => { if (state.slideRun === run) land(modal, state); });
+    after(run, ms, () => { if (state.slideRun === run) landTrack(modal, state); });
   }
   // The track at rest where it was going: put back at its place, and
   // everything in it moved by as much the other way, in one go, so that
   // nothing is drawn anywhere else. What is out of sight goes.
-  function land(modal, state) {
+  function landTrack(modal, state) {
     const track = trackOf(modal);
     const run = state.slideRun;
     state.slideRun = null;
@@ -3452,7 +3452,7 @@
   }
   // A step still on its way lands at once.
   function endSlide(modal, state) {
-    if (state.slideRun || state.to) land(modal, state);
+    if (state.slideRun || state.to) landTrack(modal, state);
   }
   // Whether the track moves, or a finger holds it.
   const trackMoving = (modal, state) => !!state.slideRun || !!state.to || drawnX(trackOf(modal) || modal) !== 0;
@@ -3472,7 +3472,7 @@
       if (!touch && !reduced() && !state.slideRun) {
         const run = startAnimation(track, [{ transform: 'none' }, { transform: `translateX(${-dir * 24}px)` }, { transform: 'none' }], { duration: 300, easing: tokens.standard });
         state.slideRun = run;
-        after(run, 300, () => { if (state.slideRun === run) land(modal, state); });
+        after(run, 300, () => { if (state.slideRun === run) landTrack(modal, state); });
       }
       return;
     }
@@ -3502,7 +3502,14 @@
     const once = () => { if (!done) { done = true; then(); } };
     const picture = item.querySelector('img');
     if (!picture) { once(); return; }
-    if (picture.decode) { picture.decode().then(once, once); return; }
+    // A decode that never ends leaves the thumbnail up no longer than 4 s:
+    // the picture is drawn then, decoded or not.
+    if (picture.decode) {
+      picture.decode().then(once, once);
+      const waited = () => { if (done) return; if (picture.complete) once(); else setTimeout(waited, DECODE_WAIT_MS); };
+      setTimeout(waited, DECODE_WAIT_MS);
+      return;
+    }
     if (picture.complete) { once(); return; }
     picture.addEventListener('load', once, { once: true });
     picture.addEventListener('error', once, { once: true });
@@ -3532,15 +3539,17 @@
     whenReady(item, () => {
       if (state.item !== item) return;
       item.duiReady = true;
-      reveal(modal, state);
+      revealItem(modal, state);
     });
   }
   // What waited for nothing to move.
   function settled(modal, state) {
     const item = state.item;
-    if (!item || !item.isConnected) return;
-    if (item.duiLater) load(modal, state, item); else reveal(modal, state);
+    // Closed: Rust has let go of the file's bytes, and nothing is asked for.
+    if (!item || !item.isConnected || !modal.classList.contains('on')) return;
+    if (item.duiLater) load(modal, state, item); else revealItem(modal, state);
   }
+  const DECODE_WAIT_MS = 4000;
   const largePicture = item => {
     const picture = item.querySelector('img[data-dui-zoom]');
     return !!picture && picture.naturalWidth * picture.naturalHeight > LARGE_PICTURE;
@@ -3548,11 +3557,11 @@
   // Rust's item for the file shown, once it can be drawn whole, takes the
   // place of what stands in for it: at once while it is small, a large
   // picture once nothing moves.
-  function reveal(modal, state) {
+  function revealItem(modal, state) {
     const item = state.item;
     if (!item || !item.isConnected || !item.classList.contains('waiting') || !item.duiReady) return;
     if (item.dataset.file !== state.file || !modal.classList.contains('on')) return;
-    if (largePicture(item) && trackMoving(modal, state)) return;
+    if (largePicture(item) && (trackMoving(modal, state) || unfinished(state.run))) return;
     takeOver(modal, item);
   }
   // The file takes the place of what stood in for it, where it is along
