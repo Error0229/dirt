@@ -371,13 +371,13 @@ function install(version) {
   // ---- Input that the scenario cannot send as a hand would ---------------
   // A picture pasted into the page, as a picture copied from another
   // program is: the app's own paste handler takes it (design 6.16).
-  async function pastePicture(selector, name, colour) {
+  async function pastePicture(selector, name, colour, width = 640, height = 420) {
     const canvas = document.createElement('canvas');
-    canvas.width = 640; canvas.height = 420;
+    canvas.width = width; canvas.height = height;
     const g = canvas.getContext('2d');
-    g.fillStyle = colour || '#6b8f71'; g.fillRect(0, 0, 640, 420);
-    g.fillStyle = '#f4efe6'; g.fillRect(40, 40, 260, 340);
-    g.fillStyle = '#2a2622'; g.font = 'bold 48px sans-serif'; g.fillText('motion', 330, 230);
+    g.fillStyle = colour || '#6b8f71'; g.fillRect(0, 0, width, height);
+    g.fillStyle = '#f4efe6'; g.fillRect(width / 16, height / 10.5, width * 0.4, height * 0.81);
+    g.fillStyle = '#2a2622'; g.font = 'bold 48px sans-serif'; g.fillText('motion', width * 0.52, height * 0.55);
     const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
     const data = new DataTransfer();
     data.items.add(new File([blob], name || 'motion.png', { type: 'image/png' }));
@@ -420,5 +420,5 @@ function install(version) {
 
 // Changed whenever what runs in the page changes, so that a page that kept
 // an older one takes this one.
-const VERSION = 6;
+const VERSION = 7;
 export const installSource = `(${install.toString()})(${VERSION})`;

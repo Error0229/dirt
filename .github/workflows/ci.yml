@@ -262,9 +262,10 @@ jobs:
         run: node --test tools/motion/test/analyse.test.mjs tools/motion/test/page.test.mjs
 
       # dirt-ui's own script in a real browser: Settings opened again
-      # takes the pointer (design 6.9)
+      # takes the pointer (design 6.9); the file preview's zoom and step
+      # (6.16). One file at a time: two browsers at once upset the timing
       - name: Test dirt-ui's script
-        run: node --test crates/dirt-ui/tests/js/modal.test.mjs
+        run: node --test --test-concurrency=1 crates/dirt-ui/tests/js/modal.test.mjs crates/dirt-ui/tests/js/preview.test.mjs
 
   build:
     name: Build
