@@ -3506,7 +3506,7 @@
     // the picture is drawn then, decoded or not.
     if (picture.decode) {
       picture.decode().then(once, once);
-      const waited = () => { if (done) return; if (picture.complete) once(); else setTimeout(waited, DECODE_WAIT_MS); };
+      const waited = () => { if (done || !item.isConnected) return; if (picture.complete) once(); else setTimeout(waited, DECODE_WAIT_MS); };
       setTimeout(waited, DECODE_WAIT_MS);
       return;
     }

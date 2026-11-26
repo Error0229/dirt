@@ -398,7 +398,7 @@ mod tests {
                 continue;
             }
             let rest = rest.strip_prefix("async ").unwrap_or(rest);
-            let name = ["function ", "const ", "let "]
+            let name = ["function ", "const ", "let ", "var ", "class "]
                 .iter()
                 .find_map(|word| rest.strip_prefix(word))
                 .map(|after| {
