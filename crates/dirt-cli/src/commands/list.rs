@@ -1,7 +1,8 @@
-use dirt_core::Store;
+use dirt_core::{Note, Store};
 
-use crate::commands::common::{format_note_lines, list_notes, note_to_list_item, NoteListItem};
+use crate::commands::common::{list_notes, listing_lines, note_to_list_item, NoteListItem};
 use crate::error::CliError;
+use crate::naming::{read_by_a_person, remember_list};
 
 pub async fn run_list(
     limit: usize,
@@ -18,11 +19,39 @@ pub async fn run_list(
             .map(note_to_list_item)
             .collect::<Vec<NoteListItem>>();
         println!("{}", serde_json::to_string_pretty(&json_items)?);
-    } else {
-        for line in format_note_lines(&notes) {
-            println!("{line}");
-        }
+        return Ok(());
     }
+    print_listing(&notes, &listing_name(tag, archived), db).await
+}
 
+/// What a list is called when a number from it is not there.
+pub fn listing_name(tag: Option<&str>, archived: bool) -> String {
+    let mut name = "`dirt list".to_owned();
+    if archived {
+        name.push_str(" --archived");
+    }
+    if let Some(tag) = tag {
+        name.push_str(" --tag ");
+        name.push_str(tag);
+    }
+    name.push('`');
+    name
+}
+
+/// Prints a numbered list and, when a person reads it, keeps it as the
+/// last list, so that the next command can name a note by its number. A
+/// list read by a program (a status bar, a script) leaves the person's
+/// numbers as they were. An empty list is said where errors go, so that
+/// standard output stays empty.
+pub async fn print_listing(notes: &[Note], what: &str, db: &Store) -> Result<(), CliError> {
+    if read_by_a_person(&std::io::stdout()) {
+        remember_list(db, what, notes);
+    }
+    if notes.is_empty() {
+        eprintln!("No notes.");
+    }
+    for line in listing_lines(notes, db).await? {
+        println!("{line}");
+    }
     Ok(())
 }

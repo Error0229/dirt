@@ -617,6 +617,79 @@ Rule: no HTTP, SQL or cryptography lives in a client crate.
   into one program. A program's dependencies must contain one or the other,
   which fixes how step 3 begins.
 
+### 8.5 The command line
+
+Added 2026-11-25, after the owner tried the CLI for the 0.1.0 release and
+found opening and editing a note hard: the list showed 13 characters of
+each ID, which notes written close together share, and nothing showed a
+whole note.
+
+- **Naming a note.** Every command that takes a note reads it the same
+  way (`dirt-cli`'s `naming` module), trying in this order:
+  1. nothing, for `dirt show` and `dirt edit` alone: the latest note, the
+     first of `dirt list`. A command that changes a note in another way
+     needs it named;
+  2. a number with no leading zero: the note shown under that number in
+     the last list. Every note ID begins with a zero (a UUID v7 begins
+     with the time, and does until the year 2527), so a number and the
+     start of an ID cannot be confused. Lists are numbered from 1;
+  3. a whole ID, or the start of one, as the list shows it;
+  4. words: the one note a search for them finds, archived notes among
+     them. Hexadecimal that begins no ID (`cafe`) is taken as words.
+  Several notes named by words or by the start of an ID are listed,
+  numbered, and become the last list. With a person at the terminal
+  (standard input and standard error both terminals) the command asks
+  which; otherwise it fails, and the next command takes the number.
+  `dirt restore` takes a number or an ID: a deleted note is not searched.
+- **The last list** is what `dirt list` or `dirt search` last printed, or
+  the notes last offered to choose from: the IDs in order, what made them
+  and when, as JSON in `<database>-list` beside the store's database. It
+  goes with the store at sign-out, a store named by `--db-path` has its
+  own, and nothing is written to a store marked signed out. A number names
+  what was shown under it even after the list has changed, so `dirt edit 2`
+  twice edits one note. A number the list did not have, a note since
+  deleted (`dirt restore 2` brings it back) and a note no longer on the
+  device are each said in words. Only a list a person reads at a terminal
+  becomes the last list: one as `--json` (which is not numbered), or piped
+  to a program such as a status bar or a script, leaves the last list
+  alone, so that it does not change what the person's numbers mean. A
+  script that reads a list reads `--json`: the numbered lines are for
+  people.
+- **Short IDs.** A list shows the shortest start of each ID that no other
+  note's ID shares, at least 8 characters and never ending in a hyphen
+  (`Store::shortest_id_prefixes`: for each note, the IDs either side of it,
+  read on the ID index, or for deleted notes, which are few, on the list's).
+  The number comes first and is the handle; the ID is for later.
+- **What is said.** A command that changes a note says, to a terminal,
+  what it did and the note's first words ("Saved: …", "Deleted: … `dirt
+  restore 01a2…` brings it back", "Unchanged: …"). To anything else it
+  prints the note's whole ID alone, as it always has, so that scripts read
+  the same answer; "Unchanged" then goes to standard error.
+- **`dirt show`** prints the note's text as it is, then a blank line and a
+  line each for its ID, edit and creation times, tags, files and whether it
+  is archived. `--json` is `dirt list --json`'s object with `files` as
+  `dirt files --json` gives them.
+- **`dirt edit`** writes the note to `<its first words>.txt` (plain text,
+  as a note is) in a new folder only the user can open, and removes the
+  folder afterwards. Lines ending in CR LF, as Notepad writes them, are
+  kept ending in LF. What the editor leaves is saved as changes from what
+  it was given (`Store::update_note_from`), so an edit made meanwhile in
+  the desktop app or on another device is kept. If it cannot be saved (the
+  note deleted, or the store signed out of, meanwhile), the text is kept in
+  a file of its own in a private folder, and the command says where. An
+  editor that cannot be
+  started says which variable named it, or, for the default (Notepad on
+  Windows, `vi` elsewhere), how to set `EDITOR`. An editor back within a
+  second with nothing changed is told to wait, as in `code --wait`
+  (`code.cmd --wait` on Windows, where a program named without its
+  extension is found only as an `.exe`):
+  Windows 11's Notepad, already open, hands the file to its window and
+  returns at once.
+- **No terminal interface.** `dirt tui` printed "Opening TUI..." and did
+  nothing; it is removed. A terminal interface is outside the design
+  (`docs/DESIGN.md`, "Platforms in scope"). `dirt tui` is now a thought,
+  as any other word is.
+
 ## 9. Errors, testing and visibility
 
 ### 9.1 Errors

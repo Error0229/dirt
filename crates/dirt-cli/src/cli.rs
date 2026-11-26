@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::naming::{NAMING_A_NOTE, NAMING_A_NOTE_OR_NOT};
+
 #[derive(Parser)]
 #[command(name = "dirt")]
 #[command(about = "Capture fleeting thoughts from the command line")]
@@ -21,13 +23,15 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Create a new note
+    /// Create a new note. With no words and nothing piped in, opens the
+    /// editor
     #[command(alias = "new")]
     Add {
         /// Note content
         content: Vec<String>,
     },
-    /// List recent notes
+    /// List recent notes, numbered: `dirt show 2` or `dirt edit 2` names
+    /// the second
     List {
         /// Number of notes to show
         #[arg(short, long, default_value = "10")]
@@ -38,51 +42,80 @@ pub enum Commands {
         /// List the archived notes, and not the others
         #[arg(long)]
         archived: bool,
-        /// Output as JSON
+        /// Output as JSON. A list as JSON is not numbered, and the last
+        /// list's numbers stay as they were
         #[arg(long)]
         json: bool,
     },
-    /// Search notes. Archived notes are found too, after the rest
+    /// Search notes, numbered as `dirt list` numbers them. Archived notes
+    /// are found too, after the rest
     Search {
         /// Search query
         query: String,
         /// Number of notes to show
         #[arg(short, long, default_value = "10")]
         limit: usize,
+        /// Output as JSON. Not numbered, as with `dirt list`
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print a whole note: its text, then its ID, times, tags and files
+    #[command(after_help = NAMING_A_NOTE_OR_NOT)]
+    Show {
+        /// The note: a number from the last list, an ID or its start, or
+        /// words from it. The latest note when omitted
+        #[arg(value_name = "NOTE")]
+        note: Vec<String>,
         /// Output as JSON
         #[arg(long)]
         json: bool,
     },
-    /// Edit an existing note
+    /// Edit a note in $VISUAL or $EDITOR
+    #[command(after_help = NAMING_A_NOTE_OR_NOT)]
     Edit {
-        /// Note ID or unique ID prefix
-        id: String,
+        /// The note: a number from the last list, an ID or its start, or
+        /// words from it. The latest note when omitted
+        #[arg(value_name = "NOTE")]
+        note: Vec<String>,
     },
-    /// Delete an existing note
+    /// Delete a note. `dirt restore` brings it back for thirty days
+    #[command(after_help = NAMING_A_NOTE)]
     Delete {
-        /// Note ID or unique ID prefix
-        id: String,
+        /// The note: a number from the last list, an ID or its start, or
+        /// words from it
+        #[arg(value_name = "NOTE", required = true)]
+        note: Vec<String>,
     },
     /// Bring a deleted note back, with the text it had. A deleted note is
     /// kept for thirty days
     Restore {
-        /// The ID that `dirt delete` printed, or a unique prefix of it
-        id: String,
+        /// Its number in the list it was deleted from, or the ID that
+        /// `dirt delete` printed, or the start of it
+        #[arg(value_name = "NOTE", required = true)]
+        note: Vec<String>,
     },
     /// Archive a note: take it out of the list. It is still found by
     /// search, synced and exported
+    #[command(after_help = NAMING_A_NOTE)]
     Archive {
-        /// Note ID or unique ID prefix
-        id: String,
+        /// The note: a number from the last list, an ID or its start, or
+        /// words from it
+        #[arg(value_name = "NOTE", required = true)]
+        note: Vec<String>,
     },
     /// Bring an archived note back to the list
+    #[command(after_help = NAMING_A_NOTE)]
     Unarchive {
-        /// Note ID or unique ID prefix
-        id: String,
+        /// The note: a number from the last list, an ID or its start, or
+        /// words from it
+        #[arg(value_name = "NOTE", required = true)]
+        note: Vec<String>,
     },
     /// Attach a file to a note. Prints the file's ID
+    #[command(after_help = NAMING_A_NOTE)]
     Attach {
-        /// Note ID or unique ID prefix
+        /// The note: a number from the last list, an ID or its start, or
+        /// words from it in quotes
         note: String,
         /// The file to attach. It is copied; the original is left alone
         file: PathBuf,
@@ -96,8 +129,10 @@ pub enum Commands {
         media_type: Option<String>,
     },
     /// List the files attached to a note
+    #[command(after_help = NAMING_A_NOTE)]
     Files {
-        /// Note ID or unique ID prefix
+        /// The note: a number from the last list, an ID or its start, or
+        /// words from it in quotes
         note: String,
         /// Output as JSON
         #[arg(long)]
@@ -105,8 +140,10 @@ pub enum Commands {
     },
     /// Save a copy of a file attached to a note, fetching it first if
     /// this device does not hold it
+    #[command(after_help = NAMING_A_NOTE)]
     Save {
-        /// Note ID or unique ID prefix
+        /// The note: a number from the last list, an ID or its start, or
+        /// words from it in quotes
         note: String,
         /// The start of the file's ID, or its name
         file: String,
@@ -118,8 +155,10 @@ pub enum Commands {
         force: bool,
     },
     /// Remove a file from a note. Prints the file's ID
+    #[command(after_help = NAMING_A_NOTE)]
     Detach {
-        /// Note ID or unique ID prefix
+        /// The note: a number from the last list, an ID or its start, or
+        /// words from it in quotes
         note: String,
         /// The start of the file's ID, or its name
         file: String,
@@ -167,8 +206,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: Option<DeviceCommands>,
     },
-    /// Open TUI interface
-    Tui,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]

@@ -1,8 +1,9 @@
 use dirt_core::Store;
 
 use crate::commands::common::{
-    format_note_lines, normalize_search_query, note_to_list_item, search_notes, NoteListItem,
+    normalize_search_query, note_to_list_item, search_notes, NoteListItem,
 };
+use crate::commands::list::print_listing;
 use crate::error::CliError;
 
 pub async fn run_search(
@@ -20,11 +21,7 @@ pub async fn run_search(
             .map(note_to_list_item)
             .collect::<Vec<NoteListItem>>();
         println!("{}", serde_json::to_string_pretty(&json_items)?);
-    } else {
-        for line in format_note_lines(&notes) {
-            println!("{line}");
-        }
+        return Ok(());
     }
-
-    Ok(())
+    print_listing(&notes, &format!("`dirt search {normalized_query}`"), db).await
 }

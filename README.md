@@ -70,6 +70,21 @@ cargo run -p dirt-cli "first thought"
 cargo run -p dirt-cli list
 ```
 
+Installed, the same is `dirt "first thought"` and `dirt list`. The list is
+numbered, and a number names a note to the next command:
+
+```bash
+dirt list               # 1  01a216c7-da  Call the dentist ...  2m ago
+dirt show 1             # the whole note, then its ID, times, tags and files
+dirt edit 1             # in $VISUAL or $EDITOR
+dirt edit dentist       # or by words from it; several matches are listed, numbered
+dirt edit               # nothing named: the latest note
+dirt delete 1           # dirt restore 1 brings it back
+```
+
+A note is also named by its ID or the start of it, as the list shows it.
+`dirt help edit` gives the rules, and system design 8.5 the reasons.
+
 Notes are saved to `dirt/stores/local/notes.db` under your platform's data
 directory (`%APPDATA%` on Windows). The desktop app opens the same file, so
 both show the same notes, and both can run at the same time. `--db-path` or

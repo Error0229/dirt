@@ -6,6 +6,7 @@ mod cli;
 mod commands;
 mod context;
 mod error;
+mod naming;
 #[cfg(test)]
 mod tests;
 
@@ -43,10 +44,6 @@ async fn run() -> Result<(), CliError> {
     let command = match cli.command {
         Some(Commands::Completions { shell, output }) => {
             return commands::completions::run_completions(shell, output.as_deref());
-        }
-        Some(Commands::Tui) => {
-            println!("Opening TUI...");
-            return Ok(());
         }
         None if cli.note.is_empty() => {
             Cli::command().print_help().map_err(CliError::Io)?;
@@ -87,14 +84,19 @@ async fn run() -> Result<(), CliError> {
         Some(Commands::Search { query, limit, json }) => {
             commands::search::run_search(&query, limit, json, store).await?;
         }
-        Some(Commands::Edit { id }) => commands::edit::run_edit(&id, &context).await?,
-        Some(Commands::Delete { id }) => commands::delete::run_delete(&id, &context).await?,
-        Some(Commands::Restore { id }) => commands::restore::run_restore(&id, &context).await?,
-        Some(Commands::Archive { id }) => {
-            commands::archive::run_archive(&id, &context).await?;
+        Some(Commands::Show { note, json }) => {
+            commands::show::run_show(&note, json, &context).await?;
         }
-        Some(Commands::Unarchive { id }) => {
-            commands::archive::run_unarchive(&id, &context).await?;
+        Some(Commands::Edit { note }) => commands::edit::run_edit(&note, &context).await?,
+        Some(Commands::Delete { note }) => commands::delete::run_delete(&note, &context).await?,
+        Some(Commands::Restore { note }) => {
+            commands::restore::run_restore(&note, &context).await?;
+        }
+        Some(Commands::Archive { note }) => {
+            commands::archive::run_archive(&note, &context).await?;
+        }
+        Some(Commands::Unarchive { note }) => {
+            commands::archive::run_unarchive(&note, &context).await?;
         }
         Some(Commands::Attach {
             note,
@@ -112,7 +114,7 @@ async fn run() -> Result<(), CliError> {
             .await?;
         }
         Some(Commands::Files { note, json }) => {
-            commands::files::run_files(&note, json, store).await?;
+            commands::files::run_files(&note, json, &context).await?;
         }
         Some(Commands::Save {
             note,
@@ -140,7 +142,7 @@ async fn run() -> Result<(), CliError> {
         Some(Commands::Devices { command }) => {
             commands::devices::run_devices(command, &context).await?;
         }
-        Some(Commands::Completions { .. } | Commands::Tui) => {
+        Some(Commands::Completions { .. }) => {
             unreachable!("handled before the store was opened")
         }
         None => commands::add::run_add(&cli.note, &context).await?,

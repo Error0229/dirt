@@ -33,6 +33,9 @@ pub struct Context {
     pub session: Option<Session>,
     /// The server the session talks to, and where its address came from.
     pub server: Option<ServerAddress>,
+    /// A person is at the terminal, so a command can ask which note was
+    /// meant when several are named ([`crate::naming`]).
+    pub can_ask: bool,
 }
 
 /// The folder the CLI and the desktop app keep their stores in:
@@ -68,6 +71,7 @@ impl Context {
                 store: Store::open(path)?,
                 session: None,
                 server: None,
+                can_ask: crate::naming::can_ask(),
             });
         }
         let Some(server) = server_address()? else {
@@ -75,6 +79,7 @@ impl Context {
                 store: Store::open_in(&data_folder(), &dirt_core::store::StoreName::Local)?,
                 session: None,
                 server: None,
+                can_ask: crate::naming::can_ask(),
             });
         };
         let session = Session::on_this_computer(&server.url, data_folder(), false)
@@ -83,6 +88,7 @@ impl Context {
             store: session.store(),
             session: Some(session),
             server: Some(server),
+            can_ask: crate::naming::can_ask(),
         })
     }
 
