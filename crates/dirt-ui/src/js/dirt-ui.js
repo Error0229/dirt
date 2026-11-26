@@ -3111,9 +3111,12 @@
   // Where the picture fits, and the window it may move in.
   // Where the item is laid out, not where it is drawn: one still sliding
   // back does not move where its picture fits.
+  // Null for a picture no longer in the page: one let go of after its
+  // file was stepped away from and its slide out ended.
   function geometryOf(picture) {
     const item = picture.closest('.dui-pv-item');
-    const stage = item.parentElement;
+    const stage = item && item.parentElement;
+    if (!stage) return null;
     const box = stage.getBoundingClientRect();
     const left = box.left + item.offsetLeft, top = box.top + item.offsetTop;
     const w = picture.offsetWidth, h = picture.offsetHeight;
@@ -3198,11 +3201,13 @@
   // pulled past an edge comes back, one pinched past a limit returns to
   // it about the point between the fingers.
   function settleView(picture, g, fx, fy) {
+    if (!g) return;
     moveView(picture, previewMaths.rest(pictureView(picture), g, fx, fy), ZOOM_MS, tokens.enter);
   }
   // Let go of while moving, a picture coasts on, slowing as a thing
   // thrown does (the toss curve), and stops at its edge.
   function coastView(picture, g, v) {
+    if (!g) return;
     const now = pictureView(picture), r = previewMaths.ranges(now.s, g);
     const inside = now.x >= r.x[0] - 0.5 && now.x <= r.x[1] + 0.5 && now.y >= r.y[0] - 0.5 && now.y <= r.y[1] + 0.5;
     if (!inside) { settleView(picture, g); return; }
