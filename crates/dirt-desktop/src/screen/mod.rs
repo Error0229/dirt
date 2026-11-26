@@ -296,6 +296,25 @@ impl Screen {
         page_store.set(self.store());
     }
 
+    /// Closes the window to the tray, as the window's own ✕ does.
+    ///
+    /// Dioxus hides a window closed by its program (`window().close()`)
+    /// itself, and the system is not told: no `CloseRequested` comes of
+    /// it. So what the screen does as it closes is done here first.
+    pub fn to_tray(self) {
+        self.closing_to_tray();
+        dioxus::desktop::window().close();
+    }
+
+    /// The window is closing to the tray, by the system's close or by its
+    /// own ✕, and is not seen: listening on the page ends there, keeping
+    /// what was said, held or hands-free (7.11).
+    fn closing_to_tray(self) {
+        if self.talking.is_listening() {
+            self.talking.end(true);
+        }
+    }
+
     /// Leaves the page: what it held is taken as it is and handed to the
     /// store's queue, to be kept or let go in the store its note is in,
     /// after whatever was asked before. The page is blank at once; nothing
@@ -1440,17 +1459,16 @@ pub fn MainScreen() -> Element {
             screen.leave();
         }
     });
-    // Closed to the tray, the window is not seen: listening on the page
-    // ends there, keeping what was said, held or hands-free (7.11).
+    // The system's close (Alt F4, the taskbar's Close window, the title
+    // bar's × where there is one) closes the window to the tray. The
+    // window's own ✕ does not come this way (`Screen::to_tray`).
     use_wry_event_handler(move |event, _| {
         if let dioxus::desktop::tao::event::Event::WindowEvent {
             event: dioxus::desktop::tao::event::WindowEvent::CloseRequested,
             ..
         } = event
         {
-            if screen.talking.is_listening() {
-                screen.talking.end(true);
-            }
+            screen.closing_to_tray();
         }
     });
     // The words of what was said, for the note on the page.
