@@ -63,6 +63,17 @@
       "ms": 1000
     },
     {
+      "name": "regrab",
+      "description": "A drag too short, let go of, and taken again by the finger as it slides back (review, #336): the file follows the finger from where it is drawn, and slides back again when let go of.",
+      "platforms": ["android"],
+      "steps": [
+        { "swipe": { "on": ".dui-pv-stage", "dx": -90, "steps": 12, "every": 24, "hold": 150 } },
+        { "swipe": { "on": ".dui-pv-stage", "dx": -60, "steps": 6, "every": 24, "hold": 150 } }
+      ],
+      "arrives": ["file", "picture"],
+      "ms": 1000
+    },
+    {
       "name": "zoom-in",
       "description": "Zoomed in about a point off the picture's centre: a double click on the desktop, two fingers spreading on Android.",
       "platforms": ["desktop", "android"],

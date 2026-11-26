@@ -1249,6 +1249,13 @@
       state.items = new MutationObserver(() => previewItemChanged(modal, state));
       if (stage) state.items.observe(stage, { childList: true });
       state.item = modal.querySelector('.dui-pv-item');
+      state.standIns = new Set();
+      // A window that changes size (turned, or resized) moves where the
+      // picture fits: a zoomed one is kept within its new edges.
+      if (stage && window.ResizeObserver) {
+        state.resized = new ResizeObserver(() => refit(modal));
+        state.resized.observe(stage);
+      }
     }
     modals.set(modal, state);
     if (state.open) opened(modal, state);
@@ -1258,6 +1265,7 @@
     if (!state) return;
     state.observer.disconnect();
     if (state.items) state.items.disconnect();
+    if (state.resized) state.resized.disconnect();
     modals.delete(modal);
     if (state.open && state.opener && state.opener.isConnected) state.opener.focus({ preventScroll: true });
   }
@@ -2880,6 +2888,7 @@
     state.item = currentItem(modal);
     state.slide = null;
     clearGhosts(modal);
+    if (state.standIns) state.standIns.clear();
     hidePeeks(modal);
     const stage = stageOf(modal), tile = tileOf(modal);
     if (state.run) state.run.cancel();
@@ -3111,8 +3120,6 @@
     views.set(picture, view);
     picture.style.transform = view.s === 1 && !view.x && !view.y ? '' : viewTransform(view);
     picture.classList.toggle('zoom', zoomed);
-    const item = picture.closest('.dui-pv-item');
-    if (item) item.classList.toggle('zoomed', zoomed);
   }
   // The view as drawn now: a movement it is in is stopped where it has
   // got to, so that a finger catches a picture still coasting.
@@ -3139,6 +3146,20 @@
     const run = startAnimation(picture, [{ transform: viewTransform(from) }, { transform: viewTransform(to) }], { duration: ms, easing });
     viewRuns.set(picture, run);
     after(run, ms, () => { if (viewRuns.get(picture) === run) viewRuns.delete(picture); });
+  }
+  // Kept within its edges where the stage has changed size, unless a hand
+  // holds it (it settles when let go of).
+  function refit(modal) {
+    const picture = currentPicture(modal);
+    if (!picture || !zoomedIn(picture) || (gesture && gesture.picture === picture) || (panning && panning.picture === picture)) return;
+    holdView(picture);
+    setView(picture, previewMaths.rest(pictureView(picture), geometryOf(picture)));
+  }
+  // How far an element is drawn moved sideways now, its movements
+  // included.
+  function drawnX(element) {
+    const drawn = getComputedStyle(element).transform;
+    return drawn && drawn !== 'none' ? new DOMMatrixReadOnly(drawn).m41 : 0;
   }
   // A double click or a double tap: zoomed to 2× about the point pressed
   // (kept under it, unless that would leave the picture short of an edge),
@@ -3189,6 +3210,9 @@
     if (!picture || event.target.closest('.dui-scroll, button')) return;
     const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? innerHeight : 1;
     const dx = event.deltaX * unit, dy = event.deltaY * unit;
+    // Without Ctrl, a picture at 1×, or on its way back there, lets the
+    // wheel be: its zooming out is not stopped half way.
+    if (!event.ctrlKey && !zoomedIn(picture)) return;
     const now = holdView(picture);
     if (!event.ctrlKey && now.s <= 1.001) return;
     event.preventDefault();
@@ -3281,6 +3305,13 @@
     element.style.transform = '';
     return startAnimation(element, frames, { duration: slide.ms, easing: slide.easing, delay: -Math.max(0, elapsed), fill: 'forwards' });
   }
+  // Thumbnails kept for a picture that has itself been replaced since, or
+  // never came, are let go of: they would stay over every later file.
+  function dropStandIns(state) {
+    if (!state.standIns) return;
+    state.standIns.forEach(ghost => ghost.remove());
+    state.standIns.clear();
+  }
   // A step still on its way lands at once.
   function endSlide(modal, state) {
     const slide = state.slide;
@@ -3339,6 +3370,15 @@
     step.clock = slideRun(item, 'out', step, 0);
     step.peek = slideRun(stand, 'in', step, 0);
     step.runs.push(step.peek);
+    // A thumbnail still standing in for the picture shown (not decoded
+    // yet) leaves with it.
+    (state.standIns ? [...state.standIns] : []).forEach(ghost => {
+      ghost.getAnimations().forEach(run => run.cancel());
+      const run = slideRun(ghost, 'out', step, 0);
+      step.runs.push(run);
+      after(run, ms, () => ghost.remove());
+    });
+    if (state.standIns) state.standIns.clear();
     state.slide = step;
     // If no file comes (the step was not taken), the file shown comes back.
     setTimeout(() => { if (state.slide === step && state.item === item) endSlide(modal, state); }, ms + 1500);
@@ -3350,12 +3390,60 @@
     item.style.transform = '';
     const peek = shownPeek(modal);
     if (!ms || !shown) { hidePeeks(modal); return; }
-    startAnimation(item, [{ transform: `translateX(${shown}px)` }, { transform: 'none' }], { duration: ms, easing });
+    item.duiBack = startAnimation(item, [{ transform: `translateX(${shown}px)` }, { transform: 'none' }], { duration: ms, easing });
     if (!peek) return;
     const side = peek.dataset.side === 'next' ? 1 : -1, D = slideDistance();
     peek.style.transform = '';
     const run = startAnimation(peek, [{ transform: `translateX(${shown + side * D}px)` }, { transform: `translateX(${side * D}px)` }], { duration: ms, easing, fill: 'forwards' });
-    after(run, ms, () => { if (!peek.getAnimations().some(other => other !== run && unfinished(other))) hidePeeks(modal); });
+    peek.duiBack = run;
+    // Hidden once back out of sight; not when a finger took it over (its
+    // movement cancelled), which would hide it as the finger shows it.
+    after(run, ms, () => {
+      if (peek.duiBack !== run || run.playState === 'idle') return;
+      peek.duiBack = null;
+      if (!peek.getAnimations().some(other => other !== run && unfinished(other))) hidePeeks(modal);
+    });
+  }
+  // A finger on the file while it still moves, sliding back or coming in
+  // from a step, takes it from where it is drawn (what is leaving goes on
+  // leaving), and gives how far it is moved. `null` while it cannot be
+  // held: the step has not reached its new file yet, or that file is not
+  // drawn yet.
+  function takeHold(modal) {
+    const state = modals.get(modal), item = currentItem(modal);
+    if (!state || !item) return 0;
+    const step = state.slide;
+    if (step) {
+      if (state.item === step.outgoing || item.classList.contains('waiting')) return null;
+      const x = drawnX(item);
+      state.slide = null;
+      const layer = modal.querySelector('.dui-pv-ghost');
+      [step.clock, ...step.runs].forEach(run => {
+        const target = run && run.effect && run.effect.target;
+        if (run && !(layer && target && layer.contains(target) && target !== step.stand)) run.cancel();
+      });
+      if (step.stand) step.stand.remove();
+      dropStandIns(state);
+      hidePeeks(modal);
+      item.style.transform = x ? `translateX(${x}px)` : '';
+      return x;
+    }
+    if (item.duiBack && unfinished(item.duiBack)) {
+      const x = drawnX(item);
+      item.duiBack.cancel();
+      item.duiBack = null;
+      item.style.transform = x ? `translateX(${x}px)` : '';
+      const peek = shownPeek(modal);
+      if (peek && peek.duiBack) {
+        const drawn = getComputedStyle(peek).transform;
+        const run = peek.duiBack;
+        peek.duiBack = null;
+        run.cancel();
+        peek.style.transform = drawn === 'none' ? '' : drawn;
+      }
+      return x;
+    }
+    return 0;
   }
   // Whether an item can be drawn whole now: a picture decoded, or nothing
   // to wait for.
@@ -3404,7 +3492,11 @@
       if (a.width > 2 && b.width > 2 && Math.abs(a.width - b.width) > 2) {
         const k = a.width / b.width;
         const dx = a.left + a.width / 2 - (b.left + b.width / 2), dy = a.top + a.height / 2 - (b.top + b.height / 2);
-        startAnimation(to, [{ transform: `translate(${dx}px, ${dy}px) scale(${k})` }, { transform: 'none' }], { duration: ZOOM_MS, easing: tokens.enter });
+        // Held like any movement of the picture's view, so that a pinch
+        // straight away takes it from where it is drawn.
+        const grow = startAnimation(to, [{ transform: `translate(${dx}px, ${dy}px) scale(${k})` }, { transform: 'none' }], { duration: ZOOM_MS, easing: tokens.enter });
+        viewRuns.set(to, grow);
+        after(grow, ZOOM_MS, () => { if (viewRuns.get(to) === grow) viewRuns.delete(to); });
         startAnimation(from, [{ transform: 'none' }, { transform: `translate(${-dx / k}px, ${-dy / k}px) scale(${1 / k})` }], { duration: ZOOM_MS, easing: tokens.enter, fill: 'forwards' });
       }
     }
@@ -3419,8 +3511,9 @@
     if (!item || item === state.item) return;
     const was = state.item;
     state.item = item;
-    if (!modal.classList.contains('on')) { endSlide(modal, state); clearGhosts(modal); return; }
+    if (!modal.classList.contains('on')) { endSlide(modal, state); clearGhosts(modal); dropStandIns(state); return; }
     if (!was) return;
+    dropStandIns(state);
     const step = state.slide;
     const sameFile = was.dataset.file === item.dataset.file;
     const elapsed = step ? slideElapsed(step) : Infinity;
@@ -3437,8 +3530,17 @@
       }
     } else if (sameFile) {
       ghost = toGhost(modal, was);
+      if (ghost && state.standIns) state.standIns.add(ghost);
       if (ghost && moving && incoming) step.runs.push(slideRun(ghost, 'in', step, elapsed));
     }
+    // A thumbnail kept for this item goes if the item is replaced before
+    // it can be drawn.
+    const stale = () => {
+      if (!ghost || !state.standIns || !state.standIns.has(ghost)) return;
+      state.standIns.delete(ghost);
+      ghost.remove();
+    };
+    const taken = () => { if (ghost && state.standIns) state.standIns.delete(ghost); };
     if (!readyNow(item)) item.classList.add('waiting');
     if (incoming) {
       if (moving) {
@@ -3452,7 +3554,8 @@
         });
       }
       whenReady(item, () => {
-        if (state.item !== item) return;
+        if (state.item !== item) { stale(); return; }
+        taken();
         takeOver(modal, ghost, item);
         if (step.stand) step.stand.remove();
         hidePeeks(modal);
@@ -3461,7 +3564,11 @@
       return;
     }
     if (ghost) {
-      whenReady(item, () => { if (state.item === item) takeOver(modal, ghost, item); });
+      whenReady(item, () => {
+        if (state.item !== item) { stale(); return; }
+        taken();
+        takeOver(modal, ghost, item);
+      });
       return;
     }
     endSlide(modal, state);
@@ -3532,7 +3639,14 @@
     const picture = currentPicture(modal);
     if (event.touches.length >= 2) {
       if (gesture && !gesture.pinch) dropDrag(gesture);
-      if (!picture || event.touches.length > 2) { gesture = { spent: true, modal }; return; }
+      if (!picture || event.touches.length > 2) {
+        // A third finger ends a pinch or a move where it was: the picture
+        // settles within its limits and edges, as if let go of.
+        const held = gesture && (gesture.pinch || gesture.pan) ? gesture : null;
+        if (held) settleView(held.picture, held.g, held.at ? held.at.x : undefined, held.at ? held.at.y : undefined);
+        gesture = { spent: true, modal, picture: held ? held.picture : null };
+        return;
+      }
       const [a, b] = event.touches;
       gesture = { pinch: true, modal, picture, d0: apart(a, b), m0: midpoint(a, b), from: holdView(picture), g: geometryOf(picture) };
       gesture.at = gesture.m0;
@@ -3548,7 +3662,9 @@
       gesture = { pan: true, modal, picture, x: touch.clientX, y: touch.clientY, from: pictureView(picture), g: geometryOf(picture), samples, moved: false };
       return;
     }
-    gesture = { x: touch.clientX, y: touch.clientY, mode: null, d: 0, shown: 0, modal, samples,
+    const base = takeHold(modal);
+    if (base === null) { gesture = { spent: true, modal }; return; }
+    gesture = { x: touch.clientX, y: touch.clientY, mode: null, d: base, base, shown: base, modal, samples,
       scrolls: !!event.target.closest('[data-dui-scroll]') };
   }, { passive: true });
   function movePreviewSwipe(event) {
@@ -3593,20 +3709,18 @@
       drag.d = dy;
       return;
     }
-    // Sideways: the file follows the finger, and the one it would step to
-    // comes into sight beside it. With nothing to step to it gives, less
-    // and less.
-    const state = modals.get(drag.modal);
-    if (state && state.slide) endSlide(drag.modal, state);
+    // Sideways: the file follows the finger, from where it was drawn when
+    // the finger took it, and the one it would step to comes into sight
+    // beside it. With nothing to step to it gives, less and less.
     const stage = stageOf(drag.modal);
     const width = stage ? stage.clientWidth : innerWidth;
     const several = severalOn(drag.modal);
-    const shown = several ? dx : previewMaths.rubber(dx, width);
+    const shown = drag.base + (several ? dx : previewMaths.rubber(dx, width));
     item.style.transform = `translateX(${shown}px)`;
-    drag.d = dx;
+    drag.d = shown;
     drag.shown = shown;
-    if (!several || !dx) return;
-    const side = dx < 0 ? 1 : -1, peek = peekOf(drag.modal, side), other = peekOf(drag.modal, -side);
+    if (!several || !shown) return;
+    const side = shown < 0 ? 1 : -1, peek = peekOf(drag.modal, side), other = peekOf(drag.modal, -side);
     if (other && other !== peek) { other.classList.remove('on'); other.style.transform = ''; }
     if (peek) {
       peek.getAnimations().forEach(run => run.cancel());
@@ -3633,7 +3747,11 @@
     if (!drag) return;
     const cancelled = event.type === 'touchcancel';
     if (drag.spent) {
-      if (!event.touches || !event.touches.length) gesture = null;
+      if (!event.touches || !event.touches.length) {
+        gesture = null;
+        // Settled already as it was ended, unless that has finished.
+        if (drag.picture && !viewRuns.has(drag.picture)) settleView(drag.picture, geometryOf(drag.picture));
+      }
       previewGestured = true;
       return;
     }
@@ -3660,6 +3778,9 @@
     const item = currentItem(modal);
     previewGestured = !!mode;
     if (!mode) {
+      // A file taken while it moved and let go of without moving slides
+      // back from there.
+      if (drag.base && item) slideBack(modal, item, drag.base);
       if (touch && !cancelled) tapped(modal, touch.clientX, touch.clientY, event.timeStamp);
       return;
     }
@@ -4227,6 +4348,11 @@
   }
   const each = (node, parent, visit) => {
     if (node.nodeType !== 1 || node.classList.contains('dui-ghost')) return;
+    // What the preview keeps in its ghost layer was let go of as it left
+    // the stage, and is not taken up again there, nor let go of twice: a
+    // PDF or a sound watched again would ask for bytes the app has
+    // already let go of.
+    if (parent && parent.closest && parent.closest('.dui-pv-ghost')) return;
     if (node.matches(WATCHED)) visit(node, parent);
     $$(WATCHED, node).forEach(inner => visit(inner, parent));
   };

@@ -407,3 +407,184 @@ test('Android: a pinch follows the fingers and settles within 4×; a swipe steps
     await browser.stop();
   }
 });
+
+// Rust's part, by hand: a new item on the stage, as `dirt_ui::files::preview`
+// draws one. `kind` is 'standin' (the thumbnail while the file is read),
+// 'picture', or 'sound' (a sound's card).
+const putItem = (file, kind, src = 'null') => `(() => {
+  const item = document.createElement('div');
+  item.className = 'dui-pv-item'; item.dataset.file = ${JSON.stringify(file)};
+  if (${JSON.stringify(kind)} === 'sound') {
+    item.innerHTML = '<div class="dui-pv-audio" data-dui-audio="data:audio/wav;base64,"></div>';
+  } else {
+    const img = document.createElement('img');
+    img.className = ${JSON.stringify(kind)} === 'standin' ? 'dui-pv-picture dui-pv-standin' : 'dui-pv-picture';
+    if (${JSON.stringify(kind)} === 'picture') img.dataset.duiZoom = '';
+    img.alt = '';
+    img.src = ${src};
+    item.appendChild(img);
+  }
+  document.querySelector('[data-dui-pv-stage] > .dui-pv-item').replaceWith(item);
+  return true;
+})()`;
+const press = async (cdp, key, code) => {
+  await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code: key, windowsVirtualKeyCode: code });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key, windowsVirtualKeyCode: code });
+};
+const ITEM_X = `new DOMMatrix(getComputedStyle(document.querySelector('[data-dui-pv-stage] > .dui-pv-item')).transform).e`;
+
+test('the desktop: what the review of #336 found', { skip: !browserFound && 'no Edge or Chrome here' }, async t => {
+  const browser = await page('desktop');
+  try {
+    const { cdp } = browser;
+    await cdp.evaluate(`document.querySelector('[data-dui-modal="preview"]').focus(); true`);
+
+    await t.test('a thumbnail kept for a picture not decoded yet leaves with a step, and is not left over the next file', async () => {
+      // A picture whose bytes never come: the request is held.
+      await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*slow.invalid*' }] });
+      await cdp.evaluate(putItem('a', 'standin', 'pictures.a'));
+      await sleep(400);
+      await cdp.evaluate(putItem('a', 'picture', "'http://slow.invalid/a.png'"));
+      await sleep(100);
+      const waiting = await cdp.evaluate(`(() => ({
+        ghosts: document.querySelectorAll('.dui-pv-ghost > .dui-pv-item').length,
+        waiting: document.querySelector('[data-dui-pv-stage] > .dui-pv-item').classList.contains('waiting'),
+      }))()`);
+      assert.deepEqual(waiting, { ghosts: 1, waiting: true });
+      await press(cdp, 'ArrowRight', 39);
+      await sleep(60);
+      await cdp.evaluate(putItem('b', 'standin', 'pictures.b'));
+      await sleep(100);
+      await cdp.evaluate(putItem('b', 'picture', 'pictures.b'));
+      await sleep(900);
+      const after = await cdp.evaluate(`(() => ({
+        ghosts: document.querySelector('.dui-pv-ghost').children.length,
+        file: document.querySelector('[data-dui-pv-stage] > .dui-pv-item').dataset.file,
+      }))()`);
+      assert.deepEqual(after, { ghosts: 0, file: 'b' });
+    });
+
+    await t.test('and one whose picture is replaced without a step goes at once', async () => {
+      await cdp.evaluate(putItem('a', 'standin', 'pictures.a'));
+      await sleep(400);
+      await cdp.evaluate(putItem('a', 'picture', "'http://slow.invalid/a2.png'"));
+      await sleep(100);
+      await cdp.evaluate(putItem('b', 'picture', 'pictures.b'));
+      await sleep(100);
+      assert.equal(await cdp.evaluate(`document.querySelectorAll('.dui-pv-ghost > .dui-pv-item[data-file="a"]').length`), 0);
+      await cdp.send('Fetch.disable');
+      await sleep(500);
+    });
+
+    await t.test('a sound that slides out is not played or read again from the ghost layer', async () => {
+      await cdp.evaluate(putItem('snd', 'sound'));
+      await sleep(300);
+      assert.equal(await cdp.evaluate(`!!document.querySelector('[data-dui-pv-stage] > .dui-pv-item [data-dui-audio]')._duiSound`), true);
+      await press(cdp, 'ArrowRight', 39);
+      await sleep(60);
+      await cdp.evaluate(putItem('b', 'picture', 'pictures.b'));
+      await sleep(60);
+      const kept = await cdp.evaluate(`(() => {
+        const card = document.querySelector('.dui-pv-ghost [data-dui-audio]');
+        return { kept: !!card, sound: card ? card._duiSound : 'none' };
+      })()`);
+      assert.deepEqual(kept, { kept: true, sound: null });
+      await sleep(900);
+    });
+
+    const box = await cdp.evaluate(`(() => { const b = document.querySelector('[data-dui-pv-stage] > .dui-pv-item img').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+    const doubleClick = async () => {
+      for (const clickCount of [1, 2]) {
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...box, button: 'left', buttons: 1, clickCount });
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...box, button: 'left', buttons: 0, clickCount });
+      }
+    };
+
+    await t.test('the wheel does not stop a zoom on its way back to fit', async () => {
+      await doubleClick();
+      await sleep(450);
+      near((await cdp.evaluate(VIEW)).s, 2, 1e-6, 'zoomed');
+      await doubleClick();
+      await sleep(60);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', ...box, deltaX: 0, deltaY: 40 });
+      await sleep(450);
+      const view = await cdp.evaluate(VIEW);
+      assert.deepEqual({ s: view.s, x: view.x, y: view.y }, { s: 1, x: 0, y: 0 });
+    });
+
+    await t.test('a zoomed picture is kept within its edges when the window changes size', async () => {
+      for (let turn = 0; turn < 8; turn++) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', ...box, deltaX: 0, deltaY: -200, modifiers: 2 });
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', ...box, deltaX: 0, deltaY: 100000 });
+      await sleep(100);
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 700, height: 500, deviceScaleFactor: 1, mobile: false });
+      await sleep(300);
+      const edges = await cdp.evaluate(`(() => { const b = document.querySelector('[data-dui-pv-stage] > .dui-pv-item img').getBoundingClientRect(); return { top: b.top, bottom: b.bottom, height: innerHeight }; })()`);
+      assert.ok(edges.top <= 0.5 && edges.bottom >= edges.height - 0.5, `the picture covers the window top to bottom: ${JSON.stringify(edges)}`);
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1000, height: 700, deviceScaleFactor: 1, mobile: false });
+    });
+  } finally {
+    await browser.stop();
+  }
+});
+
+test('Android: what the review of #336 found', { skip: !browserFound && 'no Edge or Chrome here' }, async t => {
+  const browser = await page('android');
+  try {
+    const { cdp } = browser;
+    const mid = await cdp.evaluate(`(() => { const b = document.querySelector('.dui-pv-item img').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+    const finger = (x, y, id) => ({ x, y, id });
+
+    await t.test('a third finger during a pinch past 4× settles it back to 4×', async () => {
+      let two = [finger(mid.x - 50, mid.y, 0), finger(mid.x + 50, mid.y, 1)];
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: two });
+      for (let k = 1; k <= 10; k++) {
+        two = [finger(mid.x - 50 - 20 * k, mid.y, 0), finger(mid.x + 50 + 20 * k, mid.y, 1)];
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: two });
+        await sleep(16);
+      }
+      assert.ok((await cdp.evaluate(VIEW)).s > 4, 'drawn past 4× while held');
+      const three = [...two, finger(mid.x, mid.y + 120, 2)];
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: three });
+      await sleep(450);
+      near((await cdp.evaluate(VIEW)).s, 4, 1e-6, 'settled while the fingers are still down');
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+      await sleep(450);
+      near((await cdp.evaluate(VIEW)).s, 4, 1e-6, 'and after they are gone');
+      for (let tap = 0; tap < 2; tap++) {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [finger(mid.x, mid.y, 0)] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await sleep(90);
+      }
+      await sleep(450);
+      assert.equal((await cdp.evaluate(VIEW)).s, 1);
+    });
+
+    await t.test('a file taken again as it slides back follows the finger from where it is drawn', async () => {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [finger(mid.x, mid.y, 0)] });
+      for (let k = 1; k <= 8; k++) {
+        await sleep(20);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [finger(mid.x - 12 * k, mid.y, 0)] });
+      }
+      await sleep(150);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await sleep(80);
+      const back = await cdp.evaluate(ITEM_X);
+      assert.ok(back < -5 && back > -96, `sliding back (${back})`);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [finger(mid.x, mid.y, 0)] });
+      for (let k = 1; k <= 4; k++) {
+        await sleep(16);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [finger(mid.x - 10 * k, mid.y, 0)] });
+      }
+      await sleep(50);
+      const held = await cdp.evaluate(`({ x: ${ITEM_X}, peek: document.querySelector('.dui-pv-peek[data-side="next"]').classList.contains('on') })`);
+      // It went on sliding back for a few ms between the two readings.
+      assert.ok(held.x < back - 25 && held.x > back - 60, `held at ${held.x}, 40 px on from about ${back}`);
+      assert.equal(held.peek, true);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await sleep(600);
+      assert.equal(await cdp.evaluate(ITEM_X), 0);
+    });
+  } finally {
+    await browser.stop();
+  }
+});
