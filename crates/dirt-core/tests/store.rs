@@ -299,6 +299,76 @@ async fn ids_are_found_by_prefix_and_odd_prefixes_match_nothing() {
     }
 }
 
+#[tokio::test]
+async fn the_shortest_unique_prefix_is_as_long_as_its_neighbours_need() {
+    let (_folder, store) = temp_store();
+    let id = |text: &str| text.parse::<dirt_core::NoteId>().unwrap();
+    let put = |text: &'static str| {
+        let store = store.clone();
+        async move {
+            store.create_note_with_id(id(text), "a note").await.unwrap();
+        }
+    };
+    put("0193a1b2-0000-7000-8000-000000000001").await;
+    put("0193a1b2-c000-7000-8000-000000000002").await;
+    put("0193a1b2-c100-7000-8000-000000000003").await;
+    put("0194ffff-0000-7000-8000-000000000004").await;
+
+    let prefixes = store
+        .shortest_id_prefixes(
+            &[
+                id("0193a1b2-0000-7000-8000-000000000001"),
+                id("0193a1b2-c000-7000-8000-000000000002"),
+                id("0193a1b2-c100-7000-8000-000000000003"),
+                id("0194ffff-0000-7000-8000-000000000004"),
+            ],
+            false,
+            8,
+        )
+        .await
+        .unwrap();
+    // Never shorter than asked, and one longer than the start an ID
+    // shares with its closest neighbour.
+    assert_eq!(
+        prefixes,
+        ["0193a1b2-0", "0193a1b2-c0", "0193a1b2-c1", "0194ffff"]
+    );
+    for prefix in &prefixes {
+        assert_eq!(
+            store
+                .list_note_ids_by_prefix(prefix, 10)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    // A hyphen is never the last character.
+    assert_eq!(
+        store
+            .shortest_id_prefixes(&[id("0194ffff-0000-7000-8000-000000000004")], false, 9)
+            .await
+            .unwrap(),
+        ["0194ffff-0"]
+    );
+
+    // A deleted note is counted among the deleted ones only.
+    let gone = id("0193a1b2-c100-7000-8000-000000000003");
+    store.delete_note(&gone).await.unwrap();
+    assert_eq!(
+        store
+            .shortest_id_prefixes(&[id("0193a1b2-c000-7000-8000-000000000002")], false, 8)
+            .await
+            .unwrap(),
+        ["0193a1b2-c"]
+    );
+    assert_eq!(
+        store.shortest_id_prefixes(&[gone], true, 4).await.unwrap(),
+        ["0193"]
+    );
+}
+
 // ---- Settings ----
 
 #[tokio::test]

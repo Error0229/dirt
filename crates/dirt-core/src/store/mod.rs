@@ -1190,6 +1190,26 @@ impl Store {
             .await
     }
 
+    /// For each of `ids`, the shortest start of it that names no other
+    /// note, for a list to show in place of the whole ID: at least
+    /// `at_least` characters, and never ending in a hyphen. Unique among
+    /// the live notes, archived ones among them, as
+    /// [`Self::list_note_ids_by_prefix`] looks; with `deleted`, among the
+    /// deleted ones, as [`Self::list_deleted_note_ids_by_prefix`] does.
+    ///
+    /// A prefix is unique when it is made. A note written later can share
+    /// it.
+    pub async fn shortest_id_prefixes(
+        &self,
+        ids: &[NoteId],
+        deleted: bool,
+        at_least: usize,
+    ) -> Result<Vec<String>> {
+        let ids = ids.to_vec();
+        self.read(move |c| notes::shortest_prefixes(c, &ids, deleted, at_least))
+            .await
+    }
+
     /// The IDs of deleted notes whose ID starts with `prefix`: the notes
     /// that [`Self::restore_note`] can bring back.
     pub async fn list_deleted_note_ids_by_prefix(

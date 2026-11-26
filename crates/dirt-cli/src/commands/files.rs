@@ -10,19 +10,21 @@ use dirt_core::files::{media_type_for, safe_file_name, save_copy, Attachment};
 use dirt_core::store::AttachedFile;
 use dirt_core::sync::engine::file_on_device;
 use dirt_core::sync::overview::size_words;
-use dirt_core::{NoteId, Store};
+use dirt_core::NoteId;
 use serde::Serialize;
 
-use crate::commands::common::{normalize_note_identifier, resolve_note_for_edit};
 use crate::context::Context;
 use crate::error::CliError;
 
-/// How much of a file's ID a list shows: as much as it shows of a note's.
+/// How much of a file's ID a list shows.
 const SHORT_ID: usize = 13;
 
-async fn note_named(query: &str, store: &Store) -> Result<NoteId, CliError> {
-    let query = normalize_note_identifier(query)?;
-    Ok(resolve_note_for_edit(&query, store).await?.id)
+/// The note a file command names, as every command names one
+/// ([`crate::naming`]).
+async fn note_named(query: &str, context: &Context) -> Result<NoteId, CliError> {
+    Ok(crate::naming::note_named(&[query.to_owned()], context)
+        .await?
+        .id)
 }
 
 /// The one file of a note that `query` names: by the start of its ID, or
@@ -73,7 +75,7 @@ pub async fn run_attach(
     context: &Context,
 ) -> Result<Attachment, CliError> {
     let store = &context.store;
-    let note = note_named(note, store).await?;
+    let note = note_named(note, context).await?;
     if !source.is_file() {
         return Err(CliError::Files(format!(
             "{} is not a file",
@@ -99,7 +101,7 @@ pub async fn run_attach(
 }
 
 #[derive(Debug, Serialize)]
-struct FileListItem {
+pub struct FileListItem {
     id: String,
     name: String,
     media_type: String,
@@ -110,10 +112,24 @@ struct FileListItem {
     standing: Option<String>,
 }
 
+/// A file as `--json` gives it.
+pub fn file_item(file: AttachedFile) -> FileListItem {
+    FileListItem {
+        id: file.attachment.file_id.to_string(),
+        standing: file.standing_words(),
+        on_this_device: file.on_device,
+        has_thumbnail: file.attachment.thumbnail.is_some(),
+        name: file.attachment.name,
+        media_type: file.attachment.media_type,
+        size: file.attachment.size,
+    }
+}
+
 /// One line for each file of a note: the start of its ID, its name, its
 /// size and kind, and where it is if that is worth saying.
-pub async fn files_lines(note: &str, store: &Store) -> Result<Vec<String>, CliError> {
-    let note = note_named(note, store).await?;
+pub async fn files_lines(note: &str, context: &Context) -> Result<Vec<String>, CliError> {
+    let store = &context.store;
+    let note = note_named(note, context).await?;
     let files = store.attached_files(&note).await?;
     if files.is_empty() {
         return Ok(vec!["The note has no files.".to_owned()]);
@@ -148,26 +164,19 @@ pub async fn files_lines(note: &str, store: &Store) -> Result<Vec<String>, CliEr
         .collect())
 }
 
-pub async fn run_files(note: &str, as_json: bool, store: &Store) -> Result<(), CliError> {
+pub async fn run_files(note: &str, as_json: bool, context: &Context) -> Result<(), CliError> {
     if as_json {
-        let note = note_named(note, store).await?;
-        let items: Vec<FileListItem> = store
+        let note = note_named(note, context).await?;
+        let items: Vec<FileListItem> = context
+            .store
             .attached_files(&note)
             .await?
             .into_iter()
-            .map(|file| FileListItem {
-                id: file.attachment.file_id.to_string(),
-                standing: file.standing_words(),
-                on_this_device: file.on_device,
-                has_thumbnail: file.attachment.thumbnail.is_some(),
-                name: file.attachment.name,
-                media_type: file.attachment.media_type,
-                size: file.attachment.size,
-            })
+            .map(file_item)
             .collect();
         println!("{}", serde_json::to_string_pretty(&items)?);
     } else {
-        for line in files_lines(note, store).await? {
+        for line in files_lines(note, context).await? {
             println!("{line}");
         }
     }
@@ -197,7 +206,7 @@ pub async fn run_save(
     context: &Context,
 ) -> Result<PathBuf, CliError> {
     let store = &context.store;
-    let note = note_named(note, store).await?;
+    let note = note_named(note, context).await?;
     let files = store.attached_files(&note).await?;
     let file = file_named(file, &files)?;
     let target = destination(path, &file.attachment);
@@ -241,7 +250,7 @@ pub fn copy_to(held: &Path, target: &Path, replace: bool) -> Result<(), CliError
 /// Removes a file from a note and prints the file's ID.
 pub async fn run_detach(note: &str, file: &str, context: &Context) -> Result<(), CliError> {
     let store = &context.store;
-    let note = note_named(note, store).await?;
+    let note = note_named(note, context).await?;
     let files = store.attached_files(&note).await?;
     let file_id = file_named(file, &files)?.attachment.file_id;
     store.detach_file(&note, file_id).await?;

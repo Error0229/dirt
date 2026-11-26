@@ -11,4 +11,5 @@ pub mod files;
 pub mod list;
 pub mod restore;
 pub mod search;
+pub mod show;
 pub mod sync;

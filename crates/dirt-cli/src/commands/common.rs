@@ -1,8 +1,8 @@
 use std::env;
 use std::io::{self, IsTerminal, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use dirt_core::models::Words;
@@ -10,6 +10,7 @@ use dirt_core::{Note, NoteId, Store};
 use serde::Serialize;
 
 use crate::error::CliError;
+use crate::naming::SHORT_ID;
 
 #[derive(Debug, Serialize)]
 pub struct NoteListItem {
@@ -43,67 +44,28 @@ pub async fn search_notes(query: &str, limit: usize, db: &Store) -> Result<Vec<N
     Ok(db.search_notes(query, limit).await?)
 }
 
-pub async fn resolve_note_for_edit(note_query: &str, db: &Store) -> Result<Note, CliError> {
-    if let Ok(note_id) = note_query.parse::<NoteId>() {
-        if let Some(note) = db.get_note(&note_id).await? {
-            return Ok(note);
-        }
-    }
-
-    let matching_ids = db.list_note_ids_by_prefix(note_query, 3).await?;
-    let resolved_id = the_one_of(&matching_ids, note_query)?;
-    db.get_note(&resolved_id)
-        .await?
-        .ok_or_else(|| CliError::NoteNotFound(note_query.to_string()))
+/// The lines of a list: each note's number, the shortest start of its ID
+/// that names it, its first words, when it was edited, its tags, and a
+/// word for an archived note, which a search lists among the others.
+pub async fn listing_lines(notes: &[Note], store: &Store) -> Result<Vec<String>, CliError> {
+    let ids: Vec<NoteId> = notes.iter().map(|note| note.id).collect();
+    let short_ids = store.shortest_id_prefixes(&ids, false, SHORT_ID).await?;
+    Ok(format_note_lines(notes, &short_ids))
 }
 
-/// The ID of the deleted note that `note_query` names, for bringing it
-/// back: a whole ID, or the start of the ID of one deleted note that this
-/// device still holds.
-///
-/// A whole ID is taken as it is. The store says if it holds no such note,
-/// and leaves alone a note that is not deleted.
-pub async fn resolve_deleted_note(note_query: &str, db: &Store) -> Result<NoteId, CliError> {
-    if let Ok(note_id) = note_query.parse::<NoteId>() {
-        return Ok(note_id);
-    }
-    let matching_ids = db.list_deleted_note_ids_by_prefix(note_query, 3).await?;
-    the_one_of(&matching_ids, note_query)
-}
-
-/// The one ID that a prefix matched, or why there is not exactly one.
-fn the_one_of(matching_ids: &[String], note_query: &str) -> Result<NoteId, CliError> {
-    match matching_ids {
-        [] => Err(CliError::NoteNotFound(note_query.to_string())),
-        [only] => only
-            .parse::<NoteId>()
-            .map_err(|_| CliError::NoteNotFound(note_query.to_string())),
-        several => {
-            let options = several
-                .iter()
-                .take(3)
-                .map(|id| id.chars().take(13).collect::<String>())
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            Err(CliError::AmbiguousNoteId(format!(
-                "ID prefix '{note_query}' is ambiguous; matches: {options}"
-            )))
-        }
-    }
-}
-
-pub fn format_note_lines(notes: &[Note]) -> Vec<String> {
+/// The lines of a list, given each note's short ID.
+pub fn format_note_lines(notes: &[Note], short_ids: &[String]) -> Vec<String> {
     let now_ms = Utc::now().timestamp_millis();
+    let number_width = notes.len().to_string().len();
+    let id_width = short_ids.iter().map(String::len).max().unwrap_or(0);
     notes
         .iter()
-        .map(|note| {
-            let id = note.id.to_string();
-            let short_id = id.chars().take(13).collect::<String>();
+        .zip(short_ids)
+        .enumerate()
+        .map(|(index, (note, short_id))| {
+            let number = index + 1;
             let preview = note_preview(note, 40);
             let relative_time = format_relative_time(note.updated_at, now_ms);
-            // After the time: the note's tags, and a word for an archived
-            // note, which a search lists among the others.
             let mut rest = render_tags(note);
             if note.archived {
                 if !rest.is_empty() {
@@ -111,14 +73,41 @@ pub fn format_note_lines(notes: &[Note]) -> Vec<String> {
                 }
                 rest.push_str(ARCHIVED_MARK);
             }
-
-            if rest.is_empty() {
-                format!("{short_id:<13}  {preview:<40}  {relative_time}")
-            } else {
-                format!("{short_id:<13}  {preview:<40}  {relative_time:<10}  {rest}")
-            }
+            let line = format!(
+                "{number:>number_width$}  {short_id:<id_width$}  {preview:<40}  {relative_time:<8}  {rest}"
+            );
+            line.trim_end().to_owned()
         })
         .collect()
+}
+
+/// What a command that changed a note says of it. To a terminal, in words:
+/// what was done and the note's first words, and anything more there is
+/// to say. Otherwise the note's whole ID alone, which is what a script
+/// reads, as it always was.
+pub fn report_line(done: &str, note: &Note, more: Option<&str>, to_terminal: bool) -> String {
+    if !to_terminal {
+        return note.id.to_string();
+    }
+    let preview = note_preview(note, 60);
+    let mut line = if preview.is_empty() {
+        format!("{done}.")
+    } else {
+        format!("{done}: {preview}")
+    };
+    if let Some(more) = more {
+        line.push_str(if preview.is_empty() { " " } else { ". " });
+        line.push_str(more);
+    }
+    line
+}
+
+/// Prints [`report_line`] on standard output.
+pub fn report(done: &str, note: &Note, more: Option<&str>) {
+    println!(
+        "{}",
+        report_line(done, note, more, io::stdout().is_terminal())
+    );
 }
 
 /// What a line of a list says of an archived note.
@@ -209,10 +198,13 @@ pub fn resolve_note_content(content_parts: &[String]) -> Result<String, CliError
         return Ok(content);
     }
 
-    if let Some(content) = capture_editor_input()? {
+    let edited = edit_in_editor(&preferred_editor(), "", &note_file_name(None))?;
+    if let Some(content) = edited.text {
         return Ok(content);
     }
-
+    if edited.at_once {
+        eprintln!("{RETURNED_AT_ONCE}");
+    }
     Err(CliError::EmptyContent)
 }
 
@@ -234,15 +226,6 @@ pub fn normalize_search_query(query: &str) -> Result<String, CliError> {
     }
 }
 
-pub fn normalize_note_identifier(id: &str) -> Result<String, CliError> {
-    let trimmed = id.trim();
-    if trimmed.is_empty() {
-        Err(CliError::EmptyNoteId)
-    } else {
-        Ok(trimmed.to_string())
-    }
-}
-
 pub fn read_piped_stdin() -> Result<Option<String>, CliError> {
     let stdin = io::stdin();
     if stdin.is_terminal() {
@@ -254,24 +237,102 @@ pub fn read_piped_stdin() -> Result<Option<String>, CliError> {
     Ok(normalize_content(&buffer))
 }
 
-pub fn capture_editor_input() -> Result<Option<String>, CliError> {
-    capture_editor_input_with_initial("")
+/// What came back from the editor.
+#[derive(Debug)]
+pub struct Edited {
+    /// The text, trimmed; `None` if nothing but space was left.
+    pub text: Option<String>,
+    /// The editor returned within [`AT_ONCE`]: perhaps it handed the file
+    /// to a window already open and did not wait for it.
+    pub at_once: bool,
 }
 
-pub fn capture_editor_input_with_initial(
-    initial_content: &str,
-) -> Result<Option<String>, CliError> {
-    let editor = preferred_editor();
-    let temp_file = create_temp_note_file_path();
-    std::fs::write(&temp_file, initial_content)?;
+/// An editor that returns sooner than this may not have waited for the
+/// person.
+pub const AT_ONCE: Duration = Duration::from_secs(1);
 
-    let launch_result = launch_editor(&editor, &temp_file);
-    let note_content = std::fs::read_to_string(&temp_file)?;
-    let _ = std::fs::remove_file(&temp_file);
+/// What to say when the editor came back at once with nothing changed.
+pub const RETURNED_AT_ONCE: &str = "The editor returned at once. If it opens a window \
+    and does not wait for it to close, set EDITOR to a command that waits, as in \
+    `code --wait`";
 
-    launch_result?;
-    Ok(normalize_content(&note_content))
+/// The name of the file a note is edited in, which the editor shows: the
+/// note's first words, or `new-note.txt` for a note not written yet. Plain
+/// text, as a note is.
+pub fn note_file_name(note: Option<&Note>) -> String {
+    let Some(note) = note else {
+        return "new-note.txt".to_owned();
+    };
+    let mut name = String::new();
+    for c in note_preview(note, 40).trim_end_matches("...").chars() {
+        if c.is_alphanumeric() {
+            name.extend(c.to_lowercase());
+        } else if !name.is_empty() && !name.ends_with('-') {
+            name.push('-');
+        }
+    }
+    let name = name.trim_end_matches('-');
+    if name.is_empty() {
+        "note.txt".to_owned()
+    } else {
+        format!("{name}.txt")
+    }
 }
+
+/// Opens `initial` in `editor`, in a file called `file_name`
+/// inside a new folder that only this user can open, and returns what the
+/// file holds when the editor exits. The folder is removed afterwards.
+pub fn edit_in_editor(editor: &Editor, initial: &str, file_name: &str) -> Result<Edited, CliError> {
+    let folder = tempfile::Builder::new().prefix("dirt-").tempdir()?;
+    let file = folder.path().join(file_name);
+    std::fs::write(&file, initial)?;
+
+    let started = Instant::now();
+    let launched = launch_editor(&editor.command, &file);
+    let at_once = started.elapsed() < AT_ONCE;
+    launched.map_err(|error| editor.failed(error))?;
+    let text = std::fs::read_to_string(&file)?;
+    Ok(Edited {
+        text: normalize_content(&text),
+        at_once,
+    })
+}
+
+/// The editor to use, and where the choice came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Editor {
+    pub command: String,
+    /// The variable that named it, or `None` for [`default_editor`].
+    pub from: Option<&'static str>,
+}
+
+impl Editor {
+    /// Says what went wrong, and for the editor used when none was set,
+    /// how to set one.
+    pub fn failed(&self, error: CliError) -> CliError {
+        let why = match error {
+            CliError::EditorFailed(why) => why,
+            CliError::Io(error) => format!("`{}` could not be started ({error})", self.command),
+            other => return other,
+        };
+        CliError::EditorFailed(self.from.map_or_else(
+            || {
+                format!(
+                    "{why}. It is the editor used when neither VISUAL nor EDITOR is set. \
+                     {SET_EDITOR}"
+                )
+            },
+            |variable| format!("{why}. It is the editor {variable} names"),
+        ))
+    }
+}
+
+/// How to choose an editor.
+pub const SET_EDITOR: &str = if cfg!(windows) {
+    "Set EDITOR to the editor to use, as in `$env:EDITOR = \"code --wait\"` in PowerShell"
+} else {
+    "Set EDITOR to the editor to use, as in `export EDITOR=nano`"
+};
 
 /// Runs the editor on `file_path` and waits for it.
 ///
@@ -314,10 +375,31 @@ pub fn launch_editor(editor: &str, file_path: &Path) -> Result<(), CliError> {
     }
 }
 
-pub fn preferred_editor() -> String {
-    env::var("VISUAL")
-        .or_else(|_| env::var("EDITOR"))
-        .unwrap_or_else(|_| default_editor().to_string())
+/// `VISUAL`, else `EDITOR`, else [`default_editor`]. An empty variable is
+/// as good as none.
+pub fn preferred_editor() -> Editor {
+    editor_from(env::var("VISUAL").ok(), env::var("EDITOR").ok())
+}
+
+/// [`preferred_editor`], given the two variables.
+pub fn editor_from(visual: Option<String>, editor: Option<String>) -> Editor {
+    let set = |value: Option<String>| value.filter(|value| !value.trim().is_empty());
+    if let Some(command) = set(visual) {
+        return Editor {
+            command,
+            from: Some("VISUAL"),
+        };
+    }
+    if let Some(command) = set(editor) {
+        return Editor {
+            command,
+            from: Some("EDITOR"),
+        };
+    }
+    Editor {
+        command: default_editor().to_owned(),
+        from: None,
+    }
 }
 
 pub const fn default_editor() -> &'static str {
@@ -326,11 +408,4 @@ pub const fn default_editor() -> &'static str {
     } else {
         "vi"
     }
-}
-
-pub fn create_temp_note_file_path() -> PathBuf {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_nanos());
-    env::temp_dir().join(format!("dirt-note-{}-{now}.md", std::process::id()))
 }

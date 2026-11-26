@@ -789,6 +789,45 @@ pub(super) fn ids_by_prefix(
     Ok(ids)
 }
 
+/// For each of `ids`, the shortest start of it that is the start of no
+/// other note's ID: among the live notes, or with `deleted` among the
+/// deleted ones. At least `at_least` characters long, and never ending in
+/// a hyphen. Two queries on the IDs' index for each ID: its neighbours in
+/// order are the only IDs that can share more of its start than any other.
+pub(super) fn shortest_prefixes(
+    connection: &Connection,
+    ids: &[NoteId],
+    deleted: bool,
+    at_least: usize,
+) -> Result<Vec<String>> {
+    let mut statement = connection.prepare(
+        "SELECT (SELECT id FROM notes WHERE deleted = ?2 AND id < ?1 ORDER BY id DESC LIMIT 1), \
+                (SELECT id FROM notes WHERE deleted = ?2 AND id > ?1 ORDER BY id LIMIT 1)",
+    )?;
+    let shared = |one: &str, other: Option<String>| {
+        other.map_or(0, |other| {
+            one.bytes()
+                .zip(other.bytes())
+                .take_while(|(a, b)| a == b)
+                .count()
+        })
+    };
+    let mut prefixes = Vec::with_capacity(ids.len());
+    for id in ids {
+        let id = id.as_str();
+        let (before, after): (Option<String>, Option<String>) =
+            statement.query_row(params![id, deleted], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let mut length = (shared(&id, before).max(shared(&id, after)) + 1)
+            .max(at_least)
+            .min(id.len());
+        if length < id.len() && id.as_bytes()[length - 1] == b'-' {
+            length += 1;
+        }
+        prefixes.push(id[..length].to_owned());
+    }
+    Ok(prefixes)
+}
+
 /// Turns what a person typed into a full-text query: every word must appear,
 /// and each word also matches as the start of a longer one.
 ///

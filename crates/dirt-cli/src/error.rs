@@ -14,14 +14,18 @@ pub enum CliError {
     EmptyContent,
     #[error("Edited note content cannot be empty")]
     EmptyEditedContent,
-    #[error("Note ID cannot be empty")]
+    #[error("Say which note: its number in the last list, its ID, or words from it")]
     EmptyNoteId,
     #[error("Search query cannot be empty")]
     EmptySearchQuery,
-    #[error("Note not found for id/prefix: {0}")]
-    NoteNotFound(String),
+    /// No note is the one named. The text says why, and what to try.
     #[error("{0}")]
-    AmbiguousNoteId(String),
+    NoteNotFound(String),
+    /// More than one note is. The text lists them, numbered.
+    #[error("{0}")]
+    SeveralNotes(String),
+    #[error("No note was chosen")]
+    NothingChosen,
     #[error("Editor command failed: {0}")]
     EditorFailed(String),
     #[error("Configuration error: {0}")]
