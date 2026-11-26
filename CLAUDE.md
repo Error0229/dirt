@@ -168,6 +168,10 @@ dx build --platform android --package dirt-mobile --target aarch64-linux-android
 node tools/motion/motion.mjs run settings-panel --platform desktop --mockup
 node --test tools/motion/test/analyse.test.mjs tools/motion/test/page.test.mjs
 
+# dirt-ui's script in a headless Edge or Chrome (skipped where neither is
+# installed): Settings opened again takes the pointer
+node --test crates/dirt-ui/tests/js/modal.test.mjs
+
 # List Makefile shortcuts
 make help
 

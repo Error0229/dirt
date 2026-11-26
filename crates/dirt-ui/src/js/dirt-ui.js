@@ -54,15 +54,41 @@
     setTimeout(once, ms + 400);
   }
 
+  // Every Web Animation the script starts, starts here. Chromium (WebView2,
+  // Android's WebView) keeps, for an element it has animated, the style the
+  // element had without its animation, and starts the element's next
+  // animation from that kept style when nothing else about the element is
+  // to be worked out again. Once the page has collected the element's
+  // last animations, what it kept can be from long before: a style its
+  // parent has since changed. Settings' sections, rising as it opened
+  // again, took the style they had while it was closed, inert and taking
+  // no pointer, and no button in Settings did anything but the close,
+  // which does not rise (6.9). Touching the element's own style first
+  // has the next style pass work out its whole style again, from its
+  // parent as it is now, with the animation on it. The touch leaves the
+  // element's style as it was. An element without a style attribute is
+  // given one and has it taken away again: touched through `style`
+  // instead, it kept an empty one, which Chromium writes back later.
+  function startAnimation(element, frames, options) {
+    if (element.hasAttribute('style')) {
+      element.style.setProperty('--dui-restyle', '1');
+      element.style.removeProperty('--dui-restyle');
+    } else {
+      element.setAttribute('style', '--dui-restyle: 1');
+      element.removeAttribute('style');
+    }
+    return element.animate(frames, options);
+  }
+
   // Reduced motion keeps the fade and drops the movement.
   function animate(element, frames, options) {
     if (!element) return { finished: Promise.resolve(), cancel() {} };
     if (reduced()) {
       const fades = frames.map(frame => ({ opacity: frame.opacity === undefined ? 1 : frame.opacity }));
       const fill = options.fill === 'forwards' || options.fill === 'both' ? 'forwards' : 'none';
-      return element.animate(fades, { duration: Math.min(options.duration || 0, 120), fill });
+      return startAnimation(element, fades, { duration: Math.min(options.duration || 0, 120), fill });
     }
-    return element.animate(frames, options);
+    return startAnimation(element, frames, options);
   }
 
   // ---- Telling Rust ---------------------------------------------------
@@ -149,7 +175,7 @@
     const glide = spring('glide');
     let transition;
     try { transition = document.startViewTransition(change); } catch (error) { return crossFade(change); }
-    transition.ready.then(() => root.animate(
+    transition.ready.then(() => startAnimation(root,
       { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`] },
       { duration: 620, easing: glide.easing, pseudoElement: '::view-transition-new(root)' },
     )).catch(() => {});
@@ -354,7 +380,7 @@
     if (tear) {
       // The row tears away to the left (170 ms, exit).
       ms = 170;
-      going = ghost.animate([{ transform: 'none', opacity: 1 }, { transform: 'translateX(-28px) scale(.96)', opacity: 0 }],
+      going = startAnimation(ghost, [{ transform: 'none', opacity: 1 }, { transform: 'translateX(-28px) scale(.96)', opacity: 0 }],
         { duration: ms, easing: tokens.exit, fill: 'forwards' });
     } else if ((how === 'fold' || how === 'sink') && moving) {
       // An archived row folds shut where it was, while the rows below
@@ -364,18 +390,18 @@
       ms = Math.min(snap.ms, 320);
       ghost.style.transformOrigin = '50% 0';
       ghost.style.overflow = 'hidden';
-      going = ghost.animate([{ transform: 'none', opacity: 1 }, { transform: 'scaleY(.2)', opacity: 0 }],
+      going = startAnimation(ghost, [{ transform: 'none', opacity: 1 }, { transform: 'scaleY(.2)', opacity: 0 }],
         { duration: ms, easing: tokens.exit, fill: 'forwards' });
     } else if (how === 'shrink' && moving) {
       // A token shrinks to nothing sideways while fading (200 ms, exit),
       // and the field closes up.
       ms = 200;
       ghost.style.transformOrigin = '0 50%';
-      going = ghost.animate([{ transform: 'none', opacity: 1 }, { transform: 'scaleX(0)', opacity: 0 }],
+      going = startAnimation(ghost, [{ transform: 'none', opacity: 1 }, { transform: 'scaleX(0)', opacity: 0 }],
         { duration: ms, easing: tokens.exit, fill: 'forwards' });
     } else {
       ms = moving ? 120 : tokens.reducedMs;
-      going = ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
+      going = startAnimation(ghost, [{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
     }
     after(going, ms, () => ghost.remove());
     return tear;
@@ -406,14 +432,14 @@
         if (row.dataset.duiSettle !== undefined) return;
         const first = !seen.size && list.dataset.duiEnterFirst === undefined;
         if (first || row.dataset.duiEnter === 'none' || !within(now, view)) return;
-        if (quiet) { row.animate([{ opacity: 0 }, { opacity: 1 }], { duration: tokens.reducedMs }); return; }
+        if (quiet) { startAnimation(row, [{ opacity: 0 }, { opacity: 1 }], { duration: tokens.reducedMs }); return; }
         if (row.dataset.duiEnter === 'grow') {
           // A file's tile grows out of the point last pressed (the
           // paperclip) or where it was dropped, and bounces into place
           // (pop); several follow one another, 70 ms apart.
           const pop = spring('pop'), box = row.getBoundingClientRect();
           const dx = lastPress[0] - (box.left + box.width / 2), dy = lastPress[1] - (box.top + box.height / 2);
-          row.animate([{ opacity: 0, transform: `translate(${dx}px, ${dy}px) scale(.3)` }, { opacity: 1, transform: 'none' }],
+          startAnimation(row, [{ opacity: 0, transform: `translate(${dx}px, ${dy}px) scale(.3)` }, { opacity: 1, transform: 'none' }],
             { duration: pop.ms, easing: pop.easing, delay: Math.min(fresh++, 6) * 70, fill: 'backwards' });
           return;
         }
@@ -427,13 +453,13 @@
         if (row.dataset.duiEnter === 'pop') {
           // Undo: the row drops back into its place with a bounce.
           const pop = spring('pop');
-          row.animate([{ opacity: 0, transform: 'scale(.9) translateY(-6px)' }, { opacity: 1, transform: 'none' }],
+          startAnimation(row, [{ opacity: 0, transform: 'scale(.9) translateY(-6px)' }, { opacity: 1, transform: 'none' }],
             { duration: pop.ms, easing: pop.easing });
           return;
         }
         // New rows settle in from above, one after another; past the
         // sixth the rest arrive together.
-        row.animate([{ opacity: 0, transform: 'translateY(-8px) scale(.98)' }, { opacity: 1, transform: 'none' }],
+        startAnimation(row, [{ opacity: 0, transform: 'translateY(-8px) scale(.98)' }, { opacity: 1, transform: 'none' }],
           { duration: snap.ms, easing: snap.easing, delay: follow + Math.min(fresh++, 6) * 24, fill: 'backwards' });
         return;
       }
@@ -443,16 +469,16 @@
       const [fx, fy] = flightOf(row);
       if (quiet || !(within(was, view) || within(now, view))) return;
       dx += fx; dy += fy;
-      row._duiMove = row.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
+      row._duiMove = startAnimation(row, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
         { duration: snap.ms, easing: snap.easing, delay: follow, fill: 'backwards' });
     });
     state.seen = next;
     placeSelection(list, false);
   }
   function popIn(element, delay) {
-    if (reduced()) { element.animate([{ opacity: 0 }, { opacity: 1 }], { duration: tokens.reducedMs }); return; }
+    if (reduced()) { startAnimation(element, [{ opacity: 0 }, { opacity: 1 }], { duration: tokens.reducedMs }); return; }
     const pop = spring('pop');
-    element.animate([{ opacity: 0, transform: 'scale(.3)' }, { opacity: 1, offset: 0.3 }, { opacity: 1, transform: 'none' }],
+    startAnimation(element, [{ opacity: 0, transform: 'scale(.3)' }, { opacity: 1, offset: 0.3 }, { opacity: 1, transform: 'none' }],
       { duration: pop.ms, easing: pop.easing, delay, fill: 'backwards' });
   }
   // A window made narrower, a font arriving or a text size chosen moves
@@ -571,7 +597,7 @@
     if (done.dx < -SWIPE_PAST && !(event && event.type === 'pointercancel')) {
       card.dataset.duiGone = '';
       const ms = reduced() ? tokens.reducedMs : 180;
-      const off = card.animate([{ transform: `translateX(${done.dx}px)` }, { transform: 'translateX(-110%)' }],
+      const off = startAnimation(card, [{ transform: `translateX(${done.dx}px)` }, { transform: 'translateX(-110%)' }],
         { duration: ms, easing: tokens.exit, fill: 'forwards' });
       after(off, ms, () => {
         // Where it is drawn now, written on it: the copy of it that the
@@ -933,10 +959,10 @@
     page.classList.remove('leaving');
     const from = document.getElementById(page.dataset.duiFrom || '');
     const again = (element, now) => (element && now < 1
-      ? state.runs.push(element.animate([{ opacity: now }, { opacity: 1 }], { duration: 200, easing: tokens.standard })) : 0);
+      ? state.runs.push(startAnimation(element, [{ opacity: now }, { opacity: 1 }], { duration: 200, easing: tokens.standard })) : 0);
     if (reduced() || !onScreen(from)) {
       const ms = reduced() ? tokens.reducedMs : 200;
-      const run = page.animate([{ opacity: 0 }, { opacity: 1 }], { duration: ms, easing: tokens.standard });
+      const run = startAnimation(page, [{ opacity: 0 }, { opacity: 1 }], { duration: ms, easing: tokens.standard });
       state.runs.push(run);
       focusWhenGrown(page, run, ms);
       return;
@@ -944,22 +970,22 @@
     const whole = 'inset(0px 0px 0px 0px round 0px)';
     if (page.dataset.duiFromKind === 'bar') {
       const glide = spring('glide');
-      state.runs.push(page.animate([{ clipPath: fromNow || clipOf(from) }, { clipPath: whole }], { duration: 560, easing: glide.easing }));
+      state.runs.push(startAnimation(page, [{ clipPath: fromNow || clipOf(from) }, { clipPath: whole }], { duration: 560, easing: glide.easing }));
       if (fromNow) { again(page, pageNow); again(bar, barNow); again(body, bodyNow); return; }
-      if (bar) state.runs.push(bar.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, delay: 180, fill: 'backwards' }));
+      if (bar) state.runs.push(startAnimation(bar, [{ opacity: 0 }, { opacity: 1 }], { duration: 240, delay: 180, fill: 'backwards' }));
       return;
     }
-    const run = page.animate([{ clipPath: fromNow || clipOf(from) }, { clipPath: whole }], { duration: 440, easing: tokens.enter });
+    const run = startAnimation(page, [{ clipPath: fromNow || clipOf(from) }, { clipPath: whole }], { duration: 440, easing: tokens.enter });
     state.runs.push(run);
     focusWhenGrown(page, run, 440);
     if (fromNow) {
-      if (bodyAt !== 'none') state.runs.push(body.animate([{ transform: bodyAt }, { transform: 'none' }], { duration: 440, easing: tokens.enter }));
+      if (bodyAt !== 'none') state.runs.push(startAnimation(body, [{ transform: bodyAt }, { transform: 'none' }], { duration: 440, easing: tokens.enter }));
       again(page, pageNow); again(bar, barNow); again(body, bodyNow);
       return;
     }
-    if (body) state.runs.push(body.animate([{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }],
+    if (body) state.runs.push(startAnimation(body, [{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }],
       { duration: 380, delay: 60, easing: tokens.enter, fill: 'backwards' }));
-    if (bar) state.runs.push(bar.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, delay: 120, fill: 'backwards' }));
+    if (bar) state.runs.push(startAnimation(bar, [{ opacity: 0 }, { opacity: 1 }], { duration: 260, delay: 120, fill: 'backwards' }));
   }
   function growClosed(page, state) {
     // This closing's own number in the script: a late end of an earlier
@@ -979,7 +1005,7 @@
     const grain = page.dataset.duiFromKind === 'grain';
     if (reduced() || (!grain && !onScreen(to))) {
       ms = reduced() ? tokens.reducedMs : 180;
-      going = page.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
+      going = startAnimation(page, [{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
     } else if (grain) {
       // A new page with words closes to a 7 px circle where its words
       // began (300 ms), and its grain is tossed from there onto its card
@@ -990,14 +1016,14 @@
       const x = box ? box.left + 4 : innerWidth / 2, y = box ? box.top + 6 + size * 0.8 : innerHeight / 2;
       const far = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
       ms = 300;
-      going = page.animate([{ clipPath: `circle(${far}px at ${x}px ${y}px)` }, { clipPath: `circle(7px at ${x}px ${y}px)` }],
+      going = startAnimation(page, [{ clipPath: `circle(${far}px at ${x}px ${y}px)` }, { clipPath: `circle(7px at ${x}px ${y}px)` }],
         { duration: ms, easing: 'cubic-bezier(.5,0,.75,.2)', fill: 'forwards' });
       gathering = { at: performance.now(), x, y };
     } else {
       ms = page.dataset.duiFromKind === 'bar' ? 320 : 340;
       const whole = 'inset(0px 0px 0px 0px round 0px)';
       let target = clipOf(to);
-      going = page.animate([{ clipPath: whole }, { clipPath: target }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
+      going = startAnimation(page, [{ clipPath: whole }, { clipPath: target }], { duration: ms, easing: tokens.standard, fill: 'forwards' });
       // Its words ride with it, their first line onto the card's title
       // (`wordsFrom` says when), so that they are inside the shrinking clip
       // all the way: left where they were, a short note's words were cut off
@@ -1006,15 +1032,15 @@
       const words = wordsFrom(page);
       const shift = () => wordsShift(words, to, false);
       let moved = wordsShift(words, to, true);
-      const riding = moved ? words.body.animate([{ transform: 'none' }, { transform: moved }], { duration: ms, easing: tokens.standard, fill: 'forwards' }) : null;
+      const riding = moved ? startAnimation(words.body, [{ transform: 'none' }, { transform: moved }], { duration: ms, easing: tokens.standard, fill: 'forwards' }) : null;
       if (riding) state.runs.push(riding);
       const body = page.querySelector('[data-dui-grow-body]');
       if (!riding && body) {
-        state.runs.push(body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: WORDS_FADE, delay: CROSSFADE_FROM, easing: 'linear', fill: 'forwards' }));
+        state.runs.push(startAnimation(body, [{ opacity: 1 }, { opacity: 0 }], { duration: WORDS_FADE, delay: CROSSFADE_FROM, easing: 'linear', fill: 'forwards' }));
       }
       // It becomes what it closes into: the whole page fades in the later
       // part of the shrink, ending as the clip lands.
-      state.runs.push(page.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms - CROSSFADE_FROM, delay: CROSSFADE_FROM, easing: tokens.standard, fill: 'forwards' }));
+      state.runs.push(startAnimation(page, [{ opacity: 1 }, { opacity: 0 }], { duration: ms - CROSSFADE_FROM, delay: CROSSFADE_FROM, easing: tokens.standard, fill: 'forwards' }));
       // Onto it wherever it is at each frame, not where it was as the
       // movement began: the keyboard going on the way (Back pressed twice,
       // the first putting it away) grows the web view, which can move the
@@ -1168,20 +1194,20 @@
       if (!reduced()) {
         const [cx, cy] = centreOf(modal);
         if (state.run) state.run.cancel();
-        state.run = modal.animate([
+        state.run = startAnimation(modal, [
           { transform: `translate(${state.from[0] - cx}px, ${state.from[1] - cy}px) scale(.06)`, borderRadius: '80px' },
           { transform: 'none', borderRadius: '14px' },
         ], { duration: 480, easing: snap.easing });
         // The rail's entries slide in from the left, 30 ms apart; the
         // sections rise 14 px, 40 ms apart (5.5).
-        $$('[data-dui-rail] [data-dui-jump]', modal).forEach((entry, index) => entry.animate([{ opacity: 0, transform: 'translateX(-10px)' }, { opacity: 1, transform: 'none' }],
+        $$('[data-dui-rail] [data-dui-jump]', modal).forEach((entry, index) => startAnimation(entry, [{ opacity: 0, transform: 'translateX(-10px)' }, { opacity: 1, transform: 'none' }],
           { duration: snap.ms, easing: snap.easing, delay: 110 + index * 30, fill: 'backwards' }));
-        rises.forEach((rise, index) => rise.animate([{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }],
+        rises.forEach((rise, index) => startAnimation(rise, [{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }],
           { duration: snap.ms, easing: snap.easing, delay: 140 + index * 40, fill: 'backwards' }));
       }
     } else if (!reduced()) {
       const glide = spring('glide');
-      rises.forEach((rise, index) => rise.animate([{ opacity: 0, transform: 'translateY(28px)' }, { opacity: 1, transform: 'none' }],
+      rises.forEach((rise, index) => startAnimation(rise, [{ opacity: 0, transform: 'translateY(28px)' }, { opacity: 1, transform: 'none' }],
         { duration: glide.ms, easing: glide.easing, delay: 80 + index * 45, fill: 'backwards' }));
     }
   }
@@ -1195,7 +1221,7 @@
       const from = state.opener && state.opener.isConnected && shown(state.opener) ? centreOf(state.opener) : state.from;
       const [cx, cy] = centreOf(modal);
       if (state.run) state.run.cancel();
-      const run = modal.animate([{ transform: 'none' }, { transform: `translate(${from[0] - cx}px, ${from[1] - cy}px) scale(.08)` }],
+      const run = startAnimation(modal, [{ transform: 'none' }, { transform: `translate(${from[0] - cx}px, ${from[1] - cy}px) scale(.08)` }],
         { duration: 240, easing: tokens.exit, fill: 'forwards' });
       state.run = run;
       run.finished.catch(() => {}).then(() => setTimeout(() => { if (state.run === run) run.cancel(); }, 80));
@@ -1412,7 +1438,7 @@
     const middle = (items.length - 1) / 2;
     items.forEach((item, index) => {
       const [x, y] = centreOf(item);
-      item.animate([{ transform: 'none', opacity: 1 }, { transform: `translate(${cx - x}px, ${cy - y}px) scale(.3)`, opacity: 0 }],
+      startAnimation(item, [{ transform: 'none', opacity: 1 }, { transform: `translate(${cx - x}px, ${cy - y}px) scale(.3)`, opacity: 0 }],
         { duration: 300, delay: Math.abs(index - middle) * 28, easing: tokens.exit, fill: 'forwards' });
     });
   }, true);
@@ -1460,9 +1486,9 @@
     toast._duiClosing = true;
     const ms = reduced() ? tokens.reducedMs : 300;
     const going = reduced()
-      ? toast.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, fill: 'forwards' })
+      ? startAnimation(toast, [{ opacity: 1 }, { opacity: 0 }], { duration: ms, fill: 'forwards' })
       // It closes back to a pill and drops away (300 ms, exit).
-      : toast.animate([
+      : startAnimation(toast, [
         { clipPath: OPEN, opacity: 1, transform: 'none' },
         { clipPath: PILL, opacity: 1, transform: 'none', offset: 0.55 },
         { clipPath: PILL, opacity: 0, transform: 'translateY(12px) scale(.9)' },
@@ -1470,24 +1496,24 @@
     after(going, ms, then);
   }
   function toastShown(toast) {
-    if (reduced()) toast.animate([{ opacity: 0 }, { opacity: 1 }], { duration: tokens.reducedMs });
+    if (reduced()) startAnimation(toast, [{ opacity: 0 }, { opacity: 1 }], { duration: tokens.reducedMs });
     else {
       // A 44 px pill rises 16 px (enter), then opens sideways into the
       // message (snap); the words come in after it, 50 ms apart.
       const snap = spring('snap');
-      toast.animate([
+      startAnimation(toast, [
         { clipPath: PILL, transform: 'translateY(16px)', opacity: 0, easing: tokens.enter },
         { clipPath: PILL, transform: 'none', opacity: 1, offset: 0.34, easing: snap.easing },
         { clipPath: OPEN, transform: 'none', opacity: 1 },
       ], { duration: 560 });
-      $$('.dui-toast-words, .dui-toast-act, kbd', toast).forEach((part, index) => part.animate(
+      $$('.dui-toast-words, .dui-toast-act, kbd', toast).forEach((part, index) => startAnimation(part,
         [{ opacity: 0, transform: 'translateX(-4px)' }, { opacity: 1, transform: 'none' }],
         { duration: 220, delay: 230 + index * 50, easing: tokens.enter, fill: 'backwards' }));
     }
     const bar = toast.querySelector('.dui-toast-bar');
     const ms = Number(toast.dataset.ms) || 0;
     if (!bar || !ms) return;
-    const drain = bar.animate([{ width: '100%' }, { width: '0%' }], { duration: ms, easing: 'linear', fill: 'forwards' });
+    const drain = startAnimation(bar, [{ width: '100%' }, { width: '0%' }], { duration: ms, easing: 'linear', fill: 'forwards' });
     toast._duiDrain = drain;
     // Held while a mouse or pen moves onto it and stays, or the keyboard is
     // in it (#312). A finger is no pointer that rests: Android keeps :hover
@@ -1548,7 +1574,7 @@
     const segment = event.target.closest ? event.target.closest('.dui-seg button') : null;
     if (!segment || reduced()) return;
     const thumb = segment.parentElement.querySelector('.dui-seg-thumb');
-    if (thumb) thumb.animate([{ scale: '1 1' }, { scale: '1.16 .9', offset: 0.35 }, { scale: '1 1' }], { duration: tokens.springs.snap.ms, easing: 'ease-out' });
+    if (thumb) startAnimation(thumb, [{ scale: '1 1' }, { scale: '1.16 .9', offset: 0.35 }, { scale: '1 1' }], { duration: tokens.springs.snap.ms, easing: 'ease-out' });
   }, true);
 
   // ---- Slider: what it sets follows the thumb here, not through Rust -----
@@ -1915,7 +1941,7 @@
     Object.assign(menu.style, { left: x + 'px', top: y + 'px' });
     if (!reduced()) {
       const snap = spring('snap');
-      menu.animate([{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }], { duration: snap.ms, easing: snap.easing });
+      startAnimation(menu, [{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }], { duration: snap.ms, easing: snap.easing });
     }
     const first = $$('[role="menuitem"]', menu).find(item => !item.hidden);
     if (first) first.focus({ preventScroll: true });
@@ -2207,7 +2233,7 @@
     const from = Math.max(-most, Math.min(most, moved + offset));
     if (Math.abs(from) < 1) return;
     const snap = spring('snap');
-    field._duiLine = field.animate([{ transform: `translateY(${from}px)` }, { transform: 'none' }],
+    field._duiLine = startAnimation(field, [{ transform: `translateY(${from}px)` }, { transform: 'none' }],
       { duration: snap.ms, easing: snap.easing });
   }
   // `typed`: the text changed, so the others dim. `move`: the caret's line
@@ -2418,10 +2444,10 @@
     if (mark.startsWith('go ') && pageShot && performance.now() - pageShot.at < 1500) {
       const ghost = ghostOf(pageShot);
       pageShot = null;
-      after(ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: tokens.exit, fill: 'forwards' }),
+      after(startAnimation(ghost, [{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: tokens.exit, fill: 'forwards' }),
         140, () => ghost.remove());
     }
-    field.animate([{ '--dui-placeholder': 0 }, { '--dui-placeholder': 1 }],
+    startAnimation(field, [{ '--dui-placeholder': 0 }, { '--dui-placeholder': 1 }],
       { duration: 300, delay: 140, easing: tokens.enter, fill: 'backwards' });
   }
 
@@ -2433,7 +2459,7 @@
       document.body.append(speck);
       const angle = Math.PI * (1.08 + 0.84 * index / 6), far = 8 + Math.random() * 12;
       const ms = 420 + Math.random() * 180;
-      after(speck.animate([{ transform: 'none', opacity: 0.9 },
+      after(startAnimation(speck, [{ transform: 'none', opacity: 0.9 },
         { transform: `translate(${Math.cos(angle) * far}px, ${Math.sin(angle) * far * 0.7 + 7}px) scale(.4)`, opacity: 0 }],
       { duration: ms, easing: 'cubic-bezier(.2,.6,.4,1)', fill: 'forwards' }), ms, () => speck.remove());
     }
@@ -2448,20 +2474,20 @@
     if (box.bottom < scroller.top || box.top > scroller.bottom) return;
     // In the picture's own measure, which is finer than the page's.
     const fine = svg.viewBox.baseVal.width / (box.width || 1);
-    top.animate([{ transform: `translateY(${-46 * fine}px)`, opacity: 0 }, { opacity: 1, offset: 0.3 }, { transform: 'none', opacity: 1 }],
+    startAnimation(top, [{ transform: `translateY(${-46 * fine}px)`, opacity: 0 }, { opacity: 1, offset: 0.3 }, { transform: 'none', opacity: 1 }],
       { duration: 640, easing: 'cubic-bezier(.55,0,1,.45)' });
   }
   function land(row, list, x, y, colour, hold) {
     hold.cancel();
     if (!row.isConnected) return;
     const snap = spring('snap');
-    row.animate([{ opacity: 0, transform: 'scale(.96) translateY(-5px)', transformOrigin: '14px 16px' },
+    startAnimation(row, [{ opacity: 0, transform: 'scale(.96) translateY(-5px)', transformOrigin: '14px 16px' },
       { opacity: 1, transform: 'none', transformOrigin: '14px 16px' }], { duration: snap.ms, easing: snap.easing });
     // The rows below give a little under it, one after another.
     let below = row.nextElementSibling;
     for (let index = 0; below && index < 7; below = below.nextElementSibling) {
       if (below.dataset.key === undefined || below.classList.contains('dui-ghost')) continue;
-      below.animate([{ transform: 'none' }, { transform: 'translateY(3px)', offset: 0.3 }, { transform: 'none' }],
+      startAnimation(below, [{ transform: 'none' }, { transform: 'translateY(3px)', offset: 0.3 }, { transform: 'none' }],
         { duration: 420, delay: 30 + index * 24, easing: 'ease-out' });
       index += 1;
     }
@@ -2473,7 +2499,7 @@
   // closes an Android page to its grain, whose watcher can hear of it
   // after the list's does.
   function settle(row, list) {
-    const hold = row.animate([{ opacity: 0 }, { opacity: 0 }], { duration: 3000, fill: 'forwards' });
+    const hold = startAnimation(row, [{ opacity: 0 }, { opacity: 0 }], { duration: 3000, fill: 'forwards' });
     requestAnimationFrame(() => toss(row, list, hold));
     // A page that is not being drawn runs no frame: the row comes back.
     setTimeout(() => { if (hold.playState !== 'finished' && !row._duiTossed) hold.cancel(); }, 1000);
@@ -2486,7 +2512,7 @@
     pageShot = null;
     if (!from || reduced() || document.hidden || !shown(row)) {
       hold.cancel();
-      row.animate([{ opacity: 0 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 200, easing: tokens.standard });
+      startAnimation(row, [{ opacity: 0 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 200, easing: tokens.standard });
       return;
     }
     row._duiTossed = true;
@@ -2500,7 +2526,7 @@
     if (from.text !== undefined) {
       // The words shrink toward where they began, fading as they go.
       const ghost = ghostOf(from);
-      after(ghost.animate([{ transform: 'none', opacity: 1 }, { opacity: 0.8, offset: 0.5 }, { transform: 'scale(.04)', opacity: 0 }],
+      after(startAnimation(ghost, [{ transform: 'none', opacity: 1 }, { opacity: 0.8, offset: 0.5 }, { transform: 'scale(.04)', opacity: 0 }],
         { duration: 280, easing: 'cubic-bezier(.5,0,.75,.3)', fill: 'forwards' }), 280, () => ghost.remove());
       x = from.left + 4;
       y = from.top + from.line / 2;
@@ -2517,7 +2543,7 @@
     Object.assign(grain.style, { left: x + 'px', top: y + 'px', background: colour });
     document.body.append(grain);
     // The grain pops out where the words began (150 ms).
-    grain.animate([{ transform: 'scale(0)' }, { transform: 'scale(1.2)', offset: 0.7 }, { transform: 'scale(1)' }],
+    startAnimation(grain, [{ transform: 'scale(0)' }, { transform: 'scale(1.2)', offset: 0.7 }, { transform: 'scale(1)' }],
       { duration: 150, delay: wait, easing: 'ease-out', fill: 'backwards' });
     setTimeout(() => {
       // Where the row is now: the list may have moved meanwhile.
@@ -2525,8 +2551,8 @@
       const tx = target.left + 14, ty = target.top + 16;
       const dx = tx - x, dy = ty - y, peak = Math.min(0, dy) - 46;
       const ms = Math.round(Math.max(480, Math.min(640, 440 + Math.hypot(dx, dy) * 0.25)));
-      grain.animate([{ translate: '0 0' }, { translate: `${dx}px 0` }], { duration: ms, easing: 'cubic-bezier(.3,.4,.6,1)', fill: 'both' });
-      const flight = grain.animate([
+      startAnimation(grain, [{ translate: '0 0' }, { translate: `${dx}px 0` }], { duration: ms, easing: 'cubic-bezier(.3,.4,.6,1)', fill: 'both' });
+      const flight = startAnimation(grain, [
         { transform: 'translateY(0) scale(1)', easing: TOSS },
         { transform: `translateY(${peak}px) scale(.9)`, offset: 0.42, easing: GRAVITY },
         { transform: `translateY(${dy}px) scale(.75)` },
@@ -2551,7 +2577,7 @@
       background: colour,
     });
     document.body.append(grain);
-    after(grain.animate([{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(1.2)', opacity: 1, offset: 0.25 },
+    after(startAnimation(grain, [{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(1.2)', opacity: 1, offset: 0.25 },
       { transform: 'translateY(0) scale(1)', opacity: 1, offset: 0.4 }, { transform: 'translateY(140px) scale(.7)', opacity: 0 }],
     { duration: 720, easing: GRAVITY, fill: 'forwards' }), 720, () => grain.remove());
   }
@@ -2596,7 +2622,7 @@
     if (reduced() || was === now) return;
     if (folded(now) && !folded(was) && scope.dataset.duiFocus === 'rail') {
       const rows = rowsInSight(scope);
-      rows.forEach((row, index) => row.animate(
+      rows.forEach((row, index) => startAnimation(row,
         [{ transform: 'none', opacity: 1, transformOrigin: 'left center' },
           { transform: 'translateX(-24px) scaleX(.4)', opacity: 0, transformOrigin: 'left center' }],
         { duration: 180, delay: index * 18, easing: tokens.exit, fill: 'forwards' }));
@@ -2608,13 +2634,13 @@
         $$('button, [data-dui-stop]', rail)
           .filter(stop => stop.getBoundingClientRect().top < box.bottom)
           .slice(0, 40)
-          .forEach((stop, index) => stop.animate([{ transform: 'scale(0)', opacity: 0 }, { transform: 'none', opacity: 1 }],
+          .forEach((stop, index) => startAnimation(stop, [{ transform: 'scale(0)', opacity: 0 }, { transform: 'none', opacity: 1 }],
             { duration: pop.ms, easing: pop.easing, delay: 280 + index * 24, fill: 'backwards' }));
       }
     } else if (folded(was) && !folded(now)) {
       const snap = spring('snap');
       // A new thought's row waits for its grain.
-      rowsInSight(scope).filter(row => row.dataset.duiSettle === undefined).forEach((row, index) => row.animate(
+      rowsInSight(scope).filter(row => row.dataset.duiSettle === undefined).forEach((row, index) => startAnimation(row,
         [{ transform: 'translateX(-14px)', opacity: 0 }, { transform: 'none', opacity: 1 }],
         { duration: snap.ms, easing: snap.easing, delay: 230 + index * 22, fill: 'backwards' }));
     }
@@ -2842,7 +2868,7 @@
       else if (!opening && selector === '.dui-pv-scrim' && typeof modal.duiScrimAt === 'number') from = modal.duiScrimAt;
       if (selector === '.dui-pv-scrim') element.style.opacity = '';
       const frames = [{ opacity: from }, { opacity: opening ? shownNow : 0 }];
-      state.fades.push(element.animate(frames, { duration: ms, easing: tokens.standard, fill: opening ? 'none' : 'forwards' }));
+      state.fades.push(startAnimation(element, frames, { duration: ms, easing: tokens.standard, fill: opening ? 'none' : 'forwards' }));
     }
     delete modal.duiScrimAt;
     return ms;
@@ -2856,11 +2882,11 @@
     fadeAround(modal, state, true);
     if (!stage) return;
     if (reduced() || !tile) {
-      state.run = stage.animate([{ opacity: 0 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 200, easing: tokens.standard });
+      state.run = startAnimation(stage, [{ opacity: 0 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 200, easing: tokens.standard });
       return;
     }
     // It grows out of its tile (420 ms, enter).
-    const grow = from => stage.animate([{ transform: towardsTile(stage, from), opacity: 0.5 }, { transform: 'none', opacity: 1 }],
+    const grow = from => startAnimation(stage, [{ transform: towardsTile(stage, from), opacity: 0.5 }, { transform: 'none', opacity: 1 }],
       { duration: 420, easing: tokens.enter });
     const run = grow(tile);
     state.run = run;
@@ -2911,11 +2937,11 @@
     let run, ms;
     if (reduced() || !tile) {
       ms = reduced() ? tokens.reducedMs : 160;
-      run = stage.animate([{ transform: fromTransform, opacity: fromOpacity }, { transform: fromTransform, opacity: 0 }], { duration: ms, easing: tokens.exit, fill: 'forwards' });
+      run = startAnimation(stage, [{ transform: fromTransform, opacity: fromOpacity }, { transform: fromTransform, opacity: 0 }], { duration: ms, easing: tokens.exit, fill: 'forwards' });
     } else {
       // It shrinks back into the tile (320 ms, standard).
       ms = 320;
-      run = stage.animate([{ transform: fromTransform, opacity: fromOpacity }, { transform: towardsTile(stage, tile), opacity: 0.4 }],
+      run = startAnimation(stage, [{ transform: fromTransform, opacity: fromOpacity }, { transform: towardsTile(stage, tile), opacity: 0.4 }],
         { duration: ms, easing: tokens.standard, fill: 'forwards' });
     }
     state.run = run;
@@ -2934,10 +2960,10 @@
     state.item = item;
     if (!was || !modal.classList.contains('on')) return;
     if (reduced() || was.dataset.file === item.dataset.file) {
-      item.animate([{ opacity: 0.6 }, { opacity: 1 }], { duration: tokens.reducedMs + 30, easing: tokens.standard });
+      startAnimation(item, [{ opacity: 0.6 }, { opacity: 1 }], { duration: tokens.reducedMs + 30, easing: tokens.standard });
       return;
     }
-    item.animate([{ opacity: 0, transform: `translateX(${previewStep * 48}px)` }, { opacity: 1, transform: 'none' }],
+    startAnimation(item, [{ opacity: 0, transform: `translateX(${previewStep * 48}px)` }, { opacity: 1, transform: 'none' }],
       { duration: 280, easing: tokens.enter });
   }
   function previewKey(event, modal) {
@@ -3005,7 +3031,7 @@
     }
     if (still || reduced()) return;
     const origin = `${fx * 100}% ${fy * 100}%`;
-    picture.animate([{ transform: `scale(${on ? 0.5 : 2})`, transformOrigin: origin }, { transform: 'none', transformOrigin: origin }],
+    startAnimation(picture, [{ transform: `scale(${on ? 0.5 : 2})`, transformOrigin: origin }, { transform: 'none', transformOrigin: origin }],
       { duration: 280, easing: tokens.enter });
   }
   document.addEventListener('dblclick', event => {
@@ -3155,7 +3181,7 @@
       return;
     }
     const pop = spring('pop');
-    item.animate([{ transform: item.style.transform || 'none' }, { transform: 'none' }], { duration: pop.ms, easing: pop.easing });
+    startAnimation(item, [{ transform: item.style.transform || 'none' }, { transform: 'none' }], { duration: pop.ms, easing: pop.easing });
     item.style.transform = '';
   }
   document.addEventListener('touchend', endPreviewSwipe, { passive: true });
@@ -3346,13 +3372,13 @@
   const CAPTURE_MS = 600, CAPTURE_DOWN = 'cubic-bezier(.6,0,.9,.45)';
   function captureOpened(box) {
     if (reduced()) {
-      box.animate([{ opacity: 0 }, { opacity: 1 }], { duration: tokens.reducedMs });
+      startAnimation(box, [{ opacity: 0 }, { opacity: 1 }], { duration: tokens.reducedMs });
       return;
     }
     const snap = spring('snap');
-    box.animate([{ transform: 'translateY(-10px) scale(.97)' }, { transform: 'none' }], { duration: snap.ms, easing: snap.easing });
-    box.animate([{ filter: 'blur(10px)' }, { filter: 'blur(0)' }], { duration: 260, easing: tokens.enter });
-    box.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: tokens.standard });
+    startAnimation(box, [{ transform: 'translateY(-10px) scale(.97)' }, { transform: 'none' }], { duration: snap.ms, easing: snap.easing });
+    startAnimation(box, [{ filter: 'blur(10px)' }, { filter: 'blur(0)' }], { duration: 260, easing: tokens.enter });
+    startAnimation(box, [{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: tokens.standard });
   }
   function captureLeft(box, how) {
     if (box._duiLeaving) return;
@@ -3363,18 +3389,18 @@
     const gone = () => { if (box.isConnected) tell(box, 'gone'); };
     if (how === 'fade' || reduced()) {
       const ms = reduced() ? tokens.reducedMs : 280;
-      after(box.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' }), ms, gone);
+      after(startAnimation(box, [{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' }), ms, gone);
       return;
     }
     tell(box, 'away');
     const grain = box.dataset.duiGrain || 'hsl(32 46% 60%)';
     const width = box.offsetWidth || 1, height = box.offsetHeight || 1;
     // Its words go first; the box closes into a round of the grain's shade.
-    [...box.children].forEach(child => child.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 240, easing: tokens.exit, fill: 'forwards' }));
+    [...box.children].forEach(child => startAnimation(child, [{ opacity: 1 }, { opacity: 0 }], { duration: 240, easing: tokens.exit, fill: 'forwards' }));
     const end = how === 'fall' ? [{ opacity: 1, offset: 0.45 }, { opacity: 0 }] : [{ opacity: 1 }];
     const last = end[end.length - 1];
     Object.assign(last, { transform: `scale(${12 / width}, ${12 / height})`, borderRadius: '50%', backgroundColor: grain, boxShadow: 'none' });
-    const shrink = box.animate([{ transform: 'none', opacity: 1, borderRadius: '16px', backgroundColor: getComputedStyle(box).backgroundColor }].concat(end),
+    const shrink = startAnimation(box, [{ transform: 'none', opacity: 1, borderRadius: '16px', backgroundColor: getComputedStyle(box).backgroundColor }].concat(end),
       { duration: CAPTURE_MS, easing: CAPTURE_DOWN, fill: 'forwards' });
     after(shrink, CAPTURE_MS, () => {
       if (how !== 'tray' || !box.isConnected) return gone();
@@ -3384,7 +3410,7 @@
       ring.className = 'dui-capture-pulse';
       Object.assign(ring.style, { left: place.left + place.width / 2 + 'px', top: place.top + place.height / 2 + 'px' });
       document.body.append(ring);
-      after(ring.animate([{ transform: 'scale(.4)', opacity: 1 }, { transform: 'scale(2.6)', opacity: 0 }],
+      after(startAnimation(ring, [{ transform: 'scale(.4)', opacity: 1 }, { transform: 'scale(2.6)', opacity: 0 }],
         { duration: 560, easing: tokens.enter, fill: 'forwards' }), 560, () => { ring.remove(); gone(); });
     });
   }
@@ -3501,7 +3527,7 @@
     const gone = () => { if (view.isConnected) tell(view, 'gone'); };
     const fadeOut = () => {
       const ms = reduced() ? tokens.reducedMs : 160;
-      after(view.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' }), ms, gone);
+      after(startAnimation(view, [{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: tokens.standard, fill: 'forwards' }), ms, gone);
     };
     if (how === 'kept' && canvas) {
       const box = canvas.getBoundingClientRect();
@@ -3509,13 +3535,13 @@
     }
     if (reduced() || !canvas) return fadeOut();
     if (how === 'kept') {
-      after(canvas.animate([{ transform: 'none', opacity: 1 }, { transform: 'scaleX(.03)', opacity: 0 }],
+      after(startAnimation(canvas, [{ transform: 'none', opacity: 1 }, { transform: 'scaleX(.03)', opacity: 0 }],
         { duration: 260, easing: tokens.exit, fill: 'forwards' }), 260, fadeOut);
     } else if (how === 'thrown') {
-      after(canvas.animate([{ transform: 'none', opacity: 1, filter: 'blur(0)' }, { transform: 'translateX(-70px)', opacity: 0, filter: 'blur(5px)' }],
+      after(startAnimation(canvas, [{ transform: 'none', opacity: 1, filter: 'blur(0)' }, { transform: 'translateX(-70px)', opacity: 0, filter: 'blur(5px)' }],
         { duration: 260, easing: tokens.exit, fill: 'forwards' }), 260, fadeOut);
     } else {
-      after(view.animate([{ transform: 'none' }, { transform: 'translateX(-7px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(-3px)' }, { transform: 'none' }],
+      after(startAnimation(view, [{ transform: 'none' }, { transform: 'translateX(-7px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(-3px)' }, { transform: 'none' }],
         { duration: 320, easing: 'ease-out' }), 320, fadeOut);
     }
   }
@@ -3546,7 +3572,7 @@
     records.forEach(record => {
       const title = record.target;
       if (record.oldValue === 'waiting' && title.dataset.duiWords === 'made' && !reduced()) {
-        title.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: tokens.standard });
+        startAnimation(title, [{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: tokens.standard });
       }
     });
   }

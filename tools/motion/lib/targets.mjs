@@ -396,6 +396,10 @@ export async function launchHeadless({ width = 1600, height = 1000, port, log = 
       await Promise.race([loaded, sleep(15000)]);
     },
     async stop() {
+      // Edge on Windows hands the browser to a process of its own, and the
+      // one started ends at once: ending that leaves the browser running,
+      // its profile held. So the browser is asked to close itself.
+      await cdp.send('Browser.close', {}, 5000).catch(() => {});
       cdp.close();
       undoChild(); await stopChild(child);
       undoProfile(); await removeFolder(profile);
