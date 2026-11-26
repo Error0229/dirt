@@ -26,8 +26,9 @@ const TOKENS = {
 };
 
 // The preview as `dirt_ui::files::preview` draws it with two pictures,
-// closed: the file in the track, the ghost layer beside it, and the deck
-// of what stands in for each file. The pictures are drawn in the page.
+// closed: the file in the track, the ghost layer beside it, the deck of
+// what stands in for each file, and the holder of pictures kept decoded.
+// The pictures are drawn in the page.
 const BODY = `
   <div class="dui-preview" data-dui-modal="preview" data-dui-id="7" tabindex="-1" inert>
     <div class="dui-pv-scrim"></div>
@@ -40,6 +41,7 @@ const BODY = `
         <div class="dui-pv-stand" data-file="a"><img class="dui-pv-picture dui-pv-standin" alt=""></div>
         <div class="dui-pv-stand" data-file="b"><img class="dui-pv-picture dui-pv-standin" alt=""></div>
       </div>
+      <div class="dui-pv-keep" aria-hidden="true" inert></div>
     </div>
     <div class="dui-pv-dots"><i class="on"></i><i></i></div>
   </div>`;
@@ -66,6 +68,9 @@ const SETUP = `(async () => {
   for (const card of document.querySelectorAll('.dui-pv-deck > .dui-pv-stand')) card.querySelector('img').src = pictures['t' + card.dataset.file];
   await Promise.all([...document.images].map(img => img.decode()));
   window.told = [];
+  // What Rust was told of the steps: "still", told whenever nothing
+  // moves, is the read-ahead's, and has tests of its own.
+  window.steps = () => told.map(m => m.kind).filter(kind => kind !== 'still');
   DirtUi.connect(message => told.push(message));
   return true;
 })()`;
@@ -392,7 +397,7 @@ test('the desktop: a double click and the wheel zoom about the pointer; → slid
       const moving = await cdp.evaluate(`(() => {
         const stand = document.querySelector('.dui-pv-ghost > .dui-pv-stand[data-file="b"]');
         return {
-          told: told.map(m => m.kind),
+          told: steps(),
           stand: !!stand,
           at: stand && stand.duiAt === innerWidth + 16,
           track: ${TRACK}.getAnimations().length,
@@ -536,7 +541,7 @@ test('the desktop: the slide between pictures (the owner\'s check of #336)', { s
       for (const [id, xs] of byId) {
         for (let k = 1; k < xs.length; k++) assert.ok(xs[k] <= xs[k - 1] + 1, `#${id} went back: ${xs.join(' ')}`);
       }
-      const rest = await cdp.evaluate(`({ told: told.map(m => m.kind), file: ${ITEM}.dataset.file, waiting: ${ITEM}.classList.contains('waiting'), x: ${TRACK_X}, ghosts: document.querySelector('.dui-pv-ghost').children.length })`);
+      const rest = await cdp.evaluate(`({ told: steps(), file: ${ITEM}.dataset.file, waiting: ${ITEM}.classList.contains('waiting'), x: ${TRACK_X}, ghosts: document.querySelector('.dui-pv-ghost').children.length })`);
       assert.deepEqual(rest, { told: ['next', 'next', 'next'], file: 'a', waiting: false, x: 0, ghosts: 0 });
     });
 
@@ -651,7 +656,7 @@ test('Android: a pinch follows the fingers and settles within 4×; a swipe steps
       await swipe(-90, 8, 20, 150);
       await sleep(500);
       const r = await cdp.evaluate(`(() => ({
-        told: told.map(m => m.kind),
+        told: steps(),
         transform: getComputedStyle(${TRACK}).transform,
         ghosts: document.querySelector('.dui-pv-ghost').children.length,
       }))()`);
@@ -662,7 +667,7 @@ test('Android: a pinch follows the fingers and settles within 4×; a swipe steps
       await cdp.evaluate('told.length = 0; true');
       await swipe(-120, 6, 16, 0);
       await sleep(60);
-      assert.deepEqual(await cdp.evaluate('told.map(m => m.kind)'), ['next']);
+      assert.deepEqual(await cdp.evaluate('steps()'), ['next']);
     });
   } finally {
     await browser.stop();
@@ -812,7 +817,7 @@ test('Android: what the review of #336 found', { skip: !browserFound && 'no Edge
 const SLIDE = () => `({
   x: ${TRACK_X},
   ghosts: document.querySelector('.dui-pv-ghost').children.length,
-  told: told.map(m => m.kind),
+  told: steps(),
 })`;
 
 test('Android: what the second review of #336 found, and dragging what stands in for a picture', { skip: !browserFound && 'no Edge or Chrome here' }, async t => {
@@ -867,7 +872,7 @@ test('Android: what the second review of #336 found, and dragging what stands in
       for (let k = 1; k <= 2; k++) { await sleep(16); await move(finger(mid.x - 10 * k, mid.y)); }
       await sleep(30);
       const held = await cdp.evaluate(leftOf('b'));
-      assert.deepEqual(await cdp.evaluate('told.map(m => m.kind)'), ['next']);
+      assert.deepEqual(await cdp.evaluate('steps()'), ['next']);
       assert.ok(held.length && held.every(x => x > 60), `held where it was coming in from the right, not snapped to rest (${held})`);
       // Flung on to the left: it comes the rest of its way in.
       for (let k = 3; k <= 8; k++) { await sleep(16); await move(finger(mid.x - 30 * k, mid.y)); }
@@ -927,6 +932,201 @@ test('Android: what the second review of #336 found, and dragging what stands in
       await up();
       await sleep(600);
       assert.deepEqual(await cdp.evaluate(SLIDE()), { x: 0, ghosts: 0, told: [] });
+    });
+  } finally {
+    await browser.stop();
+  }
+});
+
+// Rust's part for a picture the app holds: the deck says where its bytes
+// are (`data-dui-held`), and its item leaves the asking to the script
+// (`data-dui-src`), as `dirt_ui::files::preview` draws them.
+const held = (file, address) => `(() => {
+  const card = [...document.querySelectorAll('.dui-pv-deck > .dui-pv-stand')].find(one => one.dataset.file === ${JSON.stringify(file)});
+  if (${address === null}) card.removeAttribute('data-dui-held'); else card.dataset.duiHeld = ${address};
+  return true;
+})()`;
+const putHeld = (file, address, small = true) => `(() => {
+  const item = document.createElement('div');
+  item.className = 'dui-pv-item'; item.dataset.file = ${JSON.stringify(file)};
+  const img = document.createElement('img');
+  img.className = 'dui-pv-picture';
+  img.dataset.duiZoom = '';
+  img.dataset.duiSrc = ${address};
+  if (${small}) img.dataset.duiSmall = '';
+  img.alt = ${JSON.stringify(file)};
+  item.appendChild(img);
+  ${ITEM}.replaceWith(item);
+  return true;
+})()`;
+// The pictures kept decoded, by file, in the holder or staged beside the
+// file shown, and what Rust was told besides the steps.
+const KEPT_IMGS = `[...document.querySelectorAll('.dui-pv-keep > img, .dui-pv-ghost > .dui-pv-stand.sharp > img')]`;
+const KEPT = `({
+  kept: ${KEPT_IMGS}.map(img => img.dataset.file + (img.duiDecoded ? '' : '?')),
+  stills: told.filter(m => m.kind === 'still').length,
+})`;
+// Each picture put in the holder, with where the track was drawn then.
+const WATCH_KEEP = `(() => {
+  window.asked = [];
+  new MutationObserver(records => {
+    for (const record of records) for (const node of record.addedNodes) {
+      if (node.tagName === 'IMG' && node.dataset.duiKept && !node.duiDecoded) asked.push({ file: node.dataset.file, x: ${TRACK_X} });
+    }
+  }).observe(document.querySelector('.dui-pv-keep'), { childList: true });
+  return true;
+})()`;
+
+test('the desktop: pictures read ahead and kept decoded (6.16)', { skip: !browserFound && 'no Edge or Chrome here' }, async t => {
+  const browser = await page('desktop');
+  try {
+    const { cdp } = browser;
+    await cdp.evaluate(`document.querySelector('[data-dui-modal="preview"]').focus(); true`);
+    await cdp.evaluate(WATCH_KEEP);
+    // The file shown is one the app holds too, as it always is.
+    await cdp.evaluate(`(() => { const img = ${ITEM}.querySelector('img'); img.dataset.duiSrc = pictures.a; window.drawnA = img; return true; })()`);
+    await cdp.evaluate(held('a', 'pictures.a'));
+
+    await t.test('once nothing moves Rust is told, once for each item, and a picture the app holds beside it is asked for and decoded', async () => {
+      assert.deepEqual(await cdp.evaluate(KEPT), { kept: [], stills: 1 });
+      await cdp.evaluate(held('b', 'pictures.b'));
+      await sleep(400);
+      assert.deepEqual(await cdp.evaluate(KEPT), { kept: ['b'], stills: 1 });
+      assert.deepEqual(await cdp.evaluate('asked'), [{ file: 'b', x: 0 }]);
+      // Staged where a step brings it from, out of sight, a layer of its
+      // own for the compositor.
+      const staged = await cdp.evaluate(`(() => {
+        const stand = document.querySelector('.dui-pv-ghost > .dui-pv-stand.sharp');
+        const box = stand && stand.getBoundingClientRect();
+        return stand && { file: stand.dataset.file, at: stand.duiAt === innerWidth + 16, out: box.left >= innerWidth, layer: getComputedStyle(stand).willChange };
+      })()`);
+      assert.deepEqual(staged, { file: 'b', at: true, out: true, layer: 'transform' });
+    });
+
+    await t.test('a step to it brings the picture itself in, sharp, and Rust\'s item takes it, never asked for again', async () => {
+      await cdp.evaluate(`window.keptB = ${KEPT_IMGS}[0]; told.length = 0; true`);
+      await cdp.evaluate(WATCH);
+      await press(cdp, 'ArrowRight', 39);
+      await sleep(30);
+      const coming = await cdp.evaluate(`(() => {
+        const stand = keptB.closest('.dui-pv-ghost > .dui-pv-stand');
+        return {
+          sharp: !!stand && stand.classList.contains('sharp') && stand.dataset.file === 'b',
+          thumbnails: document.querySelectorAll('.dui-pv-ghost .dui-pv-standin').length,
+          shown: !!stand && getComputedStyle(keptB).visibility === 'visible' && Number(getComputedStyle(stand).opacity) === 1,
+          x: ${TRACK_X},
+        };
+      })()`);
+      assert.ok(coming.x < -5, `the track slides (${coming.x})`);
+      assert.deepEqual({ ...coming, x: 0 }, { sharp: true, thumbnails: 0, shown: true, x: 0 });
+      await cdp.evaluate(putHeld('b', 'pictures.b'));
+      await sleep(60);
+      const during = await cdp.evaluate(`({ waiting: ${ITEM}.classList.contains('waiting'), x: ${TRACK_X}, asked: ${ITEM}.querySelector('img').hasAttribute('src') })`);
+      assert.ok(during.x < -5 && during.waiting && !during.asked, `Rust's item waits, unasked, while it slides: ${JSON.stringify(during)}`);
+      await sleep(700);
+      const frames = await watched(cdp);
+      assert.deepEqual(jumps(frames, 1000), []);
+      const landed = await cdp.evaluate(`({
+        same: ${ITEM}.querySelector('img') === keptB,
+        waiting: ${ITEM}.classList.contains('waiting'),
+        zoom: ${ITEM}.querySelector('img').hasAttribute('data-dui-zoom'),
+        alt: ${ITEM}.querySelector('img').alt,
+        ghosts: [...document.querySelector('.dui-pv-ghost').children].map(e => e.classList.contains('sharp') && e.duiAt === innerWidth + 16 ? 'staged ' + e.dataset.file : 'drawn'),
+        steps: steps(),
+      })`);
+      assert.deepEqual(landed, { same: true, waiting: false, zoom: true, alt: 'b', ghosts: ['staged a'], steps: ['next'] });
+      // a, which slid out, is kept as it was drawn; b, shown, is not kept
+      // twice. Nothing was asked for: both were decoded already.
+      const kept = await cdp.evaluate(`({ ...${KEPT}, a: ${KEPT_IMGS}[0] === drawnA })`);
+      assert.deepEqual(kept, { kept: ['a'], stills: 1, a: true });
+      assert.deepEqual(await cdp.evaluate('asked'), [{ file: 'b', x: 0 }]);
+    });
+
+    await t.test('and back: the picture that slid out comes back sharp, the same element', async () => {
+      await press(cdp, 'ArrowLeft', 37);
+      await sleep(30);
+      assert.equal(await cdp.evaluate(`!!drawnA.closest('.dui-pv-ghost > .dui-pv-stand.sharp')`), true);
+      await cdp.evaluate(putHeld('a', 'pictures.a'));
+      await sleep(700);
+      const landed = await cdp.evaluate(`({ same: ${ITEM}.querySelector('img') === drawnA, waiting: ${ITEM}.classList.contains('waiting'), ...${KEPT} })`);
+      assert.deepEqual(landed, { same: true, waiting: false, kept: ['b'], stills: 2 });
+    });
+
+    await t.test('what the app lets go of goes from the page too', async () => {
+      await cdp.evaluate(held('b', null));
+      await sleep(100);
+      assert.deepEqual((await cdp.evaluate(KEPT)).kept, []);
+    });
+
+    await t.test('an asking whose bytes have not come is given up as a step begins, and nothing is asked for while it slides', async () => {
+      // The web view's answer for this address never comes.
+      await cdp.send('Fetch.enable', { patterns: [{ urlPattern: 'https://dirt.test/*' }] });
+      await cdp.evaluate(`asked.length = 0; true`);
+      await cdp.evaluate(held('b', `'https://dirt.test/slow.png'`));
+      await sleep(150);
+      assert.deepEqual(await cdp.evaluate(KEPT), { kept: ['b?'], stills: 2 });
+      await press(cdp, 'ArrowRight', 39);
+      await sleep(30);
+      assert.deepEqual((await cdp.evaluate(KEPT)).kept, [], 'given up');
+      await cdp.evaluate(putItem('b', 'standin', 'pictures.tb'));
+      await sleep(700);
+      // Asked again only once the track rested, if at all.
+      const asked = await cdp.evaluate('asked');
+      assert.ok(asked.every(one => one.x === 0), `nothing asked for while the track moved: ${JSON.stringify(asked)}`);
+      await cdp.send('Fetch.disable');
+      await cdp.evaluate(held('b', null));
+      await press(cdp, 'ArrowLeft', 37);
+      await sleep(30);
+      await cdp.evaluate(putHeld('a', 'pictures.a'));
+      await sleep(700);
+    });
+
+    await t.test('at most three large pictures are kept decoded, the one shown among them, the farthest going first; fewer with little memory', async () => {
+      await cdp.evaluate(`(() => {
+        const large = colour => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 3000; canvas.height = 2000;
+          const g = canvas.getContext('2d');
+          g.fillStyle = colour; g.fillRect(0, 0, 3000, 2000);
+          return canvas.toDataURL('image/png');
+        };
+        window.larges = { b: large('#a35'), c: large('#3a5'), d: large('#35a'), e: large('#aa5') };
+        const deck = document.querySelector('.dui-pv-deck');
+        for (const file of ['c', 'd', 'e']) {
+          const card = document.createElement('div');
+          card.className = 'dui-pv-stand'; card.dataset.file = file;
+          card.innerHTML = '<img class="dui-pv-picture dui-pv-standin" alt="">';
+          card.firstChild.src = pictures.tc;
+          deck.appendChild(card);
+        }
+        asked.length = 0;
+        return true;
+      })()`);
+      for (const file of ['b', 'c', 'd', 'e']) await cdp.evaluate(held(file, `larges.${file}`));
+      await sleep(2500);
+      const kept = (await cdp.evaluate(KEPT)).kept.sort();
+      // a is shown, and small; b and e are one step away, c and d two.
+      assert.equal(kept.length, 3, `three large ones kept: ${kept}`);
+      assert.ok(kept.includes('b') && kept.includes('e'), `the nearest kept: ${kept}`);
+      // One left out is not asked for again and again.
+      const askedOnce = await cdp.evaluate('asked.length');
+      await sleep(500);
+      assert.equal(await cdp.evaluate('asked.length'), askedOnce);
+      assert.ok(askedOnce <= 4, `each asked for once: ${askedOnce}`);
+      // A device with 1 GB keeps one large picture (the one shown, if it
+      // were large).
+      await cdp.evaluate(`Object.defineProperty(navigator, 'deviceMemory', { value: 1, configurable: true }); true`);
+      await cdp.evaluate(held('e', 'larges.e + "#again"'));
+      await sleep(300);
+      const few = (await cdp.evaluate(KEPT)).kept;
+      assert.equal(few.length, 1, `one kept: ${few}`);
+      assert.ok(['b', 'e'].includes(few[0]), `the nearest: ${few}`);
+    });
+
+    await t.test('closing lets go of every picture kept', async () => {
+      await cdp.evaluate(set(false));
+      await sleep(100);
+      assert.deepEqual((await cdp.evaluate(KEPT)).kept, []);
     });
   } finally {
     await browser.stop();

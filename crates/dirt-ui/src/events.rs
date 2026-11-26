@@ -56,6 +56,9 @@ pub enum Outcome {
     /// The file preview asks for the file before: ←, or a swipe to the
     /// right.
     Previous,
+    /// Nothing in the file preview moves, and the file shown is drawn: the
+    /// files either side may be read ahead now (design 6.16).
+    Still,
     /// The desktop's quick capture has begun to shrink to its grain: the
     /// window carries it from here to where it goes (sections 5.5, 7.2).
     Away,

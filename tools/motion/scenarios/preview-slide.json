@@ -1,8 +1,8 @@
 {
   "name": "preview-slide",
-  "title": "The file preview: the slide between pictures, to large ones not read yet, and steps in quick succession",
+  "title": "The file preview: the slide between pictures, to large ones not read yet, to one seen already, and steps in quick succession",
   "platforms": ["desktop", "android"],
-  "description": "Design 6.16 and 5.5. The note holds a small picture and two large ones (6000 × 4000 and 4000 × 6000 JPEGs with grain, several megabytes each), so that the picture stepped to is read, decoded and drawn while it slides in. Nothing may jump back, flash or go empty on the way: the thumbnail slides in at the picture's size and the picture takes its place where it is, with no second movement. Then steps one after another, faster than a slide lasts: the file shown goes on from where it is drawn, never back to its place first. The desktop pastes the pictures; on Android the newest note must already hold the three, in this order (docs/ui/motion-check.md, Several files on one note on the emulator, and Large pictures).",
+  "description": "Design 6.16 and 5.5. The note holds a small picture and two large ones (6000 × 4000 and 4000 × 6000 JPEGs with grain, several megabytes each), so that the picture stepped to is read, decoded and drawn while it slides in. Nothing may jump back, flash or go empty on the way: the thumbnail slides in at the picture's size and the picture takes its place where it is, with no second movement. A step back to the picture just left, which is still held and decoded, draws it sharp at once, with no thumbnail first. Then steps one after another, faster than a slide lasts: the file shown goes on from where it is drawn, never back to its place first. The desktop pastes the pictures; on Android the newest note must already hold the three, in this order (docs/ui/motion-check.md, Several files on one note on the emulator, and Large pictures).",
   "setup": [
     { "platforms": ["desktop"], "click": "[data-dui-typed]" },
     { "platforms": ["desktop"], "pastePicture": "[data-dui-typed]", "name": "garden.png", "then": 2500 },
@@ -74,6 +74,18 @@
       ],
       "arrives": ["file", "picture"],
       "ms": 2500
+    },
+    {
+      "name": "seen-again",
+      "description": "Once the file shown has rested, a step to the next, and after a rest a step back to the one just left: → then ← on the desktop, a fling each way on Android. The next is read ahead as the one shown rests, and the one left is kept, both held and decoded (6.16), so each slides in sharp, with no thumbnail first.",
+      "steps": [
+        { "platforms": ["desktop"], "key": "ArrowRight", "then": 1500 },
+        { "platforms": ["desktop"], "key": "ArrowLeft" },
+        { "platforms": ["android"], "swipe": { "on": ".dui-pv-stage", "dx": -220, "steps": 8, "every": 16 }, "then": 1500 },
+        { "platforms": ["android"], "swipe": { "on": ".dui-pv-stage", "dx": 220, "steps": 8, "every": 16 } }
+      ],
+      "arrives": ["file", "picture"],
+      "ms": 3500
     }
   ]
 }

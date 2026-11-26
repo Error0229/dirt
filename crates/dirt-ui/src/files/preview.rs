@@ -20,7 +20,9 @@
 //! picture zoomed (a pinch that follows the fingers, a double click or a
 //! double tap, the wheel), all of it there. A PDF's pages are
 //! drawn there by the bundled renderer (`crate::pdf`), and a sound's card
-//! plays there.
+//! plays there. Once nothing moves it says so, and the pictures either
+//! side are read ahead; the script keeps them decoded, with the ones shown
+//! last, so that a step to one draws it at once.
 //!
 //! It is always in the page while a note is open, so that it can move in
 //! and out.
@@ -49,6 +51,7 @@ pub fn FilePreview(
         Outcome::Dismiss | Outcome::Back => files.close(),
         Outcome::Next => files.step(true),
         Outcome::Previous => files.step(false),
+        Outcome::Still => files.read_ahead(),
         _ => {}
     });
     let all = files.previewable();
@@ -85,16 +88,15 @@ pub fn FilePreview(
     // sight, in the order the step goes through them: its thumbnail, or
     // its kind. The script takes its copies from here, so that a step
     // begun before Rust has drawn the last one still brings the right file.
+    // A picture held in memory gives its address too, which the script
+    // asks for and decodes while nothing moves, to keep it for a step.
     let deck = all.iter().map(|file| {
         let id = file.attachment.file_id;
-        (
-            id.to_string(),
-            files.thumbnail(id),
-            kind_icon(preview_kind(
-                &file.attachment.name,
-                &file.attachment.media_type,
-            )),
-        )
+        let kind = preview_kind(&file.attachment.name, &file.attachment.media_type);
+        let held = (kind == Some(PreviewKind::Picture))
+            .then(|| files.held_address(id))
+            .flatten();
+        (id.to_string(), files.thumbnail(id), kind_icon(kind), held)
     });
 
     rsx! {
@@ -142,8 +144,12 @@ pub fn FilePreview(
                 // Never drawn. A thumbnail smaller than `EDGE` a side is the
                 // picture's own size: it stands in at that size.
                 div { class: "dui-pv-deck", "aria-hidden": "true", "data-edge": "{EDGE}",
-                    for (deck_id , deck_thumbnail , deck_icon) in deck {
-                        div { key: "{deck_id}", class: "dui-pv-stand", "data-file": "{deck_id}",
+                    for (deck_id , deck_thumbnail , deck_icon , deck_held) in deck {
+                        div {
+                            key: "{deck_id}",
+                            class: "dui-pv-stand",
+                            "data-file": "{deck_id}",
+                            "data-dui-held": deck_held,
                             if let Some(picture) = deck_thumbnail {
                                 img {
                                     class: "dui-pv-picture dui-pv-standin",
@@ -159,6 +165,9 @@ pub fn FilePreview(
                         }
                     }
                 }
+                // Never drawn: the pictures the script keeps decoded, read
+                // ahead or shown a moment ago, for a step to one.
+                div { class: "dui-pv-keep", "aria-hidden": "true", "inert": "" }
             }
             // The script steps, on a press of ‹ or ›, as on ← and →: the
             // file shown slides out as the next slides in.
@@ -230,20 +239,22 @@ pub fn FilePreview(
     }
 }
 
-/// A name for what is shown, so that a change of it is a new item.
-const fn item_name(showing: &Showing) -> &'static str {
+/// A name for what is shown, so that a change of it is a new item: a file
+/// held again, at another address, too.
+fn item_name(showing: &Showing) -> String {
     match showing {
-        Showing::Nothing | Showing::Loading => "loading",
-        Showing::Media { .. } | Showing::Text(_) => "shown",
-        Showing::Failed(_) => "failed",
+        Showing::Nothing | Showing::Loading => "loading".to_owned(),
+        Showing::Media { address, .. } => format!("shown{address}"),
+        Showing::Text(_) => "shown".to_owned(),
+        Showing::Failed(_) => "failed".to_owned(),
     }
 }
 
-/// A picture larger than this is asked for by the script, once nothing in
-/// the preview moves (`data-dui-src`), not as it is drawn here: the web
-/// view takes a picture's bytes on its main thread in one piece, and on the
-/// desktop drew no frame for as long, 15 to 25 ms for 9 MB, which a slide
-/// to it showed as a stutter (design 6.16, the slide again).
+/// A picture larger than this is asked for by the script once nothing in
+/// the preview moves, not as it slides in: the web view takes a picture's
+/// bytes on its main thread in one piece, and on the desktop drew no frame
+/// for as long, 15 to 25 ms for 9 MB, which a slide to it showed as a
+/// stutter (design 6.16, the slide again). One no larger is `small`.
 const ASKED_FOR_WHEN_STILL: u64 = 2 * 1024 * 1024;
 
 /// What the stage shows. `bytes` is the file's size.
@@ -276,13 +287,16 @@ fn PreviewItem(showing: Showing, name: String, thumbnail: Option<String>, bytes:
             }
         },
         Showing::Media { kind, address } => match kind {
+            // The script asks for every picture (`data-dui-src`): one it
+            // keeps decoded already, read ahead or shown a moment ago, takes
+            // this one's place without being asked for again.
             PreviewKind::Picture => {
-                let later = bytes > ASKED_FOR_WHEN_STILL;
+                let small = bytes <= ASKED_FOR_WHEN_STILL;
                 rsx! {
                     img {
                         class: "dui-pv-picture",
-                        src: (!later).then(|| address.clone()),
-                        "data-dui-src": later.then(|| address.clone()),
+                        "data-dui-src": "{address}",
+                        "data-dui-small": small.then_some(""),
                         alt: "{name}",
                         draggable: "false",
                         "data-dui-zoom": "",
