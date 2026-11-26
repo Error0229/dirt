@@ -3630,12 +3630,13 @@
       }
       setTimeout(() => stillNow(modal, state), 0);
     };
-    // A decoding that never ends gives the picture up after 4 s, as
-    // `whenReady` does, so that keeping goes on with the next.
+    // A decoding that never ends gives the picture up after 15 s, so that
+    // keeping goes on with the next. Longer than `whenReady`'s 4 s: no one
+    // waits on it, and a large picture on a slow phone may take that long.
     img.addEventListener('load', () => {
       if (state.keeping !== run) return;
       img.decode().then(() => done(true), () => done(false));
-      setTimeout(() => done(false), DECODE_WAIT_MS);
+      setTimeout(() => done(false), KEEP_DECODE_WAIT_MS);
     }, { once: true });
     img.addEventListener('error', () => done(false), { once: true });
     keep.appendChild(img);
@@ -3858,6 +3859,7 @@
     stillNow(modal, state);
   }
   const DECODE_WAIT_MS = 4000;
+  const KEEP_DECODE_WAIT_MS = 15000;
   const largePicture = item => {
     const picture = item.querySelector('img[data-dui-zoom]');
     return !!picture && picture.naturalWidth * picture.naturalHeight > LARGE_PICTURE;
@@ -4161,6 +4163,14 @@
     if (!onceOnly(event)) return;
     const drag = gesture;
     if (!drag) return;
+    // A pinch or a pan let go of: what is staged beside the file shown,
+    // taken back if the phone was turned meanwhile, is staged again.
+    if (drag.pinch || drag.pan || drag.spent) {
+      setTimeout(() => {
+        const state = modals.get(drag.modal);
+        if (state && !gesture) stillNow(drag.modal, state);
+      }, 0);
+    }
     const cancelled = event.type === 'touchcancel';
     if (drag.spent) {
       if (!event.touches || !event.touches.length) {
