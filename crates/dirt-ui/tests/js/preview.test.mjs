@@ -588,3 +588,183 @@ test('Android: what the review of #336 found', { skip: !browserFound && 'no Edge
     await browser.stop();
   }
 });
+
+// A picture smaller than the stage, whose thumbnail stands in at the
+// stage's size: as it is decoded it grows from the thumbnail's box down
+// to its own (`takeOver`, 280 ms).
+const SMALL = `(() => {
+  const canvas = document.createElement('canvas');
+  canvas.width = 200; canvas.height = 130;
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#b07a4f'; g.fillRect(0, 0, 200, 130);
+  window.pictures.small = canvas.toDataURL('image/png');
+  return true;
+})()`;
+async function growing(cdp, file) {
+  await cdp.evaluate(putItem(file, 'standin', 'pictures.small'));
+  await sleep(300);
+  await cdp.evaluate(putItem(file, 'picture', 'pictures.small'));
+  // Decoded, and growing: well inside its 280 ms.
+  for (let tries = 0; tries < 50; tries++) {
+    const running = await cdp.evaluate(`document.querySelector('[data-dui-pv-stage] > .dui-pv-item img').getAnimations().length`);
+    if (running) return;
+    await sleep(5);
+  }
+  throw new Error('the picture did not grow from its thumbnail');
+}
+const SLIDE = (side) => `({
+  x: ${ITEM_X},
+  peeks: document.querySelectorAll('[data-dui-pv-stage] > .dui-pv-peek.on').length,
+  told: told.map(m => m.kind),
+})`;
+
+test('the desktop: what the second review of #336 found', { skip: !browserFound && 'no Edge or Chrome here' }, async t => {
+  const browser = await page('desktop');
+  try {
+    const { cdp } = browser;
+    await cdp.evaluate(SMALL);
+
+    await t.test('a double click while a picture grows from its thumbnail zooms to 2×', async () => {
+      await growing(cdp, 'c');
+      const at = await cdp.evaluate(`(() => { const b = document.querySelector('[data-dui-pv-stage] > .dui-pv-item').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+      for (const clickCount of [1, 2]) {
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...at, button: 'left', buttons: 1, clickCount });
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at, button: 'left', buttons: 0, clickCount });
+      }
+      await sleep(500);
+      const view = await cdp.evaluate(VIEW);
+      near(view.s, 2, 1e-6, 'scale');
+      assert.equal(view.animations, 0);
+    });
+  } finally {
+    await browser.stop();
+  }
+});
+
+test('Android: what the second review of #336 found', { skip: !browserFound && 'no Edge or Chrome here' }, async t => {
+  const browser = await page('android');
+  try {
+    const { cdp } = browser;
+    await cdp.evaluate(SMALL);
+    const mid = await cdp.evaluate(`(() => { const b = document.querySelector('[data-dui-pv-stage]').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+    const finger = (x, y, id = 0) => ({ x, y, id });
+    const down = (...points) => cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points });
+    const move = (...points) => cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points });
+    const up = () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    async function drag(dx, dy, steps, every, hold) {
+      await down(finger(mid.x, mid.y));
+      for (let k = 1; k <= steps; k++) {
+        await sleep(every);
+        await move(finger(mid.x + (dx * k) / steps, mid.y + (dy * k) / steps));
+      }
+      if (hold) await sleep(hold);
+      await up();
+    }
+
+    await t.test('a tap while a picture grows from its thumbnail leaves it to grow, and it rests at fit', async () => {
+      await growing(cdp, 'c');
+      await down(finger(mid.x, mid.y));
+      await up();
+      await sleep(500);
+      const view = await cdp.evaluate(VIEW);
+      assert.deepEqual({ s: view.s, x: view.x, y: view.y, animations: view.animations }, { s: 1, x: 0, y: 0, animations: 0 });
+    });
+
+    await t.test('a pinch while it grows takes it from where it is drawn and settles within the limits', async () => {
+      await sleep(400);
+      await growing(cdp, 'd');
+      await down(finger(mid.x - 50, mid.y, 0), finger(mid.x + 50, mid.y, 1));
+      for (let k = 1; k <= 5; k++) {
+        await move(finger(mid.x - 50 - 5 * k, mid.y, 0), finger(mid.x + 50 + 5 * k, mid.y, 1));
+        await sleep(16);
+      }
+      const held = await cdp.evaluate(VIEW);
+      assert.ok(held.s > 1 && held.animations === 0, `held where it was drawn, with nothing moving it (${JSON.stringify(held)})`);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [finger(mid.x - 75, mid.y, 0)] });
+      await up();
+      await sleep(500);
+      const rest = await cdp.evaluate(VIEW);
+      assert.ok(rest.s >= 1 && rest.s <= 4 && rest.animations === 0, `at rest within 1× and 4× (${JSON.stringify(rest)})`);
+      // Back to fit for what follows.
+      for (let tap = 0; tap < 2; tap++) { await down(finger(mid.x, mid.y)); await up(); await sleep(90); }
+      await sleep(500);
+      assert.equal((await cdp.evaluate(VIEW)).s, 1);
+    });
+
+    await t.test('a second flick takes the file still coming in from a step from where it is drawn', async () => {
+      await cdp.evaluate(putItem('a', 'picture', 'pictures.a'));
+      await sleep(400);
+      await cdp.evaluate('told.length = 0; true');
+      await drag(-120, 0, 6, 16, 0);
+      await sleep(30);
+      await cdp.evaluate(putItem('b', 'standin', 'pictures.b'));
+      await sleep(40);
+      await down(finger(mid.x, mid.y));
+      for (let k = 1; k <= 2; k++) { await sleep(16); await move(finger(mid.x - 10 * k, mid.y)); }
+      await sleep(30);
+      const held = await cdp.evaluate(SLIDE());
+      assert.deepEqual(held.told, ['next']);
+      assert.ok(held.x > 60, `held where it was coming in from the right, not snapped to rest (${held.x})`);
+      // Flung on to the left: it comes the rest of its way in.
+      for (let k = 3; k <= 8; k++) { await sleep(16); await move(finger(mid.x - 30 * k, mid.y)); }
+      await up();
+      await sleep(600);
+      const rest = await cdp.evaluate(SLIDE());
+      assert.deepEqual(rest, { x: 0, peeks: 0, told: ['next'] });
+    });
+
+    // A file taken again as it slides back, by a finger that then does
+    // something else than drag it sideways.
+    async function slidingBack() {
+      await drag(-90, 0, 8, 20, 150);
+      await sleep(60);
+      const x = await cdp.evaluate(ITEM_X);
+      assert.ok(x < -5, `sliding back (${x})`);
+      await down(finger(mid.x, mid.y));
+    }
+
+    await t.test('taken as it slides back and then moved down, it goes back in place and nothing closes', async () => {
+      await cdp.evaluate(putItem('b', 'picture', 'pictures.b'));
+      await sleep(400);
+      await cdp.evaluate('told.length = 0; true');
+      await slidingBack();
+      for (let k = 1; k <= 6; k++) { await sleep(16); await move(finger(mid.x, mid.y + 25 * k)); }
+      await up();
+      await sleep(600);
+      assert.deepEqual(await cdp.evaluate(SLIDE()), { x: 0, peeks: 0, told: [] });
+    });
+
+    await t.test('taken as it slides back and then a second finger comes, it goes back in place', async () => {
+      await slidingBack();
+      await down(finger(mid.x, mid.y, 0), finger(mid.x + 80, mid.y, 1));
+      await sleep(40);
+      await move(finger(mid.x - 5, mid.y, 0), finger(mid.x + 85, mid.y, 1));
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [finger(mid.x - 5, mid.y, 0)] });
+      await up();
+      await sleep(600);
+      const rest = await cdp.evaluate(SLIDE());
+      assert.deepEqual({ x: rest.x, peeks: rest.peeks }, { x: 0, peeks: 0 });
+      for (let tap = 0; tap < 2; tap++) { await down(finger(mid.x, mid.y)); await up(); await sleep(90); }
+      await sleep(500);
+    });
+
+    await t.test('taken as it slides back on text that scrolls, and scrolled, it goes back in place', async () => {
+      await cdp.evaluate(`(() => {
+        const item = document.createElement('div');
+        item.className = 'dui-pv-item'; item.dataset.file = 'txt';
+        item.innerHTML = '<div class="dui-scroll" data-dui-scroll style="width:100%;height:100%;overflow:auto"><pre style="height:3000px;margin:0">text</pre></div>';
+        document.querySelector('[data-dui-pv-stage] > .dui-pv-item').replaceWith(item);
+        return true;
+      })()`);
+      await sleep(400);
+      await cdp.evaluate('told.length = 0; true');
+      await slidingBack();
+      for (let k = 1; k <= 6; k++) { await sleep(16); await move(finger(mid.x, mid.y - 25 * k)); }
+      await up();
+      await sleep(600);
+      assert.deepEqual(await cdp.evaluate(SLIDE()), { x: 0, peeks: 0, told: [] });
+    });
+  } finally {
+    await browser.stop();
+  }
+});

@@ -3098,7 +3098,7 @@
     },
   };
 
-  const views = new WeakMap(), viewRuns = new WeakMap();
+  const views = new WeakMap(), viewRuns = new WeakMap(), pictureGrows = new WeakMap();
   const pictureView = picture => views.get(picture) || { s: 1, x: 0, y: 0 };
   const viewTransform = view => `translate(${view.x}px, ${view.y}px) scale(${view.s})`;
   const zoomedIn = picture => pictureView(picture).s > 1.001;
@@ -3109,11 +3109,15 @@
     return item && !item.classList.contains('waiting') ? item.querySelector('img[data-dui-zoom]') : null;
   };
   // Where the picture fits, and the window it may move in.
+  // Where the item is laid out, not where it is drawn: one still sliding
+  // back does not move where its picture fits.
   function geometryOf(picture) {
     const item = picture.closest('.dui-pv-item');
-    const box = item.getBoundingClientRect();
+    const stage = item.parentElement;
+    const box = stage.getBoundingClientRect();
+    const left = box.left + item.offsetLeft, top = box.top + item.offsetTop;
     const w = picture.offsetWidth, h = picture.offsetHeight;
-    return { x: box.left + picture.offsetLeft + w / 2, y: box.top + picture.offsetTop + h / 2, w, h, left: 0, top: 0, right: innerWidth, bottom: innerHeight };
+    return { x: left + picture.offsetLeft + w / 2, y: top + picture.offsetTop + h / 2, w, h, left: 0, top: 0, right: innerWidth, bottom: innerHeight };
   }
   function setView(picture, view) {
     const zoomed = view.s > 1.001;
@@ -3135,6 +3139,23 @@
       run.cancel();
     }
     return pictureView(picture);
+  }
+  // A picture growing from its thumbnail's size (`takeOver`) is not a view
+  // a hand holds: a tap or a swipe leaves it to grow, a double click or
+  // the wheel stops it and starts from fit, and only a pinch takes it from
+  // where it is drawn (`take`).
+  function stopGrow(picture, take) {
+    const run = pictureGrows.get(picture);
+    pictureGrows.delete(picture);
+    if (!run) return;
+    if (take && unfinished(run)) {
+      const drawn = getComputedStyle(picture).transform;
+      run.cancel();
+      const m = drawn && drawn !== 'none' ? new DOMMatrixReadOnly(drawn) : null;
+      setView(picture, m ? { s: m.a, x: m.e, y: m.f } : { s: 1, x: 0, y: 0 });
+      return;
+    }
+    run.cancel();
   }
   // Moves the picture from the view it has to `to`: at once with reduced
   // motion.
@@ -3165,6 +3186,7 @@
   // (kept under it, unless that would leave the picture short of an edge),
   // or back to fit (280 ms, enter, as the mockup's).
   function toggleZoom(picture, x, y) {
+    stopGrow(picture, false);
     const now = holdView(picture);
     if (now.s > 1.001) { moveView(picture, { s: 1, x: 0, y: 0 }, ZOOM_MS, tokens.enter); return; }
     const g = geometryOf(picture);
@@ -3213,6 +3235,7 @@
     // Without Ctrl, a picture at 1×, or on its way back there, lets the
     // wheel be: its zooming out is not stopped half way.
     if (!event.ctrlKey && !zoomedIn(picture)) return;
+    if (event.ctrlKey) stopGrow(picture, false);
     const now = holdView(picture);
     if (!event.ctrlKey && now.s <= 1.001) return;
     event.preventDefault();
@@ -3244,10 +3267,10 @@
   }, { passive: true });
   const endPan = event => {
     if (!panning || event.pointerId !== panning.id) return;
-    const { picture, g } = panning;
+    const { picture } = panning;
     panning = null;
     picture.classList.remove('held');
-    settleView(picture, g);
+    settleView(picture, geometryOf(picture));
   };
   window.addEventListener('pointerup', endPan);
   window.addEventListener('pointercancel', endPan);
@@ -3492,11 +3515,11 @@
       if (a.width > 2 && b.width > 2 && Math.abs(a.width - b.width) > 2) {
         const k = a.width / b.width;
         const dx = a.left + a.width / 2 - (b.left + b.width / 2), dy = a.top + a.height / 2 - (b.top + b.height / 2);
-        // Held like any movement of the picture's view, so that a pinch
-        // straight away takes it from where it is drawn.
+        // Kept apart from the view's movements: a pinch straight away
+        // takes it from where it is drawn (`stopGrow`), a tap leaves it.
         const grow = startAnimation(to, [{ transform: `translate(${dx}px, ${dy}px) scale(${k})` }, { transform: 'none' }], { duration: ZOOM_MS, easing: tokens.enter });
-        viewRuns.set(to, grow);
-        after(grow, ZOOM_MS, () => { if (viewRuns.get(to) === grow) viewRuns.delete(to); });
+        pictureGrows.set(to, grow);
+        after(grow, ZOOM_MS, () => { if (pictureGrows.get(to) === grow) pictureGrows.delete(to); });
         startAnimation(from, [{ transform: 'none' }, { transform: `translate(${-dx / k}px, ${-dy / k}px) scale(${1 / k})` }], { duration: ZOOM_MS, easing: tokens.enter, fill: 'forwards' });
       }
     }
@@ -3618,8 +3641,20 @@
     target.addEventListener('touchend', ended, { passive: true });
     target.addEventListener('touchcancel', ended, { passive: true });
   }
+  // A file taken while it moved (`takeHold`, `drag.base`) and then not
+  // dragged sideways (a scroll took the finger, a second finger came, or
+  // it went up or down) slides back from where it was taken, its peek
+  // with it: otherwise it stayed off its place.
+  function putBack(drag) {
+    if (!drag || !drag.base) return;
+    const item = currentItem(drag.modal);
+    const base = drag.base;
+    drag.base = 0;
+    if (item) slideBack(drag.modal, item, base); else hidePeeks(drag.modal);
+  }
   // A drag begun and not finished is let go of where it is: back to rest.
   function dropDrag(drag) {
+    if (drag && !drag.mode) putBack(drag);
     if (!drag || !drag.mode) return;
     const item = currentItem(drag.modal);
     const scrim = drag.modal.querySelector('.dui-pv-scrim');
@@ -3643,11 +3678,14 @@
         // A third finger ends a pinch or a move where it was: the picture
         // settles within its limits and edges, as if let go of.
         const held = gesture && (gesture.pinch || gesture.pan) ? gesture : null;
-        if (held) settleView(held.picture, held.g, held.at ? held.at.x : undefined, held.at ? held.at.y : undefined);
+        if (held) settleView(held.picture, geometryOf(held.picture), held.at ? held.at.x : undefined, held.at ? held.at.y : undefined);
         gesture = { spent: true, modal, picture: held ? held.picture : null };
         return;
       }
       const [a, b] = event.touches;
+      // A picture still growing from its thumbnail's size is taken from
+      // where it is drawn.
+      stopGrow(picture, true);
       gesture = { pinch: true, modal, picture, d0: apart(a, b), m0: midpoint(a, b), from: holdView(picture), g: geometryOf(picture) };
       gesture.at = gesture.m0;
       return;
@@ -3696,6 +3734,14 @@
       return;
     }
     if (!drag.mode && Math.hypot(dx, dy) > 8) drag.mode = Math.abs(dy) > Math.abs(dx) ? 'y' : 'x';
+    // A file taken as it moved and then moved up or down goes back in
+    // place, and the finger does nothing more: neither scrolls it (the
+    // scroll it starts is its own) nor closes the preview.
+    if (drag.mode === 'y' && drag.base) {
+      putBack(drag);
+      gesture = drag.scrolls ? null : { spent: true, modal: drag.modal };
+      return;
+    }
     // Up or down on what scrolls is its own scrolling.
     if (drag.mode === 'y' && drag.scrolls) { gesture = null; return; }
     const item = currentItem(drag.modal);
@@ -3760,7 +3806,7 @@
       gesture = event.touches && event.touches.length ? { spent: true, modal: drag.modal } : null;
       previewGestured = true;
       lastTap = null;
-      settleView(drag.picture, drag.g, drag.at.x, drag.at.y);
+      settleView(drag.picture, geometryOf(drag.picture), drag.at.x, drag.at.y);
       return;
     }
     if (event.touches && event.touches.length) return;
@@ -3770,8 +3816,8 @@
       previewGestured = drag.moved;
       if (!drag.moved) { if (touch && !cancelled) tapped(drag.modal, touch.clientX, touch.clientY, event.timeStamp); return; }
       lastTap = null;
-      if (cancelled) { settleView(drag.picture, drag.g); return; }
-      coastView(drag.picture, drag.g, previewMaths.speed(drag.samples, event.timeStamp));
+      if (cancelled) { settleView(drag.picture, geometryOf(drag.picture)); return; }
+      coastView(drag.picture, geometryOf(drag.picture), previewMaths.speed(drag.samples, event.timeStamp));
       return;
     }
     const { mode, d, modal } = drag;
