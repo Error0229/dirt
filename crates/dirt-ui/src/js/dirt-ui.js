@@ -1245,11 +1245,14 @@
     });
     state.observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
     if (modal.dataset.duiModal === 'preview') {
-      const stage = stageOf(modal);
+      const stage = stageOf(modal), track = trackOf(modal);
       state.items = new MutationObserver(() => previewItemChanged(modal, state));
-      if (stage) state.items.observe(stage, { childList: true });
-      state.item = modal.querySelector('.dui-pv-item');
-      state.standIns = new Set();
+      if (track) state.items.observe(track, { childList: true });
+      state.item = currentItem(modal);
+      state.file = state.item ? state.item.dataset.file : null;
+      state.asked = [];
+      state.to = 0;
+      state.slideRun = null;
       // A window that changes size (turned, or resized) moves where the
       // picture fits: a zoomed one is kept within its new edges.
       if (stage && window.ResizeObserver) {
@@ -2818,12 +2821,16 @@
     const seen = Math.max(0, right - left) * Math.max(0, bottom - top);
     return seen >= 0.75 * box.width * box.height;
   }
-  // The box of what the stage shows, or a part of the stage's middle.
+  // The box of what the stage shows (the file, or what stands in for it),
+  // or a part of the stage's middle.
   function shownBox(stage) {
-    const item = stage.querySelector(':scope > .dui-pv-item');
-    const inner = item && item.firstElementChild;
-    const box = inner && inner.getBoundingClientRect();
-    if (box && box.width > 8 && box.height > 8) return box;
+    const item = stage.querySelector(':scope > .dui-pv-track > .dui-pv-item');
+    const shown = [item && !item.classList.contains('waiting') ? item : null, ...stage.querySelectorAll(':scope > .dui-pv-track > .dui-pv-ghost > *')];
+    for (const one of shown) {
+      const inner = one && Math.abs(atOf(one)) < 1 ? one.firstElementChild : null;
+      const box = inner && (inner.tagName === 'IMG' ? drawnBox(inner) : inner.getBoundingClientRect());
+      if (box && box.width > 8 && box.height > 8) return box;
+    }
     const whole = stage.getBoundingClientRect();
     const w = whole.width * 0.6, h = whole.height * 0.6;
     return { left: whole.left + (whole.width - w) / 2, top: whole.top + (whole.height - h) / 2, width: w, height: h };
@@ -2885,17 +2892,29 @@
     previewStep = 1;
     // What is on the stage as it opens (the thumbnail standing in, mostly):
     // the picture that replaces it takes its place without going empty.
-    state.item = currentItem(modal);
-    state.slide = null;
+    // A picture opened straight away (one fetched first) waits, undrawn,
+    // until it is decoded, its thumbnail standing in for it meanwhile.
+    endSlide(modal, state);
     clearGhosts(modal);
-    if (state.standIns) state.standIns.clear();
-    hidePeeks(modal);
+    const item = currentItem(modal);
+    state.item = item;
+    state.file = item ? item.dataset.file : null;
+    state.asked = [];
+    if (item) {
+      placeAt(item, 0);
+      if (item.querySelector('img[data-dui-zoom]') && !item.duiReady) {
+        item.classList.add('waiting');
+        standAt(modal, state.file, 0);
+      }
+    }
     const stage = stageOf(modal), tile = tileOf(modal);
     if (state.run) state.run.cancel();
+    state.run = null;
     fadeAround(modal, state, true);
-    if (!stage) return;
+    if (!stage) { afterOpening(modal, state, item); return; }
     if (reduced() || !tile) {
       state.run = startAnimation(stage, [{ opacity: 0 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 200, easing: tokens.standard });
+      afterOpening(modal, state, item);
       return;
     }
     // It grows out of its tile (420 ms, enter).
@@ -2903,6 +2922,7 @@
       { duration: 420, easing: tokens.enter });
     const run = grow(tile);
     state.run = run;
+    afterOpening(modal, state, item);
     // The window may change size as it opens: on Android the keyboard goes
     // as the preview takes the focus, and the page under it moves. The
     // file still grows out of its tile where the tile is now: the movement
@@ -2921,6 +2941,18 @@
     };
     addEventListener('resize', resized);
     setTimeout(() => removeEventListener('resize', resized), 520);
+  }
+  // The file on the stage as the preview opens is asked for (a large
+  // picture) once the preview has grown, and so is one Rust draws while it
+  // grows; one that can be drawn takes its place then.
+  function afterOpening(modal, state, item) {
+    if (item && item.querySelector('img[data-dui-zoom]') && !item.duiReady) load(modal, state, item);
+    const grown = () => {
+      if (!modal.classList.contains('on')) return;
+      if (unfinished(state.run)) { setTimeout(grown, 50); return; }
+      settled(modal, state);
+    };
+    setTimeout(grown, 50);
   }
   function previewClosed(modal, state) {
     const stage = stageOf(modal), tile = tileOf(modal);
@@ -2987,7 +3019,7 @@
     if (!modal) return;
     const nav = event.target.closest('.dui-pv-nav');
     if (nav) { slide(modal, nav.classList.contains('prev') ? -1 : 1); return; }
-    const backdrop = event.target.matches('[data-dui-pv-stage], .dui-pv-item, .dui-pv-scrim, .dui-pv-failed');
+    const backdrop = event.target.matches('[data-dui-pv-stage], .dui-pv-track, .dui-pv-item, .dui-pv-scrim, .dui-pv-failed');
     if (!backdrop) return;
     if (previewGestured) { previewGestured = false; return; }
     if (touchUi()) modal.classList.toggle('bare');
@@ -3098,29 +3130,35 @@
     },
   };
 
-  const views = new WeakMap(), viewRuns = new WeakMap(), pictureGrows = new WeakMap();
+  const views = new WeakMap(), viewRuns = new WeakMap();
   const pictureView = picture => views.get(picture) || { s: 1, x: 0, y: 0 };
   const viewTransform = view => `translate(${view.x}px, ${view.y}px) scale(${view.s})`;
   const zoomedIn = picture => pictureView(picture).s > 1.001;
   // The file on the stage now, never one the ghost layer keeps.
-  const currentItem = modal => modal.querySelector('[data-dui-pv-stage] > .dui-pv-item');
+  const currentItem = modal => modal.querySelector('[data-dui-pv-stage] > .dui-pv-track > .dui-pv-item');
   const currentPicture = modal => {
     const item = currentItem(modal);
     return item && !item.classList.contains('waiting') ? item.querySelector('img[data-dui-zoom]') : null;
   };
   // Where the picture fits, and the window it may move in.
-  // Where the item is laid out, not where it is drawn: one still sliding
-  // back does not move where its picture fits.
-  // Null for a picture no longer in the page: one let go of after its
-  // file was stepped away from and its slide out ended.
+  // Where the item is laid out, not where it is drawn: the track moved
+  // under a finger, or sliding back, does not move where its picture fits.
+  // Null for a picture no longer on the stage: one let go of after its
+  // file was stepped away from, kept in the ghost layer or gone.
   function geometryOf(picture) {
     const item = picture.closest('.dui-pv-item');
-    const stage = item && item.parentElement;
+    const track = item && item.parentElement;
+    const stage = track && track.classList.contains('dui-pv-track') ? track.parentElement : null;
     if (!stage) return null;
     const box = stage.getBoundingClientRect();
-    const left = box.left + item.offsetLeft, top = box.top + item.offsetTop;
-    const w = picture.offsetWidth, h = picture.offsetHeight;
-    return { x: left + picture.offsetLeft + w / 2, y: top + picture.offsetTop + h / 2, w, h, left: 0, top: 0, right: innerWidth, bottom: innerHeight };
+    const left = box.left + track.offsetLeft + item.offsetLeft, top = box.top + track.offsetTop + item.offsetTop;
+    // As large as fits in the item, never larger than itself, in its middle:
+    // worked out, since the box the page gives is rounded to whole pixels,
+    // which zoomed four times left it a pixel or two short of an edge.
+    const iw = item.clientWidth, ih = item.clientHeight, nw = picture.naturalWidth, nh = picture.naturalHeight;
+    const k = nw && nh ? Math.min(1, iw / nw, ih / nh) : 0;
+    const w = k ? nw * k : picture.offsetWidth, h = k ? nh * k : picture.offsetHeight;
+    return { x: left + iw / 2, y: top + ih / 2, w, h, left: 0, top: 0, right: innerWidth, bottom: innerHeight };
   }
   function setView(picture, view) {
     const zoomed = view.s > 1.001;
@@ -3142,23 +3180,6 @@
       run.cancel();
     }
     return pictureView(picture);
-  }
-  // A picture growing from its thumbnail's size (`takeOver`) is not a view
-  // a hand holds: a tap or a swipe leaves it to grow, a double click or
-  // the wheel stops it and starts from fit, and only a pinch takes it from
-  // where it is drawn (`take`).
-  function stopGrow(picture, take) {
-    const run = pictureGrows.get(picture);
-    pictureGrows.delete(picture);
-    if (!run) return;
-    if (take && unfinished(run)) {
-      const drawn = getComputedStyle(picture).transform;
-      run.cancel();
-      const m = drawn && drawn !== 'none' ? new DOMMatrixReadOnly(drawn) : null;
-      setView(picture, m ? { s: m.a, x: m.e, y: m.f } : { s: 1, x: 0, y: 0 });
-      return;
-    }
-    run.cancel();
   }
   // Moves the picture from the view it has to `to`: at once with reduced
   // motion.
@@ -3189,7 +3210,6 @@
   // (kept under it, unless that would leave the picture short of an edge),
   // or back to fit (280 ms, enter, as the mockup's).
   function toggleZoom(picture, x, y) {
-    stopGrow(picture, false);
     const now = holdView(picture);
     if (now.s > 1.001) { moveView(picture, { s: 1, x: 0, y: 0 }, ZOOM_MS, tokens.enter); return; }
     const g = geometryOf(picture);
@@ -3226,32 +3246,27 @@
     if (!picture) return;
     if (zoomedIn(picture) || event.target === picture) toggleZoom(picture, event.clientX, event.clientY);
   });
-  // The wheel: with Ctrl (a touchpad's pinch comes as one) it zooms about
-  // the pointer, between 1× and 4×; zoomed, without it, it moves the
-  // picture. Taken from the web view, whose own zoom Ctrl and the wheel
-  // would otherwise be.
+  // The wheel zooms the picture about the pointer, between 1× and 4×, as
+  // far as it is turned, with no movement of its own: on its own, or with
+  // Ctrl, as a touchpad's pinch comes. It does nothing else in the
+  // preview (a zoomed picture is moved by a drag), and it is taken from
+  // the web view, whose own zoom Ctrl and the wheel would otherwise be.
+  // Turned sideways only, or while the file slides, it does nothing.
   document.addEventListener('wheel', event => {
     if (!event.target.closest) return;
     const modal = event.target.closest('[data-dui-modal="preview"].on');
-    const picture = modal && currentPicture(modal);
-    if (!picture || event.target.closest('.dui-scroll, button')) return;
-    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? innerHeight : 1;
-    const dx = event.deltaX * unit, dy = event.deltaY * unit;
-    // Without Ctrl, a picture at 1×, or on its way back there, lets the
-    // wheel be: its zooming out is not stopped half way.
-    if (!event.ctrlKey && !zoomedIn(picture)) return;
-    if (event.ctrlKey) stopGrow(picture, false);
-    const now = holdView(picture);
-    if (!event.ctrlKey && now.s <= 1.001) return;
+    if (!modal || event.target.closest('.dui-scroll, button')) return;
+    const picture = currentPicture(modal);
+    if (!picture) return;
     event.preventDefault();
+    const state = modals.get(modal);
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? innerHeight : 1;
+    const dy = event.deltaY * unit;
     const g = geometryOf(picture);
-    if (event.ctrlKey) {
-      const s = Math.min(ZOOM_MOST, Math.max(1, now.s * Math.exp(-dy * 0.0025)));
-      setView(picture, previewMaths.rest(previewMaths.zoomAbout(now, s, event.clientX, event.clientY, g), g));
-      return;
-    }
-    const [mx, my] = event.shiftKey && !dx ? [dy, 0] : [dx, dy];
-    setView(picture, previewMaths.rest({ s: now.s, x: now.x - mx, y: now.y - my }, g));
+    if (!dy || !g || (state && trackMoving(modal, state))) return;
+    const now = holdView(picture);
+    const s = Math.min(ZOOM_MOST, Math.max(1, now.s * Math.exp(-dy * 0.0025)));
+    setView(picture, previewMaths.rest(previewMaths.zoomAbout(now, s, event.clientX, event.clientY, g), g));
   }, { passive: false });
   // A mouse or pen dragging a zoomed picture moves it, with a give past
   // its edges that it comes back from when let go of.
@@ -3259,7 +3274,7 @@
   document.addEventListener('pointerdown', event => {
     if (event.pointerType === 'touch' || event.button || !event.target.closest) return;
     const picture = event.target.closest('img[data-dui-zoom].zoom');
-    if (!picture || !picture.closest('[data-dui-pv-stage] > .dui-pv-item')) return;
+    if (!picture || !picture.closest('[data-dui-pv-stage] > .dui-pv-track > .dui-pv-item')) return;
     event.preventDefault();
     panning = { picture, id: event.pointerId, x: event.clientX, y: event.clientY, from: holdView(picture), g: geometryOf(picture) };
     picture.classList.add('held');
@@ -3281,213 +3296,216 @@
   window.addEventListener('pointercancel', endPan);
 
   // ---- The step: the next file slides in as the one shown slides out -----
-  // Everything moves a window's width and 16 px (the gap between two
-  // files side by side), so that what leaves is wholly gone. A finger
-  // dragging sideways moves the file and brings the next one (`.dui-pv-
-  // peek`, its thumbnail or its kind, as it will stand in while it is
-  // read) into sight beside it; let go, it slides on to the end, or back.
-  // Rust is told at once, and its new file takes over the movement where
-  // it has got to. What was shown is kept in the ghost layer while it
-  // slides away, or, for the same file read after its thumbnail, until
-  // the picture can be drawn whole (`img.decode()`), so that nothing goes
-  // empty and nothing jumps in size.
+  // The file and the ghost layer beside it are in one track
+  // (`.dui-pv-track`), and a step moves the track alone, a window's width
+  // and 16 px (the gap between two files side by side) at a time, so that
+  // what leaves is wholly gone. Nothing in it moves by itself: each thing
+  // keeps its place along it (`duiAt`, px from the file's place). So the
+  // web view runs the step as one movement of one element, which it can
+  // draw by itself while the page is busy, and nothing is ever taken off
+  // one movement and put on another part way, which drew it back at its
+  // place for a frame.
+  //
+  // What slides in is a copy of what stands in for the file, from the
+  // deck Rust draws (`.dui-pv-deck`: each file's thumbnail, or its kind),
+  // placed beside the file shown, the way the step goes. Rust is told at
+  // once and draws the file, in its own time: its new item is put where
+  // the file is along the track and stays undrawn (`waiting`) until it can
+  // be drawn whole; what was shown is kept in the ghost layer, where it
+  // is, while it can still be seen. When the track comes to rest it is
+  // put back at its place and everything in it moved by as much the other
+  // way, in one go (`land`). A picture is shown in place of what stood in
+  // for it once decoded, and a large one only once nothing moves: drawing
+  // it the first time costs the web view its decoding again, and the page
+  // waits for that (A83).
   const SLIDE_GAP = 16;
+  // A picture of more pixels than this is shown only once nothing moves.
+  const LARGE_PICTURE = 4e6;
   const slideDistance = () => innerWidth + SLIDE_GAP;
-  const peekOf = (modal, dir) => modal.querySelector(`[data-dui-pv-stage] > .dui-pv-peek[data-side="${dir > 0 ? 'next' : 'prev'}"]`);
-  const shownPeek = modal => modal.querySelector('[data-dui-pv-stage] > .dui-pv-peek.on');
-  function hidePeeks(modal) {
-    modal.querySelectorAll('[data-dui-pv-stage] > .dui-pv-peek').forEach(peek => {
-      peek.getAnimations().forEach(run => run.cancel());
-      peek.classList.remove('on');
-      peek.style.transform = '';
-    });
+  const trackOf = modal => modal.querySelector('[data-dui-pv-stage] > .dui-pv-track');
+  const ghostLayer = modal => modal.querySelector('.dui-pv-track > .dui-pv-ghost');
+  const deckOf = modal => modal.querySelector('[data-dui-pv-stage] > .dui-pv-deck');
+  const deckCards = modal => { const deck = deckOf(modal); return deck ? [...deck.children] : []; };
+  const deckFiles = modal => deckCards(modal).map(card => card.dataset.file);
+  const severalOn = modal => deckFiles(modal).length > 1;
+  // Where something in the track is kept, px from the file's place.
+  const atOf = element => element.duiAt || 0;
+  function placeAt(element, at) {
+    element.duiAt = at;
+    element.style.transform = at ? `translateX(${at}px)` : '';
   }
   function clearGhosts(modal) {
-    const layer = modal.querySelector('.dui-pv-ghost');
+    const layer = ghostLayer(modal);
     if (layer) layer.replaceChildren();
   }
-  // Keeps an item Rust has taken out of the page in the ghost layer, as it
-  // was drawn: the same element, whose picture is already decoded (a copy
-  // would ask for bytes the app may already have let go of). It takes no
-  // pointer and no focus there.
+  // The file `dir` from `file`, going round at the ends, as Rust's step does.
+  function fileFrom(modal, file, dir) {
+    const files = deckFiles(modal);
+    if (!files.length) return null;
+    const at = Math.max(0, files.indexOf(file));
+    return files[(at + dir + files.length * 2) % files.length];
+  }
+  // A thumbnail smaller than a thumbnail can be (`dirt_core::files::
+  // thumbnail::EDGE`, given by the deck) is the picture's own size, and
+  // stands in at that size, as the picture is drawn.
+  function ownSize(modal, img) {
+    const deck = deckOf(modal);
+    const edge = Number(deck && deck.dataset.edge) || 256;
+    const mark = () => { if (img.naturalWidth && Math.max(img.naturalWidth, img.naturalHeight) < edge) img.classList.add('own'); };
+    if (img.complete) mark(); else img.addEventListener('load', mark, { once: true });
+  }
+  // What stands in for `file` `at` px along the track: what is there for
+  // it already (the file itself, drawn, or a copy kept), or a copy from
+  // the deck.
+  function standAt(modal, file, at) {
+    const layer = ghostLayer(modal);
+    if (!layer || !file) return null;
+    const near = element => element.dataset.file === file && Math.abs(atOf(element) - at) < 1;
+    const item = currentItem(modal);
+    if (item && near(item) && !item.classList.contains('waiting')) return item;
+    const kept = [...layer.children].find(near);
+    if (kept) return kept;
+    const card = deckCards(modal).find(one => one.dataset.file === file);
+    if (!card) return null;
+    const copy = card.cloneNode(true);
+    copy.querySelectorAll('img').forEach(img => ownSize(modal, img));
+    layer.appendChild(copy);
+    placeAt(copy, at);
+    return copy;
+  }
+  // Keeps an item Rust has taken out of the page in the ghost layer, where
+  // it was along the track and as it was drawn: the same element, whose
+  // picture is already decoded (a copy would ask for bytes the app may
+  // already have let go of). It takes no pointer and no focus there.
   function toGhost(modal, element) {
-    const layer = modal.querySelector('.dui-pv-ghost');
+    const layer = ghostLayer(modal);
     if (!layer) return null;
-    element.getAnimations().forEach(run => run.cancel());
-    element.style.transform = '';
-    element.classList.remove('waiting');
     element.setAttribute('inert', '');
     layer.appendChild(element);
+    placeAt(element, atOf(element));
     return element;
   }
-  // How long a step has run: read from the animation that leads it, so
-  // that the motion check's stepped clock sets it too.
-  const slideElapsed = slide => (slide.clock && slide.clock.currentTime !== null ? Number(slide.clock.currentTime) + slide.offset : Infinity);
-  // One part of a step, begun `elapsed` ms in (a negative delay: a file
-  // that comes in part way takes up the movement where it has got to).
-  function slideRun(element, kind, slide, elapsed) {
-    const { dir, from, D } = slide;
-    const frames = kind === 'out'
-      ? [{ transform: `translateX(${from}px)` }, { transform: `translateX(${-dir * D}px)` }]
-      : [{ transform: `translateX(${from + dir * D}px)` }, { transform: 'none' }];
-    element.style.transform = '';
-    return startAnimation(element, frames, { duration: slide.ms, easing: slide.easing, delay: -Math.max(0, elapsed), fill: 'forwards' });
+  // The track held where it is drawn, its movement stopped there; how far
+  // it is moved.
+  function holdTrack(modal, state) {
+    const track = trackOf(modal);
+    if (!track) return 0;
+    const x = drawnX(track);
+    const run = state.slideRun;
+    state.slideRun = null;
+    if (run) run.cancel();
+    track.style.transform = x ? `translateX(${x}px)` : '';
+    return x;
   }
-  // Thumbnails kept for a picture that has itself been replaced since, or
-  // never came, are let go of: they would stay over every later file.
-  function dropStandIns(state) {
-    if (!state.standIns) return;
-    state.standIns.forEach(ghost => ghost.remove());
-    state.standIns.clear();
+  // The track moved from where it is drawn to where the file stepped to is
+  // in the middle, on the glide spring's curve, and at rest there.
+  function moveTrack(modal, state, ms) {
+    const track = trackOf(modal);
+    const from = holdTrack(modal, state);
+    const to = -state.to;
+    if (!track || reduced() || Math.abs(from - to) < 0.5) { land(modal, state); return; }
+    const run = startAnimation(track, [{ transform: `translateX(${from}px)` }, { transform: `translateX(${to}px)` }],
+      { duration: ms, easing: spring('glide').easing, fill: 'forwards' });
+    track.style.transform = '';
+    state.slideRun = run;
+    after(run, ms, () => { if (state.slideRun === run) land(modal, state); });
+  }
+  // The track at rest where it was going: put back at its place, and
+  // everything in it moved by as much the other way, in one go, so that
+  // nothing is drawn anywhere else. What is out of sight goes.
+  function land(modal, state) {
+    const track = trackOf(modal);
+    const run = state.slideRun;
+    state.slideRun = null;
+    if (run) run.cancel();
+    if (track) track.style.transform = '';
+    const to = state.to;
+    state.to = 0;
+    const D = slideDistance();
+    const layer = ghostLayer(modal);
+    if (layer) {
+      [...layer.children].forEach(kept => {
+        const at = atOf(kept) - to;
+        if (Math.abs(at) >= D - 1) kept.remove(); else placeAt(kept, at);
+      });
+    }
+    const item = currentItem(modal);
+    if (item) {
+      if (item.dataset.file === state.file) placeAt(item, atOf(item) - to);
+      else { item.classList.add('waiting'); placeAt(item, 0); }
+    }
+    settled(modal, state);
+    // Rust has not drawn the file stepped to: if it never does (a step it
+    // did not take), what it shows is shown again.
+    if (item && item.dataset.file !== state.file) {
+      const file = state.file;
+      setTimeout(() => {
+        const now = currentItem(modal);
+        if (state.file !== file || state.slideRun || !now || now.dataset.file === file || !modal.classList.contains('on')) return;
+        state.file = now.dataset.file;
+        state.asked = [];
+        clearGhosts(modal);
+        placeAt(now, 0);
+        if (now.duiReady) takeOver(modal, now); else now.classList.add('waiting');
+      }, 2500);
+    }
   }
   // A step still on its way lands at once.
   function endSlide(modal, state) {
-    const slide = state.slide;
-    if (!slide) return;
-    state.slide = null;
-    [slide.clock, ...slide.runs].forEach(run => run && run.cancel());
-    clearGhosts(modal);
-    hidePeeks(modal);
-    const item = currentItem(modal);
-    if (item) { item.style.transform = ''; item.classList.remove('waiting'); }
+    if (state.slideRun || state.to) land(modal, state);
   }
-  // A step that has come to rest: its movements are let go of, leaving
-  // the file where it rests, but not those of what the ghost layer keeps,
-  // which goes when its own movement ends.
-  function landSlide(modal, state, step) {
-    if (state.slide === step) state.slide = null;
-    const layer = modal.querySelector('.dui-pv-ghost');
-    [step.clock, ...step.runs].forEach(run => {
-      const target = run && run.effect && run.effect.target;
-      if (run && !(layer && target && layer.contains(target))) run.cancel();
-    });
-    hidePeeks(modal);
-  }
-  // Steps to the next file (`dir` 1) or the one before (-1), from a drag
-  // that has moved the file `from` px; `touch` for a finger's, which takes
-  // the rest of its way in up to 340 ms, where ← and → take 260 ms. Both
-  // on the glide spring's curve, as a large surface moves (5.3). With one
-  // file there is nothing to step to: a key nudges it and it comes back.
-  function slide(modal, dir, from = 0, touch = false) {
+  // Whether the track moves, or a finger holds it.
+  const trackMoving = (modal, state) => !!state.slideRun || !!state.to || drawnX(trackOf(modal) || modal) !== 0;
+  // Steps to the next file (`dir` 1) or the one before (-1), from where the
+  // track is drawn: still, part way through a step (they add up), or under
+  // a finger (`touch`), which takes the rest of its way in up to 340 ms,
+  // where ← and → take 260 ms. Both on the glide spring's curve, as a
+  // large surface moves (5.3). With one file there is nothing to step to:
+  // a key nudges it and it comes back.
+  function slide(modal, dir, touch = false) {
     const state = modals.get(modal);
     if (!state) return;
     previewStep = dir;
-    endSlide(modal, state);
-    const item = currentItem(modal), peek = peekOf(modal, dir);
-    if (!peek) {
-      if (item && !touch && !reduced()) {
-        startAnimation(item, [{ transform: 'none' }, { transform: `translateX(${-dir * 24}px)` }, { transform: 'none' }], { duration: 300, easing: tokens.standard });
+    const track = trackOf(modal);
+    if (!track) return;
+    if (!severalOn(modal)) {
+      if (!touch && !reduced() && !state.slideRun) {
+        const run = startAnimation(track, [{ transform: 'none' }, { transform: `translateX(${-dir * 24}px)` }, { transform: 'none' }], { duration: 300, easing: tokens.standard });
+        state.slideRun = run;
+        after(run, 300, () => { if (state.slideRun === run) land(modal, state); });
       }
       return;
     }
+    const file = fileFrom(modal, state.file, dir);
     tell(modal, dir > 0 ? 'next' : 'previous');
-    if (!item || reduced()) { if (item) item.style.transform = ''; hidePeeks(modal); return; }
+    state.asked.push(file);
+    state.file = file;
+    const from = drawnX(track);
     const D = slideDistance();
-    const ms = touch ? Math.round(Math.max(180, (340 * (D - Math.abs(from))) / D)) : 260;
-    const step = { dir, from, D, ms, easing: spring('glide').easing, file: peek.dataset.file, runs: [], outgoing: item, offset: 0 };
-    // What slides in until the file comes is a copy of the peek, in the
-    // ghost layer: Rust draws the peeks again for the new neighbours as
-    // soon as it has stepped, which would change the picture coming in.
-    const layer = modal.querySelector('.dui-pv-ghost');
-    const stand = peek.cloneNode(true);
-    stand.removeAttribute('data-side');
-    stand.classList.add('on');
-    hidePeeks(modal);
-    if (layer) layer.appendChild(stand);
-    step.stand = stand;
-    step.clock = slideRun(item, 'out', step, 0);
-    step.peek = slideRun(stand, 'in', step, 0);
-    step.runs.push(step.peek);
-    // A thumbnail still standing in for the picture shown (not decoded
-    // yet) leaves with it.
-    (state.standIns ? [...state.standIns] : []).forEach(ghost => {
-      ghost.getAnimations().forEach(run => run.cancel());
-      const run = slideRun(ghost, 'out', step, 0);
-      step.runs.push(run);
-      after(run, ms, () => ghost.remove());
-    });
-    if (state.standIns) state.standIns.clear();
-    state.slide = step;
-    // If no file comes (the step was not taken), the file shown comes back.
-    setTimeout(() => { if (state.slide === step && state.item === item) endSlide(modal, state); }, ms + 1500);
+    state.to += dir * D;
+    standAt(modal, file, state.to);
+    const way = Math.abs(-state.to - from);
+    moveTrack(modal, state, touch ? Math.round(Math.max(180, Math.min(340, (340 * way) / D))) : 260);
   }
-  // Let go of short of a step: the file comes back, and the one beside it
-  // goes back out of sight (on the glide spring's curve over 300 ms).
-  function slideBack(modal, item, shown) {
-    const ms = reduced() ? 0 : 300, easing = spring('glide').easing;
-    item.style.transform = '';
-    const peek = shownPeek(modal);
-    if (!ms || !shown) { hidePeeks(modal); return; }
-    item.duiBack = startAnimation(item, [{ transform: `translateX(${shown}px)` }, { transform: 'none' }], { duration: ms, easing });
-    if (!peek) return;
-    const side = peek.dataset.side === 'next' ? 1 : -1, D = slideDistance();
-    peek.style.transform = '';
-    const run = startAnimation(peek, [{ transform: `translateX(${shown + side * D}px)` }, { transform: `translateX(${side * D}px)` }], { duration: ms, easing, fill: 'forwards' });
-    peek.duiBack = run;
-    // Hidden once back out of sight; not when a finger took it over (its
-    // movement cancelled), which would hide it as the finger shows it.
-    after(run, ms, () => {
-      if (peek.duiBack !== run || run.playState === 'idle') return;
-      peek.duiBack = null;
-      if (!peek.getAnimations().some(other => other !== run && unfinished(other))) hidePeeks(modal);
-    });
-  }
-  // A finger on the file while it still moves, sliding back or coming in
-  // from a step, takes it from where it is drawn (what is leaving goes on
-  // leaving), and gives how far it is moved. `null` while it cannot be
-  // held: the step has not reached its new file yet, or that file is not
-  // drawn yet.
-  function takeHold(modal) {
-    const state = modals.get(modal), item = currentItem(modal);
-    if (!state || !item) return 0;
-    const step = state.slide;
-    if (step) {
-      if (state.item === step.outgoing || item.classList.contains('waiting')) return null;
-      const x = drawnX(item);
-      state.slide = null;
-      const layer = modal.querySelector('.dui-pv-ghost');
-      [step.clock, ...step.runs].forEach(run => {
-        const target = run && run.effect && run.effect.target;
-        if (run && !(layer && target && layer.contains(target) && target !== step.stand)) run.cancel();
-      });
-      if (step.stand) step.stand.remove();
-      dropStandIns(state);
-      hidePeeks(modal);
-      item.style.transform = x ? `translateX(${x}px)` : '';
-      return x;
-    }
-    if (item.duiBack && unfinished(item.duiBack)) {
-      const x = drawnX(item);
-      item.duiBack.cancel();
-      item.duiBack = null;
-      item.style.transform = x ? `translateX(${x}px)` : '';
-      const peek = shownPeek(modal);
-      if (peek && peek.duiBack) {
-        const drawn = getComputedStyle(peek).transform;
-        const run = peek.duiBack;
-        peek.duiBack = null;
-        run.cancel();
-        peek.style.transform = drawn === 'none' ? '' : drawn;
-      }
-      return x;
-    }
-    return 0;
+  // Let go of short of a step: the track goes back to the file it was
+  // going to (on the glide spring's curve over 300 ms), and the one
+  // beside it, out of sight.
+  function slideBack(modal) {
+    const state = modals.get(modal);
+    if (state) moveTrack(modal, state, 300);
   }
   // Whether an item can be drawn whole now: a picture decoded, or nothing
-  // to wait for.
-  function readyNow(item) {
-    const picture = item.querySelector('img');
-    return !picture || (picture.complete && picture.naturalWidth > 0);
-  }
+  // to wait for. A picture's `load` comes before it is decoded: drawn
+  // then, the web view decodes it as it draws, and the page waits for that.
   function whenReady(item, then) {
     let done = false;
     const once = () => { if (!done) { done = true; then(); } };
-    if (readyNow(item)) { once(); return; }
     const picture = item.querySelector('img');
-    if (picture.decode) picture.decode().then(once, once);
+    if (!picture) { once(); return; }
+    if (picture.decode) { picture.decode().then(once, once); return; }
+    if (picture.complete) { once(); return; }
     picture.addEventListener('load', once, { once: true });
     picture.addEventListener('error', once, { once: true });
-    setTimeout(once, 1500);
   }
   // The box a picture is drawn in: inside its element's box when it is
   // contained (a stand-in), or the element's box.
@@ -3498,117 +3516,133 @@
     const w = picture.naturalWidth * k, h = picture.naturalHeight * k;
     return { left: box.left + (box.width - w) / 2, top: box.top + (box.height - h) / 2, width: w, height: h };
   }
-  // The file, ready, takes the place of what stood in for it: the picture
-  // fades in over its thumbnail (160 ms, standard), from the thumbnail's
-  // size if the picture is drawn smaller than it (one smaller than the
-  // stage, drawn at its own size), as the thumbnail fades out at the
-  // picture's.
-  function takeOver(modal, ghost, item) {
+  // Asks for the file's picture, unless Rust left that to the script
+  // (`data-dui-src`, a large one) and something moves: the track, a finger
+  // holding it, or the preview opening. Then it is asked for once nothing
+  // does (`duiLater`). The web view takes a picture's bytes on its main
+  // thread in one piece, and on the desktop drew no frame meanwhile. Once
+  // it is decoded, the item can be drawn.
+  function load(modal, state, item) {
+    const picture = item.querySelector('img[data-dui-src]');
+    if (picture && !picture.getAttribute('src')) {
+      if (trackMoving(modal, state) || unfinished(state.run)) { item.duiLater = true; return; }
+      picture.src = picture.dataset.duiSrc;
+    }
+    item.duiLater = false;
+    whenReady(item, () => {
+      if (state.item !== item) return;
+      item.duiReady = true;
+      reveal(modal, state);
+    });
+  }
+  // What waited for nothing to move.
+  function settled(modal, state) {
+    const item = state.item;
+    if (!item || !item.isConnected) return;
+    if (item.duiLater) load(modal, state, item); else reveal(modal, state);
+  }
+  const largePicture = item => {
+    const picture = item.querySelector('img[data-dui-zoom]');
+    return !!picture && picture.naturalWidth * picture.naturalHeight > LARGE_PICTURE;
+  };
+  // Rust's item for the file shown, once it can be drawn whole, takes the
+  // place of what stands in for it: at once while it is small, a large
+  // picture once nothing moves.
+  function reveal(modal, state) {
+    const item = state.item;
+    if (!item || !item.isConnected || !item.classList.contains('waiting') || !item.duiReady) return;
+    if (item.dataset.file !== state.file || !modal.classList.contains('on')) return;
+    if (largePicture(item) && trackMoving(modal, state)) return;
+    takeOver(modal, item);
+  }
+  // The file takes the place of what stood in for it, where it is along
+  // the track: it fades in over it (160 ms, standard), which stays drawn
+  // under it until it has, and then fades (80 ms). Nothing moves, and nothing
+  // changes size: the thumbnail stands in at the picture's size (as large
+  // as fits both ways, or its own size where the thumbnail is). What is
+  // drawn in another box (a picture smaller than the stage and larger
+  // than a thumbnail, what stands in for a file that is not a picture)
+  // fades out as it comes, rather than be left around it. The same
+  // thumbnail, read as the file is (Rust's stand-in while it reads), shows
+  // at once. A file in place of one removed comes in 48 px from the side
+  // it was stepped to (280 ms, enter).
+  function takeOver(modal, item) {
+    const layer = ghostLayer(modal);
+    const at = atOf(item);
+    const stands = layer ? [...layer.children].filter(kept => kept.dataset.file === item.dataset.file && Math.abs(atOf(kept) - at) < 1) : [];
+    const to = item.querySelector('img');
+    // Rust's thumbnail is not put over the file itself, still drawn there
+    // (stepped back to before it had gone): the file comes in its place.
+    if (to && to.classList.contains('dui-pv-standin') && stands.some(stand => stand.querySelector('img[data-dui-zoom]'))) return;
     item.classList.remove('waiting');
-    const ms = reduced() ? tokens.reducedMs : 160;
-    if (!ghost) {
-      // Over the copy of its peek that slid in, which looks as it does, it
-      // shows at once.
-      const stand = modal.querySelector('.dui-pv-ghost > .dui-pv-peek');
-      if (!stand) startAnimation(item, [{ opacity: 0.6 }, { opacity: 1 }], { duration: ms, easing: tokens.standard });
+    if (item.duiEnter) {
+      item.duiEnter = false;
+      stands.forEach(stand => stand.remove());
+      if (reduced()) { startAnimation(item, [{ opacity: 0.6 }, { opacity: 1 }], { duration: tokens.reducedMs + 30, easing: tokens.standard }); return; }
+      startAnimation(item, [{ opacity: 0, transform: `translateX(${at + previewStep * 48}px)` }, { opacity: 1, transform: at ? `translateX(${at}px)` : 'none' }],
+        { duration: 280, easing: tokens.enter });
       return;
     }
-    const from = ghost.querySelector('img'), to = item.querySelector('img');
-    const frames = [{ opacity: 0 }, { opacity: 1 }], gone = [{ opacity: 1 }, { opacity: 0 }];
-    if (from && to && !reduced()) {
-      const a = drawnBox(from), b = to.getBoundingClientRect();
-      if (a.width > 2 && b.width > 2 && Math.abs(a.width - b.width) > 2) {
-        const k = a.width / b.width;
-        const dx = a.left + a.width / 2 - (b.left + b.width / 2), dy = a.top + a.height / 2 - (b.top + b.height / 2);
-        // Kept apart from the view's movements: a pinch straight away
-        // takes it from where it is drawn (`stopGrow`), a tap leaves it.
-        const grow = startAnimation(to, [{ transform: `translate(${dx}px, ${dy}px) scale(${k})` }, { transform: 'none' }], { duration: ZOOM_MS, easing: tokens.enter });
-        pictureGrows.set(to, grow);
-        after(grow, ZOOM_MS, () => { if (pictureGrows.get(to) === grow) pictureGrows.delete(to); });
-        startAnimation(from, [{ transform: 'none' }, { transform: `translate(${-dx / k}px, ${-dy / k}px) scale(${1 / k})` }], { duration: ZOOM_MS, easing: tokens.enter, fill: 'forwards' });
-      }
+    if (!stands.length) {
+      if (!to || !to.classList.contains('dui-pv-standin')) startAnimation(item, [{ opacity: 0.6 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 160, easing: tokens.standard });
+      return;
     }
-    startAnimation(item, frames, { duration: ms, easing: tokens.standard });
-    const run = startAnimation(ghost, gone, { duration: ms, easing: tokens.standard, fill: 'forwards' });
-    after(run, Math.max(ms, ZOOM_MS), () => ghost.remove());
+    if (to && to.classList.contains('dui-pv-standin')) { stands.forEach(stand => stand.remove()); return; }
+    const ms = reduced() ? tokens.reducedMs : 160;
+    startAnimation(item, [{ opacity: 0 }, { opacity: 1 }], { duration: ms, easing: tokens.standard });
+    const box = to && drawnBox(to);
+    // One in the same box goes once the file covers it, in 80 ms: its blur
+    // reaches a little past the box, and would go at once.
+    const last = reduced() ? 0 : 80;
+    stands.forEach(stand => {
+      const from = stand.querySelector('img');
+      const other = from && box && drawnBox(from);
+      const same = other && Math.abs(other.width - box.width) <= 2 && Math.abs(other.height - box.height) <= 2;
+      const timing = same ? { duration: last, delay: ms } : { duration: ms };
+      const run = startAnimation(stand, [{ opacity: 1 }, { opacity: 0 }], { ...timing, easing: tokens.standard, fill: 'forwards' });
+      after(run, same ? ms + last : ms, () => stand.remove());
+    });
   }
-  // A new item on the stage: the file stepped to, the same file read, or
-  // the next file in place of one removed.
+  // A new item on the stage: the file stepped to (or one stepped through),
+  // the same file read, or the next file in place of one removed.
   function previewItemChanged(modal, state) {
     const item = currentItem(modal);
     if (!item || item === state.item) return;
     const was = state.item;
     state.item = item;
-    if (!modal.classList.contains('on')) { endSlide(modal, state); clearGhosts(modal); dropStandIns(state); return; }
-    if (!was) return;
-    dropStandIns(state);
-    const step = state.slide;
-    const sameFile = was.dataset.file === item.dataset.file;
-    const elapsed = step ? slideElapsed(step) : Infinity;
-    const moving = !!step && elapsed < step.ms;
-    const incoming = !!step && item.dataset.file === step.file;
-    let ghost = null;
-    if (moving && !sameFile && was === step.outgoing) {
-      // The file stepped from slides on out, from where it had got to.
-      const leaving = toGhost(modal, was);
-      if (leaving) {
-        const run = slideRun(leaving, 'out', step, elapsed);
-        step.runs.push(run);
-        after(run, step.ms - elapsed, () => leaving.remove());
-      }
-    } else if (sameFile) {
-      ghost = toGhost(modal, was);
-      if (ghost && state.standIns) state.standIns.add(ghost);
-      if (ghost && moving && incoming) step.runs.push(slideRun(ghost, 'in', step, elapsed));
-    }
-    // A thumbnail kept for this item goes if the item is replaced before
-    // it can be drawn.
-    const stale = () => {
-      if (!ghost || !state.standIns || !state.standIns.has(ghost)) return;
-      state.standIns.delete(ghost);
-      ghost.remove();
-    };
-    const taken = () => { if (ghost && state.standIns) state.standIns.delete(ghost); };
-    if (!readyNow(item)) item.classList.add('waiting');
-    if (incoming) {
-      if (moving) {
-        const run = slideRun(item, 'in', step, elapsed);
-        step.runs.push(run);
-        step.clock = run;
-        step.offset = elapsed;
-        // Landed: its movements are let go of, leaving it where it rests.
-        after(run, step.ms - elapsed, () => {
-          if (state.slide === step && state.item === item && readyNow(item)) landSlide(modal, state, step);
-        });
-      }
-      whenReady(item, () => {
-        if (state.item !== item) { stale(); return; }
-        taken();
-        takeOver(modal, ghost, item);
-        if (step.stand) step.stand.remove();
-        hidePeeks(modal);
-        if (!(slideElapsed(step) < step.ms)) landSlide(modal, state, step);
-      });
+    const file = item.dataset.file;
+    if (!modal.classList.contains('on')) {
+      endSlide(modal, state);
+      clearGhosts(modal);
+      state.file = file;
+      state.asked = [];
       return;
     }
-    if (ghost) {
-      whenReady(item, () => {
-        if (state.item !== item) { stale(); return; }
-        taken();
-        takeOver(modal, ghost, item);
-      });
-      return;
+    // Rust at a file a step went to, or through.
+    const asked = state.asked.indexOf(file);
+    if (asked >= 0) state.asked.splice(0, asked + 1);
+    // Not stepped to, not the file shown, and not the file Rust showed
+    // already (read again, as a picture is after its thumbnail).
+    const replaced = asked < 0 && file !== state.file && !(was && was.dataset.file === file);
+    if (replaced) {
+      // Another file in place of the one shown, which was removed.
+      endSlide(modal, state);
+      clearGhosts(modal);
+      state.file = file;
+      state.asked = [];
+      item.duiEnter = true;
+    } else if (was && !was.classList.contains('waiting')) {
+      // What was shown stays drawn where it is along the track: as it
+      // slides away (until the track rests), or standing in for the same
+      // file read again.
+      toGhost(modal, was);
     }
-    endSlide(modal, state);
-    whenReady(item, () => {
-      if (state.item !== item) return;
-      item.classList.remove('waiting');
-      if (reduced()) { startAnimation(item, [{ opacity: 0.6 }, { opacity: 1 }], { duration: tokens.reducedMs + 30, easing: tokens.standard }); return; }
-      // The next file in place of one removed comes in 48 px from the
-      // side it was stepped to (280 ms, enter).
-      startAnimation(item, [{ opacity: 0, transform: `translateX(${previewStep * 48}px)` }, { opacity: 1, transform: 'none' }],
-        { duration: 280, easing: tokens.enter });
-    });
+    placeAt(item, file === state.file ? state.to : 0);
+    item.classList.add('waiting');
+    // The thumbnail Rust shows while it reads a picture stands in at the
+    // picture's size, as the deck's copy of it does.
+    item.querySelectorAll('img.dui-pv-standin').forEach(img => ownSize(modal, img));
+    load(modal, state, item);
   }
 
   // ---- Android: the preview's gestures (6.16) ----------------------------
@@ -3628,13 +3662,14 @@
   // is taken out of the page, and then no longer reaches the document: a
   // picture's stand-in replaced by the picture as a finger moves. So the
   // gesture listens on that element as well, and each touch event is taken
-  // once, wherever it is heard first; and what moves is whatever item is
-  // on the stage now.
+  // once, wherever it is heard first. A finger sideways moves the track,
+  // and with it whatever is in it, so that a file Rust draws in the place
+  // of its stand-in as the finger moves is where the stand-in was: both
+  // had jumped to the middle for a moment (#336).
   let gesture = null, previewGestured = false, lastTap = null;
   const onceOnly = event => { if (event.__duiPreview) return false; event.__duiPreview = true; return true; };
   const midpoint = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 });
   const apart = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-  const severalOn = modal => !!modal.querySelector('[data-dui-pv-stage] > .dui-pv-peek');
   function followTouch(target) {
     const stop = () => {
       target.removeEventListener('touchmove', movePreviewSwipe);
@@ -3646,29 +3681,27 @@
     target.addEventListener('touchend', ended, { passive: true });
     target.addEventListener('touchcancel', ended, { passive: true });
   }
-  // A file taken while it moved (`takeHold`, `drag.base`) and then not
+  // A file taken while it moved (`holdTrack`, `drag.taken`) and then not
   // dragged sideways (a scroll took the finger, a second finger came, or
-  // it went up or down) slides back from where it was taken, its peek
-  // with it: otherwise it stayed off its place.
+  // it went up or down) slides back from where it was taken, the file
+  // beside it with it: otherwise it stayed off its place.
   function putBack(drag) {
-    if (!drag || !drag.base) return;
-    const item = currentItem(drag.modal);
-    const base = drag.base;
-    drag.base = 0;
-    if (item) slideBack(drag.modal, item, base); else hidePeeks(drag.modal);
+    if (!drag || !drag.taken) return;
+    drag.taken = false;
+    slideBack(drag.modal);
   }
   // A drag begun and not finished is let go of where it is: back to rest.
   function dropDrag(drag) {
     if (drag && !drag.mode) putBack(drag);
     if (!drag || !drag.mode) return;
-    const item = currentItem(drag.modal);
     const scrim = drag.modal.querySelector('.dui-pv-scrim');
     if (scrim) scrim.style.opacity = '';
-    if (!item) return;
-    if (drag.mode === 'x') { slideBack(drag.modal, item, drag.shown || 0); return; }
+    if (drag.mode === 'x') { slideBack(drag.modal); return; }
+    const track = trackOf(drag.modal);
+    if (!track) return;
     const pop = spring('pop');
-    startAnimation(item, [{ transform: item.style.transform || 'none' }, { transform: 'none' }], { duration: pop.ms, easing: pop.easing });
-    item.style.transform = '';
+    startAnimation(track, [{ transform: track.style.transform || 'none' }, { transform: 'none' }], { duration: pop.ms, easing: pop.easing });
+    track.style.transform = '';
   }
   document.addEventListener('touchstart', event => {
     const modal = event.target.closest && event.target.closest('[data-dui-modal="preview"].on');
@@ -3688,9 +3721,6 @@
         return;
       }
       const [a, b] = event.touches;
-      // A picture still growing from its thumbnail's size is taken from
-      // where it is drawn.
-      stopGrow(picture, true);
       gesture = { pinch: true, modal, picture, d0: apart(a, b), m0: midpoint(a, b), from: holdView(picture), g: geometryOf(picture) };
       gesture.at = gesture.m0;
       return;
@@ -3705,9 +3735,13 @@
       gesture = { pan: true, modal, picture, x: touch.clientX, y: touch.clientY, from: pictureView(picture), g: geometryOf(picture), samples, moved: false };
       return;
     }
-    const base = takeHold(modal);
-    if (base === null) { gesture = { spent: true, modal }; return; }
-    gesture = { x: touch.clientX, y: touch.clientY, mode: null, d: base, base, shown: base, modal, samples,
+    // A finger on the file while it still moves, sliding back or coming in
+    // from a step, takes it from where it is drawn, and with it what is
+    // beside it: the whole track.
+    const state = modals.get(modal);
+    const base = state ? holdTrack(modal, state) : 0;
+    const taken = !!base || !!(state && state.to);
+    gesture = { x: touch.clientX, y: touch.clientY, mode: null, d: 0, base, taken, shown: base, modal, samples,
       scrolls: !!event.target.closest('[data-dui-scroll]') };
   }, { passive: true });
   function movePreviewSwipe(event) {
@@ -3742,19 +3776,21 @@
     // A file taken as it moved and then moved up or down goes back in
     // place, and the finger does nothing more: neither scrolls it (the
     // scroll it starts is its own) nor closes the preview.
-    if (drag.mode === 'y' && drag.base) {
+    if (drag.mode === 'y' && drag.taken) {
       putBack(drag);
       gesture = drag.scrolls ? null : { spent: true, modal: drag.modal };
       return;
     }
     // Up or down on what scrolls is its own scrolling.
     if (drag.mode === 'y' && drag.scrolls) { gesture = null; return; }
-    const item = currentItem(drag.modal);
-    if (!drag.mode || !item) return;
+    const track = trackOf(drag.modal), state = modals.get(drag.modal);
+    if (!drag.mode || !track || !state) return;
     stats.moves += 1;
     if (drag.mode === 'y') {
+      // Down: the file (or what stands in for it) goes with the finger,
+      // smaller, and the backdrop fades.
       const d = Math.max(0, dy);
-      item.style.transform = `translateY(${d}px) scale(${1 - Math.min(d, 300) / 1200})`;
+      track.style.transform = `translateY(${d}px) scale(${1 - Math.min(d, 300) / 1200})`;
       const scrim = drag.modal.querySelector('.dui-pv-scrim');
       if (scrim) scrim.style.opacity = String(1 - Math.min(d, 300) / 400);
       drag.d = dy;
@@ -3767,17 +3803,14 @@
     const width = stage ? stage.clientWidth : innerWidth;
     const several = severalOn(drag.modal);
     const shown = drag.base + (several ? dx : previewMaths.rubber(dx, width));
-    item.style.transform = `translateX(${shown}px)`;
-    drag.d = shown;
+    track.style.transform = `translateX(${shown}px)`;
     drag.shown = shown;
-    if (!several || !shown) return;
-    const side = shown < 0 ? 1 : -1, peek = peekOf(drag.modal, side), other = peekOf(drag.modal, -side);
-    if (other && other !== peek) { other.classList.remove('on'); other.style.transform = ''; }
-    if (peek) {
-      peek.getAnimations().forEach(run => run.cancel());
-      peek.classList.add('on');
-      peek.style.transform = `translateX(${shown + side * slideDistance()}px)`;
-    }
+    // How far the file stepped to is off its place.
+    const off = shown + state.to;
+    drag.d = off;
+    if (!several || !off) return;
+    const side = off < 0 ? 1 : -1;
+    standAt(drag.modal, fileFrom(drag.modal, state.file, side), state.to + side * slideDistance());
   }
   document.addEventListener('touchmove', movePreviewSwipe, { passive: true });
   // A tap: the second within 320 ms and 30 px of the first is a double tap,
@@ -3826,34 +3859,36 @@
       return;
     }
     const { mode, d, modal } = drag;
-    const item = currentItem(modal);
+    const track = trackOf(modal), state = modals.get(modal);
     previewGestured = !!mode;
     if (!mode) {
       // A file taken while it moved and let go of without moving slides
-      // back from there.
-      if (drag.base && item) slideBack(modal, item, drag.base);
+      // back from there. A large picture held back while the finger was
+      // down is drawn now.
+      if (drag.taken) slideBack(modal);
+      else if (state) settled(modal, state);
       if (touch && !cancelled) tapped(modal, touch.clientX, touch.clientY, event.timeStamp);
       return;
     }
     lastTap = null;
     const scrim = modal.querySelector('.dui-pv-scrim');
     const scrimAt = scrim && scrim.style.opacity !== '' ? parseFloat(scrim.style.opacity) : null;
-    if (item && !cancelled && mode === 'y' && d > 110) {
+    if (track && !cancelled && mode === 'y' && d > 110) {
       // It fades on from where the finger left the backdrop, which stays
       // there until the closing takes it (or comes back, if it does not).
       if (scrimAt !== null) modal.duiScrimAt = scrimAt;
       tell(modal, 'dismiss');
-      setTimeout(() => { item.style.transform = ''; if (scrim) scrim.style.opacity = ''; }, 400);
+      setTimeout(() => { track.style.transform = ''; if (scrim) scrim.style.opacity = ''; }, 400);
       return;
     }
-    if (!item) { if (scrim) scrim.style.opacity = ''; return; }
+    if (!track) { if (scrim) scrim.style.opacity = ''; return; }
     if (mode === 'x') {
       const stage = stageOf(modal);
       const width = stage ? stage.clientWidth : innerWidth;
       const v = previewMaths.speed(drag.samples, event.timeStamp).x;
       const dir = cancelled ? 0 : previewMaths.stepOf(d, v, width, severalOn(modal));
-      if (dir) slide(modal, dir, drag.shown, true);
-      else slideBack(modal, item, drag.shown);
+      if (dir) slide(modal, dir, true);
+      else slideBack(modal);
       return;
     }
     dropDrag(drag);

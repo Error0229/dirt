@@ -593,6 +593,10 @@
    row sized by its content a tall picture was fitted to the width alone,
    and ran off the bottom where it could not be reached (#313). */
 .dui-pv-item{width:100%;height:100%;min-height:0;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);place-items:center;position:relative}
+/* What a step slides and a finger drags, as one: the file and the ghost
+   layer beside it. Only it moves; what is in it keeps its place there. */
+.dui-pv-track{width:100%;height:100%;min-height:0;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);place-items:center;position:relative}
+.dui-pv-track>.dui-pv-item{grid-area:1/1}
 .dui-pv-picture,.dui-pv-video{max-width:100%;max-height:100%;object-fit:contain;display:block;border-radius:6px;box-shadow:0 24px 60px rgba(0,0,0,.5);cursor:zoom-in}
 /* Zoomed, the picture keeps the box it fits in and the script moves and
    scales it with a transform about its middle (`translate() scale()`), so
@@ -606,15 +610,18 @@
    picture will be (as large as fits both ways), so that the picture takes
    its place without a jump in size. */
 .dui-pv-standin{width:100%;height:100%;object-fit:contain;filter:blur(6px);opacity:.7;box-shadow:none;border-radius:0}
-/* A file not drawn yet stays unseen, what it replaces kept in the ghost
-   layer over it, until it can be drawn whole. */
-.dui-pv-item.waiting{opacity:0}
-.dui-pv-ghost,.dui-pv-peek{position:absolute;inset:0;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);place-items:center;pointer-events:none}
-.dui-pv-ghost>.dui-pv-item{grid-area:1/1}
-/* The files either side, seen only while a finger drags sideways or a
-   step slides one in. */
-.dui-pv-peek{visibility:hidden}
-.dui-pv-peek.on{visibility:visible}
+/* A thumbnail smaller than a thumbnail can be is the picture's own size,
+   and the picture is drawn at that size: so is what stands in for it. */
+.dui-pv-standin.own{width:auto;height:auto}
+/* A file not drawn yet is not drawn at all, what stands in for it kept
+   in the ghost layer, until it can be drawn whole: not even painted
+   unseen, which had the web view decode a large picture as it slid. */
+.dui-pv-item.waiting{visibility:hidden}
+.dui-pv-ghost{position:absolute;inset:0;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);place-items:center;pointer-events:none}
+.dui-pv-ghost>*{grid-area:1/1}
+.dui-pv-stand{width:100%;height:100%;min-height:0;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);place-items:center}
+/* What stands in for each file, from which the script takes copies. */
+.dui-pv-deck{display:none}
 .dui-pv-peek-kind{width:96px;height:96px;border-radius:24px;display:grid;place-items:center;background:rgba(255,255,255,.06);color:rgba(237,232,225,.7)}
 .dui-pv-ring{position:absolute;width:44px;height:44px;animation:dui-turn 1s linear infinite}
 .dui-pv-ring circle{stroke:#EDE8E1}

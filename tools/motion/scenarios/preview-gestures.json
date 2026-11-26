@@ -28,7 +28,7 @@
     "file": { "desktop": ".dui-pv-item", "android": ".dui-pv-item", "mockup-desktop": "#D .pv-item" },
     "picture": { "desktop": ".dui-pv-item img", "android": ".dui-pv-item img", "mockup-desktop": "#D .pv-item img, #D .pv-item .pv-fake, #D .pv-item .pv-audio" },
     "leaving": { "desktop": ".dui-pv-ghost .dui-pv-item", "android": ".dui-pv-ghost .dui-pv-item" },
-    "peek": { "desktop": ".dui-pv-peek", "android": ".dui-pv-peek" },
+    "stand": { "desktop": ".dui-pv-ghost > .dui-pv-stand", "android": ".dui-pv-ghost > .dui-pv-stand" },
     "dots": { "desktop": ".dui-pv-dots", "android": ".dui-pv-dots", "mockup-desktop": "#D .pv-dots" }
   },
   "crop": { "mockup-desktop": "#D" },
@@ -78,8 +78,8 @@
       "description": "Zoomed in about a point off the picture's centre: a double click on the desktop, two fingers spreading on Android.",
       "platforms": ["desktop", "android"],
       "steps": [
-        { "platforms": ["desktop"], "doubleClick": ".dui-pv-item img", "atX": 90, "atY": -60 },
-        { "platforms": ["android"], "pinch": { "on": ".dui-pv-item img", "atX": 60, "atY": -40, "from": 90, "to": 260, "steps": 14, "every": 16 } }
+        { "platforms": ["desktop"], "doubleClick": ".dui-pv-track > .dui-pv-item img", "atX": 90, "atY": -60 },
+        { "platforms": ["android"], "pinch": { "on": ".dui-pv-track > .dui-pv-item img", "atX": 60, "atY": -40, "from": 90, "to": 260, "steps": 14, "every": 16 } }
       ],
       "arrives": ["picture"],
       "ms": 1000
@@ -88,7 +88,7 @@
       "name": "zoom-out",
       "description": "A double click, or a double tap, brings it back to fit.",
       "platforms": ["desktop", "android"],
-      "steps": [{ "doubleClick": ".dui-pv-item img" }],
+      "steps": [{ "doubleClick": ".dui-pv-track > .dui-pv-item img" }],
       "arrives": ["picture"],
       "ms": 1000
     }

@@ -371,19 +371,40 @@ function install(version) {
   // ---- Input that the scenario cannot send as a hand would ---------------
   // A picture pasted into the page, as a picture copied from another
   // program is: the app's own paste handler takes it (design 6.16).
-  async function pastePicture(selector, name, colour, width = 640, height = 420) {
+  // `noise` (0 to 255) scatters grain of that strength over it, as a
+  // photograph has, so that a large picture is several megabytes, not a
+  // few kilobytes; `type` is its format, PNG unless `image/jpeg`. It gives
+  // the size of the file pasted, in bytes.
+  async function pastePicture(selector, name, colour, width = 640, height = 420, noise = 0, type = 'image/png') {
     const canvas = document.createElement('canvas');
     canvas.width = width; canvas.height = height;
     const g = canvas.getContext('2d');
     g.fillStyle = colour || '#6b8f71'; g.fillRect(0, 0, width, height);
     g.fillStyle = '#f4efe6'; g.fillRect(width / 16, height / 10.5, width * 0.4, height * 0.81);
-    g.fillStyle = '#2a2622'; g.font = 'bold 48px sans-serif'; g.fillText('motion', width * 0.52, height * 0.55);
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    const em = Math.max(48, Math.round(width / 13));
+    g.fillStyle = '#2a2622'; g.font = `bold ${em}px sans-serif`; g.fillText('motion', width * 0.52, height * 0.55);
+    if (noise > 0) {
+      // Band by band, so that no one array holds the whole picture.
+      const band = 256;
+      let seed = 1;
+      for (let y = 0; y < height; y += band) {
+        const h = Math.min(band, height - y);
+        const pixels = g.getImageData(0, y, width, h);
+        const d = pixels.data;
+        for (let i = 0; i < d.length; i += 4) {
+          seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+          const n = ((seed >> 8) % (2 * noise + 1)) - noise;
+          d[i] += n; d[i + 1] += n; d[i + 2] += n;
+        }
+        g.putImageData(pixels, 0, y);
+      }
+    }
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, type, 0.92));
     const data = new DataTransfer();
-    data.items.add(new File([blob], name || 'motion.png', { type: 'image/png' }));
+    data.items.add(new File([blob], name || 'motion.png', { type }));
     const target = document.querySelector(selector) || document.activeElement || document.body;
     target.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
-    return true;
+    return blob.size;
   }
 
   // Where a text field's caret is drawn, on the screen. A field gives no
@@ -420,5 +441,5 @@ function install(version) {
 
 // Changed whenever what runs in the page changes, so that a page that kept
 // an older one takes this one.
-const VERSION = 7;
+const VERSION = 8;
 export const installSource = `(${install.toString()})(${VERSION})`;

@@ -285,7 +285,8 @@ export async function sendStep(target, step) {
   } else if (step.pastePicture) {
     const selector = sel(step.pastePicture);
     const size = step.size || {};
-    await cdp.evaluate(`__motion.pastePicture(${JSON.stringify(selector)}, ${JSON.stringify(step.name || 'motion.png')}, ${JSON.stringify(step.colour || null)}, ${JSON.stringify(size.width || 640)}, ${JSON.stringify(size.height || 420)})`);
+    const bytes = await cdp.evaluate(`__motion.pastePicture(${JSON.stringify(selector)}, ${JSON.stringify(step.name || 'motion.png')}, ${JSON.stringify(step.colour || null)}, ${JSON.stringify(size.width || 640)}, ${JSON.stringify(size.height || 420)}, ${JSON.stringify(step.noise || 0)}, ${JSON.stringify(step.format === 'jpeg' ? 'image/jpeg' : 'image/png')})`);
+    if (typeof bytes === 'number' && bytes > 1048576) console.log(`[motion] pasted ${step.name || 'motion.png'}: ${(bytes / 1048576).toFixed(1)} MB`);
   } else if (step.caretAbove) {
     // A check, not an input: the caret of the field that has the keyboard
     // (or the one named) is drawn above the element named, by its bottom
