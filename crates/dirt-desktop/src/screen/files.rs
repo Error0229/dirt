@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 
+use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 use dirt_core::files::safe_file_name;
 use dirt_core::store::AttachedFile;
@@ -145,8 +146,32 @@ pub fn dropped(event: &Event<DragData>) -> Vec<PathBuf> {
             .map(PathBuf::from)
             .collect();
     }
+    paths_dropped(event)
+}
+
+/// Where the files of a drop are on the disk.
+///
+/// They are the paths the system gave the window (wry's drag and drop
+/// handler), which Dioxus hands over as the event's files
+/// ([`HasFileData`]), not the files of the page's own drop
+/// (`data_transfer()`). On Windows the web view hears no drop of files
+/// from outside while that handler is on: Dioxus plays one on the page
+/// itself, whose only file is a stand-in, "file.txt", with nothing in
+/// it, and gives a file of the page a path only where the name of a real
+/// one ends in it (`dioxus-desktop`, `webview.rs`). Taken from the page,
+/// the stand-in was opened beside the app's working folder, and failed.
+/// Elsewhere the page's own drop is heard, and each of its files is given
+/// the first real path that ends in its name: two files of one name from
+/// different folders both became the first.
+///
+/// The paths the system gave are those of the last drag of files that
+/// came into the window, so a drop on the page that carries no files (a
+/// selection of text dragged within it) takes none of them.
+fn paths_dropped(event: &DragData) -> Vec<PathBuf> {
+    if event.data_transfer().files().is_empty() {
+        return Vec::new();
+    }
     event
-        .data_transfer()
         .files()
         .iter()
         .map(dioxus::html::FileData::path)
@@ -163,4 +188,166 @@ pub fn use_served_files() {
             served::range_of(&request),
         ));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use dioxus::html::geometry::{ClientPoint, Coordinates, ElementPoint, PagePoint, ScreenPoint};
+    use dioxus::html::input_data::{MouseButton, MouseButtonSet};
+    use dioxus::html::point_interaction::{
+        InteractionElementOffset, InteractionLocation, ModifiersInteraction, PointerInteraction,
+        SerializedPointInteraction,
+    };
+    use dioxus::html::{
+        DataTransfer, DragData, FileData, HasDataTransferData, HasDragData, HasFileData,
+        HasMouseData, Modifiers, SerializedDataTransfer, SerializedFileData,
+    };
+
+    use super::paths_dropped;
+
+    /// A drop as `dioxus-desktop` makes it (its `DesktopFileDragEvent`):
+    /// the page's drop as the page told it, and the paths the system gave
+    /// the window as the event's files.
+    struct Dropped {
+        mouse: SerializedPointInteraction,
+        page: SerializedDataTransfer,
+        system: Vec<PathBuf>,
+    }
+
+    fn file(path: &str) -> SerializedFileData {
+        SerializedFileData {
+            path: PathBuf::from(path),
+            ..SerializedFileData::empty()
+        }
+    }
+
+    fn drop_of(page: &[&str], system: &[&str]) -> DragData {
+        DragData::new(Dropped {
+            mouse: SerializedPointInteraction::default(),
+            page: SerializedDataTransfer {
+                items: Vec::new(),
+                files: page.iter().copied().map(file).collect(),
+                effect_allowed: "all".to_owned(),
+                drop_effect: "none".to_owned(),
+            },
+            system: system.iter().map(PathBuf::from).collect(),
+        })
+    }
+
+    impl HasFileData for Dropped {
+        fn files(&self) -> Vec<FileData> {
+            self.system
+                .iter()
+                .map(|path| FileData::new(file(&path.to_string_lossy())))
+                .collect()
+        }
+    }
+
+    impl HasDataTransferData for Dropped {
+        fn data_transfer(&self) -> DataTransfer {
+            DataTransfer::new(self.page.clone())
+        }
+    }
+
+    impl HasDragData for Dropped {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    impl HasMouseData for Dropped {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    impl InteractionLocation for Dropped {
+        fn client_coordinates(&self) -> ClientPoint {
+            self.mouse.client_coordinates()
+        }
+
+        fn page_coordinates(&self) -> PagePoint {
+            self.mouse.page_coordinates()
+        }
+
+        fn screen_coordinates(&self) -> ScreenPoint {
+            self.mouse.screen_coordinates()
+        }
+    }
+
+    impl InteractionElementOffset for Dropped {
+        fn element_coordinates(&self) -> ElementPoint {
+            self.mouse.element_coordinates()
+        }
+
+        fn coordinates(&self) -> Coordinates {
+            self.mouse.coordinates()
+        }
+    }
+
+    impl ModifiersInteraction for Dropped {
+        fn modifiers(&self) -> Modifiers {
+            self.mouse.modifiers()
+        }
+    }
+
+    impl PointerInteraction for Dropped {
+        fn held_buttons(&self) -> MouseButtonSet {
+            self.mouse.held_buttons()
+        }
+
+        fn trigger_button(&self) -> Option<MouseButton> {
+            self.mouse.trigger_button()
+        }
+    }
+
+    #[test]
+    fn a_drop_on_windows_takes_the_systems_paths_not_the_pages_stand_in() {
+        // Windows: the page's drop is played by Dioxus with one stand-in,
+        // whatever was dropped (D18).
+        let dropped = drop_of(
+            &["file.txt"],
+            &[r"C:\Papers\plan.pdf", r"C:\Pictures\cat.png"],
+        );
+        assert_eq!(
+            paths_dropped(&dropped),
+            vec![
+                PathBuf::from(r"C:\Papers\plan.pdf"),
+                PathBuf::from(r"C:\Pictures\cat.png"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_drop_elsewhere_keeps_two_files_of_one_name_apart() {
+        // Linux and macOS: the page's drop is the web view's own, and
+        // Dioxus gives each of its files the first real path ending in its
+        // name, so two of one name both carry the first folder's.
+        let dropped = drop_of(
+            &["/srv/papers/plan.pdf", "/srv/papers/plan.pdf"],
+            &["/srv/papers/plan.pdf", "/srv/old/plan.pdf"],
+        );
+        assert_eq!(
+            paths_dropped(&dropped),
+            vec![
+                PathBuf::from("/srv/papers/plan.pdf"),
+                PathBuf::from("/srv/old/plan.pdf"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_drop_that_carries_no_files_takes_none_of_the_last_drags() {
+        // Text dragged within the page, after files were dropped before.
+        let dropped = drop_of(&[], &[r"C:\Papers\plan.pdf"]);
+        assert!(paths_dropped(&dropped).is_empty());
+    }
+
+    #[test]
+    fn a_path_the_system_left_empty_is_not_taken() {
+        let dropped = drop_of(&["file.txt"], &[""]);
+        assert!(paths_dropped(&dropped).is_empty());
+    }
 }

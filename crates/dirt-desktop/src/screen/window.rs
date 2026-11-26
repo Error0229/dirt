@@ -28,6 +28,8 @@ use dioxus::prelude::*;
 use dirt_ui::events::{use_outcome, Outcome};
 use dirt_ui::{Icon, IconSize, IconSvg};
 
+use super::Screen;
+
 /// How much of the window's top moves it, in CSS pixels.
 pub const DRAG_ROW: &str = "52";
 
@@ -102,6 +104,7 @@ fn TopEdges() -> Element {
 /// and come back when the pointer comes within 64 px of them.
 #[component]
 pub fn WindowControls() -> Element {
+    let screen = use_context::<Screen>();
     let mut maximized = use_signal(|| window().is_maximized());
     use_wry_event_handler(move |event, _| {
         if let Event::WindowEvent {
@@ -155,9 +158,9 @@ pub fn WindowControls() -> Element {
                 "aria-label": "Close to tray",
                 "data-tip": "Close to tray",
                 "data-kbd": "Alt F4",
-                // Closing hides the window, as the system's close did: Dirt
+                // Closing hides the window, as the system's close does: Dirt
                 // stays in the tray so that the hotkey still works.
-                onclick: move |_| window().close(),
+                onclick: move |_| screen.to_tray(),
                 IconSvg { icon: Icon::X, size: IconSize::Small }
             }
         }
