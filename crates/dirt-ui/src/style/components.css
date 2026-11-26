@@ -576,7 +576,7 @@
 .android .dui-shelf{padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}
 
 /* ---- The file preview (6.16) --------------------------------------------- */
-.dui-preview{position:fixed;inset:0;z-index:700;display:none;color:#EDE8E1;outline:none}
+.dui-preview{position:fixed;inset:0;z-index:700;display:none;color:#EDE8E1;outline:none;overflow:hidden}
 .dui-preview.on,.dui-preview.leaving{display:block}
 .dui-pv-scrim{position:absolute;inset:0;background:rgba(12,10,8,.9);opacity:0;transition:opacity var(--d-3) var(--e-std)}
 .dui-preview.on .dui-pv-scrim{opacity:1}
@@ -594,15 +594,28 @@
    and ran off the bottom where it could not be reached (#313). */
 .dui-pv-item{width:100%;height:100%;min-height:0;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);place-items:center;position:relative}
 .dui-pv-picture,.dui-pv-video{max-width:100%;max-height:100%;object-fit:contain;display:block;border-radius:6px;box-shadow:0 24px 60px rgba(0,0,0,.5);cursor:zoom-in}
-/* Zoomed, the picture is twice the size it fitted at, and its item
-   scrolls to every part of it; auto margins centre it on a side where it
-   still fits and keep its start in reach where it does not. */
-.dui-pv-item.zoomed{overflow:auto;place-items:start;touch-action:pan-x pan-y}
-.dui-pv-picture.zoom{width:var(--w);height:var(--h);max-width:none;max-height:none;margin:auto;cursor:grab}
+/* Zoomed, the picture keeps the box it fits in and the script moves and
+   scales it with a transform about its middle (`translate() scale()`), so
+   that the web view draws it from its own pixels at every scale; it may
+   cover the whole window, which clips it (A83). */
+.dui-pv-picture[data-dui-zoom]{transform-origin:50% 50%}
+.dui-pv-picture.zoom{cursor:grab}
 .dui-pv-picture.zoom.held{cursor:grabbing}
 .dui-pv-video{cursor:default}
-/* A thumbnail stands in while the picture is read. */
-.dui-pv-standin{width:min(480px,100%);filter:blur(6px);opacity:.7}
+/* A thumbnail stands in while the picture is read, drawn as large as the
+   picture will be (as large as fits both ways), so that the picture takes
+   its place without a jump in size. */
+.dui-pv-standin{width:100%;height:100%;object-fit:contain;filter:blur(6px);opacity:.7;box-shadow:none;border-radius:0}
+/* A file not drawn yet stays unseen, what it replaces kept in the ghost
+   layer over it, until it can be drawn whole. */
+.dui-pv-item.waiting{opacity:0}
+.dui-pv-ghost,.dui-pv-peek{position:absolute;inset:0;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);place-items:center;pointer-events:none}
+.dui-pv-ghost>.dui-pv-item{grid-area:1/1}
+/* The files either side, seen only while a finger drags sideways or a
+   step slides one in. */
+.dui-pv-peek{visibility:hidden}
+.dui-pv-peek.on{visibility:visible}
+.dui-pv-peek-kind{width:96px;height:96px;border-radius:24px;display:grid;place-items:center;background:rgba(255,255,255,.06);color:rgba(237,232,225,.7)}
 .dui-pv-ring{position:absolute;width:44px;height:44px;animation:dui-turn 1s linear infinite}
 .dui-pv-ring circle{stroke:#EDE8E1}
 .dui-pv-failed{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;max-width:420px;padding:0 20px}

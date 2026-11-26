@@ -86,7 +86,7 @@ pub fn FileTiles(
 }
 
 /// The icon for a file of a kind with no thumbnail.
-const fn kind_icon(kind: Option<PreviewKind>) -> Icon {
+pub(super) const fn kind_icon(kind: Option<PreviewKind>) -> Icon {
     match kind {
         Some(PreviewKind::Audio) => Icon::Music,
         _ => Icon::File,

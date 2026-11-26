@@ -169,8 +169,9 @@ node tools/motion/motion.mjs run settings-panel --platform desktop --mockup
 node --test tools/motion/test/analyse.test.mjs tools/motion/test/page.test.mjs
 
 # dirt-ui's script in a headless Edge or Chrome (skipped where neither is
-# installed): Settings opened again takes the pointer
-node --test crates/dirt-ui/tests/js/modal.test.mjs
+# installed): Settings opened again takes the pointer; the file preview's
+# zoom and step. One file at a time
+node --test --test-concurrency=1 crates/dirt-ui/tests/js/modal.test.mjs crates/dirt-ui/tests/js/preview.test.mjs
 
 # List Makefile shortcuts
 make help

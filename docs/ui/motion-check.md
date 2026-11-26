@@ -361,7 +361,18 @@ mockups) and `default`.
     (pasted) brings focus at once (7.9). With `ctrl` it is a shortcut and
     types nothing;
   - `type` (inserted as typed text);
-  - `wheel`;
+  - `wheel` (a selector, or `{ "on": …, "dx": 0, "dy": 300, "times": 1, "every": 16, "ctrl": false }`:
+    with `ctrl`, Ctrl held, as a touchpad's pinch comes to the page);
+  - `doubleClick` (a selector, moved by `atX`, `atY`: two presses as a
+    hand double-clicks, or on Android a double tap);
+  - `swipe` (`{ "on": …, "dx": -220, "dy": 0, "steps": 8, "every": 16, "hold": 0 }`:
+    a finger on the touch screen from the centre of `on`, held still
+    `hold` ms before it lifts, for a release with no speed);
+  - `pinch` (`{ "on": …, "atX": 0, "atY": 0, "from": 90, "to": 260, "angle": 0,
+    "steps": 12, "every": 16 }`: two fingers either side of a point,
+    `from` px apart to `to`, lifted one after the other). The frames
+    while a finger moves are not stepped: what follows a finger has no
+    animation of its own, so stepping starts as it lifts;
   - `wait` (ms), `waitFor` / `waitGone` (a selector);
   - `viewport` (`{ "height": 530 }`: the page's layout made that size by
     DevTools' device metrics, as a keyboard rising makes it; `"reset"`
@@ -373,7 +384,8 @@ mockups) and `default`.
     `note-close-view-grows` uses it (A78). Not on a desktop scenario that
     has a `viewport` of its own: `"reset"` would undo it;
   - `pastePicture` (a picture pasted into the page, as one copied from
-    another program; the app's own paste handler takes it);
+    another program; the app's own paste handler takes it; `colour` and
+    `size` (`{ "width", "height" }`) draw another, 640 × 420 by default);
   - `androidKey` (an Android key code, on the emulator: 4 is Back);
   - `androidTap` (`[x, y]`, a tap on the emulator's screen outside the web
     view, in the screen's pixels as `uiautomator dump` gives them: in

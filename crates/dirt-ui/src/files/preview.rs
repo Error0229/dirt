@@ -16,9 +16,11 @@
 //! click on the backdrop or ✕ close it; on Android a swipe down or Back.
 //! It grows out of its file's tile and shrinks back into it. The script
 //! does the keys, the gestures and the movement, and tells Rust only how
-//! they ended; a picture zooms to twice its size there too, on a double
-//! click or a pinch. A PDF's pages are drawn there by the bundled renderer
-//! (`crate::pdf`), and a sound's card plays there.
+//! they ended: the next file sliding in as the one shown slides out, and a
+//! picture zoomed (a pinch that follows the fingers, a double click or a
+//! double tap, Ctrl and the wheel), all of it there. A PDF's pages are
+//! drawn there by the bundled renderer (`crate::pdf`), and a sound's card
+//! plays there.
 //!
 //! It is always in the page while a note is open, so that it can move in
 //! and out.
@@ -27,9 +29,9 @@ use dioxus::prelude::*;
 use dirt_core::files::runs_as_a_program;
 use dirt_core::store::AttachedFile;
 
-use super::kind::PreviewKind;
+use super::kind::{preview_kind, PreviewKind};
 use super::note_files::{NoteFiles, Showing};
-use super::tile::tile_element_id;
+use super::tile::{kind_icon, tile_element_id};
 use crate::components::{IconButton, ScrollArea};
 use crate::events::{use_outcome, Outcome};
 use crate::icons::{Icon, IconSize, IconSvg};
@@ -77,6 +79,28 @@ pub fn FilePreview(
         .map(|file| file.attachment.file_id.to_string())
         .unwrap_or_default();
     let item_key = format!("{file_id}-{}", item_name(&showing));
+    // The files either side, which a finger dragging sideways brings into
+    // sight, and which a step slides in (going round at the ends, as the
+    // step does).
+    let peek = |place: usize| {
+        let file = &all[place];
+        let id = file.attachment.file_id;
+        (
+            id.to_string(),
+            files.thumbnail(id),
+            kind_icon(preview_kind(
+                &file.attachment.name,
+                &file.attachment.media_type,
+            )),
+        )
+    };
+    let neighbours = several.then(|| {
+        let count = all.len();
+        [
+            ("prev", peek((index + count - 1) % count)),
+            ("next", peek((index + 1) % count)),
+        ]
+    });
 
     rsx! {
         div {
@@ -97,10 +121,44 @@ pub fn FilePreview(
             }
             div { class: "dui-pv-name", "aria-hidden": "true", "{name}" }
             div { class: "dui-pv-stage", "data-dui-pv-stage": "",
-                div { key: "{item_key}", class: "dui-pv-item", "data-file": "{file_id}",
-                    PreviewItem { showing, name: name.clone(), thumbnail }
+                // A list of one, so that its key is kept: a new key is a new
+                // element, which the script sees come and brings in. Keyed
+                // alone, in place, the element stayed and only what was in
+                // it changed, so nothing came in at all.
+                for key in std::iter::once(item_key) {
+                    div { key: "{key}", class: "dui-pv-item", "data-file": "{file_id}",
+                        PreviewItem { showing: showing.clone(), name: name.clone(), thumbnail: thumbnail.clone() }
+                    }
+                }
+                // What was shown, kept here by the script while it slides
+                // away, or until what replaces it can be drawn.
+                div { class: "dui-pv-ghost", "aria-hidden": "true", "inert": "" }
+                if let Some(sides) = neighbours {
+                    for (side , (peek_id , peek_thumbnail , peek_icon)) in sides {
+                        div {
+                            key: "{side}",
+                            class: "dui-pv-peek",
+                            "data-side": side,
+                            "data-file": "{peek_id}",
+                            "aria-hidden": "true",
+                            if let Some(picture) = peek_thumbnail {
+                                img {
+                                    class: "dui-pv-picture dui-pv-standin",
+                                    src: "{picture}",
+                                    alt: "",
+                                    draggable: "false",
+                                }
+                            } else {
+                                span { class: "dui-pv-peek-kind",
+                                    IconSvg { icon: peek_icon, size: IconSize::Large }
+                                }
+                            }
+                        }
+                    }
                 }
             }
+            // The script steps, on a press of ‹ or ›, as on ← and →: the
+            // file shown slides out as the next slides in.
             if several {
                 button {
                     r#type: "button",
@@ -108,7 +166,6 @@ pub fn FilePreview(
                     "aria-label": "Previous",
                     "data-tip": "Previous",
                     "data-kbd": "\u{2190}",
-                    onclick: move |_| files.step(false),
                     IconSvg { icon: Icon::ChevronLeft, size: IconSize::Regular }
                 }
                 button {
@@ -117,7 +174,6 @@ pub fn FilePreview(
                     "aria-label": "Next",
                     "data-tip": "Next",
                     "data-kbd": "\u{2192}",
-                    onclick: move |_| files.step(true),
                     IconSvg { icon: Icon::ChevronRight, size: IconSize::Regular }
                 }
                 div { class: "dui-pv-dots", "aria-hidden": "true",

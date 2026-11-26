@@ -2745,8 +2745,7 @@
   // shrinks back into it; ← and → say `previous` and `next`; Space closes
   // it, as Esc does; a press on its backdrop closes it on the desktop and
   // hides or shows its controls on Android, where a swipe down closes it
-  // and one sideways goes to the next file. A picture zooms to twice its
-  // size on a double click or a pinch.
+  // and one sideways goes to the next file. A picture zooms: below.
   let previewStep = 1;
   // An animation that has begun and not ended: running, or held (the motion
   // check's stepped clock holds every animation it steps).
@@ -2813,7 +2812,7 @@
   }
   // The box of what the stage shows, or a part of the stage's middle.
   function shownBox(stage) {
-    const item = stage.querySelector('.dui-pv-item');
+    const item = stage.querySelector(':scope > .dui-pv-item');
     const inner = item && item.firstElementChild;
     const box = inner && inner.getBoundingClientRect();
     if (box && box.width > 8 && box.height > 8) return box;
@@ -2876,7 +2875,12 @@
   function previewOpened(modal, state) {
     modal.classList.remove('leaving', 'bare');
     previewStep = 1;
-    state.item = null;
+    // What is on the stage as it opens (the thumbnail standing in, mostly):
+    // the picture that replaces it takes its place without going empty.
+    state.item = currentItem(modal);
+    state.slide = null;
+    clearGhosts(modal);
+    hidePeeks(modal);
     const stage = stageOf(modal), tile = tileOf(modal);
     if (state.run) state.run.cancel();
     fadeAround(modal, state, true);
@@ -2914,8 +2918,9 @@
     // A zoomed picture is let go of first, at once, so that the preview
     // shrinks into its tile from the picture as it fitted, not from twice
     // that, mostly scrolled away; and opens again unzoomed.
-    const zoomed = modal.querySelector('img[data-dui-zoom].zoom');
-    if (zoomed) zoom(zoomed, 0, 0, false, true);
+    endSlide(modal, state);
+    const zoomed = currentItem(modal) && currentItem(modal).querySelector('img[data-dui-zoom]');
+    if (zoomed) { holdView(zoomed); setView(zoomed, { s: 1, x: 0, y: 0 }); }
     // Closed while it still grows: it shrinks from where it has got to, its
     // size and its opacity, not from the whole file at once (rule 7 of 5.2;
     // the mockup starts from the item's transform too). Measured before the
@@ -2951,28 +2956,12 @@
     const last = fadeMs > ms && state.fades.length ? state.fades[0] : run;
     after(last, Math.max(ms, fadeMs), () => { finish(); if (state.run === run) run.cancel(); });
   }
-  // A new file on the stage comes in from the side it was stepped to
-  // (280 ms, enter); the same file, read, fades in where it was.
-  function previewItemChanged(modal, state) {
-    const item = modal.querySelector('.dui-pv-item');
-    if (!item || item === state.item) return;
-    const was = state.item;
-    state.item = item;
-    if (!was || !modal.classList.contains('on')) return;
-    if (reduced() || was.dataset.file === item.dataset.file) {
-      startAnimation(item, [{ opacity: 0.6 }, { opacity: 1 }], { duration: tokens.reducedMs + 30, easing: tokens.standard });
-      return;
-    }
-    startAnimation(item, [{ opacity: 0, transform: `translateX(${previewStep * 48}px)` }, { opacity: 1, transform: 'none' }],
-      { duration: 280, easing: tokens.enter });
-  }
   function previewKey(event, modal) {
     const at = event.target;
     const media = at && at.closest && at.closest('video, audio, .dui-pv-wave');
     if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && !media) {
       event.preventDefault();
-      previewStep = event.key === 'ArrowRight' ? 1 : -1;
-      tell(modal, previewStep > 0 ? 'next' : 'previous');
+      slide(modal, event.key === 'ArrowRight' ? 1 : -1);
       return true;
     }
     // Space presses a button that has the keyboard, plays a sound and
@@ -2985,10 +2974,10 @@
     return false;
   }
   document.addEventListener('click', event => {
-    const nav = event.target.closest && event.target.closest('.dui-pv-nav');
-    if (nav) { previewStep = nav.classList.contains('prev') ? -1 : 1; return; }
     const modal = event.target.closest && event.target.closest('[data-dui-modal="preview"].on');
     if (!modal) return;
+    const nav = event.target.closest('.dui-pv-nav');
+    if (nav) { slide(modal, nav.classList.contains('prev') ? -1 : 1); return; }
     const backdrop = event.target.matches('[data-dui-pv-stage], .dui-pv-item, .dui-pv-scrim, .dui-pv-failed');
     if (!backdrop) return;
     if (previewGestured) { previewGestured = false; return; }
@@ -3004,46 +2993,501 @@
     event.preventDefault();
     event.stopPropagation();
   }, true));
-  // A double click on a picture zooms it to twice the size it fitted at,
-  // about the point clicked, and back (280 ms, enter). Zoomed, its item
-  // scrolls, so that every part of it can be reached: the wheel, a drag
-  // or a finger moves it (#313). The point clicked stays where it was,
-  // unless that would leave the picture short of an edge.
-  function zoom(picture, x, y, on, still = false) {
+  // ---- A picture zoomed, and the step between files (A83) -----------------
+  // A picture's view is `{ s, x, y }`: its scale, and how far its middle is
+  // moved from where it fits, in CSS px. It is drawn as `translate(x, y)
+  // scale(s)` about its middle, so the picture keeps the box it fits in and
+  // the web view draws it from its own pixels at every scale: one smaller
+  // than the stage stays as sharp as it can be. The maths is apart, and
+  // tested (crates/dirt-ui/tests/js/preview.test.mjs).
+  const ZOOM_MOST = 4, ZOOM_TAP = 2, ZOOM_MS = 280;
+  // A finger let go of at this speed (px/ms) or more flings: a picture
+  // coasts on, a swipe steps however short it was.
+  const FLING = 0.4;
+  // How far a fling carries a picture for each px/ms it was let go of at.
+  const COAST_MS = 250;
+  const previewMaths = {
+    // How far something pulled `over` past where it may go is drawn past
+    // it: less and less the further it is pulled, never as far as `room`.
+    rubber(over, room) {
+      if (!over || !(room > 0)) return 0;
+      return Math.sign(over) * (1 - 1 / ((Math.abs(over) * 0.55) / room + 1)) * room;
+    },
+    // A scale pinched past its limits, drawn with a give.
+    softScale(s, least = 1, most = ZOOM_MOST) {
+      if (s > most) return most * (1 + previewMaths.rubber(s / most - 1, 0.5));
+      if (s < least) return least * (1 - previewMaths.rubber(1 - s / least, 0.45));
+      return s;
+    },
+    // The view at scale `s` that keeps the point (`fx`, `fy`) of the
+    // screen where it is; `c` is the picture's middle as it fits.
+    zoomAbout(view, s, fx, fy, c) {
+      const k = s / view.s;
+      return { s, x: fx - c.x - k * (fx - c.x - view.x), y: fy - c.y - k * (fy - c.y - view.y) };
+    },
+    // How far a picture's middle may be moved on one axis: `mid` is its
+    // middle as it fits, `size` its size as drawn, `lo` and `hi` the
+    // window's edges. Larger than the window, it may go until one of its
+    // edges meets the window's; no larger, it stays where it fits, moved
+    // only as far as keeps the whole of it in the window.
+    panRange(mid, size, lo, hi) {
+      if (size > hi - lo) return [hi - mid - size / 2, lo - mid + size / 2];
+      const p = Math.min(Math.max(0, lo - mid + size / 2), hi - mid - size / 2);
+      return [p, p];
+    },
+    // Both ranges at scale `s`. `g` is where the picture fits (`x`, `y`
+    // its middle, `w`, `h` its size) and the window (`left`, `top`,
+    // `right`, `bottom`).
+    ranges(s, g) {
+      return {
+        x: previewMaths.panRange(g.x, g.w * s, g.left, g.right),
+        y: previewMaths.panRange(g.y, g.h * s, g.top, g.bottom),
+      };
+    },
+    // Where a view comes to rest: its scale within the limits, about the
+    // point (`fx`, `fy`) (the picture's middle unless named), and moved no
+    // further than its ranges. At 1× it fits exactly.
+    rest(view, g, fx, fy) {
+      const s = Math.min(ZOOM_MOST, Math.max(1, view.s));
+      const at = s === view.s ? view : previewMaths.zoomAbout(view, s, fx === undefined ? g.x + view.x : fx, fy === undefined ? g.y + view.y : fy, g);
+      const r = previewMaths.ranges(s, g);
+      const clamp = (v, [a, b]) => Math.min(b, Math.max(a, v));
+      return { s, x: clamp(at.x, r.x), y: clamp(at.y, r.y) };
+    },
+    // The view drawn while fingers or a pointer hold it: past its ranges
+    // with a give, as much as the window is wide or high.
+    held(view, g) {
+      const r = previewMaths.ranges(view.s, g);
+      const give = (v, [a, b], room) => (v < a ? a + previewMaths.rubber(v - a, room) : v > b ? b + previewMaths.rubber(v - b, room) : v);
+      return { s: view.s, x: give(view.x, r.x, g.right - g.left), y: give(view.y, r.y, g.bottom - g.top) };
+    },
+    // Where a picture let go of at `v` px/ms coasts to from `at`: as far as
+    // a fling of that speed carries it, and no further than its range.
+    coast(at, v, [a, b]) {
+      return Math.min(b, Math.max(a, at + v * COAST_MS));
+    },
+    // Whether a swipe sideways steps when let go of: 1 to the next file,
+    // -1 to the one before, 0 back where it was. `dx` is how far it went
+    // (to the left is negative), `v` its speed at the end in px/ms, `width`
+    // the stage's. A fling steps the way it was going; a slow drag steps
+    // once past a third of the stage, and not if it was flung back.
+    stepOf(dx, v, width, several) {
+      if (!several || !dx) return 0;
+      if (Math.abs(v) >= FLING) return Math.sign(v) === Math.sign(dx) && Math.abs(dx) > 24 ? -Math.sign(dx) : 0;
+      return Math.abs(dx) > width / 3 ? -Math.sign(dx) : 0;
+    },
+    // A finger's speed (px/ms) from its last moves (`t`, `x`, `y`), over
+    // the last 100 ms of them; none if it was held still for 60 ms before
+    // it was let go of at `end`.
+    speed(samples, end) {
+      const last = samples[samples.length - 1];
+      if (!last || end - last.t > 60) return { x: 0, y: 0 };
+      let first = last;
+      for (let k = samples.length - 1; k >= 0 && last.t - samples[k].t <= 100; k--) first = samples[k];
+      const dt = last.t - first.t;
+      return dt > 0 ? { x: (last.x - first.x) / dt, y: (last.y - first.y) / dt } : { x: 0, y: 0 };
+    },
+  };
+
+  const views = new WeakMap(), viewRuns = new WeakMap();
+  const pictureView = picture => views.get(picture) || { s: 1, x: 0, y: 0 };
+  const viewTransform = view => `translate(${view.x}px, ${view.y}px) scale(${view.s})`;
+  const zoomedIn = picture => pictureView(picture).s > 1.001;
+  // The file on the stage now, never one the ghost layer keeps.
+  const currentItem = modal => modal.querySelector('[data-dui-pv-stage] > .dui-pv-item');
+  const currentPicture = modal => {
+    const item = currentItem(modal);
+    return item && !item.classList.contains('waiting') ? item.querySelector('img[data-dui-zoom]') : null;
+  };
+  // Where the picture fits, and the window it may move in.
+  function geometryOf(picture) {
     const item = picture.closest('.dui-pv-item');
-    if (!item || on === picture.classList.contains('zoom')) return;
-    const box = picture.getBoundingClientRect();
-    const fx = Math.min(1, Math.max(0, (x - box.left) / box.width));
-    const fy = Math.min(1, Math.max(0, (y - box.top) / box.height));
-    if (on) {
-      picture.style.setProperty('--w', `${box.width * 2}px`);
-      picture.style.setProperty('--h', `${box.height * 2}px`);
-      item.classList.add('zoomed');
-      picture.classList.add('zoom');
-      const now = picture.getBoundingClientRect();
-      item.scrollLeft += now.left + fx * now.width - x;
-      item.scrollTop += now.top + fy * now.height - y;
-    } else {
-      picture.classList.remove('zoom', 'held');
-      item.classList.remove('zoomed');
-      picture.style.removeProperty('--w');
-      picture.style.removeProperty('--h');
-    }
-    if (still || reduced()) return;
-    const origin = `${fx * 100}% ${fy * 100}%`;
-    startAnimation(picture, [{ transform: `scale(${on ? 0.5 : 2})`, transformOrigin: origin }, { transform: 'none', transformOrigin: origin }],
-      { duration: 280, easing: tokens.enter });
+    const box = item.getBoundingClientRect();
+    const w = picture.offsetWidth, h = picture.offsetHeight;
+    return { x: box.left + picture.offsetLeft + w / 2, y: box.top + picture.offsetTop + h / 2, w, h, left: 0, top: 0, right: innerWidth, bottom: innerHeight };
   }
+  function setView(picture, view) {
+    const zoomed = view.s > 1.001;
+    views.set(picture, view);
+    picture.style.transform = view.s === 1 && !view.x && !view.y ? '' : viewTransform(view);
+    picture.classList.toggle('zoom', zoomed);
+    const item = picture.closest('.dui-pv-item');
+    if (item) item.classList.toggle('zoomed', zoomed);
+  }
+  // The view as drawn now: a movement it is in is stopped where it has
+  // got to, so that a finger catches a picture still coasting.
+  function holdView(picture) {
+    const run = viewRuns.get(picture);
+    viewRuns.delete(picture);
+    if (run && unfinished(run)) {
+      const drawn = getComputedStyle(picture).transform;
+      run.cancel();
+      const m = drawn && drawn !== 'none' ? new DOMMatrixReadOnly(drawn) : null;
+      setView(picture, m ? { s: m.a, x: m.e, y: m.f } : { s: 1, x: 0, y: 0 });
+    } else if (run) {
+      run.cancel();
+    }
+    return pictureView(picture);
+  }
+  // Moves the picture from the view it has to `to`: at once with reduced
+  // motion.
+  function moveView(picture, to, ms, easing) {
+    const from = holdView(picture);
+    setView(picture, to);
+    if (reduced() || !ms) return;
+    if (Math.abs(from.s - to.s) < 1e-3 && Math.hypot(from.x - to.x, from.y - to.y) < 0.5) return;
+    const run = startAnimation(picture, [{ transform: viewTransform(from) }, { transform: viewTransform(to) }], { duration: ms, easing });
+    viewRuns.set(picture, run);
+    after(run, ms, () => { if (viewRuns.get(picture) === run) viewRuns.delete(picture); });
+  }
+  // A double click or a double tap: zoomed to 2× about the point pressed
+  // (kept under it, unless that would leave the picture short of an edge),
+  // or back to fit (280 ms, enter, as the mockup's).
+  function toggleZoom(picture, x, y) {
+    const now = holdView(picture);
+    if (now.s > 1.001) { moveView(picture, { s: 1, x: 0, y: 0 }, ZOOM_MS, tokens.enter); return; }
+    const g = geometryOf(picture);
+    const fx = Math.min(g.x + g.w / 2, Math.max(g.x - g.w / 2, x));
+    const fy = Math.min(g.y + g.h / 2, Math.max(g.y - g.h / 2, y));
+    moveView(picture, previewMaths.rest(previewMaths.zoomAbout(now, ZOOM_TAP, fx, fy, g), g), ZOOM_MS, tokens.enter);
+  }
+  // Settled where it may rest, from where a hand let it go: a picture
+  // pulled past an edge comes back, one pinched past a limit returns to
+  // it about the point between the fingers.
+  function settleView(picture, g, fx, fy) {
+    moveView(picture, previewMaths.rest(pictureView(picture), g, fx, fy), ZOOM_MS, tokens.enter);
+  }
+  // Let go of while moving, a picture coasts on, slowing as a thing
+  // thrown does (the toss curve), and stops at its edge.
+  function coastView(picture, g, v) {
+    const now = pictureView(picture), r = previewMaths.ranges(now.s, g);
+    const inside = now.x >= r.x[0] - 0.5 && now.x <= r.x[1] + 0.5 && now.y >= r.y[0] - 0.5 && now.y <= r.y[1] + 0.5;
+    if (!inside) { settleView(picture, g); return; }
+    const speed = Math.hypot(v.x, v.y);
+    if (speed < 0.05) return;
+    const to = { s: now.s, x: previewMaths.coast(now.x, v.x, r.x), y: previewMaths.coast(now.y, v.y, r.y) };
+    const far = Math.hypot(to.x - now.x, to.y - now.y);
+    if (far < 1) return;
+    moveView(picture, to, Math.round(Math.min(900, Math.max(160, (2.8 * far) / speed))), TOSS);
+  }
+
   document.addEventListener('dblclick', event => {
-    const picture = event.target.closest && event.target.closest('img[data-dui-zoom]');
-    if (picture) zoom(picture, event.clientX, event.clientY, !picture.classList.contains('zoom'));
+    if (touchUi() || !event.target.closest) return;
+    const modal = event.target.closest('[data-dui-modal="preview"].on');
+    const picture = modal && currentPicture(modal);
+    if (!picture) return;
+    if (zoomedIn(picture) || event.target === picture) toggleZoom(picture, event.clientX, event.clientY);
   });
-  // Android: a swipe down closes, a swipe sideways goes to the next file,
-  // and two fingers spreading or closing zoom a picture, anywhere on the
-  // preview but its buttons. Touch events, as the web view takes a drag of
-  // pointer events for its own scrolling. On text or a PDF, which scroll,
-  // a finger moving up or down scrolls them, and only one moving sideways
-  // is a swipe: otherwise a PDF that fills the screen could not be left.
+  // The wheel: with Ctrl (a touchpad's pinch comes as one) it zooms about
+  // the pointer, between 1× and 4×; zoomed, without it, it moves the
+  // picture. Taken from the web view, whose own zoom Ctrl and the wheel
+  // would otherwise be.
+  document.addEventListener('wheel', event => {
+    if (!event.target.closest) return;
+    const modal = event.target.closest('[data-dui-modal="preview"].on');
+    const picture = modal && currentPicture(modal);
+    if (!picture || event.target.closest('.dui-scroll, button')) return;
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? innerHeight : 1;
+    const dx = event.deltaX * unit, dy = event.deltaY * unit;
+    const now = holdView(picture);
+    if (!event.ctrlKey && now.s <= 1.001) return;
+    event.preventDefault();
+    const g = geometryOf(picture);
+    if (event.ctrlKey) {
+      const s = Math.min(ZOOM_MOST, Math.max(1, now.s * Math.exp(-dy * 0.0025)));
+      setView(picture, previewMaths.rest(previewMaths.zoomAbout(now, s, event.clientX, event.clientY, g), g));
+      return;
+    }
+    const [mx, my] = event.shiftKey && !dx ? [dy, 0] : [dx, dy];
+    setView(picture, previewMaths.rest({ s: now.s, x: now.x - mx, y: now.y - my }, g));
+  }, { passive: false });
+  // A mouse or pen dragging a zoomed picture moves it, with a give past
+  // its edges that it comes back from when let go of.
+  let panning = null;
+  document.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'touch' || event.button || !event.target.closest) return;
+    const picture = event.target.closest('img[data-dui-zoom].zoom');
+    if (!picture || !picture.closest('[data-dui-pv-stage] > .dui-pv-item')) return;
+    event.preventDefault();
+    panning = { picture, id: event.pointerId, x: event.clientX, y: event.clientY, from: holdView(picture), g: geometryOf(picture) };
+    picture.classList.add('held');
+    try { picture.setPointerCapture(event.pointerId); } catch (error) { /* the pointer has gone */ }
+  });
+  window.addEventListener('pointermove', event => {
+    if (!panning || event.pointerId !== panning.id) return;
+    const { from, g } = panning;
+    setView(panning.picture, previewMaths.held({ s: from.s, x: from.x + event.clientX - panning.x, y: from.y + event.clientY - panning.y }, g));
+  }, { passive: true });
+  const endPan = event => {
+    if (!panning || event.pointerId !== panning.id) return;
+    const { picture, g } = panning;
+    panning = null;
+    picture.classList.remove('held');
+    settleView(picture, g);
+  };
+  window.addEventListener('pointerup', endPan);
+  window.addEventListener('pointercancel', endPan);
+
+  // ---- The step: the next file slides in as the one shown slides out -----
+  // Everything moves a window's width and 16 px (the gap between two
+  // files side by side), so that what leaves is wholly gone. A finger
+  // dragging sideways moves the file and brings the next one (`.dui-pv-
+  // peek`, its thumbnail or its kind, as it will stand in while it is
+  // read) into sight beside it; let go, it slides on to the end, or back.
+  // Rust is told at once, and its new file takes over the movement where
+  // it has got to. What was shown is kept in the ghost layer while it
+  // slides away, or, for the same file read after its thumbnail, until
+  // the picture can be drawn whole (`img.decode()`), so that nothing goes
+  // empty and nothing jumps in size.
+  const SLIDE_GAP = 16;
+  const slideDistance = () => innerWidth + SLIDE_GAP;
+  const peekOf = (modal, dir) => modal.querySelector(`[data-dui-pv-stage] > .dui-pv-peek[data-side="${dir > 0 ? 'next' : 'prev'}"]`);
+  const shownPeek = modal => modal.querySelector('[data-dui-pv-stage] > .dui-pv-peek.on');
+  function hidePeeks(modal) {
+    modal.querySelectorAll('[data-dui-pv-stage] > .dui-pv-peek').forEach(peek => {
+      peek.getAnimations().forEach(run => run.cancel());
+      peek.classList.remove('on');
+      peek.style.transform = '';
+    });
+  }
+  function clearGhosts(modal) {
+    const layer = modal.querySelector('.dui-pv-ghost');
+    if (layer) layer.replaceChildren();
+  }
+  // Keeps an item Rust has taken out of the page in the ghost layer, as it
+  // was drawn: the same element, whose picture is already decoded (a copy
+  // would ask for bytes the app may already have let go of). It takes no
+  // pointer and no focus there.
+  function toGhost(modal, element) {
+    const layer = modal.querySelector('.dui-pv-ghost');
+    if (!layer) return null;
+    element.getAnimations().forEach(run => run.cancel());
+    element.style.transform = '';
+    element.classList.remove('waiting');
+    element.setAttribute('inert', '');
+    layer.appendChild(element);
+    return element;
+  }
+  // How long a step has run: read from the animation that leads it, so
+  // that the motion check's stepped clock sets it too.
+  const slideElapsed = slide => (slide.clock && slide.clock.currentTime !== null ? Number(slide.clock.currentTime) + slide.offset : Infinity);
+  // One part of a step, begun `elapsed` ms in (a negative delay: a file
+  // that comes in part way takes up the movement where it has got to).
+  function slideRun(element, kind, slide, elapsed) {
+    const { dir, from, D } = slide;
+    const frames = kind === 'out'
+      ? [{ transform: `translateX(${from}px)` }, { transform: `translateX(${-dir * D}px)` }]
+      : [{ transform: `translateX(${from + dir * D}px)` }, { transform: 'none' }];
+    element.style.transform = '';
+    return startAnimation(element, frames, { duration: slide.ms, easing: slide.easing, delay: -Math.max(0, elapsed), fill: 'forwards' });
+  }
+  // A step still on its way lands at once.
+  function endSlide(modal, state) {
+    const slide = state.slide;
+    if (!slide) return;
+    state.slide = null;
+    [slide.clock, ...slide.runs].forEach(run => run && run.cancel());
+    clearGhosts(modal);
+    hidePeeks(modal);
+    const item = currentItem(modal);
+    if (item) { item.style.transform = ''; item.classList.remove('waiting'); }
+  }
+  // A step that has come to rest: its movements are let go of, leaving
+  // the file where it rests, but not those of what the ghost layer keeps,
+  // which goes when its own movement ends.
+  function landSlide(modal, state, step) {
+    if (state.slide === step) state.slide = null;
+    const layer = modal.querySelector('.dui-pv-ghost');
+    [step.clock, ...step.runs].forEach(run => {
+      const target = run && run.effect && run.effect.target;
+      if (run && !(layer && target && layer.contains(target))) run.cancel();
+    });
+    hidePeeks(modal);
+  }
+  // Steps to the next file (`dir` 1) or the one before (-1), from a drag
+  // that has moved the file `from` px; `touch` for a finger's, which takes
+  // the rest of its way in up to 340 ms, where ← and → take 260 ms. Both
+  // on the glide spring's curve, as a large surface moves (5.3). With one
+  // file there is nothing to step to: a key nudges it and it comes back.
+  function slide(modal, dir, from = 0, touch = false) {
+    const state = modals.get(modal);
+    if (!state) return;
+    previewStep = dir;
+    endSlide(modal, state);
+    const item = currentItem(modal), peek = peekOf(modal, dir);
+    if (!peek) {
+      if (item && !touch && !reduced()) {
+        startAnimation(item, [{ transform: 'none' }, { transform: `translateX(${-dir * 24}px)` }, { transform: 'none' }], { duration: 300, easing: tokens.standard });
+      }
+      return;
+    }
+    tell(modal, dir > 0 ? 'next' : 'previous');
+    if (!item || reduced()) { if (item) item.style.transform = ''; hidePeeks(modal); return; }
+    const D = slideDistance();
+    const ms = touch ? Math.round(Math.max(180, (340 * (D - Math.abs(from))) / D)) : 260;
+    const step = { dir, from, D, ms, easing: spring('glide').easing, file: peek.dataset.file, runs: [], outgoing: item, offset: 0 };
+    // What slides in until the file comes is a copy of the peek, in the
+    // ghost layer: Rust draws the peeks again for the new neighbours as
+    // soon as it has stepped, which would change the picture coming in.
+    const layer = modal.querySelector('.dui-pv-ghost');
+    const stand = peek.cloneNode(true);
+    stand.removeAttribute('data-side');
+    stand.classList.add('on');
+    hidePeeks(modal);
+    if (layer) layer.appendChild(stand);
+    step.stand = stand;
+    step.clock = slideRun(item, 'out', step, 0);
+    step.peek = slideRun(stand, 'in', step, 0);
+    step.runs.push(step.peek);
+    state.slide = step;
+    // If no file comes (the step was not taken), the file shown comes back.
+    setTimeout(() => { if (state.slide === step && state.item === item) endSlide(modal, state); }, ms + 1500);
+  }
+  // Let go of short of a step: the file comes back, and the one beside it
+  // goes back out of sight (on the glide spring's curve over 300 ms).
+  function slideBack(modal, item, shown) {
+    const ms = reduced() ? 0 : 300, easing = spring('glide').easing;
+    item.style.transform = '';
+    const peek = shownPeek(modal);
+    if (!ms || !shown) { hidePeeks(modal); return; }
+    startAnimation(item, [{ transform: `translateX(${shown}px)` }, { transform: 'none' }], { duration: ms, easing });
+    if (!peek) return;
+    const side = peek.dataset.side === 'next' ? 1 : -1, D = slideDistance();
+    peek.style.transform = '';
+    const run = startAnimation(peek, [{ transform: `translateX(${shown + side * D}px)` }, { transform: `translateX(${side * D}px)` }], { duration: ms, easing, fill: 'forwards' });
+    after(run, ms, () => { if (!peek.getAnimations().some(other => other !== run && unfinished(other))) hidePeeks(modal); });
+  }
+  // Whether an item can be drawn whole now: a picture decoded, or nothing
+  // to wait for.
+  function readyNow(item) {
+    const picture = item.querySelector('img');
+    return !picture || (picture.complete && picture.naturalWidth > 0);
+  }
+  function whenReady(item, then) {
+    let done = false;
+    const once = () => { if (!done) { done = true; then(); } };
+    if (readyNow(item)) { once(); return; }
+    const picture = item.querySelector('img');
+    if (picture.decode) picture.decode().then(once, once);
+    picture.addEventListener('load', once, { once: true });
+    picture.addEventListener('error', once, { once: true });
+    setTimeout(once, 1500);
+  }
+  // The box a picture is drawn in: inside its element's box when it is
+  // contained (a stand-in), or the element's box.
+  function drawnBox(picture) {
+    const box = picture.getBoundingClientRect();
+    if (getComputedStyle(picture).objectFit !== 'contain' || !picture.naturalWidth || !picture.naturalHeight) return box;
+    const k = Math.min(box.width / picture.naturalWidth, box.height / picture.naturalHeight);
+    const w = picture.naturalWidth * k, h = picture.naturalHeight * k;
+    return { left: box.left + (box.width - w) / 2, top: box.top + (box.height - h) / 2, width: w, height: h };
+  }
+  // The file, ready, takes the place of what stood in for it: the picture
+  // fades in over its thumbnail (160 ms, standard), from the thumbnail's
+  // size if the picture is drawn smaller than it (one smaller than the
+  // stage, drawn at its own size), as the thumbnail fades out at the
+  // picture's.
+  function takeOver(modal, ghost, item) {
+    item.classList.remove('waiting');
+    const ms = reduced() ? tokens.reducedMs : 160;
+    if (!ghost) {
+      // Over the copy of its peek that slid in, which looks as it does, it
+      // shows at once.
+      const stand = modal.querySelector('.dui-pv-ghost > .dui-pv-peek');
+      if (!stand) startAnimation(item, [{ opacity: 0.6 }, { opacity: 1 }], { duration: ms, easing: tokens.standard });
+      return;
+    }
+    const from = ghost.querySelector('img'), to = item.querySelector('img');
+    const frames = [{ opacity: 0 }, { opacity: 1 }], gone = [{ opacity: 1 }, { opacity: 0 }];
+    if (from && to && !reduced()) {
+      const a = drawnBox(from), b = to.getBoundingClientRect();
+      if (a.width > 2 && b.width > 2 && Math.abs(a.width - b.width) > 2) {
+        const k = a.width / b.width;
+        const dx = a.left + a.width / 2 - (b.left + b.width / 2), dy = a.top + a.height / 2 - (b.top + b.height / 2);
+        startAnimation(to, [{ transform: `translate(${dx}px, ${dy}px) scale(${k})` }, { transform: 'none' }], { duration: ZOOM_MS, easing: tokens.enter });
+        startAnimation(from, [{ transform: 'none' }, { transform: `translate(${-dx / k}px, ${-dy / k}px) scale(${1 / k})` }], { duration: ZOOM_MS, easing: tokens.enter, fill: 'forwards' });
+      }
+    }
+    startAnimation(item, frames, { duration: ms, easing: tokens.standard });
+    const run = startAnimation(ghost, gone, { duration: ms, easing: tokens.standard, fill: 'forwards' });
+    after(run, Math.max(ms, ZOOM_MS), () => ghost.remove());
+  }
+  // A new item on the stage: the file stepped to, the same file read, or
+  // the next file in place of one removed.
+  function previewItemChanged(modal, state) {
+    const item = currentItem(modal);
+    if (!item || item === state.item) return;
+    const was = state.item;
+    state.item = item;
+    if (!modal.classList.contains('on')) { endSlide(modal, state); clearGhosts(modal); return; }
+    if (!was) return;
+    const step = state.slide;
+    const sameFile = was.dataset.file === item.dataset.file;
+    const elapsed = step ? slideElapsed(step) : Infinity;
+    const moving = !!step && elapsed < step.ms;
+    const incoming = !!step && item.dataset.file === step.file;
+    let ghost = null;
+    if (moving && !sameFile && was === step.outgoing) {
+      // The file stepped from slides on out, from where it had got to.
+      const leaving = toGhost(modal, was);
+      if (leaving) {
+        const run = slideRun(leaving, 'out', step, elapsed);
+        step.runs.push(run);
+        after(run, step.ms - elapsed, () => leaving.remove());
+      }
+    } else if (sameFile) {
+      ghost = toGhost(modal, was);
+      if (ghost && moving && incoming) step.runs.push(slideRun(ghost, 'in', step, elapsed));
+    }
+    if (!readyNow(item)) item.classList.add('waiting');
+    if (incoming) {
+      if (moving) {
+        const run = slideRun(item, 'in', step, elapsed);
+        step.runs.push(run);
+        step.clock = run;
+        step.offset = elapsed;
+        // Landed: its movements are let go of, leaving it where it rests.
+        after(run, step.ms - elapsed, () => {
+          if (state.slide === step && state.item === item && readyNow(item)) landSlide(modal, state, step);
+        });
+      }
+      whenReady(item, () => {
+        if (state.item !== item) return;
+        takeOver(modal, ghost, item);
+        if (step.stand) step.stand.remove();
+        hidePeeks(modal);
+        if (!(slideElapsed(step) < step.ms)) landSlide(modal, state, step);
+      });
+      return;
+    }
+    if (ghost) {
+      whenReady(item, () => { if (state.item === item) takeOver(modal, ghost, item); });
+      return;
+    }
+    endSlide(modal, state);
+    whenReady(item, () => {
+      if (state.item !== item) return;
+      item.classList.remove('waiting');
+      if (reduced()) { startAnimation(item, [{ opacity: 0.6 }, { opacity: 1 }], { duration: tokens.reducedMs + 30, easing: tokens.standard }); return; }
+      // The next file in place of one removed comes in 48 px from the
+      // side it was stepped to (280 ms, enter).
+      startAnimation(item, [{ opacity: 0, transform: `translateX(${previewStep * 48}px)` }, { opacity: 1, transform: 'none' }],
+        { duration: 280, easing: tokens.enter });
+    });
+  }
+
+  // ---- Android: the preview's gestures (6.16) ----------------------------
+  // One finger: a swipe down closes, a swipe sideways steps, a tap on the
+  // backdrop hides and shows the controls; on a zoomed picture it moves
+  // the picture instead, with a give at its edges and a coast when let go
+  // of moving, and never steps or closes. Two taps zoom about the point
+  // tapped and back. Two fingers zoom a picture about the point between
+  // them, following them, with a give past 1× and 4× that it settles
+  // back from. Anywhere on the preview but its buttons. Touch events, as
+  // the web view takes a drag of pointer events for its own scrolling. On
+  // text or a PDF, which scroll, a finger moving up or down scrolls them,
+  // and only one moving sideways is a swipe: otherwise a PDF that fills
+  // the screen could not be left.
   //
   // A touch keeps going to the element it began on, even once that element
   // is taken out of the page, and then no longer reaches the document: a
@@ -3051,9 +3495,11 @@
   // gesture listens on that element as well, and each touch event is taken
   // once, wherever it is heard first; and what moves is whatever item is
   // on the stage now.
-  let previewSwipe = null, previewGestured = false;
+  let gesture = null, previewGestured = false, lastTap = null;
   const onceOnly = event => { if (event.__duiPreview) return false; event.__duiPreview = true; return true; };
-  const stageItem = swipe => swipe.modal.querySelector('.dui-pv-item');
+  const midpoint = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 });
+  const apart = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  const severalOn = modal => !!modal.querySelector('[data-dui-pv-stage] > .dui-pv-peek');
   function followTouch(target) {
     const stop = () => {
       target.removeEventListener('touchmove', movePreviewSwipe);
@@ -3065,105 +3511,162 @@
     target.addEventListener('touchend', ended, { passive: true });
     target.addEventListener('touchcancel', ended, { passive: true });
   }
+  // A drag begun and not finished is let go of where it is: back to rest.
+  function dropDrag(drag) {
+    if (!drag || !drag.mode) return;
+    const item = currentItem(drag.modal);
+    const scrim = drag.modal.querySelector('.dui-pv-scrim');
+    if (scrim) scrim.style.opacity = '';
+    if (!item) return;
+    if (drag.mode === 'x') { slideBack(drag.modal, item, drag.shown || 0); return; }
+    const pop = spring('pop');
+    startAnimation(item, [{ transform: item.style.transform || 'none' }, { transform: 'none' }], { duration: pop.ms, easing: pop.easing });
+    item.style.transform = '';
+  }
   document.addEventListener('touchstart', event => {
     const modal = event.target.closest && event.target.closest('[data-dui-modal="preview"].on');
     if (!modal) return;
     // A tap after a swipe is a tap again.
     previewGestured = false;
     followTouch(event.target);
-    if (event.touches.length === 2) {
+    const picture = currentPicture(modal);
+    if (event.touches.length >= 2) {
+      if (gesture && !gesture.pinch) dropDrag(gesture);
+      if (!picture || event.touches.length > 2) { gesture = { spent: true, modal }; return; }
       const [a, b] = event.touches;
-      previewSwipe = { pinch: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), modal,
-        picture: modal.querySelector('img[data-dui-zoom]'), at: [(a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2] };
+      gesture = { pinch: true, modal, picture, d0: apart(a, b), m0: midpoint(a, b), from: holdView(picture), g: geometryOf(picture) };
+      gesture.at = gesture.m0;
       return;
     }
-    // One finger on a zoomed picture moves it, as its item scrolls.
-    if (event.touches.length !== 1 || event.target.closest('button, video, .dui-pv-audio, .dui-pv-item.zoomed')) { previewSwipe = null; return; }
+    if (event.touches.length !== 1 || event.target.closest('button, video, .dui-pv-audio')) { gesture = null; return; }
     const touch = event.touches[0];
-    previewSwipe = { x: touch.clientX, y: touch.clientY, mode: null, d: 0, modal,
+    const samples = [{ t: event.timeStamp, x: touch.clientX, y: touch.clientY }];
+    // A finger on a zoomed picture, or anywhere while one is zoomed, holds
+    // it, catching it if it still coasts.
+    if (picture) holdView(picture);
+    if (picture && zoomedIn(picture)) {
+      gesture = { pan: true, modal, picture, x: touch.clientX, y: touch.clientY, from: pictureView(picture), g: geometryOf(picture), samples, moved: false };
+      return;
+    }
+    gesture = { x: touch.clientX, y: touch.clientY, mode: null, d: 0, shown: 0, modal, samples,
       scrolls: !!event.target.closest('[data-dui-scroll]') };
   }, { passive: true });
   function movePreviewSwipe(event) {
     if (!onceOnly(event)) return;
-    const swipe = previewSwipe;
-    if (!swipe) return;
-    // Two fingers: how far apart they are now. The fingers are lifted one
-    // at a time, so the pinch is judged by where they last were together.
-    if (swipe.pinch !== undefined) {
-      if (event.touches.length === 2) {
-        const [a, b] = event.touches;
-        swipe.now = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-      }
+    const drag = gesture;
+    if (!drag || drag.spent) return;
+    if (drag.pinch) {
+      if (event.touches.length < 2) return;
+      const [a, b] = event.touches;
+      const at = midpoint(a, b), s = (drag.from.s * apart(a, b)) / drag.d0;
+      const moved = { s: drag.from.s, x: drag.from.x + at.x - drag.m0.x, y: drag.from.y + at.y - drag.m0.y };
+      const asked = previewMaths.zoomAbout(moved, s, at.x, at.y, drag.g);
+      const drawn = previewMaths.zoomAbout(asked, previewMaths.softScale(s), at.x, at.y, drag.g);
+      drag.at = at;
+      setView(drag.picture, previewMaths.held(drawn, drag.g));
+      stats.moves += 1;
       return;
     }
     if (event.touches.length !== 1) return;
     const touch = event.touches[0];
-    const dx = touch.clientX - swipe.x, dy = touch.clientY - swipe.y;
-    if (!swipe.mode && Math.hypot(dx, dy) > 8) swipe.mode = Math.abs(dy) > Math.abs(dx) ? 'y' : 'x';
+    drag.samples.push({ t: event.timeStamp, x: touch.clientX, y: touch.clientY });
+    if (drag.samples.length > 12) drag.samples.shift();
+    const dx = touch.clientX - drag.x, dy = touch.clientY - drag.y;
+    if (drag.pan) {
+      if (Math.hypot(dx, dy) > 8) drag.moved = true;
+      if (!drag.moved) return;
+      setView(drag.picture, previewMaths.held({ s: drag.from.s, x: drag.from.x + dx, y: drag.from.y + dy }, drag.g));
+      stats.moves += 1;
+      return;
+    }
+    if (!drag.mode && Math.hypot(dx, dy) > 8) drag.mode = Math.abs(dy) > Math.abs(dx) ? 'y' : 'x';
     // Up or down on what scrolls is its own scrolling.
-    if (swipe.mode === 'y' && swipe.scrolls) { previewSwipe = null; return; }
-    const item = stageItem(swipe);
-    if (!swipe.mode || !item) return;
+    if (drag.mode === 'y' && drag.scrolls) { gesture = null; return; }
+    const item = currentItem(drag.modal);
+    if (!drag.mode || !item) return;
     stats.moves += 1;
-    if (swipe.mode === 'y') {
+    if (drag.mode === 'y') {
       const d = Math.max(0, dy);
       item.style.transform = `translateY(${d}px) scale(${1 - Math.min(d, 300) / 1200})`;
-      const scrim = swipe.modal.querySelector('.dui-pv-scrim');
+      const scrim = drag.modal.querySelector('.dui-pv-scrim');
       if (scrim) scrim.style.opacity = String(1 - Math.min(d, 300) / 400);
-      swipe.d = dy;
-    } else {
-      item.style.transform = `translateX(${dx}px)`;
-      swipe.d = dx;
+      drag.d = dy;
+      return;
+    }
+    // Sideways: the file follows the finger, and the one it would step to
+    // comes into sight beside it. With nothing to step to it gives, less
+    // and less.
+    const state = modals.get(drag.modal);
+    if (state && state.slide) endSlide(drag.modal, state);
+    const stage = stageOf(drag.modal);
+    const width = stage ? stage.clientWidth : innerWidth;
+    const several = severalOn(drag.modal);
+    const shown = several ? dx : previewMaths.rubber(dx, width);
+    item.style.transform = `translateX(${shown}px)`;
+    drag.d = dx;
+    drag.shown = shown;
+    if (!several || !dx) return;
+    const side = dx < 0 ? 1 : -1, peek = peekOf(drag.modal, side), other = peekOf(drag.modal, -side);
+    if (other && other !== peek) { other.classList.remove('on'); other.style.transform = ''; }
+    if (peek) {
+      peek.getAnimations().forEach(run => run.cancel());
+      peek.classList.add('on');
+      peek.style.transform = `translateX(${shown + side * slideDistance()}px)`;
     }
   }
   document.addEventListener('touchmove', movePreviewSwipe, { passive: true });
-  // A mouse or pen dragging a zoomed picture moves it.
-  let panning = null;
-  document.addEventListener('pointerdown', event => {
-    if (event.pointerType === 'touch' || event.button || !event.target.closest) return;
-    const picture = event.target.closest('img[data-dui-zoom].zoom');
-    const item = picture && picture.closest('.dui-pv-item');
-    if (!item) return;
-    event.preventDefault();
-    panning = { item, picture, id: event.pointerId, x: event.clientX, y: event.clientY, left: item.scrollLeft, top: item.scrollTop };
-    picture.classList.add('held');
-    try { picture.setPointerCapture(event.pointerId); } catch (error) { /* the pointer has gone */ }
-  });
-  window.addEventListener('pointermove', event => {
-    if (!panning || event.pointerId !== panning.id) return;
-    panning.item.scrollLeft = panning.left - (event.clientX - panning.x);
-    panning.item.scrollTop = panning.top - (event.clientY - panning.y);
-  }, { passive: true });
-  const endPan = event => {
-    if (!panning || event.pointerId !== panning.id) return;
-    panning.picture.classList.remove('held');
-    panning = null;
-  };
-  window.addEventListener('pointerup', endPan);
-  window.addEventListener('pointercancel', endPan);
+  // A tap: the second within 320 ms and 30 px of the first is a double tap,
+  // which zooms a picture about the point tapped, or back.
+  function tapped(modal, x, y, t) {
+    const near = lastTap && t - lastTap.t < 320 && Math.hypot(x - lastTap.x, y - lastTap.y) < 30;
+    lastTap = near ? null : { x, y, t };
+    if (!near) return;
+    const picture = currentPicture(modal);
+    if (!picture) return;
+    const box = picture.getBoundingClientRect();
+    const on = x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+    if (zoomedIn(picture) || on) toggleZoom(picture, x, y);
+  }
   function endPreviewSwipe(event) {
     if (!onceOnly(event)) return;
-    const swipe = previewSwipe;
-    if (!swipe) return;
-    if (swipe.pinch !== undefined) {
-      if (event.touches && event.touches.length) return;
-      previewSwipe = null;
-      const now = swipe.now === undefined ? swipe.pinch : swipe.now;
-      if (swipe.picture) {
-        if (now > swipe.pinch * 1.2) zoom(swipe.picture, swipe.at[0], swipe.at[1], true);
-        else if (now < swipe.pinch * 0.85) zoom(swipe.picture, swipe.at[0], swipe.at[1], false);
-      }
+    const drag = gesture;
+    if (!drag) return;
+    const cancelled = event.type === 'touchcancel';
+    if (drag.spent) {
+      if (!event.touches || !event.touches.length) gesture = null;
       previewGestured = true;
       return;
     }
-    previewSwipe = null;
-    const { mode, d, modal } = swipe;
-    const item = stageItem(swipe);
+    if (drag.pinch) {
+      // Judged as the first finger lifts: the second is not left to pan.
+      gesture = event.touches && event.touches.length ? { spent: true, modal: drag.modal } : null;
+      previewGestured = true;
+      lastTap = null;
+      settleView(drag.picture, drag.g, drag.at.x, drag.at.y);
+      return;
+    }
+    if (event.touches && event.touches.length) return;
+    gesture = null;
+    const touch = event.changedTouches && event.changedTouches[0];
+    if (drag.pan) {
+      previewGestured = drag.moved;
+      if (!drag.moved) { if (touch && !cancelled) tapped(drag.modal, touch.clientX, touch.clientY, event.timeStamp); return; }
+      lastTap = null;
+      if (cancelled) { settleView(drag.picture, drag.g); return; }
+      coastView(drag.picture, drag.g, previewMaths.speed(drag.samples, event.timeStamp));
+      return;
+    }
+    const { mode, d, modal } = drag;
+    const item = currentItem(modal);
     previewGestured = !!mode;
+    if (!mode) {
+      if (touch && !cancelled) tapped(modal, touch.clientX, touch.clientY, event.timeStamp);
+      return;
+    }
+    lastTap = null;
     const scrim = modal.querySelector('.dui-pv-scrim');
     const scrimAt = scrim && scrim.style.opacity !== '' ? parseFloat(scrim.style.opacity) : null;
-    const cancelled = event.type === 'touchcancel';
-    if (mode && item && !cancelled && mode === 'y' && d > 110) {
+    if (item && !cancelled && mode === 'y' && d > 110) {
       // It fades on from where the finger left the backdrop, which stays
       // there until the closing takes it (or comes back, if it does not).
       if (scrimAt !== null) modal.duiScrimAt = scrimAt;
@@ -3171,18 +3674,17 @@
       setTimeout(() => { item.style.transform = ''; if (scrim) scrim.style.opacity = ''; }, 400);
       return;
     }
-    if (scrim) scrim.style.opacity = '';
-    if (!mode || !item) return;
-    const several = modal.querySelectorAll('.dui-pv-dots i').length > 1;
-    if (!cancelled && mode === 'x' && Math.abs(d) > 70 && several) {
-      item.style.transform = '';
-      previewStep = d < 0 ? 1 : -1;
-      tell(modal, previewStep > 0 ? 'next' : 'previous');
+    if (!item) { if (scrim) scrim.style.opacity = ''; return; }
+    if (mode === 'x') {
+      const stage = stageOf(modal);
+      const width = stage ? stage.clientWidth : innerWidth;
+      const v = previewMaths.speed(drag.samples, event.timeStamp).x;
+      const dir = cancelled ? 0 : previewMaths.stepOf(d, v, width, severalOn(modal));
+      if (dir) slide(modal, dir, drag.shown, true);
+      else slideBack(modal, item, drag.shown);
       return;
     }
-    const pop = spring('pop');
-    startAnimation(item, [{ transform: item.style.transform || 'none' }, { transform: 'none' }], { duration: pop.ms, easing: pop.easing });
-    item.style.transform = '';
+    dropDrag(drag);
   }
   document.addEventListener('touchend', endPreviewSwipe, { passive: true });
   document.addEventListener('touchcancel', endPreviewSwipe, { passive: true });
@@ -3751,5 +4253,5 @@
     if (document.body) watchPage(); else document.addEventListener('DOMContentLoaded', watchPage);
   }
 
-  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, mergeInto, appendText, paste, back, jump, onPastedFiles, typedAgain };
+  window.DirtUi = { install, apply, connect, frames, reduced, stats, knowsLinear, animate, focus, setValue, mergeInto, appendText, paste, back, jump, onPastedFiles, typedAgain, previewMaths };
 })();

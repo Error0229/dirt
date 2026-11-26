@@ -2819,14 +2819,20 @@ function closePreview() {
 }
 function pvGo(step) {
   if (!PV.open || PV.list.length < 2) return;
-  const dev = PV.dev, old = $(`#${dev}-pv-stage .pv-item`);
-  const swap = () => {
-    PV.i = (PV.i + step + PV.list.length) % PV.list.length;
-    const item = pvFill(dev);
-    anim(item, [{ opacity: 0, transform: `translateX(${step * 48}px)` }, { opacity: 1, transform: 'none' }], { duration: 280, easing: EOUT });
-  };
-  if (!old || reduced()) return swap();
-  anim(old, [{ opacity: 1, transform: getComputedStyle(old).transform === 'none' ? 'none' : getComputedStyle(old).transform }, { opacity: 0, transform: `translateX(${-step * 48}px)` }], { duration: 160, easing: EIN, fill: 'forwards' }).finished.then(swap);
+  const dev = PV.dev, stage = $(`#${dev}-pv-stage`), old = $('.pv-item', stage);
+  PV.i = (PV.i + step + PV.list.length) % PV.list.length;
+  if (!old || reduced()) { anim(pvFill(dev), [{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: ESTD }); return; }
+  // The file shown slides out as the next slides in, the screen's width and
+  // 16 px, on the glide spring: 260 ms from a key or a button; a swipe takes
+  // the rest of its way in up to 340 ms (design.md 6.16).
+  const D = $(dev === 'd' ? '#D' : '#M').clientWidth + 16;
+  const glide = getComputedStyle(document.documentElement).getPropertyValue('--sp-glide').trim();
+  const from = getComputedStyle(old).transform;
+  const item = pvFill(dev);
+  Object.assign(old.style, { position: 'absolute', inset: '0', pointerEvents: 'none', transform: '' });
+  stage.appendChild(old);
+  anim(old, [{ transform: from === 'none' ? 'none' : from }, { transform: `translateX(${-step * D}px)` }], { duration: 260, easing: glide, fill: 'forwards' }).finished.then(() => old.remove());
+  anim(item, [{ transform: `translateX(${step * D}px)` }, { transform: 'none' }], { duration: 260, easing: glide });
 }
 function pvPlay(btn) {
   const box = btn.closest('.pv-audio'), bars = $$('.wave i', box), time = $('.pv-time', box);

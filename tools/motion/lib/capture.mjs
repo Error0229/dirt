@@ -181,9 +181,83 @@ export async function sendStep(target, step) {
   } else if (step.type !== undefined) {
     await cdp.send('Input.insertText', { text: step.type });
   } else if (step.wheel) {
-    const selector = sel(step.wheel.on || step.wheel);
-    const { x, y } = await centre(cdp, selector);
-    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: step.wheel.dy || 300 });
+    // The wheel turned over what `on` names (or the selector itself),
+    // `dx` and `dy` pixels, in `times` turns `every` ms apart. With `ctrl`
+    // it is Ctrl held, as a touchpad's pinch is sent to the page.
+    const wheel = typeof step.wheel === 'object' ? step.wheel : { on: step.wheel };
+    const { x, y } = await centre(cdp, sel(wheel.on), wheel.index || 0);
+    const modifiers = wheel.ctrl ? 2 : 0;
+    for (let turn = 0; turn < Math.max(1, wheel.times || 1); turn++) {
+      if (turn) await sleep(wheel.every || 16);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: x + (wheel.atX || 0), y: y + (wheel.atY || 0), deltaX: wheel.dx || 0, deltaY: wheel.dy === undefined ? 300 : wheel.dy, modifiers });
+    }
+  } else if (step.doubleClick) {
+    // Two presses where a hand makes a double click, or on a touch screen
+    // a double tap, at the centre of what it names, moved by `atX`, `atY`.
+    const selector = sel(step.doubleClick);
+    if (!selector) return;
+    const at = await centre(cdp, selector, step.index || 0);
+    const x = at.x + (step.atX || 0), y = at.y + (step.atY || 0);
+    if (target.pointer === 'touch') {
+      for (let tap = 0; tap < 2; tap++) {
+        if (tap) await sleep(step.gapMs || 120);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        await sleep(40);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      }
+    } else {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+      for (let press = 1; press <= 2; press++) {
+        if (press === 2) await sleep(step.gapMs || 90);
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: press });
+        await sleep(30);
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: press });
+      }
+      if (!step.stay) await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: -20, y: -20 });
+    }
+  } else if (step.swipe) {
+    // A finger dragged on the touch screen, as a hand drags it: from the
+    // centre of what `on` names, `dx` and `dy` pixels further in `steps`
+    // moves `every` ms apart, held still `hold` ms (a release with no
+    // speed left), then lifted.
+    const swipe = step.swipe;
+    const from = await centre(cdp, sel(swipe.on), swipe.index || 0);
+    const count = Math.max(1, swipe.steps || 10);
+    const point = at => ({ x: from.x + ((swipe.dx || 0) * at) / count, y: from.y + ((swipe.dy || 0) * at) / count, id: 0 });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point(0)] });
+    for (let at = 1; at <= count; at++) {
+      await sleep(swipe.every || 16);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point(at)] });
+    }
+    if (swipe.hold) await sleep(swipe.hold);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  } else if (step.pinch) {
+    // Two fingers on the touch screen, either side of a point (the centre
+    // of what `on` names, moved by `atX`, `atY`), on a line at `angle`
+    // degrees: `from` px apart to `to` px apart in `steps` moves `every` ms
+    // apart, then lifted one after the other, as a hand lifts them.
+    const pinch = step.pinch;
+    const at = await centre(cdp, sel(pinch.on), pinch.index || 0);
+    const cx = at.x + (pinch.atX || 0), cy = at.y + (pinch.atY || 0);
+    const angle = ((pinch.angle || 0) * Math.PI) / 180;
+    const count = Math.max(1, pinch.steps || 12);
+    const fingers = apart => [
+      { x: cx - (Math.cos(angle) * apart) / 2, y: cy - (Math.sin(angle) * apart) / 2, id: 0 },
+      { x: cx + (Math.cos(angle) * apart) / 2, y: cy + (Math.sin(angle) * apart) / 2, id: 1 },
+    ];
+    const start = fingers(pinch.from);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [start[0]] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: start });
+    let last = start;
+    for (let k = 1; k <= count; k++) {
+      await sleep(pinch.every || 16);
+      last = fingers(pinch.from + ((pinch.to - pinch.from) * k) / count);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: last });
+    }
+    if (pinch.hold) await sleep(pinch.hold);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [last[0]] });
+    await sleep(30);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   } else if (step.viewport !== undefined) {
     // The page's layout viewport made shorter (as a keyboard rising does),
     // or given back its own size with "reset" (as the keyboard going does),
@@ -210,7 +284,8 @@ export async function sendStep(target, step) {
     if (selector) await waitFor(cdp, selector, true, step.ms);
   } else if (step.pastePicture) {
     const selector = sel(step.pastePicture);
-    await cdp.evaluate(`__motion.pastePicture(${JSON.stringify(selector)}, ${JSON.stringify(step.name || 'motion.png')})`);
+    const size = step.size || {};
+    await cdp.evaluate(`__motion.pastePicture(${JSON.stringify(selector)}, ${JSON.stringify(step.name || 'motion.png')}, ${JSON.stringify(step.colour || null)}, ${JSON.stringify(size.width || 640)}, ${JSON.stringify(size.height || 420)})`);
   } else if (step.caretAbove) {
     // A check, not an input: the caret of the field that has the keyboard
     // (or the one named) is drawn above the element named, by its bottom

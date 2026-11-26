@@ -1,0 +1,85 @@
+{
+  "name": "preview-gestures",
+  "title": "The file preview: stepping between two pictures, and zooming one (A83)",
+  "platforms": ["desktop", "android", "mockup-desktop"],
+  "description": "Design 6.16 and 5.5: the next picture slides in as the one shown slides out, following the finger on Android and settling on the glide spring; a swipe too short springs back; a double click or a double tap zooms about the point pressed and back; a pinch follows the fingers about the point between them. The note needs two pictures of different shapes, so that a change of size would show. The desktop pastes them; on Android the newest note must already hold two pictures, chosen with its paperclip (docs/ui/motion-check.md, Several files on one note on the emulator).",
+  "setup": [
+    { "platforms": ["desktop"], "click": "[data-dui-typed]" },
+    { "platforms": ["desktop"], "pastePicture": "[data-dui-typed]", "name": "garden.png", "then": 2500 },
+    { "platforms": ["desktop"], "pastePicture": "[data-dui-typed]", "name": "tall.png", "colour": "#8a6f9e", "size": { "width": 420, "height": 640 }, "then": 3000 },
+    { "platforms": ["desktop"], "waitFor": ".dk-files .dui-mini", "ms": 15000 },
+    { "platforms": ["android"], "tap": ".dm-list .dui-card-in", "then": 1500 },
+    { "platforms": ["android"], "waitFor": ".dm-page .dui-mini", "ms": 15000 },
+    {
+      "platforms": ["mockup"],
+      "eval": "(() => { const n = S.notes.find(n => !n.deleted && !n.archived && n.files.some(f => f.src || f.thumb)); document.querySelector('#d-list .row[data-id=\"' + n.id + '\"]').click(); return true; })()",
+      "then": 800
+    },
+    {
+      "platforms": ["mockup"],
+      "eval": "(() => { const shelf = document.querySelector('#d-shelf[data-folded]'); if (shelf) shelf.querySelector('.shelf-fold').click(); return true; })()",
+      "then": 900
+    },
+    { "platforms": ["desktop", "android"], "click": { "desktop": ".dk-files .dui-mini", "android": ".dm-page .dui-mini" }, "then": 1500 },
+    { "platforms": ["mockup"], "click": "#d-files .file .file-thumb", "then": 1500 }
+  ],
+  "parts": {
+    "stage": { "desktop": ".dui-pv-stage", "android": ".dui-pv-stage", "mockup-desktop": "#D .pv-stage" },
+    "file": { "desktop": ".dui-pv-item", "android": ".dui-pv-item", "mockup-desktop": "#D .pv-item" },
+    "picture": { "desktop": ".dui-pv-item img", "android": ".dui-pv-item img", "mockup-desktop": "#D .pv-item img, #D .pv-item .pv-fake, #D .pv-item .pv-audio" },
+    "leaving": { "desktop": ".dui-pv-ghost .dui-pv-item", "android": ".dui-pv-ghost .dui-pv-item" },
+    "peek": { "desktop": ".dui-pv-peek", "android": ".dui-pv-peek" },
+    "dots": { "desktop": ".dui-pv-dots", "android": ".dui-pv-dots", "mockup-desktop": "#D .pv-dots" }
+  },
+  "crop": { "mockup-desktop": "#D" },
+  "checks": { "within": [], "apart": [], "pops": { "px": 24, "opacity": 0.3 } },
+  "movements": [
+    {
+      "name": "step-next",
+      "description": "To the next picture: → on the desktop, a fling to the left on Android.",
+      "steps": [
+        { "platforms": ["desktop", "mockup-desktop"], "key": "ArrowRight" },
+        { "platforms": ["android"], "swipe": { "on": ".dui-pv-stage", "dx": -220, "steps": 8, "every": 16 } }
+      ],
+      "arrives": ["file", "picture"],
+      "ms": 1200
+    },
+    {
+      "name": "step-back",
+      "description": "Back to the first picture: ← on the desktop; on Android a slow drag to the right past the middle, held still before it is let go.",
+      "steps": [
+        { "platforms": ["desktop", "mockup-desktop"], "key": "ArrowLeft" },
+        { "platforms": ["android"], "swipe": { "on": ".dui-pv-stage", "dx": 240, "steps": 24, "every": 20, "hold": 120 } }
+      ],
+      "arrives": ["file", "picture"],
+      "ms": 1200
+    },
+    {
+      "name": "spring-back",
+      "description": "A drag too short, held still and let go: the picture springs back, and nothing steps.",
+      "platforms": ["android"],
+      "steps": [{ "swipe": { "on": ".dui-pv-stage", "dx": -90, "steps": 12, "every": 24, "hold": 150 } }],
+      "arrives": ["file", "picture"],
+      "ms": 1000
+    },
+    {
+      "name": "zoom-in",
+      "description": "Zoomed in about a point off the picture's centre: a double click on the desktop, two fingers spreading on Android.",
+      "platforms": ["desktop", "android"],
+      "steps": [
+        { "platforms": ["desktop"], "doubleClick": ".dui-pv-item img", "atX": 90, "atY": -60 },
+        { "platforms": ["android"], "pinch": { "on": ".dui-pv-item img", "atX": 60, "atY": -40, "from": 90, "to": 260, "steps": 14, "every": 16 } }
+      ],
+      "arrives": ["picture"],
+      "ms": 1000
+    },
+    {
+      "name": "zoom-out",
+      "description": "A double click, or a double tap, brings it back to fit.",
+      "platforms": ["desktop", "android"],
+      "steps": [{ "doubleClick": ".dui-pv-item img" }],
+      "arrives": ["picture"],
+      "ms": 1000
+    }
+  ]
+}
