@@ -158,9 +158,11 @@ pub fn dropped(event: &Event<DragData>) -> Vec<PathBuf> {
 /// from outside while that handler is on: Dioxus plays one on the page
 /// itself, whose only file is a stand-in, "file.txt", with nothing in
 /// it, and gives a file of the page a path only where the name of a real
-/// one ends in it (`dioxus-desktop`, `webview.rs`). Elsewhere the page's
-/// own file has only its name. Taken from the page, the stand-in or the
-/// bare name was opened beside the app's working folder, and failed.
+/// one ends in it (`dioxus-desktop`, `webview.rs`). Taken from the page,
+/// the stand-in was opened beside the app's working folder, and failed.
+/// Elsewhere the page's own drop is heard, and each of its files is given
+/// the first real path that ends in its name: two files of one name from
+/// different folders both became the first.
 ///
 /// The paths the system gave are those of the last drag of files that
 /// came into the window, so a drop on the page that carries no files (a
@@ -319,13 +321,20 @@ mod tests {
     }
 
     #[test]
-    fn a_drop_elsewhere_takes_the_systems_paths_not_the_bare_names() {
-        // Linux and macOS: the page's drop is the web view's own, whose
-        // files have only their names.
-        let dropped = drop_of(&["plan.pdf"], &["/srv/papers/plan.pdf"]);
+    fn a_drop_elsewhere_keeps_two_files_of_one_name_apart() {
+        // Linux and macOS: the page's drop is the web view's own, and
+        // Dioxus gives each of its files the first real path ending in its
+        // name, so two of one name both carry the first folder's.
+        let dropped = drop_of(
+            &["/srv/papers/plan.pdf", "/srv/papers/plan.pdf"],
+            &["/srv/papers/plan.pdf", "/srv/old/plan.pdf"],
+        );
         assert_eq!(
             paths_dropped(&dropped),
-            vec![PathBuf::from("/srv/papers/plan.pdf")]
+            vec![
+                PathBuf::from("/srv/papers/plan.pdf"),
+                PathBuf::from("/srv/old/plan.pdf"),
+            ]
         );
     }
 
