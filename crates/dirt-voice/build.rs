@@ -6,7 +6,11 @@
 //! - Silero's voice-activity detector, which finds the pauses.
 //! - On Windows, the engine's two libraries, which the program loads from
 //!   this folder when it first listens or reads.
-//! - `NOTICE.txt`, the credits the licences ask for.
+//! - `NOTICE.txt`, the credits the licences ask for, and
+//!   `THIRD_PARTY_LICENSES.txt` from the workspace's root: the licence texts
+//!   of everything the apps ship from others, the fonts and PDF.js among
+//!   them. The voice folder is what both apps ship of their own as files,
+//!   so the texts travel with the installed app and the APK.
 //!
 //! Each file is fetched once, by a pinned address and SHA-256, into the
 //! build cache outside `target/` (`build/fetch.rs`), and the folder is made
@@ -66,6 +70,7 @@ fn run() -> Result<(), BuildError> {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=build/fetch.rs");
     println!("cargo:rerun-if-changed=NOTICE.txt");
+    println!("cargo:rerun-if-changed=../../THIRD_PARTY_LICENSES.txt");
     println!("cargo:rerun-if-env-changed=DIRT_VOICE_MODEL");
     // `voice_engine` is set when the engine is linked: without it the
     // crate builds, and listening and reading say voice is not in this
@@ -135,6 +140,10 @@ fn put_folder() -> Result<(PathBuf, String), BuildError> {
     fs::create_dir_all(&folder)?;
     fetch::link_or_copy(&detector, &folder.join(DETECTOR.name))?;
     fs::copy("NOTICE.txt", folder.join("NOTICE.txt"))?;
+    fs::copy(
+        "../../THIRD_PARTY_LICENSES.txt",
+        folder.join("THIRD_PARTY_LICENSES.txt"),
+    )?;
     if let Some(model) = &model {
         for file in MODEL_FILES {
             let source = model.join(file);

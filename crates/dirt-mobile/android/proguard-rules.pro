@@ -13,6 +13,20 @@
 -dontwarn javax.annotation.Nullable
 -dontwarn javax.annotation.concurrent.GuardedBy
 
-# The activity's methods that Rust calls (`services::activity`) are marked
-# @Keep in MainActivity.kt; Kotlin's native methods, which Rust provides,
-# are kept by Android's own rules.
+# The activity's static methods, which Rust calls by name
+# (`services::activity`: ACTIVITY_CLASS, and startMicrophone). They are
+# marked @Keep in MainActivity.kt too; this does not lean on that.
+-keep class dev.dioxus.main.MainActivity {
+    public static *;
+}
+
+# The native methods Rust provides, found by their classes' and methods'
+# names (`Java_dev_dirt_capture_Core_takeIn`, `…_Core_makeWords`,
+# `…_Microphone_heard`): their classes and names must not be renamed.
+# Android's default rules keep them; this does not lean on those.
+-keepclasseswithmembernames class dev.dirt.capture.** {
+    native <methods>;
+}
+
+# wry's own classes in dev.dioxus.main, which its Rust calls by name, are
+# kept by the rules dx generates beside them (proguard-wry.pro).

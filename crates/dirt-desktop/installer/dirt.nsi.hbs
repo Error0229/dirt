@@ -7,10 +7,10 @@
 ;   in Settings, Apps;
 ; - one Start menu shortcut, with no folder around it and no "Uninstall"
 ;   beside it: Dirt is removed from Settings, Apps, which shows its icon;
-; - the uninstaller removes what the installer put in, and the folder only
-;   if nothing else is left in it: never a folder the person chose that
-;   held other things. The notes, the keys and the settings are not in it
-;   (%APPDATA%\dirt, and the keychain), and an uninstall leaves them;
+; - the uninstaller removes the files the installer put in, one by one, and
+;   a folder only if nothing else is left in it: never what a folder the
+;   person chose held before. The notes, the keys and the settings are not
+;   in it (%APPDATA%\dirt, and the keychain), and an uninstall leaves them;
 ; - the last page offers to start Dirt;
 ; - WebView2's bootstrapper is run only where WebView2 is missing.
 
@@ -133,12 +133,18 @@ Section "Install"
         "EstimatedSize" "$0"
 
     {{#if install_webview}}
-    ; WebView2, only where it is missing: Edge's updater records the
-    ; runtime's version under its client ID, for the computer or the user.
-    ReadRegStr $1 HKLM "SOFTWAREWOW6432NodeMicrosoftEdgeUpdateClients{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
-    StrCmp $1 "" 0 webview_present
-    ReadRegStr $1 HKCU "SoftwareMicrosoftEdgeUpdateClients{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
-    StrCmp $1 "" 0 webview_present
+    ; WebView2, only where it is missing. Edge's updater records the
+    ; runtime's version ("pv") under its client ID, for the computer or for
+    ; the user; Microsoft's own check reads these two keys, and takes an
+    ; empty value or 0.0.0.0 as not installed. Where it is missing, the
+    ; bootstrapper below fetches it, which needs the network; where it is
+    ; there, nothing is fetched.
+    ReadRegStr $1 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+    StrCmp $1 "" +2 0
+    StrCmp $1 "0.0.0.0" 0 webview_present
+    ReadRegStr $1 HKCU "Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+    StrCmp $1 "" +2 0
+    StrCmp $1 "0.0.0.0" 0 webview_present
 {{webview_install_code}}
     webview_present:
     {{/if}}
@@ -149,12 +155,32 @@ SectionEnd
 !include "{{installer_hooks}}"
 {{/if}}
 
+; The folders the installer put files in, each removed only if empty. Called
+; several times, so that a folder empties once the ones inside it have gone
+; (assets\pdfjs-…\cmaps is three deep).
+Function un.RemoveEmptyFolders
+    {{#each staged_files}}
+    {{#if this.target_dir}}
+    RMDir "$INSTDIR\{{this.target_dir}}"
+    {{/if}}
+    {{/each}}
+FunctionEnd
+
 ; Uninstaller section
 Section "Uninstall"
-    ; What the installer put in: the program, its assets folder (the
-    ; style sheets, the fonts, the speech model) and the uninstaller.
+    ; What the installer put in, file by file, and nothing else: the
+    ; program, its assets (the style sheets, the fonts, PDF.js, the voice
+    ; folder with the speech model and the licences) and the uninstaller.
+    ; A folder the person chose may hold other things, which stay.
     Delete "$INSTDIR\{{main_binary_name}}"
-    RMDir /r "$INSTDIR\assets"
+    {{#each staged_files}}
+    ${un.GetFileName} "{{this.source}}" $R0
+    Delete "$INSTDIR{{#if this.target_dir}}\{{this.target_dir}}{{/if}}\$R0"
+    {{/each}}
+    Call un.RemoveEmptyFolders
+    Call un.RemoveEmptyFolders
+    Call un.RemoveEmptyFolders
+    Call un.RemoveEmptyFolders
     Delete "$INSTDIR\uninstall.exe"
     ; The folder itself only if that left it empty.
     RMDir "$INSTDIR"

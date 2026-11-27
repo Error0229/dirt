@@ -1,4 +1,6 @@
 Dirt turns speech into text on the device with these, shipped in this folder.
+Their licences' full texts, and those of everything else Dirt ships from
+others, are in THIRD_PARTY_LICENSES.txt beside this file.
 
 Parakeet TDT-CTC 110M, by NVIDIA
   https://huggingface.co/nvidia/parakeet-tdt_ctc-110m

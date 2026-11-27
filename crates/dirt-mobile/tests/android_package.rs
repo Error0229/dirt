@@ -29,6 +29,20 @@ fn identifier() -> String {
     panic!("Dioxus.toml gives the app no identifier: dx would make one up");
 }
 
+/// The account's keys are kept in Android's encrypted preferences under a
+/// file name of their own, not the package's. The package changed for
+/// 0.1.0, and Android gives the new one a sandbox of its own all the same;
+/// within it, a later change of this name would leave a signed-in phone
+/// with its keys out of reach.
+#[test]
+fn the_encrypted_preferences_keep_their_name() {
+    let source = read("src/services/secure_storage.rs");
+    assert!(
+        source.contains("const PREFS_FILE: &str = \"dev.dirt.device\";"),
+        "services::secure_storage's PREFS_FILE is no longer dev.dirt.device"
+    );
+}
+
 #[test]
 fn the_app_is_dev_catjam_dirt() {
     // Changing it makes another app on Android, beside this one: people

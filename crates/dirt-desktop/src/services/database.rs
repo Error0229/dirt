@@ -37,6 +37,34 @@ mod tests {
     /// The keychain's entry is held by `dirt_core::secrets`' own test. Any
     /// of these moved would lose a person's notes or settings, or let two
     /// copies run; change one only with a move of what it names.
+    /// The web view keeps its own data (what the page stores, its caches)
+    /// where dioxus-desktop puts it when the app names no folder: on
+    /// Windows `%LOCALAPPDATA%\<program>`, the program's name without
+    /// `.exe`. So the program stays `dirt-desktop.exe` (the installer
+    /// installs it under that name too) and the app names no folder of its
+    /// own; either changed, the web view would begin again empty.
+    #[test]
+    fn the_web_views_folder_keeps_its_name() {
+        assert_eq!(env!("CARGO_BIN_NAME"), "dirt-desktop");
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut stack = vec![source];
+        while let Some(folder) = stack.pop() {
+            for entry in std::fs::read_dir(folder).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|ending| ending == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    assert!(
+                        !text.contains(concat!("with_data", "_directory")),
+                        "{} names the web view's folder: it would move",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn what_a_computer_holds_is_not_named_after_the_bundle_identifier() {
         let dioxus =
