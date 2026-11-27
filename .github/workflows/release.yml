@@ -349,6 +349,7 @@ jobs:
           apk="out/Dirt-$VERSION-android-arm64-v8a.apk"
           "$BUILD_TOOLS/apksigner" sign --ks "$keystore" --ks-type PKCS12 --ks-key-alias "$KEY_ALIAS" \
             --ks-pass env:DIRT_KEYSTORE_PASSWORD --key-pass env:DIRT_KEYSTORE_PASSWORD \
+            --v4-signing-enabled false \
             --out "$apk" "$BUILT_APK"
           # Signed by the release key and no other.
           want=$(keytool -exportcert -keystore "$keystore" -storetype PKCS12 -alias "$KEY_ALIAS" \
