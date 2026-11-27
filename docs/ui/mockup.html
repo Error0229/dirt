@@ -158,11 +158,12 @@ mark{background:var(--mark);color:inherit;border-radius:3px;padding:0 1px;margin
 .chip .n{color:var(--text-3);font-size:11px;font-variant-numeric:tabular-nums}
 .chip.on{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
 .chip.on .n{color:inherit;opacity:.75}
-.seg{position:relative;display:grid;grid-template-columns:repeat(var(--n),1fr);background:var(--surface-2);border-radius:9px;padding:2px;flex:none}
-.seg button{position:relative;z-index:1;height:28px;padding:0 12px;border-radius:7px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12.5px;font-weight:500;color:var(--text-2);transition:color var(--d-2)}
+.seg{position:relative;display:grid;grid-template-columns:repeat(var(--n),1fr);background:var(--surface-2);border-radius:10px;padding:4px;flex:none}
+.seg button{position:relative;z-index:1;height:26px;padding:0 12px 1px;border-radius:6px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12.5px;font-weight:500;color:var(--text-2);transition:color var(--d-2)}
 .seg button.on{color:var(--text)}
-.seg-thumb{position:absolute;top:2px;bottom:2px;left:2px;width:calc((100% - 4px) / var(--n));background:var(--surface);border-radius:7px;box-shadow:var(--shadow-1),0 0 0 1px var(--border);transform:translateX(calc(var(--i) * 100%));transition:transform var(--d-3) var(--e-out)}
-.seg.sm button{height:24px;padding:0 10px;font-size:12px}
+.seg-thumb{position:absolute;top:4px;bottom:4px;left:4px;width:calc((100% - 8px) / var(--n));background:var(--surface);border-radius:6px;box-shadow:var(--shadow-1),0 0 0 1px var(--border);transform:translateX(calc(var(--i) * 100%));transition:transform var(--d-3) var(--e-out)}
+.seg.sm{padding:3px;border-radius:8px}.seg.sm .seg-thumb{top:3px;bottom:3px;left:3px;width:calc((100% - 6px) / var(--n));border-radius:5px}
+.seg.sm button{height:22px;padding:0 10px 1px;font-size:12px;border-radius:5px}
 .toast-host{position:absolute;left:0;right:0;bottom:18px;display:grid;justify-items:center;pointer-events:none;z-index:45}
 .toast{grid-area:1/1;pointer-events:auto;display:flex;align-items:center;gap:10px;min-height:40px;padding:6px 6px 6px 14px;border-radius:12px;background:var(--inverse);color:var(--on-inverse);font-size:13px;box-shadow:var(--shadow-2);position:relative;overflow:hidden;max-width:calc(100% - 32px)}
 .toast .tm{display:flex;align-items:center;gap:8px}
