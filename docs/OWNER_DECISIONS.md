@@ -183,11 +183,16 @@ from `https://clerk.dirt.catjam.dev`. The production server is at
 which for a Clerk application made through Vercel is not what Clerk's pages
 describe.
 
-- **How people sign in:** with a code sent to their email address, and
-  nothing else. Passwords are off, as on the trial instance.
-- **Google is not offered,** though the trial instance offers it. In
-  production Clerk wants the application's own Google credentials, which
-  are made in a Google Cloud account. That account is the owner's to open.
+- **How people sign in:** with a code sent to their email address, or with
+  Google. Passwords are off, as on the trial instance.
+- **Google, decided (2026-11-27): offered to everyone.** In production Clerk
+  wants the application's own Google credentials. They are an OAuth client
+  in a Google Cloud project of the owner's, "Dirt", whose consent screen
+  shows the owner's address as its support email and is published ("In
+  production"), linking to the home page and privacy policy at
+  `https://dirt.catjam.dev` (`docs/DEPLOY.md`, "The site"). The client's
+  secret is held by Clerk alone; a new one is made in Google Cloud if it is
+  ever needed again.
 
 The two things that could not be settled from Clerk's pages were looked at
 in the dashboard:
@@ -288,7 +293,6 @@ Nothing here blocks the owner's own use of the production server.
 | What | Why it is the owner's | When |
 |---|---|---|
 | Keep the dumps' private key | It is one file on the owner's computer. Without it no dump can be read | Now |
-| Google sign-in on the production server | Needs credentials from a Google Cloud account | If it is wanted |
 | Neon's Launch plan | Costs money | Before the address is given to others |
 | The consent page at sign-in | A trade of one press against one check, on the owner's instance | Whenever |
 | Sign-in by device code for the CLI | New work, not planned | If it is wanted |
