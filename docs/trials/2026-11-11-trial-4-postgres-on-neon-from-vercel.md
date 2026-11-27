@@ -3,7 +3,9 @@
 - **Date:** 2026-11-11
 - **Verdict:** pass on every criterion. The cost measurement led to a change
   in decision 4 (see "Cost of polling")
-- **Code:** `trials/vercel-neon/` on the `trials/step-1` branch
+- **Code:** `trials/vercel-neon/`, not merged. It was on the `trials/step-1`
+  branch, which has since been deleted (its last commit was 7b38358); this
+  write-up is the record of what it found
 - **Plan:** `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md`, Step 1
 - **Tracking issue:** #237
 
@@ -255,6 +257,10 @@ otherwise. This is amendment D1 in the plan and decision 4 in the design.
   the US west coast adds its own network time to every number here.
 
 ## How to rerun
+
+The commands below are kept as the record of how it was run. The code they
+name is not in this repository: it was on the `trials/step-1` branch, which
+has since been deleted (its last commit was 7b38358).
 
 ```bash
 cd trials/vercel-neon

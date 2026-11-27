@@ -3,6 +3,9 @@
 `dirt-api` is one axum application. Locally it runs as a program; in
 production it runs as a single Vercel function, with Postgres on Neon.
 
+The apps' releases are made by a workflow of their own:
+[RELEASING.md](RELEASING.md).
+
 ## Run it locally
 
 ```bash

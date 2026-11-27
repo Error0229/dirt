@@ -848,8 +848,9 @@ import into the new one.
 
 ### To verify in step 1
 
-All four trials have passed. The write-ups are in `docs/trials/`, and the
-trial code is on the `trials/step-1` branch.
+All four trials have passed. The write-ups are in `docs/trials/`. The
+trial code was not merged, and its branch, `trials/step-1`, has since been
+deleted (its last commit was 7b38358).
 
 - **Trial 1, passed 2026-11-10:** 15.3 KB after 1,000 edits, about 15 bytes
   per edit.

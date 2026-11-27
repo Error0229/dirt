@@ -1,0 +1,559 @@
+name: Release
+
+# Builds what a release offers, for Windows and Android only (owner's
+# decision for 0.1.0; docs/RELEASING.md says how a release is made):
+#
+# - the desktop app's installer for Windows, unsigned, with voice;
+# - the CLI for Windows, `dirt.exe` in a zip;
+# - the Android app for arm64-v8a phones.
+#
+# A pushed tag `v<version>` builds them, signs the APK with the release key
+# in the one job that uses it (`publish`, in the GitHub environment
+# `release`, which only `v*` tags may use), and puts everything in a draft
+# GitHub Release, with a SHA256SUMS file and the release notes
+# (docs/releases/<version>.md). Publishing the draft is the owner's step.
+#
+# Run by hand, or by a pull request that changes what the builds are made
+# from, it is a dry run: it builds and checks everything, never touches the
+# release key (its APK is signed with a key made for that build alone,
+# which no installed Dirt trusts), keeps what it built for a day, and
+# publishes nothing.
+#
+# Every build points at the production server. Nothing here contacts it.
+#
+# Third-party actions are pinned by commit, with the release they are.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
+      - .github/scripts/sign-apk.sh
+      - Cargo.lock
+      - crates/*/Cargo.toml
+      - crates/dirt-desktop/Dioxus.toml
+      - crates/dirt-desktop/icons/**
+      - crates/dirt-desktop/installer/**
+      - crates/dirt-desktop/build.rs
+      - crates/dirt-mobile/Dioxus.toml
+      - crates/dirt-mobile/build.rs
+      - crates/dirt-mobile/src/**
+      - crates/dirt-mobile/android/**
+      - crates/dirt-voice/build.rs
+      - crates/dirt-voice/build/**
+      - crates/dirt-voice/sherpa-onnx-sys/build.rs
+      - crates/dirt-voice/NOTICE.txt
+      - assets/brand/**
+      - docs/releases/**
+      - THIRD_PARTY_LICENSES.txt
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # What dirt-voice fetches, by its pins (crates/dirt-voice/build.rs), into
+  # a folder each job keeps in its cache. The speech model is fetched too:
+  # the apps ship it.
+  DIRT_BUILD_CACHE: ${{ github.workspace }}/.dirt-build-cache
+  DIRT_VOICE_MODEL: fetch
+  # A build that cannot fetch the engine or the model fails, rather than
+  # shipping an app without its mic.
+  DIRT_VOICE: required
+  # The server the builds name (the build scripts read these before
+  # `.env.client`, which is not in git). The CLI and the desktop app on one
+  # computer must name the same one.
+  DIRT_API_BASE_URL: https://api.dirt.catjam.dev
+  DIRT_DESKTOP_API_BASE_URL: https://api.dirt.catjam.dev
+  DIRT_MOBILE_API_BASE_URL: https://api.dirt.catjam.dev
+  # dx, the Dioxus CLI that makes the installer and the APK: its prebuilt
+  # release, checked against these digests (the `.sha256` files beside it
+  # on the release page). The version is the one the apps' Dioxus is.
+  DX_VERSION: 0.7.9
+  DX_WINDOWS_SHA256: 0423b94dd36372d09936a9a288c4a6e7903a9f1bddd193b60bba9659890c87c4
+  DX_LINUX_SHA256: 3b132551b480bc96f938f9f0d37936ee1190f994977539dcc347eaf38540d005
+  # The NDK CI builds with (ci.yml), and the build tools that sign the APK.
+  ANDROID_NDK_VERSION: 26.3.11579264
+  ANDROID_BUILD_TOOLS: 35.0.0
+
+jobs:
+  version:
+    name: Version and release notes
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, to see whether a tag is on main.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The version is the workspace's (Cargo.toml). A tag must name it, be
+      # on a commit of main, and its release notes must exist, before
+      # anything is built. Only a pushed tag publishes; anything else is a
+      # dry run.
+      - name: Read the version
+        id: version
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            if [ "${GITHUB_REF_NAME}" != "v$version" ]; then
+              echo "::error::The tag ${GITHUB_REF_NAME} does not name the workspace's version, $version (Cargo.toml)."
+              exit 1
+            fi
+            # Only what is on main is released: the tagged commit must be
+            # main's, or one before it.
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::The tag ${GITHUB_REF_NAME} is on a commit that is not on main: tag a commit of main."
+              exit 1
+            fi
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "Version $version: a draft release, the APK signed with the release key." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Version $version: a dry run. Nothing is published, and the release key is not used." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ ! -s "docs/releases/$version.md" ]; then
+            echo "::error::docs/releases/$version.md, the release notes, is missing."
+            exit 1
+          fi
+
+  desktop:
+    name: Windows installer
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Install dx
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'dx.zip'
+          Invoke-WebRequest -Uri "https://github.com/DioxusLabs/dioxus/releases/download/v$env:DX_VERSION/dx-x86_64-pc-windows-msvc.zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:DX_WINDOWS_SHA256) { throw "dx's download is not the one pinned: $hash" }
+          $folder = Join-Path $env:RUNNER_TEMP 'dx'
+          Expand-Archive $zip -DestinationPath $folder
+          $folder >> $env:GITHUB_PATH
+
+      - name: Cache what dirt-voice fetches, the model included
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .dirt-build-cache
+          key: ${{ runner.os }}-dirt-voice-model-${{ hashFiles('crates/dirt-voice/build.rs', 'crates/dirt-voice/sherpa-onnx-sys/build.rs') }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-desktop-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-desktop-
+
+      # dx downloads NSIS itself, and WebView2's bootstrapper, which the
+      # installer runs only where WebView2 is missing (installer/dirt.nsi.hbs).
+      - name: Build the installer
+        run: dx bundle --platform desktop --package dirt-desktop --release --package-types nsis --out-dir "$RUNNER_TEMP/bundle"
+
+      - name: Check it and name it
+        run: |
+          app=target/dx/dirt-desktop/release/windows/app
+          exe="$app/dirt-desktop.exe"
+          # The production server, and no other, is built in.
+          grep -a -q "$DIRT_API_BASE_URL" "$exe" || { echo "::error::The program does not name $DIRT_API_BASE_URL"; exit 1; }
+          if grep -a -q "dirt-trial" "$exe"; then echo "::error::The program names the trial server"; exit 1; fi
+          # Voice ships: the model, the detector, the engine, the notice and
+          # the licence texts.
+          for wanted in '*.onnx' 'tokens.txt' 'sherpa-onnx-c-api.dll' 'NOTICE.txt' 'THIRD_PARTY_LICENSES.txt'; do
+            found=$(find "$app" -name "$wanted" | head -n 1)
+            test -n "$found" || { echo "::error::The app has no $wanted"; exit 1; }
+          done
+          # The installer's script as dx wrote it: WebView2 looked for at
+          # its real registry keys, and an uninstaller that removes files
+          # one by one, never a folder with what is in it.
+          nsi=$(find target/dx/dirt-desktop/bundle/windows/nsis -name '*.nsi' | head -n 1)
+          test -n "$nsi" || { echo "::error::dx left no .nsi"; exit 1; }
+          grep -F -q 'ReadRegStr $1 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"' "$nsi" \
+            || { echo "::error::The installer does not look for WebView2 where it is"; exit 1; }
+          if grep -q 'RMDir /r' "$nsi"; then echo "::error::The uninstaller removes a folder with what is in it"; exit 1; fi
+          setup=$(find "$RUNNER_TEMP/bundle" -name '*-setup.exe' | head -n 1)
+          test -n "$setup" || { echo "::error::dx made no installer"; exit 1; }
+          mkdir -p out
+          mv "$setup" "out/Dirt-$VERSION-windows-x64-setup.exe"
+          ls -l out
+          {
+            echo "### Windows installer"
+            echo
+            echo "\`Dirt-$VERSION-windows-x64-setup.exe\`, $(du -m "out/Dirt-$VERSION-windows-x64-setup.exe" | cut -f1) MiB, unsigned."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Kept for a day: long enough for the release job to take it, or for
+      # a dry run to be looked at.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-installer
+          path: out/*
+          if-no-files-found: error
+          retention-days: 1
+
+  cli:
+    name: Windows CLI
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-cli-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-cli-
+
+      - name: Build dirt.exe
+        run: cargo build -p dirt-cli --release --locked
+
+      - name: Check it and zip it
+        run: |
+          exe=target/release/dirt.exe
+          grep -a -q "$DIRT_API_BASE_URL" "$exe" || { echo "::error::dirt.exe does not name $DIRT_API_BASE_URL"; exit 1; }
+          if grep -a -q "dirt-trial" "$exe"; then echo "::error::dirt.exe names the trial server"; exit 1; fi
+          "$exe" --version
+          mkdir -p out zip
+          cp "$exe" LICENSE THIRD_PARTY_LICENSES.txt zip/
+          name="dirt-cli-$VERSION-windows-x64.zip"
+          pwsh -NoProfile -Command "Compress-Archive -Path zip/* -DestinationPath out/$name"
+          ls -l out
+          echo "### Windows CLI: \`$name\`, $(du -k "out/$name" | cut -f1) KiB" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-cli
+          path: out/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Builds and checks the APK. It has no secrets: the APK is signed with a
+  # key made for this build alone (dx builds a release APK only when given
+  # a keystore, and writes its password into the Gradle project it makes).
+  # On a tag the publish job signs it again with the release key.
+  android:
+    name: Android APK (arm64-v8a)
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Android SDK tools
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: ''
+
+      - name: Install the NDK and the build tools
+        run: |
+          sdkmanager "ndk;$ANDROID_NDK_VERSION" "build-tools;$ANDROID_BUILD_TOOLS"
+          sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "ANDROID_NDK_HOME=$sdk/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "BUILD_TOOLS=$sdk/build-tools/$ANDROID_BUILD_TOOLS" >> "$GITHUB_ENV"
+
+      # Gradle, which dx runs, wants JDK 17 or later; 21 is what it is
+      # built with on the owner's computer (CLAUDE.md).
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Rust toolchain and Android target
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android
+
+      - name: Install dx
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/dx.tar.gz" "https://github.com/DioxusLabs/dioxus/releases/download/v$DX_VERSION/dx-x86_64-unknown-linux-gnu.tar.gz"
+          echo "$DX_LINUX_SHA256  $RUNNER_TEMP/dx.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/dx"
+          tar -xzf "$RUNNER_TEMP/dx.tar.gz" -C "$RUNNER_TEMP/dx"
+          echo "$RUNNER_TEMP/dx" >> "$GITHUB_PATH"
+
+      - name: Cache what dirt-voice fetches, the model included
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .dirt-build-cache
+          key: ${{ runner.os }}-dirt-voice-android-model-${{ hashFiles('crates/dirt-voice/build.rs', 'crates/dirt-voice/sherpa-onnx-sys/build.rs') }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-release-android-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-android-
+
+      - name: Give dx a key for this build
+        run: |
+          mkdir -p target/release-signing
+          pass=$(openssl rand -hex 24)
+          keytool -genkeypair -keystore target/release-signing/build-only.p12 -storetype PKCS12 \
+            -alias build-only -keyalg RSA -keysize 2048 -validity 2 -dname "CN=Dirt build only" \
+            -storepass "$pass" -keypass "$pass" 2>/dev/null
+          # The path is relative to the workspace, as dx's Gradle file has it.
+          cat >> crates/dirt-mobile/Dioxus.toml <<EOF
+
+          [bundle.android]
+          jks_file = "target/release-signing/build-only.p12"
+          jks_password = "$pass"
+          key_alias = "build-only"
+          key_password = "$pass"
+          EOF
+
+      - name: Build the APK
+        run: |
+          dx build --platform android --package dirt-mobile --target aarch64-linux-android --release
+          built=target/dx/dirt-mobile/release/android/app/app/build/outputs/apk/release/app-release.apk
+          test -f "$built"
+          echo "BUILT_APK=$built" >> "$GITHUB_ENV"
+
+      - name: Forget the build's key
+        if: always()
+        run: rm -rf target/release-signing
+
+      # Signed again, as a tag's publish job signs with the release key:
+      # the same script and commands (apksigner sign and verify, the
+      # single-signer check, zipalign -c), here with a stand-in key made for
+      # this run, so that a tag is never the first time they run.
+      - name: Sign it again as publish does, with a stand-in key
+        run: |
+          stand_in="$RUNNER_TEMP/stand-in-key.p12"
+          trap 'rm -f "$stand_in"' EXIT
+          DIRT_KEYSTORE_PASSWORD=$(openssl rand -hex 24)
+          export DIRT_KEYSTORE_PASSWORD
+          keytool -genkeypair -keystore "$stand_in" -storetype PKCS12 \
+            -alias stand-in -keyalg RSA -keysize 2048 -validity 2 -dname "CN=Dirt stand-in" \
+            -storepass:env DIRT_KEYSTORE_PASSWORD -keypass:env DIRT_KEYSTORE_PASSWORD 2>/dev/null
+          mkdir -p out
+          apk="out/Dirt-$VERSION-android-arm64-v8a-NOT-RELEASE-SIGNED.apk"
+          digest=$(bash .github/scripts/sign-apk.sh "$stand_in" stand-in "$BUILT_APK" "$apk")
+          echo "APK=$apk" >> "$GITHUB_ENV"
+          echo "SIGNED_BY=a stand-in key made for this run (certificate SHA-256 $digest)" >> "$GITHUB_ENV"
+
+      # What a release APK must be (docs/MANUAL_CHECKLIST.md, A63; R1 is a
+      # person's), besides its signature (checked as it was signed): the
+      # package, the name, the version, not debuggable, arm64-v8a only, the
+      # production server, and voice and the licence texts inside.
+      - name: Check the APK
+        run: |
+          apk="$APK"
+          badging=$("$BUILD_TOOLS/aapt2" dump badging "$apk")
+          echo "$badging" | grep -q "^package: name='dev.catjam.dirt' versionCode='1' versionName='$VERSION'" \
+            || { echo "::error::Not dev.catjam.dirt $VERSION (versionCode 1)"; echo "$badging" | head -n 3; exit 1; }
+          echo "$badging" | grep -q "^application-label:'Dirt'" || { echo "::error::The app is not named Dirt"; exit 1; }
+          if echo "$badging" | grep -q "application-debuggable"; then echo "::error::The APK is debuggable"; exit 1; fi
+          echo "$badging" | grep -q "^native-code: 'arm64-v8a'$" || { echo "::error::Not arm64-v8a alone"; echo "$badging" | grep native-code; exit 1; }
+          listing=$(unzip -v "$apk")
+          for wanted in 'lib/arm64-v8a/libmain.so' 'lib/arm64-v8a/libsherpa-onnx-c-api.so' 'lib/arm64-v8a/libonnxruntime.so' \
+                        'assets/voice/NOTICE.txt' 'assets/voice/THIRD_PARTY_LICENSES.txt' 'assets/voice/tokens.txt'; do
+            echo "$listing" | grep -q " $wanted$" || { echo "::error::The APK has no $wanted"; exit 1; }
+          done
+          echo "$listing" | grep -q ' assets/voice/.*\.onnx$' || { echo "::error::The APK has no speech model"; exit 1; }
+          if echo "$listing" | grep -q 'libsherpa-onnx-jni.so'; then echo "::error::The APK carries the engine's Java bindings"; exit 1; fi
+          unzip -p "$apk" lib/arm64-v8a/libmain.so > "$RUNNER_TEMP/app.so"
+          grep -a -q "$DIRT_API_BASE_URL" "$RUNNER_TEMP/app.so" || { echo "::error::The app does not name $DIRT_API_BASE_URL"; exit 1; }
+          if grep -a -q "dirt-trial" "$RUNNER_TEMP/app.so"; then echo "::error::The app names the trial server"; exit 1; fi
+          rm "$RUNNER_TEMP/app.so"
+          {
+            echo "### Android APK"
+            echo
+            echo "\`$(basename "$apk")\`, $(du -m "$apk" | cut -f1) MiB ($(stat -c %s "$apk") bytes)."
+            echo "Signed with $SIGNED_BY, by the same script a tag's publish job signs with; not the release key, so no installed Dirt takes it as an update."
+            echo
+            echo '```'
+            echo "$badging" | grep -E "^(package|application-label|sdkVersion|targetSdkVersion|native-code):"
+            echo
+            echo "$listing" | grep -E ' (assets/voice/|lib/arm64-v8a/)' | awk '{ printf "%12s %12s  %s\n", $1, $3, $8 }'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-apk
+          path: out/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # A dry run's end: the assets gathered and summed, and nothing published.
+  dry-run:
+    name: Dry run's assets
+    needs: [version, desktop, cli, android]
+    if: needs.version.outputs.publish != 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Gather the assets
+        run: |
+          cp LICENSE THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.txt release-assets/
+          cd release-assets
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+          {
+            echo "### Assets"
+            echo
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+            echo
+            echo "A dry run: everything was built and checked, the release key was not used, and nothing was published."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # A tag's end: the APK signed with the release key, and the draft
+  # release. The only job that sees the key, and the only one that may
+  # write to the repository. The environment `release` holds the key's
+  # secrets and lets only `v*` tags use them (docs/RELEASING.md).
+  publish:
+    name: Draft release
+    needs: [version, desktop, cli, android]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      # Not secret: the key's name in the keystore. As a secret it would be
+      # masked in every log line that says "dirt".
+      DIRT_ANDROID_KEY_ALIAS: dirt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: built
+          merge-multiple: true
+
+      - name: Setup Android SDK tools
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: ''
+
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install the build tools
+        run: |
+          sdkmanager "build-tools;$ANDROID_BUILD_TOOLS"
+          echo "BUILD_TOOLS=${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools/$ANDROID_BUILD_TOOLS" >> "$GITHUB_ENV"
+
+      # The keystore is written to the runner's temporary folder for this
+      # step alone and deleted after; its password reaches apksigner and
+      # keytool from the environment, never on a command line or in a file.
+      - name: Sign the APK with the release key
+        env:
+          KEYSTORE_B64: ${{ secrets.DIRT_ANDROID_KEYSTORE_B64 }}
+          DIRT_KEYSTORE_PASSWORD: ${{ secrets.DIRT_ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$DIRT_KEYSTORE_PASSWORD" ]; then
+            echo "::error::The release key's secrets (DIRT_ANDROID_KEYSTORE_B64, DIRT_ANDROID_KEYSTORE_PASSWORD) are not in the environment 'release': a release is never signed with another key."
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/release-key.p12"
+          trap 'rm -f "$keystore"' EXIT
+          umask 077
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$keystore"
+          built=$(ls built/*-NOT-RELEASE-SIGNED.apk)
+          mkdir -p release-assets
+          apk="release-assets/Dirt-$VERSION-android-arm64-v8a.apk"
+          # The same script every dry run runs with its stand-in key: signed
+          # by this key and no other, verified, and aligned.
+          digest=$(bash .github/scripts/sign-apk.sh "$keystore" "$DIRT_ANDROID_KEY_ALIAS" "$built" "$apk")
+          rm "$built"
+          echo "The APK is signed with the release key (certificate SHA-256 $digest)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Gather the assets
+        run: |
+          mv built/* release-assets/
+          cp LICENSE THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.txt release-assets/
+          cd release-assets
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+          { echo "### Assets"; echo; echo '```'; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # A draft, which only the repository's owners see. Run again for the
+      # same tag, it replaces the draft's assets and notes.
+      - name: Make the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$VERSION"
+          notes="docs/releases/$VERSION.md"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            if [ "$(gh release view "$tag" --json isDraft --jq .isDraft)" != "true" ]; then
+              echo "::error::$tag is already published; a published release is not changed by this workflow."
+              exit 1
+            fi
+            gh release edit "$tag" --title "Dirt $VERSION" --notes-file "$notes"
+            gh release upload "$tag" release-assets/* --clobber
+          else
+            gh release create "$tag" --draft --verify-tag --title "Dirt $VERSION" --notes-file "$notes" release-assets/*
+          fi
+          echo "A draft release, **Dirt $VERSION**, holds the assets. Publishing it is the owner's step (docs/RELEASING.md)." >> "$GITHUB_STEP_SUMMARY"

@@ -2,6 +2,19 @@
 android_manifest = "android/AndroidManifest.xml"
 android_main_activity = "android/MainActivity.kt"
 
+# The app's package on Android (its applicationId), and the desktop app's
+# identifier too. `dx` would otherwise make it `com.example.DirtMobile`,
+# which development builds before 0.1.0 had: Android holds the two as two
+# apps (docs/releases/0.1.0.md). The app shortcuts name it
+# (`dirt_shortcuts.xml`, held to it by `tests/android_package.rs`). The
+# version Android shows is the crate's; `dx` writes versionCode 1.
+#
+# A release build is signed when `[bundle.android]` is added here with a
+# keystore, which only the release workflow does (docs/RELEASING.md).
+[bundle]
+identifier = "dev.catjam.dirt"
+publisher = "catjam"
+
 # Pull AndroidX Security into the generated APK so that the JNI-backed
 # secure storage (`services::secure_storage`) can call `MasterKey.Builder`
 # and `EncryptedSharedPreferences.create`. The account's keys are kept
@@ -15,3 +28,6 @@ gradle_dependencies = [
     "androidx.security:security-crypto:1.1.0-alpha06",
     "androidx.browser:browser:1.8.0",
 ]
+# A release build is shrunk by R8, which would take away what only Rust
+# calls through JNI: android/proguard-rules.pro keeps it.
+proguard_rules = ["android/proguard-rules.pro"]

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Made by tools/icons/make-icons.mjs from assets/brand/cairn.svg: change the drawing and run it again, not this file. -->
+<resources>
+    <color name="dirt_launcher_paper">#FFFAF8F5</color>
+    <color name="dirt_launcher_clay">#FFAC4A26</color>
+    <color name="dirt_launcher_dark">#FF743923</color>
+</resources>

@@ -183,6 +183,15 @@ the head of the note in the Markdown.
 | Text size | Settings → Appearance, Ctrl + and Ctrl − (13 to 20 px, 15 at first). Inter and JetBrains Mono, bundled; the choice of font is gone | Settings → Appearance, the same sizes; a note's text is drawn a pixel larger than the size chosen, as design 4.2 has it. The same two fonts | Not applicable |
 | Shell completions | Not applicable | Not applicable | `dirt completions <shell>` |
 
+## Getting it
+
+| | Desktop | Android | CLI |
+|---|---|---|---|
+| Where a release is | GitHub Releases, from 0.1.0 (`docs/RELEASING.md`) | The same | The same |
+| What is offered | Windows: an installer, unsigned, for the person installing it, with no administrator; it carries the speech model. macOS and Linux: built from the source only, with no release | An APK for 64-bit ARM phones, Android 7 and later, signed with the release key; installed from the browser or the Files app | Windows: `dirt.exe` in a zip. Elsewhere: built from the source |
+| Its name and icon | "Dirt", with the cairn (`assets/brand/cairn.svg`) on the program, its window and taskbar button, the installer, the Start menu and Settings → Apps. The tray keeps the sprout in the accent | "Dirt", with the cairn: an adaptive icon, shaped as the launcher shapes icons, and themed with Android 13's themed icons. Package `dev.catjam.dirt`; development builds before 0.1.0 were another app, `com.example.DirtMobile` | Not applicable |
+| Where its data is | `%APPDATA%\dirt` and the keychain, shared with the CLI; an uninstall leaves both | The app's own storage; uninstalling removes it | As the desktop app's |
+
 ## Not built
 
 | What | Where it stands |

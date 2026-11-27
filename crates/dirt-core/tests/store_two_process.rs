@@ -16,7 +16,9 @@
 //! The store gets this from two rules, `BEGIN IMMEDIATE` for every write and
 //! a retry around the switch to write-ahead-log mode. Trial 2 of the redesign
 //! showed that each rule is needed, with a control run for each
-//! (`trials/sqlite-two-process/` on the `trials/step-1` branch). The store
+//! (`docs/trials/2026-11-11-trial-2-rusqlite-android-and-two-processes.md`;
+//! the trial's code was not merged, and its branch has since been deleted).
+//! The store
 //! has no switch to turn a rule off, so the controls are not repeated here.
 //!
 //! A third rule, a longer retry around opening, was added after

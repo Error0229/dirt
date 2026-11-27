@@ -119,8 +119,9 @@ recording's format.
 > recording ends", after this section, for the engine's model and how a
 > finished recording is read.
 
-Run on 2026-11-16 and 17. The measuring code is on the branch
-`trial/voice-engine`, in `trials/voice/`; it is not merged.
+Run on 2026-11-16 and 17. The measuring code was not merged: it was
+in `trials/voice/` on the branch `trial/voice-engine`, which has since been
+deleted (its last commit was 53462b0). What it measured is below.
 
 **What it found, in short**
 
@@ -603,7 +604,8 @@ other device connected. It installs nothing: it pushes a folder to
 `/data/local/tmp`, runs a program there, and removes the folder. The
 program is proven to build for arm64 (`scripts/build-android.sh
 aarch64-linux-android "whisper sherpa"`). All of it is
-`trials/voice/scripts/phone.sh` on the branch. In short, from
+`trials/voice/scripts/phone.sh` on the trial's branch (since deleted; see
+above). In short, from
 `trials/voice`, with the models fetched and the test set made as its
 README says:
 
@@ -645,10 +647,10 @@ while the person speaks: the recording is kept as a note at once, and its
 words are made afterwards on the device that recorded it. So the question
 became which engine and model write the most accurate English text for a
 finished recording, read once, within what a phone can do. Streaming and
-words that change no longer count. The measuring code is on the branch
-`trial/voice-engine`, in `trials/voice/` (`voice-trial read`,
-`scripts/run2.sh`, `scripts/analyse2.py`, `scripts/analyse-long.py`); it is
-not merged.
+words that change no longer count. The measuring code (`voice-trial read`,
+`scripts/run2.sh`, `scripts/analyse2.py`, `scripts/analyse-long.py`) was not
+merged: it was in `trials/voice/` on the branch `trial/voice-engine`, which
+has since been deleted (its last commit was 53462b0).
 
 **What it found, in short**
 
@@ -1140,9 +1142,10 @@ fallback, and how Android's native code is laid out for steps 8 and 9.
 ### Trial 2 result
 
 Run on 2026-11-17 on the Android 16 emulator (x86_64, no window) on a
-Windows laptop, with a debug build. The code is on the branch
-`trial/android-capture`, with the scripts and timings in
-`trials/android-capture/`; it is not merged. The server was the real one
+Windows laptop, with a debug build. The code was not merged: it was
+on the branch `trial/android-capture`, with the scripts and timings in
+`trials/android-capture/`, and the branch has since been deleted (its last
+commit was 4d5aecb). What it found is below. The server was the real one
 run on the same laptop (`cargo run -p dirt-sim --example serve`), and the
 CLI, with a data folder of its own, was the second device. No phone was
 touched: **every figure and every lock-screen answer below is the

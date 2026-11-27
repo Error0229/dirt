@@ -94,8 +94,8 @@ mod tests {
 
     #[test]
     fn parse_cmdline_process_name_handles_terminator() {
-        let name = parse_cmdline_process_name(b"com.example.DirtMobile\0ignored");
-        assert_eq!(name.as_deref(), Some("com.example.DirtMobile"));
+        let name = parse_cmdline_process_name(b"dev.catjam.dirt\0ignored");
+        assert_eq!(name.as_deref(), Some("dev.catjam.dirt"));
     }
 
     #[test]

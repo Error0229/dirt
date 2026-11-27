@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Made by tools/icons/make-icons.mjs from assets/brand/cairn.svg: change the drawing and run it again, not this file. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/dirt_launcher_paper" />
+    <foreground android:drawable="@drawable/dirt_launcher_foreground" />
+    <monochrome android:drawable="@drawable/dirt_launcher_monochrome" />
+</adaptive-icon>

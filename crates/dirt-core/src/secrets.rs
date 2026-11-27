@@ -324,6 +324,16 @@ impl DeviceSecrets {
 mod tests {
     use super::*;
 
+    /// The keychain entry of the desktop app and the CLI is filed under a
+    /// name of its own, not the app's bundle identifier, which changed for
+    /// version 0.1.0 (`dev.catjam.dirt`). Changed, a computer's device
+    /// would be found signed out and its keys lost to it.
+    #[cfg(all(feature = "keyring-store", not(target_os = "android")))]
+    #[test]
+    fn the_keychain_entry_keeps_its_name() {
+        assert_eq!(KeyringSecrets::SERVICE, "dev.dirt.device");
+    }
+
     fn sample(account_key: Option<AccountKey>) -> DeviceSecrets {
         DeviceSecrets {
             account_id: Uuid::now_v7(),

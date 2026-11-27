@@ -2,8 +2,8 @@
 <!-- A long press on the app's icon: New note, the capture sheet (8.1), and
      Talk, the sheet listening at once (6.18). A
      static shortcut names its target by package, and a resource cannot say
-     ${applicationId}: the package is written out, and is the one `dx`
-     gives the app (com.example. and the crate's name in camel case). -->
+     ${applicationId}: the package is written out, and is the bundle's
+     identifier in dirt-mobile's Dioxus.toml (tests/android_package.rs). -->
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
     <shortcut
         android:enabled="true"
@@ -13,7 +13,7 @@
         <intent
             android:action="android.intent.action.VIEW"
             android:targetClass="dev.dirt.capture.CaptureActivity"
-            android:targetPackage="com.example.DirtMobile" />
+            android:targetPackage="dev.catjam.dirt" />
     </shortcut>
     <!-- Only in a build with voice (`dirt_voice_shipped`, build.rs). -->
     <shortcut
@@ -24,6 +24,6 @@
         <intent
             android:action="android.intent.action.VIEW"
             android:targetClass="dev.dirt.capture.Talk"
-            android:targetPackage="com.example.DirtMobile" />
+            android:targetPackage="dev.catjam.dirt" />
     </shortcut>
 </shortcuts>

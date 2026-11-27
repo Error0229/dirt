@@ -64,7 +64,7 @@ options:
   android:  --serial <s>        the device (default: the running emulator)
             --real-phone        allow a device that is not an emulator (its owner's choice; needs --serial)
             --allow-writes      on a phone, allow the steps that type or change notes
-            --package <name>    (default com.example.DirtMobile)
+            --package <name>    (default dev.catjam.dirt)
             --port <n>          the local port forwarded to its web view, if free`;
 
 function targetFolder() {

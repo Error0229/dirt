@@ -1,0 +1,211 @@
+; The Windows installer's script, which `dx bundle` fills in and gives to
+; NSIS (Dioxus.toml, [bundle.windows.nsis]). It is dx 0.7's own template
+; (dioxus-cli, MIT or Apache-2.0) with these changes:
+;
+; - the product is "Dirt", where dx names it after the program
+;   ("DirtDesktop"): the folder it installs to, the shortcuts, and the name
+;   in Settings, Apps;
+; - one Start menu shortcut, with no folder around it and no "Uninstall"
+;   beside it: Dirt is removed from Settings, Apps, which shows its icon;
+; - the uninstaller removes the files the installer put in, one by one, and
+;   a folder only if nothing else is left in it: never what a folder the
+;   person chose held before. The notes, the keys and the settings are not
+;   in it (%APPDATA%\dirt, and the keychain), and an uninstall leaves them;
+; - installed over an earlier version, it first runs that version's own
+;   uninstaller, so that its files (named by their contents) do not stay;
+; - the last page offers to start Dirt;
+; - WebView2's bootstrapper is run only where WebView2 is missing.
+
+!include "MUI2.nsh"
+!include "FileFunc.nsh"
+!include "x64.nsh"
+
+; Basic installer attributes
+Name "Dirt"
+OutFile "{{output_path}}"
+Unicode true
+{{#if install_mode_per_machine}}
+InstallDir "$PROGRAMFILES64\Dirt"
+{{else}}
+InstallDir "$LOCALAPPDATA\Programs\Dirt"
+{{/if}}
+
+; Request appropriate privileges
+{{#if install_mode_per_machine}}
+RequestExecutionLevel admin
+{{else if install_mode_both}}
+RequestExecutionLevel admin
+{{else}}
+RequestExecutionLevel user
+{{/if}}
+
+; Version information
+VIProductVersion "{{version}}.0"
+VIAddVersionKey "ProductName" "Dirt"
+VIAddVersionKey "FileVersion" "{{version}}"
+VIAddVersionKey "ProductVersion" "{{version}}"
+VIAddVersionKey "FileDescription" "Dirt installer"
+{{#if publisher}}
+VIAddVersionKey "CompanyName" "{{publisher}}"
+{{/if}}
+{{#if copyright}}
+VIAddVersionKey "LegalCopyright" "{{copyright}}"
+{{/if}}
+
+; MUI settings
+!define MUI_ABORTWARNING
+{{#if installer_icon}}
+!define MUI_ICON "{{installer_icon}}"
+!define MUI_UNICON "{{installer_icon}}"
+{{/if}}
+{{#if header_image}}
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_BITMAP "{{header_image}}"
+{{/if}}
+{{#if sidebar_image}}
+!define MUI_WELCOMEFINISHPAGE_BITMAP "{{sidebar_image}}"
+{{/if}}
+!define MUI_FINISHPAGE_RUN "$INSTDIR\{{main_binary_name}}"
+!define MUI_FINISHPAGE_RUN_TEXT "Start Dirt"
+
+; Pages
+{{#if license}}
+!insertmacro MUI_PAGE_LICENSE "{{license}}"
+{{/if}}
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+; Uninstaller pages
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+; Language
+!insertmacro MUI_LANGUAGE "English"
+{{#each additional_languages}}
+!insertmacro MUI_LANGUAGE "{{this}}"
+{{/each}}
+
+; Installer section
+Section "Install"
+    ; An earlier version installed here: its own uninstaller removes its own
+    ; files first. dx names assets after their contents, so a new version's
+    ; files have other names, and its uninstaller would not know the old
+    ; ones. Only when Settings, Apps records Dirt in this very folder, so
+    ; that another program's uninstall.exe in a folder the person chose is
+    ; never run. It runs silently and in place (`_?=`, so it does not copy
+    ; itself away and the install waits for it); like any of Dirt's
+    ; uninstallers it removes only the files it installed, never the notes,
+    ; keys or settings (%APPDATA%\dirt, the keychain). If it is missing or
+    ; fails, the install goes on all the same.
+    ReadRegStr $1 SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{bundle_id}}" "InstallLocation"
+    StrCmp $1 "$INSTDIR" 0 no_earlier_version
+    IfFileExists "$INSTDIR\uninstall.exe" 0 no_earlier_version
+    ExecWait '"$INSTDIR\uninstall.exe" /S _?=$INSTDIR' $0
+    ClearErrors
+    no_earlier_version:
+
+    SetOutPath $INSTDIR
+
+    ; Install main binary
+    File "{{main_binary_path}}"
+
+    ; Install resources
+    {{#each staged_files}}
+    SetOutPath "$INSTDIR{{#if this.target_dir}}\{{this.target_dir}}{{/if}}"
+    File "{{this.source}}"
+    {{/each}}
+
+    SetOutPath $INSTDIR
+
+    ; Create uninstaller
+    WriteUninstaller "$INSTDIR\uninstall.exe"
+
+    ; The Start menu's shortcut, and one on the desktop
+    CreateShortcut "$SMPROGRAMS\Dirt.lnk" "$INSTDIR\{{main_binary_name}}"
+    CreateShortcut "$DESKTOP\Dirt.lnk" "$INSTDIR\{{main_binary_name}}"
+
+    ; Write registry keys for Add/Remove Programs
+    WriteRegStr SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{bundle_id}}" \
+        "DisplayName" "Dirt"
+    WriteRegStr SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{bundle_id}}" \
+        "DisplayIcon" '"$INSTDIR\{{main_binary_name}}"'
+    WriteRegStr SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{bundle_id}}" \
+        "UninstallString" '"$INSTDIR\uninstall.exe"'
+    WriteRegStr SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{bundle_id}}" \
+        "DisplayVersion" "{{version}}"
+    {{#if publisher}}
+    WriteRegStr SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{bundle_id}}" \
+        "Publisher" "{{publisher}}"
+    {{/if}}
+    WriteRegStr SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{bundle_id}}" \
+        "InstallLocation" "$INSTDIR"
+    WriteRegDWORD SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{bundle_id}}" \
+        "NoModify" 1
+    WriteRegDWORD SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{bundle_id}}" \
+        "NoRepair" 1
+
+    ; Get installed size
+    ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+    IntFmt $0 "0x%08X" $0
+    WriteRegDWORD SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{bundle_id}}" \
+        "EstimatedSize" "$0"
+
+    {{#if install_webview}}
+    ; WebView2, only where it is missing. Edge's updater records the
+    ; runtime's version ("pv") under its client ID, for the computer or for
+    ; the user; Microsoft's own check reads these two keys, and takes an
+    ; empty value or 0.0.0.0 as not installed. Where it is missing, the
+    ; bootstrapper below fetches it, which needs the network; where it is
+    ; there, nothing is fetched.
+    ReadRegStr $1 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+    StrCmp $1 "" +2 0
+    StrCmp $1 "0.0.0.0" 0 webview_present
+    ReadRegStr $1 HKCU "Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+    StrCmp $1 "" +2 0
+    StrCmp $1 "0.0.0.0" 0 webview_present
+{{webview_install_code}}
+    webview_present:
+    {{/if}}
+
+SectionEnd
+
+{{#if installer_hooks}}
+!include "{{installer_hooks}}"
+{{/if}}
+
+; The folders the installer put files in, each removed only if empty. Called
+; several times, so that a folder empties once the ones inside it have gone
+; (assets\pdfjs-…\cmaps is three deep).
+Function un.RemoveEmptyFolders
+    {{#each staged_files}}
+    {{#if this.target_dir}}
+    RMDir "$INSTDIR\{{this.target_dir}}"
+    {{/if}}
+    {{/each}}
+FunctionEnd
+
+; Uninstaller section
+Section "Uninstall"
+    ; What the installer put in, file by file, and nothing else: the
+    ; program, its assets (the style sheets, the fonts, PDF.js, the voice
+    ; folder with the speech model and the licences) and the uninstaller.
+    ; A folder the person chose may hold other things, which stay.
+    Delete "$INSTDIR\{{main_binary_name}}"
+    {{#each staged_files}}
+    ${un.GetFileName} "{{this.source}}" $R0
+    Delete "$INSTDIR{{#if this.target_dir}}\{{this.target_dir}}{{/if}}\$R0"
+    {{/each}}
+    Call un.RemoveEmptyFolders
+    Call un.RemoveEmptyFolders
+    Call un.RemoveEmptyFolders
+    Call un.RemoveEmptyFolders
+    Delete "$INSTDIR\uninstall.exe"
+    ; The folder itself only if that left it empty.
+    RMDir "$INSTDIR"
+
+    Delete "$SMPROGRAMS\Dirt.lnk"
+    Delete "$DESKTOP\Dirt.lnk"
+
+    DeleteRegKey SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{bundle_id}}"
+SectionEnd
