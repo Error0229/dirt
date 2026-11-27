@@ -60,7 +60,7 @@ deployed by hand, after its migrations.
 | For | Real use | Trying a change. Its data is thrown away |
 | Vercel project | `dirt-server` | `dirt-trial` |
 | Database | Neon project `dirt-prod`, free plan | Neon project `dirt-trial`, free plan |
-| Sign-in | The Clerk application's production instance, `https://clerk.dirt.catjam.dev`. An email code | Its development instance. An email code, or Google |
+| Sign-in | The Clerk application's production instance, `https://clerk.dirt.catjam.dev`. An email code, or Google | Its development instance. An email code, or Google |
 | Files | R2 bucket `dirt-files`, with a token of its own | R2 bucket `dirt-trial-files`, with a token of its own |
 | Dumps | Daily, to Backblaze B2 | None |
 | Firewall | The rate limit below | The same |
@@ -96,7 +96,13 @@ Nothing here uses it.
    Nothing is copied from the development instance. Make the OAuth
    application again, and switch passwords off under "User &
    authentication": a new instance has them on. Google sign-in needs the
-   application's own Google credentials in production.
+   application's own Google credentials in production: an OAuth client of
+   the "Web application" type in a Google Cloud project, whose authorised
+   redirect URI is the one Clerk's Google connection shows
+   (`https://clerk.<that name>/v1/oauth_callback`). Its consent screen asks
+   only for `openid`, `email` and `profile` and has no logo, so it is
+   published without verification, once it links to a home page and a
+   privacy policy on the domain ("The site", below).
 3. **Vercel:** create a project whose Root Directory is the repository root.
    `vercel.json` sends every path to the one function and pins it to `pdx1`,
    the region beside the database. Give it the server's address with
