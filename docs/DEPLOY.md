@@ -337,3 +337,14 @@ use the server that it happened, and what to check:
 
 The first row and the last are the ones that matter for privacy. A restore
 is a reason to tell people, not something to do quietly.
+
+## The site
+
+`https://dirt.catjam.dev` is the project's home page and privacy policy,
+the static files in `site/`, published by GitHub Pages
+(`.github/workflows/pages.yml`) on every push to `main` that changes them.
+Google's sign-in screen links to both pages, and Google requires them to
+offer Google sign-in to everyone, so change the privacy policy when what the
+apps or the server collect changes. The domain is a CNAME record `dirt` →
+`error0229.github.io` in Cloudflare, not proxied, and the custom domain is set
+in the repository's Pages settings, which also hold the certificate.
