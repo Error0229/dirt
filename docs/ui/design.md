@@ -1158,10 +1158,21 @@ A switch is 40 × 24 px. Off, it is an outline in `--border-control` with a
 thumb of the same colour; on, it is filled with the accent and its thumb,
 in `--on-accent`, has moved across (snap).
 
+The segmented control's track is `--surface-2` with a 10 px radius, and
+its thumb sits 4 px inside it, its corners the track's less that gap
+(6 px), so that the two are concentric. A segment is 26 px high on the
+desktop (22 px in the small one, 3 px inside an 8 px track). Each label's
+line is trimmed to its capitals and baseline (`text-box: trim-both cap
+alphabetic`) and centred half a pixel above the middle: centred on its
+capitals, a word that is mostly lower case looked low. The first version
+had a 2 px gap, which the owner found too tight, the thumb too large for
+its track (their check of 0.1.0).
+
 The segmented control and the accent dots are groups of exclusive choices:
 one stop for <kbd>Tab</kbd>, and the arrow keys move the choice. On
-Android a segment is 40 dp high and a dot, still 24 px, is 16 px from the
-next so that each has a 40 dp target. While the text-size slider's thumb
+Android a segment is 40 dp high, 4 dp inside a track of 12 dp radius, and
+a dot, still 24 px, is 16 px from the next so that each has a 40 dp
+target. While the text-size slider's thumb
 is held, the text on the page follows it; the size is kept when the thumb
 is let go.
 

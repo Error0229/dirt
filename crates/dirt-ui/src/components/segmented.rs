@@ -102,7 +102,7 @@ pub fn Segmented(
                         IconSvg { icon, size: IconSize::Small }
                     }
                     if !segment.icon_only {
-                        "{segment.label}"
+                        span { class: "dui-seg-label", "{segment.label}" }
                     }
                 }
             }

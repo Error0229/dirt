@@ -114,12 +114,18 @@
 .android .dui-banner-title{font-weight:600}
 
 /* ---- Segmented control (6.11) ---------------------------------------- */
-.dui-seg{position:relative;display:inline-grid;grid-template-columns:repeat(var(--n),1fr);background:var(--surface-2);border-radius:9px;padding:2px;flex:none}
-.dui-seg button{position:relative;z-index:1;height:28px;padding:0 12px;border-radius:7px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12.5px;font-weight:500;color:var(--text-2);transition:color var(--d-2)}
+/* The thumb sits --seg-pad inside the track, and its corners follow the
+   track's: radius = the track's radius less the gap. The label's line is
+   trimmed to its capitals and baseline, so that it is centred on them. */
+.dui-seg{--seg-pad:4px;--seg-r:10px;position:relative;display:inline-grid;grid-template-columns:repeat(var(--n),1fr);background:var(--surface-2);border-radius:var(--seg-r);padding:var(--seg-pad);flex:none}
+.dui-seg button{position:relative;z-index:1;height:26px;padding:0 12px 1px;border-radius:calc(var(--seg-r) - var(--seg-pad));display:flex;align-items:center;justify-content:center;gap:6px;font-size:12.5px;font-weight:500;color:var(--text-2);transition:color var(--d-2)}
 .dui-seg button[aria-checked="true"]{color:var(--text)}
-.dui-seg-thumb{position:absolute;top:2px;bottom:2px;left:2px;width:calc((100% - 4px) / var(--n));background:var(--surface);border-radius:7px;box-shadow:var(--shadow-1),0 0 0 1px var(--border);transform:translateX(calc(var(--i) * 100%));transition:transform var(--d-snap) var(--sp-snap)}
-.dui-seg.sm button{height:24px;padding:0 10px;font-size:12px}
-.android .dui-seg button,.android .dui-seg.sm button{height:40px;padding:0 14px;font-size:13.5px}
+.dui-seg-label{line-height:1;text-box:trim-both cap alphabetic}
+.dui-seg-thumb{position:absolute;top:var(--seg-pad);bottom:var(--seg-pad);left:var(--seg-pad);width:calc((100% - 2 * var(--seg-pad)) / var(--n));background:var(--surface);border-radius:calc(var(--seg-r) - var(--seg-pad));box-shadow:var(--shadow-1),0 0 0 1px var(--border);transform:translateX(calc(var(--i) * 100%));transition:transform var(--d-snap) var(--sp-snap)}
+.dui-seg.sm{--seg-pad:3px;--seg-r:8px}
+.dui-seg.sm button{height:22px;padding:0 10px 1px;font-size:12px}
+.android .dui-seg{--seg-pad:4px;--seg-r:12px}
+.android .dui-seg button,.android .dui-seg.sm button{height:40px;padding:0 14px 1px;font-size:13.5px}
 
 /* ---- Slider, with a small and a large A (6.11) ------------------------- */
 .dui-slider{display:inline-flex;align-items:center;gap:10px;color:var(--text-2);flex:none}
