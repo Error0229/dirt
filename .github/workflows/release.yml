@@ -430,13 +430,13 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          path: assets
+          path: release-assets
           merge-multiple: true
 
       - name: Gather the assets
         run: |
-          cp LICENSE THIRD_PARTY_NOTICES.md assets/
-          cd assets
+          cp LICENSE THIRD_PARTY_NOTICES.md release-assets/
+          cd release-assets
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
           { echo "### Assets"; echo; echo '```'; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -456,9 +456,9 @@ jobs:
               exit 1
             fi
             gh release edit "$tag" --title "Dirt $VERSION" --notes-file "$notes"
-            gh release upload "$tag" assets/* --clobber
+            gh release upload "$tag" release-assets/* --clobber
           else
-            gh release create "$tag" --draft --verify-tag --title "Dirt $VERSION" --notes-file "$notes" assets/*
+            gh release create "$tag" --draft --verify-tag --title "Dirt $VERSION" --notes-file "$notes" release-assets/*
           fi
           echo "A draft release, **Dirt $VERSION**, holds the assets. Publishing it is the owner's step (docs/RELEASING.md)." >> "$GITHUB_STEP_SUMMARY"
 
