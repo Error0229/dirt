@@ -464,4 +464,5 @@ jobs:
 
       - name: Say that nothing was published
         if: needs.version.outputs.publish != 'true'
-        run: echo "A dry run: everything was built and checked, and nothing was published." >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo "A dry run: everything was built and checked, and nothing was published." >> "$GITHUB_STEP_SUMMARY"
