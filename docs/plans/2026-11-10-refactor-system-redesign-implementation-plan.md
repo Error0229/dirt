@@ -125,7 +125,9 @@ Notes from the setup:
   `[workspace]` table in its `Cargo.toml`, so it stays outside the main
   workspace and cannot affect its dependency graph.
 - Work happens on a `trials/step-1` branch. Only the write-ups are merged to
-  `main`; the trial code stays on the branch.
+  `main`; the trial code stays on the branch. (The trials are over and the
+  branch has since been deleted; its last commit was 7b38358. What each
+  trial found is in its write-up.)
 - Each trial ends with a write-up at `docs/trials/2026-11-<day>-<name>.md`
   holding the question, the method, the numbers, the verdict and the effect on
   the design.
@@ -154,8 +156,9 @@ core libraries were linted. #247 adds the flag.
 full on every edit, and can the deletion rule be implemented correctly?
 
 **Result (2026-11-10): pass.** 15.3 KB after 1,000 diffed edits in the v2
-encoding, about 15 bytes per edit, and all 31 tests pass. Code and write-up
-are on the `trials/step-1` branch. Every task below was done; the deletion
+encoding, about 15 bytes per edit, and all 31 tests pass. The write-up is
+`docs/trials/2026-11-10-trial-1-yrs-document-size.md`; the code was not
+merged, and its branch, `trials/step-1`, has since been deleted (its last commit was 7b38358). Every task below was done; the deletion
 marker holds edit counts kept in the document instead of the yrs state vector.
 
 **Baseline from research** (yrs 0.25.0, a 52-byte note, small client IDs, one
@@ -216,8 +219,8 @@ links for Android, so CI does not need `dx`. Two processes lose no write and
 see no busy error, given `BEGIN IMMEDIATE` and an open routine that retries
 the switch to write-ahead-log mode. The trial used rusqlite 0.42, the
 current version. Every task below was done. Write-up:
-`docs/trials/2026-11-11-trial-2-rusqlite-android-and-two-processes.md` on
-the `trials/step-1` branch.
+`docs/trials/2026-11-11-trial-2-rusqlite-android-and-two-processes.md`. The
+code was not merged, and its branch, `trials/step-1`, has since been deleted (its last commit was 7b38358).
 
 **Known risks from research**
 
@@ -341,8 +344,8 @@ CU-hours a month for one always-open client against the free 100; function
 size 2.61 MB; build 2 min 52 s cold and 44 s cached; request body limit
 between 4,493,163 and 4,494,140 bytes. Every task below was done, except
 that the polling run ended at 76.5 minutes when the machine went to sleep.
-Write-up: `docs/trials/2026-11-11-trial-4-postgres-on-neon-from-vercel.md`
-on the `trials/step-1` branch.
+Write-up: `docs/trials/2026-11-11-trial-4-postgres-on-neon-from-vercel.md`.
+The code was not merged, and its branch, `trials/step-1`, has since been deleted (its last commit was 7b38358).
 
 **Known from research**
 

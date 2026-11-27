@@ -27,6 +27,12 @@ use dioxus::desktop::{Config, HotKeyState, WindowCloseBehaviour};
 use dioxus::prelude::*;
 use single_instance::SingleInstance;
 
+/// The system-wide lock that keeps one copy of the app running. Its name
+/// is not the bundle's identifier, and must not change with it: a copy of
+/// an older build still running would otherwise run beside the new one
+/// (`services::database`'s tests).
+const SINGLE_INSTANCE: &str = "dirt-desktop-single-instance";
+
 fn main() {
     // Initialize logging
     tracing_subscriber::fmt()
@@ -46,7 +52,7 @@ fn main() {
 
     tracing::info!("Starting Dirt...");
 
-    let _single_instance = match SingleInstance::new("dirt-desktop-single-instance") {
+    let _single_instance = match SingleInstance::new(SINGLE_INSTANCE) {
         Ok(instance) if instance.is_single() => instance,
         Ok(_) => {
             tracing::error!("Another Dirt desktop instance is already running.");

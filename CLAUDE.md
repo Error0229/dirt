@@ -21,6 +21,7 @@ What is left:
 
 - The items of `docs/MANUAL_CHECKLIST.md` marked "Person": a real microphone, real phones, TalkBack and Narrator, WebKit on macOS and Linux, release builds, and whatever acts on somebody's screen.
 - The short list at the end of `docs/OWNER_DECISIONS.md`.
+- Version 0.1.0: the release workflow makes a draft GitHub Release from a tag `v0.1.0`; trying its builds by hand and publishing it are the owner's (`docs/RELEASING.md`).
 
 ## The system: standing rules
 
@@ -100,6 +101,7 @@ crates/
 ├── dirt-mobile/   # Dioxus Android application; android/native is its Kotlin module
 └── dirt-cli/      # Command-line interface (`dirt`)
 scripts/           # Dumping the server's database and restoring it
+assets/brand/      # The app's icon, drawn once (cairn.svg); tools/icons/make-icons.mjs makes every icon from it
 tools/motion/      # The motion check: a movement's frames on the real app, stepped and in real time (docs/ui/motion-check.md)
 docs/
 ├── DESIGN.md      # Product vision and standing decisions
@@ -243,6 +245,7 @@ Hooks run:
 - `docs/BACKEND_API.md` - The server's protocol
 - `docs/LIMITS.md` - Every limit the server enforces, with its reason and what was measured. Change a number in `dirt_proto::api::limits` and its row here together
 - `docs/DEPLOY.md` - Running the server, backups, and what to do after a restore
+- `docs/RELEASING.md` - How a release is built, checked and published; the Android signing key; the icon. `docs/releases/` holds each version's notes
 - `docs/OWNER_DECISIONS.md` - What only the owner could decide, what was decided, and what is still the owner's: plans, storage, the sign-in service
 - `docs/feature-parity.md` - What each client does. Change a client's row in the pull request that changes the client
 - `docs/MANUAL_CHECKLIST.md` - What to try by hand on real devices

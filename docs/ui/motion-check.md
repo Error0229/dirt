@@ -423,8 +423,8 @@ read without a grant (a picture in the emulator's media store it cannot):
 
 ```bash
 adb -s emulator-5554 push garden.png /data/local/tmp/garden.png
-adb -s emulator-5554 shell "run-as com.example.DirtMobile sh -c 'mkdir -p files/dirt/opened && cat /data/local/tmp/garden.png > files/dirt/opened/garden.png'"
-adb -s emulator-5554 shell am start -W -a android.intent.action.SEND -t image/png   --eu android.intent.extra.STREAM content://com.example.DirtMobile.files/opened/garden.png   -n com.example.DirtMobile/dev.dioxus.main.MainActivity
+adb -s emulator-5554 shell "run-as dev.catjam.dirt sh -c 'mkdir -p files/dirt/opened && cat /data/local/tmp/garden.png > files/dirt/opened/garden.png'"
+adb -s emulator-5554 shell am start -W -a android.intent.action.SEND -t image/png   --eu android.intent.extra.STREAM content://dev.catjam.dirt.files/opened/garden.png   -n dev.catjam.dirt/dev.dioxus.main.MainActivity
 ```
 
 (In Git Bash, set `MSYS_NO_PATHCONV=1` and give `push` a Windows path.)

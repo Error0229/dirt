@@ -22,6 +22,8 @@ What the decisions made is one more server, for real use, beside the trial
 server. `docs/DEPLOY.md`, "What exists", lists both.
 
 [What is still the owner's](#what-is-still-the-owners) is at the end.
+[Releasing 0.1.0](#7-releasing-010) records the decisions for the first
+release, taken on 2026-11-25.
 
 ## 1. Where the database dumps are kept
 
@@ -281,6 +283,24 @@ own. `docs/MANUAL_CHECKLIST.md` has the run.
 device, sent a note with a file the same day. Fetching it on a second
 device is still to be tried there.
 
+## 7. Releasing 0.1.0
+
+Taken by the owner on 2026-11-25, after trying the apps by hand
+(`docs/MANUAL_CHECKLIST.md`). `docs/RELEASING.md` says how a release is
+made from them.
+
+| Question | Decided |
+|---|---|
+| Who it is for | A few people |
+| Platforms | Windows and Android only; no macOS or Linux builds |
+| Where it is offered | GitHub Releases, as a draft the owner publishes |
+| The apps' identifier | `dev.catjam.dirt`, both apps. On Android it is a new package: a development build is synced and uninstalled first |
+| The Android app's name and icon | "Dirt", with the "Cairn" (`assets/brand/cairn.svg`), which the Windows program and installer have too |
+| The Android signing key | Made for the release, kept by the owner off the repository and as the repository's Actions secrets |
+| The Windows installer | Unsigned: SmartScreen warns, and the release notes say how to get past it |
+| The licence | MIT, "Copyright (c) 2026 Cato" (`LICENSE`) |
+| The release notes | Say plainly what has not been tried by hand |
+
 ## What is still the owner's
 
 Nothing here blocks the owner's own use of the production server.
@@ -293,6 +313,8 @@ Nothing here blocks the owner's own use of the production server.
 | The consent page at sign-in | A trade of one press against one check, on the owner's instance | Whenever |
 | Sign-in by device code for the CLI | New work, not planned | If it is wanted |
 | The rest of `docs/MANUAL_CHECKLIST.md` | Needs a person, a phone and a Mac | Before the address is given to others |
+| Publishing a release | Tag it, try the draft's builds by hand (R1, R2), publish (`docs/RELEASING.md`) | Each release |
+| Keep the Android signing key | Without the original keystore and its password, Android cannot update Dirt in place | Always |
 
 ## Sources
 

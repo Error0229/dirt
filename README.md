@@ -16,6 +16,13 @@ devices ([docs/MANUAL_CHECKLIST.md](docs/MANUAL_CHECKLIST.md)), and an
 audit of how the apps use Dioxus, with three bugs to check and fix (issue
 #303).
 
+**Releases.** Version 0.1.0 is for a few people, through GitHub Releases:
+the desktop app's installer and the CLI for Windows, and the Android app.
+There are no builds for macOS or Linux. How to install it, and what has
+not been tried by hand, are in
+[docs/releases/0.1.0.md](docs/releases/0.1.0.md); how a release is made, in
+[docs/RELEASING.md](docs/RELEASING.md).
+
 - **The system's design:**
   [docs/plans/2026-11-10-system-redesign-design.md](docs/plans/2026-11-10-system-redesign-design.md),
   built by
@@ -269,5 +276,6 @@ processes, so they run wherever `cargo test` does.
 
 ## License
 
-MIT, as declared in `Cargo.toml`. The repository does not contain a `LICENSE`
-file yet.
+MIT: see [LICENSE](LICENSE). The works the apps ship from others, the fonts,
+PDF.js and the speech model (CC BY 4.0) among them, are listed with their
+licences in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

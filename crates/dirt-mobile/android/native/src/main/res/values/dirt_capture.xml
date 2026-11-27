@@ -2,6 +2,8 @@
 <!-- The capture sheet's, the widget's and the tile's words and look. The
      colours are in dirt_colours.xml, made from dirt_ui::tokens. -->
 <resources>
+    <!-- The app's name under its icon (the app's manifest). -->
+    <string name="dirt_app_name">Dirt</string>
     <string name="dirt_capture_hint">What’s on your mind?</string>
     <string name="dirt_capture_done">Done</string>
     <string name="dirt_capture_locked">Adds a note. Your notes stay locked.</string>

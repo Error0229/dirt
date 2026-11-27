@@ -11,16 +11,33 @@ title = "Dirt"
 reload_html = true
 watch_path = ["src", "assets"]
 
+# What `dx bundle` makes the program and the installer from (docs/RELEASING.md).
+# The identifier is the Android app's too. Nothing the app keeps on a
+# computer is named after it: the data folder, the keychain's entry, the
+# one-copy lock and the web view's folder are found as they were before it
+# was set (`services::database`'s tests).
 [bundle]
-identifier = "com.dirt.app"
-publisher = "Dirt"
-# icon = ["assets/icons/icon.ico", "assets/icons/icon.icns", "assets/icons/icon.png"]
+identifier = "dev.catjam.dirt"
+publisher = "catjam"
+copyright = "Copyright (c) 2026 Cato"
+# What Windows shows for the running program, in Task Manager among others.
+short_description = "Dirt"
+# Made by tools/icons/make-icons.mjs from assets/brand/cairn.svg. `dx` puts
+# it in the program, whose window and taskbar button take it from there.
+icon = ["icons/dirt.ico"]
 
-[bundle.windows]
-# Windows-specific bundle settings
+# The installer: for the person installing it, with no administrator's
+# rights, into %LOCALAPPDATA%\Programs\Dirt. The template is dx's own with
+# the product named "Dirt" (dx would name it after the program,
+# "DirtDesktop"), and an uninstaller that removes only what it installed.
+[bundle.windows.nsis]
+template = "installer/dirt.nsi.hbs"
+installer_icon = "icons/dirt.ico"
+install_mode = "CurrentUser"
 
-[bundle.macos]
-minimum_system_version = "10.13"
-
-[bundle.linux]
-# Linux-specific bundle settings
+# WebView2, which the app draws in: Windows 11 and an up-to-date Windows 10
+# have it. The installer carries Microsoft's small bootstrapper and runs it,
+# quietly, only where WebView2 is missing (the template looks first); dx
+# would otherwise carry the whole offline installer and run it each time.
+[bundle.windows.webview_install_mode.EmbedBootstrapper]
+silent = true

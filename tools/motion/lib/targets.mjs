@@ -254,7 +254,7 @@ export async function dirtIsRunning() {
 
 // ---- Android -------------------------------------------------------------
 
-export const ANDROID_PACKAGE = 'com.example.DirtMobile';
+export const ANDROID_PACKAGE = 'dev.catjam.dirt';
 /** The app's main screen (Dioxus's activity); `--package` names another app with the same. */
 export const ANDROID_ACTIVITY = 'dev.dioxus.main.MainActivity';
 

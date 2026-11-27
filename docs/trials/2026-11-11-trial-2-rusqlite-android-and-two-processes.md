@@ -2,8 +2,10 @@
 
 - **Date:** 2026-11-11
 - **Verdict:** pass, with one gap: no physical arm64 device was tested
-- **Code:** `trials/rusqlite-android/` and `trials/sqlite-two-process/` on the
-  `trials/step-1` branch
+- **Code:** `trials/rusqlite-android/` and `trials/sqlite-two-process/`, not
+  merged. They were on the `trials/step-1` branch, which has since been
+  deleted (its last commit was 7b38358); this write-up is the record of what
+  they found
 - **Plan:** `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md`, Step 1
 - **Tracking issue:** #237
 
@@ -191,6 +193,10 @@ each commit waits for the disk. The `FULL` run and a start-up race under
   established, and the trial did not test it.
 
 ## How to rerun
+
+The commands below are kept as the record of how it was run. The code they
+name is not in this repository: it was on the `trials/step-1` branch, which
+has since been deleted (its last commit was 7b38358).
 
 ```bash
 # Two processes

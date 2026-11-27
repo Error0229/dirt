@@ -2,8 +2,10 @@
 
 - **Date:** 2026-11-11
 - **Verdict:** pass, with one gap: Android was tested on the emulator only
-- **Code:** `trials/clerk-signin/` and `trials/clerk-signin-android/` on the
-  `trials/step-1` branch
+- **Code:** `trials/clerk-signin/` and `trials/clerk-signin-android/`, not
+  merged. They were on the `trials/step-1` branch, which has since been
+  deleted (its last commit was 7b38358); this write-up is the record of what
+  they found
 - **Plan:** `docs/plans/2026-11-10-refactor-system-redesign-implementation-plan.md`, Step 1
 - **Tracking issue:** #237
 
@@ -267,6 +269,10 @@ The same function accepted every real ID token from Clerk.
 - A user for the Google account used in the Google runs.
 
 ## How to rerun
+
+The commands below are kept as the record of how it was run. The code they
+name is not in this repository: it was on the `trials/step-1` branch, which
+has since been deleted (its last commit was 7b38358).
 
 ```bash
 cd trials/clerk-signin
