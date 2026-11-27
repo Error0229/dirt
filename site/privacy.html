@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dirt privacy policy</title>
+  <meta name="description" content="What Dirt collects, what it cannot see, and how to delete it.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <a href="./"><img src="icon.svg" alt="Dirt"></a>
+    <h1>Privacy policy</h1>
+  </header>
+  <p class="updated">Last updated 27 November 2026.</p>
+
+  <p>This policy covers the Dirt apps for Windows and Android, the <code>dirt</code> command-line program, and the Dirt sync service at <code>api.dirt.catjam.dev</code>. Dirt is a small open-source project; its source code, including everything described here, is public at <a href="https://github.com/Error0229/dirt">github.com/Error0229/dirt</a>.</p>
+
+  <h2>Without an account</h2>
+  <p>Dirt works without an account. Your notes, files and settings then stay on your device and nothing is sent to us.</p>
+
+  <h2>Your notes and files</h2>
+  <p>With an account, your notes and the files attached to them are encrypted on your device before they are sent, with keys that stay on your devices. The sync service stores and relays only this ciphertext. We cannot read your notes, their tags or their titles, or open your files.</p>
+  <p>What the service does see: how many notes your account has, the size of each one's ciphertext and when it changes, the size of each encrypted file, which devices your account has and when each was last seen, and network information such as IP addresses that comes with any connection.</p>
+
+  <h2>Signing in</h2>
+  <p>Sign-in is handled by <a href="https://clerk.com/privacy">Clerk</a>. You sign in with a code sent to your email address, or with your Google account. Clerk tells Dirt your email address and an account identifier; with Google, Clerk receives your name, email address and profile picture from Google, and Dirt uses only the email address and the identifier. Dirt does not get your Google password, and asks Google for nothing else: no contacts, files, mail or calendar.</p>
+
+  <h2>Speech</h2>
+  <p>Voice notes are turned into text on the device that recorded them, by a speech model shipped in the app. Recordings are kept as encrypted files of the note, like any other file; they are never sent anywhere to be transcribed.</p>
+
+  <h2>What we do not do</h2>
+  <ul>
+    <li>No advertising, no analytics, no tracking, and no third-party trackers in the apps.</li>
+    <li>We do not sell or share your information, except with the service providers below, who process it only to run Dirt.</li>
+  </ul>
+
+  <h2>Service providers</h2>
+  <ul>
+    <li><a href="https://clerk.com/privacy">Clerk</a>: sign-in.</li>
+    <li><a href="https://vercel.com/legal/privacy-policy">Vercel</a>: runs the sync service.</li>
+    <li><a href="https://neon.com/privacy-policy">Neon</a>: the service's database (encrypted notes, devices, email address).</li>
+    <li><a href="https://www.cloudflare.com/privacypolicy/">Cloudflare</a>: storage for encrypted files and for encrypted database backups.</li>
+  </ul>
+
+  <h2>How long it is kept, and deleting it</h2>
+  <ul>
+    <li>A note you delete is removed from the service 30 days after one of your devices sees it deleted.</li>
+    <li>You can delete your account from Settings → Account in either app, or with <code>dirt auth delete-account</code>. This removes everything the sync service holds for your account: notes, files, devices and your email address. Your sign-in record at Clerk is not removed by this; ask us (below) and we delete it. Encrypted database backups are kept for about 30 days, so a deleted account remains in backups made before the deletion until they expire.</li>
+    <li>Signing out removes the account's notes and keys from that device.</li>
+  </ul>
+
+  <h2>Children</h2>
+  <p>Dirt is not directed at children under 13, and we do not knowingly collect their information.</p>
+
+  <h2>Changes and contact</h2>
+  <p>If this policy changes, the new version is published here with a new date, and its history is in the project's repository. For questions or requests about your information, open an issue at <a href="https://github.com/Error0229/dirt/issues">github.com/Error0229/dirt/issues</a> or use the support address shown on Google's sign-in screen for Dirt.</p>
+
+  <footer><a href="./">Dirt</a> · MIT licence</footer>
+</main>
+</body>
+</html>
