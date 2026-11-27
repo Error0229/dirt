@@ -148,10 +148,16 @@ apart because only one of them writes.
   casting, the page's menu has no Save as, and a picture cannot be
   dragged out of the window. No copy is written to be
   shown from: not in the folder copies for opening go in, nor in the
-  system's place for temporary files. The app holds the bytes of the one
-  file shown and lets go of them as the preview moves to another file or
-  closes. A file still being read when the person moves on, or closes the
-  preview, is dropped when it comes and never held. What the page drew
+  system's place for temporary files. While the preview is open the app
+  holds, in memory only, the bytes of the file shown, of the pictures
+  either side of it (read ahead from the device's own copy, never fetched
+  for that) and of the files shown most recently, within a budget of
+  96 MiB on Android and 256 MiB on the desktop besides the file shown
+  (interface design 6.16). The page keeps a few of those pictures
+  decoded, in memory too. All of it is let go of as the preview closes or
+  another note opens, and a file's as it is removed. A file still being
+  read when the person closes the preview, or no longer wanted when it
+  comes, is dropped when it comes and never held. What the page drew
   goes when the element that drew it goes. Like
   any text on screen, it may stay in memory the web view has given back
   until that memory is used again, and in a crash report of the web view's

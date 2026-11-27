@@ -622,6 +622,8 @@
 .dui-pv-stand{width:100%;height:100%;min-height:0;display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);place-items:center}
 /* What stands in for each file, from which the script takes copies. */
 .dui-pv-deck{display:none}
+.dui-pv-keep{display:none}
+.dui-pv-stand.sharp{will-change:transform}
 .dui-pv-peek-kind{width:96px;height:96px;border-radius:24px;display:grid;place-items:center;background:rgba(255,255,255,.06);color:rgba(237,232,225,.7)}
 .dui-pv-ring{position:absolute;width:44px;height:44px;animation:dui-turn 1s linear infinite}
 .dui-pv-ring circle{stroke:#EDE8E1}

@@ -1248,6 +1248,13 @@
       const stage = stageOf(modal), track = trackOf(modal);
       state.items = new MutationObserver(() => previewItemChanged(modal, state));
       if (track) state.items.observe(track, { childList: true });
+      // The app holds another picture, or has let one go: it is kept
+      // decoded, or let go of, once nothing moves.
+      const deck = deckOf(modal);
+      state.deckSeen = new MutationObserver(() => { if (modal.classList.contains('on')) stillNow(modal, state); });
+      if (deck) state.deckSeen.observe(deck, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-dui-held'] });
+      state.keeping = null;
+      state.passed = new Set();
       state.item = currentItem(modal);
       state.file = state.item ? state.item.dataset.file : null;
       state.asked = [];
@@ -1255,8 +1262,10 @@
       state.slideRun = null;
       // A window that changes size (turned, or resized) moves where the
       // picture fits: a zoomed one is kept within its new edges.
+      // What is staged beside it, a window's width away, is staged again
+      // at the new width, or it would come into sight (Codex, #338).
       if (stage && window.ResizeObserver) {
-        state.resized = new ResizeObserver(() => refit(modal));
+        state.resized = new ResizeObserver(() => { refit(modal); restageBeside(modal, state); });
         state.resized.observe(stage);
       }
     }
@@ -1268,6 +1277,7 @@
     if (!state) return;
     state.observer.disconnect();
     if (state.items) state.items.disconnect();
+    if (state.deckSeen) state.deckSeen.disconnect();
     if (state.resized) state.resized.disconnect();
     modals.delete(modal);
     if (state.open && state.opener && state.opener.isConnected) state.opener.focus({ preventScroll: true });
@@ -2896,6 +2906,7 @@
     // until it is decoded, its thumbnail standing in for it meanwhile.
     endSlide(modal, state);
     clearGhosts(modal);
+    letKeptGo(modal, state);
     const item = currentItem(modal);
     state.item = item;
     state.file = item ? item.dataset.file : null;
@@ -2958,8 +2969,10 @@
     const stage = stageOf(modal), tile = tileOf(modal);
     // A zoomed picture is let go of first, at once, so that the preview
     // shrinks into its tile from the picture as it fitted, not from twice
-    // that, mostly scrolled away; and opens again unzoomed.
+    // that, mostly scrolled away; and opens again unzoomed. What was kept
+    // decoded goes at once: the app has let go of its bytes.
     endSlide(modal, state);
+    letKeptGo(modal, state);
     const zoomed = currentItem(modal) && currentItem(modal).querySelector('img[data-dui-zoom]');
     if (zoomed) { holdView(zoomed); setView(zoomed, { s: 1, x: 0, y: 0 }); }
     // Closed while it still grows: it shrinks from where it has got to, its
@@ -3365,6 +3378,12 @@
     if (item && near(item) && !item.classList.contains('waiting')) return item;
     const kept = [...layer.children].find(near);
     if (kept) return kept;
+    // A picture kept and staged beside the file shown, drawn already: it
+    // is moved where it is wanted, out of sight as it is.
+    const staged = [...layer.children].find(one => one.classList.contains('sharp') && one.dataset.file === file && outOfSight(modal, one));
+    if (staged) { placeAt(staged, at); return staged; }
+    const sharp = sharpStand(modal, file, at);
+    if (sharp) return sharp;
     const card = deckCards(modal).find(one => one.dataset.file === file);
     if (!card) return null;
     const copy = card.cloneNode(true);
@@ -3384,6 +3403,279 @@
     layer.appendChild(element);
     placeAt(element, atOf(element));
     return element;
+  }
+  // ---- Pictures kept decoded (6.16, read ahead and kept) ----
+  // The app holds the bytes of the pictures either side of the one shown,
+  // read ahead once nothing moves, and of those shown a moment ago, and
+  // says so in the deck (`data-dui-held`, the address). Once nothing moves
+  // the page asks for them, one at a time, the nearest first, and decodes
+  // each (`img.decode()`) in a holder that is never drawn
+  // (`.dui-pv-keep`). An item that slides out of sight goes there too,
+  // decoded already. A step to a picture kept brings it in itself, sharp,
+  // in place of its thumbnail. Those of the files either side are staged
+  // where a step would bring them from, a window's width away, once
+  // nothing moves, each its own layer for the compositor: so the web view
+  // draws each at its size before a step, and a step only moves what is
+  // drawn. Drawn first as it came into sight, a large picture held up the
+  // emulator's every frame for two seconds while it was drawn at that
+  // size from its pixels. Once nothing moves it takes the place
+  // of the picture in Rust's item, which is then never asked for: a second
+  // asking would be decoded again from nothing, since nothing the app
+  // hands over is kept by the web view (`no-store`). Asking for a large
+  // picture holds up the page's main thread while its bytes cross, so
+  // nothing is asked for while anything moves, and an asking whose bytes
+  // have not come is given up when a step or a finger begins.
+  //
+  // A decoded picture is its width × height × 4 bytes: 96 MB for 24
+  // million pixels. So at most `KEPT_MOST` are kept, and of those over
+  // `LARGE_PICTURE` only as many as `largeKeptMost` allows with the one
+  // shown, fewer where the device says it has little memory; the farthest
+  // from the file shown go first. What the app lets go of goes from here
+  // too, and all of it as the preview closes.
+  const KEPT_MOST = 6;
+  function largeKeptMost() {
+    const memory = navigator.deviceMemory;
+    if (typeof memory !== 'number') return 3;
+    return memory >= 4 ? 3 : memory >= 2 ? 2 : 1;
+  }
+  const keepLayer = modal => modal.querySelector('[data-dui-pv-stage] > .dui-pv-keep');
+  // The address the app holds a file's bytes at, from the deck, or ''.
+  function heldAt(modal, file) {
+    const card = deckCards(modal).find(one => one.dataset.file === file);
+    return (card && card.dataset.duiHeld) || '';
+  }
+  // The address a picture was asked for by.
+  const pictureAddress = img => img.dataset.duiKept || img.dataset.duiSrc || '';
+  const keptReady = img => !!img.duiDecoded && img.complete && img.naturalWidth > 0;
+  const largeImg = img => !!img && img.naturalWidth * img.naturalHeight > LARGE_PICTURE;
+  // Steps between two files, the shorter way round.
+  function deckDistance(modal, file, from) {
+    const files = deckFiles(modal);
+    const a = files.indexOf(file), b = files.indexOf(from);
+    if (a < 0 || b < 0) return Infinity;
+    const d = Math.abs(a - b);
+    return Math.min(d, files.length - d);
+  }
+  // A picture decoded already for `address`: kept, standing in, or in
+  // an item that slid away.
+  function decodedFor(modal, address) {
+    if (!address) return null;
+    const layer = ghostLayer(modal), keep = keepLayer(modal);
+    const all = [...(keep ? keep.children : []), ...(layer ? layer.querySelectorAll(':scope > .dui-pv-stand.sharp > img, :scope > .dui-pv-item img[data-dui-zoom]') : [])];
+    return all.find(img => pictureAddress(img) === address && keptReady(img)) || null;
+  }
+  function dropKept(img) {
+    const stand = img.parentElement && img.parentElement.classList.contains('sharp') ? img.parentElement : null;
+    img.removeAttribute('src');
+    img.remove();
+    if (stand) stand.remove();
+  }
+  // Whether something in the track is out of the window's sight.
+  function outOfSight(modal, element) {
+    const track = trackOf(modal);
+    return Math.abs(atOf(element) + (track ? drawnX(track) : 0)) >= slideDistance() - 1;
+  }
+  // The pictures kept of the files either side of the one shown, staged
+  // where a step would bring them from.
+  function stageBeside(modal, state) {
+    const layer = ghostLayer(modal);
+    if (!layer) return;
+    for (const dir of [1, -1]) {
+      const file = fileFrom(modal, state.file, dir);
+      if (!file || file === state.file || [...layer.children].some(one => one.classList.contains('sharp') && one.dataset.file === file)) continue;
+      sharpStand(modal, file, dir * slideDistance());
+    }
+  }
+  // The window has changed size: what is staged beside the file shown, a
+  // window's width away, is taken back and staged again at the new width,
+  // once the track is at rest; while it moves, its landing does that.
+  function restageBeside(modal, state) {
+    const D = slideDistance();
+    if (state.stagedAt === undefined) { state.stagedAt = D; return; }
+    if (state.stagedAt === D) return;
+    state.stagedAt = D;
+    if (state.slideRun || state.to) { state.restage = true; return; }
+    const layer = ghostLayer(modal);
+    if (!layer) return;
+    [...layer.querySelectorAll(':scope > .dui-pv-stand.sharp')].filter(one => atOf(one) !== 0).forEach(one => retire(modal, one));
+    stillNow(modal, state);
+  }
+  // Whether a picture staged, `at` px along the track once it rests, is
+  // still staged beside the file shown, and stays.
+  function stagedBeside(modal, state, element, at) {
+    const img = element.classList.contains('sharp') ? element.firstElementChild : null;
+    return !!img && Math.abs(Math.abs(at) - slideDistance()) < 1 && element.dataset.file === fileFrom(modal, state.file, at > 0 ? 1 : -1)
+      && heldAt(modal, element.dataset.file) === pictureAddress(img);
+  }
+  // What stands in for `file` `at` px along the track, when its picture is
+  // kept decoded: the picture itself.
+  function sharpStand(modal, file, at) {
+    const address = heldAt(modal, file), keep = keepLayer(modal), layer = ghostLayer(modal);
+    const img = address && keep && layer ? [...keep.children].find(one => one.dataset.duiKept === address && keptReady(one)) : null;
+    if (!img) return null;
+    const stand = document.createElement('div');
+    stand.className = 'dui-pv-stand sharp';
+    stand.dataset.file = file;
+    stand.appendChild(img);
+    layer.appendChild(stand);
+    placeAt(stand, at);
+    return stand;
+  }
+  // Something in the ghost layer gone out of sight as the track rests:
+  // a picture in it that is decoded and that the app still holds is kept;
+  // the rest goes.
+  function retire(modal, element) {
+    const img = element.querySelector('img[data-dui-kept], img[data-dui-zoom]');
+    const address = img ? pictureAddress(img) : '';
+    const keep = keepLayer(modal);
+    const file = element.dataset.file;
+    if (img && keep && address && keptReady(img) && modal.classList.contains('on') && heldAt(modal, file) === address
+      && ![...keep.children].some(one => one.dataset.duiKept === address)) {
+      holdView(img);
+      setView(img, { s: 1, x: 0, y: 0 });
+      img.removeAttribute('style');
+      img.className = 'dui-pv-picture';
+      img.dataset.duiKept = address;
+      img.dataset.file = file;
+      keep.appendChild(img);
+    }
+    element.remove();
+  }
+  // Takes the place of the picture in Rust's item with the one kept for
+  // it (`item.duiKeep`), decoded, as it is drawn: the same attributes, the
+  // same box. Whatever it stood in from goes. False if it can no longer.
+  function adoptKept(item) {
+    const kept = item.duiKeep;
+    item.duiKeep = null;
+    const picture = item.querySelector('img[data-dui-src]');
+    if (!kept || !picture || picture.getAttribute('src') || !kept.isConnected || !keptReady(kept) || pictureAddress(kept) !== picture.dataset.duiSrc) return false;
+    const from = kept.closest('.dui-pv-ghost > *');
+    holdView(kept);
+    views.delete(kept);
+    kept.removeAttribute('style');
+    for (const name of ['class', 'alt', 'draggable', 'data-dui-zoom', 'data-dui-src', 'data-dui-small']) {
+      const value = picture.getAttribute(name);
+      if (value === null) kept.removeAttribute(name); else kept.setAttribute(name, value);
+    }
+    kept.removeAttribute('data-dui-kept');
+    kept.removeAttribute('data-file');
+    picture.replaceWith(kept);
+    if (from) from.remove();
+    return true;
+  }
+  // Nothing moves: the preview is open and grown, the track at rest, and
+  // no finger on it.
+  const restingNow = (modal, state) => modal.classList.contains('on') && !trackMoving(modal, state) && !unfinished(state.run)
+    && !(gesture && gesture.modal === modal && !gesture.spent);
+  // Keeps no more than the limits allow, the nearest the file shown first,
+  // and nothing the app no longer holds.
+  function trimKept(modal, state) {
+    const keep = keepLayer(modal);
+    if (!keep) return;
+    const item = state.item;
+    const waitingFor = item && item.duiKeep;
+    const layer = ghostLayer(modal);
+    const staged = layer ? [...layer.querySelectorAll(':scope > .dui-pv-stand.sharp > img')].filter(img => outOfSight(modal, img.parentElement)) : [];
+    const kept = [...keep.children, ...staged].filter(img => img !== waitingFor && !(state.keeping && state.keeping.img === img));
+    const wanted = kept.filter(img => {
+      if (heldAt(modal, img.dataset.file) === img.dataset.duiKept && img.dataset.file !== state.file) return true;
+      dropKept(img);
+      return false;
+    }).sort((a, b) => deckDistance(modal, a.dataset.file, state.file) - deckDistance(modal, b.dataset.file, state.file));
+    let large = item && (largePicture(item) || largeImg(waitingFor)) ? 1 : 0;
+    let count = 0;
+    const most = largeKeptMost();
+    for (const img of wanted) {
+      const big = largeImg(img);
+      if (count >= KEPT_MOST || (big && large >= most)) {
+        state.passed.add(img.dataset.duiKept);
+        dropKept(img);
+        continue;
+      }
+      count += 1;
+      if (big) large += 1;
+    }
+  }
+  // Asks for the next picture to keep, once nothing moves: the nearest the
+  // file shown that the app holds and the page has not decoded. One at a
+  // time; each, done, asks for the next.
+  function keepNext(modal, state) {
+    if (state.keeping || !restingNow(modal, state)) return;
+    const keep = keepLayer(modal);
+    if (!keep) return;
+    if (state.passedFor !== state.file) { state.passedFor = state.file; state.passed = new Set(); }
+    const shown = state.file;
+    const card = deckCards(modal)
+      .filter(one => one.dataset.duiHeld && one.dataset.file !== shown && !state.passed.has(one.dataset.duiHeld) && !decodedFor(modal, one.dataset.duiHeld))
+      .sort((a, b) => deckDistance(modal, a.dataset.file, shown) - deckDistance(modal, b.dataset.file, shown))[0];
+    if (!card) return;
+    const address = card.dataset.duiHeld, file = card.dataset.file;
+    const img = new Image();
+    img.className = 'dui-pv-picture';
+    img.alt = '';
+    img.draggable = false;
+    img.dataset.duiKept = address;
+    img.dataset.file = file;
+    const run = { img };
+    state.keeping = run;
+    const done = ok => {
+      if (state.keeping !== run) return;
+      state.keeping = null;
+      if (ok && modal.classList.contains('on') && heldAt(modal, file) === address) {
+        img.duiDecoded = true;
+        trimKept(modal, state);
+      } else {
+        state.passed.add(address);
+        dropKept(img);
+      }
+      setTimeout(() => stillNow(modal, state), 0);
+    };
+    // A decoding that never ends gives the picture up after 15 s, so that
+    // keeping goes on with the next. Longer than `whenReady`'s 4 s: no one
+    // waits on it, and a large picture on a slow phone may take that long.
+    img.addEventListener('load', () => {
+      if (state.keeping !== run) return;
+      img.decode().then(() => done(true), () => done(false));
+      setTimeout(() => done(false), KEEP_DECODE_WAIT_MS);
+    }, { once: true });
+    img.addEventListener('error', () => done(false), { once: true });
+    keep.appendChild(img);
+    img.src = address;
+  }
+  // A step or a finger begins: an asking whose bytes have not come is
+  // given up, and asked again once nothing moves. One being decoded goes
+  // on, off the page's thread.
+  function abandonKeeping(modal, state) {
+    const run = state.keeping;
+    if (!run || run.img.complete) return;
+    state.keeping = null;
+    dropKept(run.img);
+  }
+  function letKeptGo(modal, state) {
+    if (state.keeping) dropKept(state.keeping.img);
+    state.keeping = null;
+    state.passed = new Set();
+    state.toldStill = null;
+    const keep = keepLayer(modal);
+    if (keep) [...keep.children].forEach(dropKept);
+    // What is staged out of sight would come into it as the preview
+    // shrinks into its tile.
+    const layer = ghostLayer(modal);
+    if (layer) [...layer.querySelectorAll(':scope > .dui-pv-stand.sharp')].filter(one => outOfSight(modal, one)).forEach(one => one.remove());
+  }
+  // Nothing moves and the file shown is drawn: Rust is told, once for each
+  // item, and reads the pictures either side ahead; and the page goes on
+  // keeping what the app holds.
+  function stillNow(modal, state) {
+    if (!restingNow(modal, state)) return;
+    const item = state.item;
+    if (item && item.isConnected && item.dataset.file === state.file && !item.classList.contains('waiting') && state.toldStill !== item) {
+      state.toldStill = item;
+      tell(modal, 'still');
+    }
+    trimKept(modal, state);
+    stageBeside(modal, state);
+    keepNext(modal, state);
   }
   // The track held where it is drawn, its movement stopped there; how far
   // it is moved.
@@ -3426,9 +3718,13 @@
     if (layer) {
       [...layer.children].forEach(kept => {
         const at = atOf(kept) - to;
-        if (Math.abs(at) >= D - 1) kept.remove(); else placeAt(kept, at);
+        if (Math.abs(at) >= D - 1 && !stagedBeside(modal, state, kept, at)) retire(modal, kept); else placeAt(kept, at);
       });
+      // The window changed size while it moved: what was placed by the old
+      // width goes (a decoded picture back to be kept), and is staged again.
+      if (state.restage) [...layer.children].filter(kept => Math.abs(atOf(kept)) >= 1).forEach(kept => retire(modal, kept));
     }
+    state.restage = false;
     const item = currentItem(modal);
     if (item) {
       if (item.dataset.file === state.file) placeAt(item, atOf(item) - to);
@@ -3465,6 +3761,7 @@
   function slide(modal, dir, touch = false) {
     const state = modals.get(modal);
     if (!state) return;
+    abandonKeeping(modal, state);
     previewStep = dir;
     const track = trackOf(modal);
     if (!track) return;
@@ -3505,7 +3802,7 @@
     // A decode that never ends leaves the thumbnail up no longer than 4 s:
     // the picture is drawn then, decoded or not.
     if (picture.decode) {
-      picture.decode().then(once, once);
+      picture.decode().then(() => { picture.duiDecoded = true; once(); }, once);
       const waited = () => { if (done || !item.isConnected) return; if (picture.complete) once(); else setTimeout(waited, DECODE_WAIT_MS); };
       setTimeout(waited, DECODE_WAIT_MS);
       return;
@@ -3529,10 +3826,21 @@
   // does (`duiLater`). The web view takes a picture's bytes on its main
   // thread in one piece, and on the desktop drew no frame meanwhile. Once
   // it is decoded, the item can be drawn.
+  // A picture the page keeps decoded for the same address is not asked
+  // for at all: it takes this one's place (`adoptKept`). A small one
+  // (`data-dui-small`) is asked for at once, moving or not.
   function load(modal, state, item) {
     const picture = item.querySelector('img[data-dui-src]');
     if (picture && !picture.getAttribute('src')) {
-      if (trackMoving(modal, state) || unfinished(state.run)) { item.duiLater = true; return; }
+      const kept = decodedFor(modal, picture.dataset.duiSrc);
+      if (kept) {
+        item.duiKeep = kept;
+        item.duiLater = false;
+        item.duiReady = true;
+        revealItem(modal, state);
+        return;
+      }
+      if (!picture.hasAttribute('data-dui-small') && (trackMoving(modal, state) || unfinished(state.run))) { item.duiLater = true; return; }
       picture.src = picture.dataset.duiSrc;
     }
     item.duiLater = false;
@@ -3548,8 +3856,10 @@
     // Closed: Rust has let go of the file's bytes, and nothing is asked for.
     if (!item || !item.isConnected || !modal.classList.contains('on')) return;
     if (item.duiLater) load(modal, state, item); else revealItem(modal, state);
+    stillNow(modal, state);
   }
   const DECODE_WAIT_MS = 4000;
+  const KEEP_DECODE_WAIT_MS = 15000;
   const largePicture = item => {
     const picture = item.querySelector('img[data-dui-zoom]');
     return !!picture && picture.naturalWidth * picture.naturalHeight > LARGE_PICTURE;
@@ -3561,8 +3871,18 @@
     const item = state.item;
     if (!item || !item.isConnected || !item.classList.contains('waiting') || !item.duiReady) return;
     if (item.dataset.file !== state.file || !modal.classList.contains('on')) return;
-    if (largePicture(item) && (trackMoving(modal, state) || unfinished(state.run))) return;
+    if (item.duiKeep) {
+      // The picture kept stands in for it, sharp, until nothing moves.
+      if (trackMoving(modal, state) || unfinished(state.run)) return;
+      if (!adoptKept(item)) {
+        item.duiReady = false;
+        load(modal, state, item);
+        return;
+      }
+      item.duiAdopted = true;
+    } else if (largePicture(item) && (trackMoving(modal, state) || unfinished(state.run))) return;
     takeOver(modal, item);
+    stillNow(modal, state);
   }
   // The file takes the place of what stood in for it, where it is along
   // the track: it fades in over it (160 ms, standard), which stays drawn
@@ -3592,8 +3912,11 @@
         { duration: 280, easing: tokens.enter });
       return;
     }
+    const adopted = !!item.duiAdopted;
+    item.duiAdopted = false;
     if (!stands.length) {
-      if (!to || !to.classList.contains('dui-pv-standin')) startAnimation(item, [{ opacity: 0.6 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 160, easing: tokens.standard });
+      // A picture kept was drawn already, there: nothing changes.
+      if (!adopted && (!to || !to.classList.contains('dui-pv-standin'))) startAnimation(item, [{ opacity: 0.6 }, { opacity: 1 }], { duration: reduced() ? tokens.reducedMs : 160, easing: tokens.standard });
       return;
     }
     if (to && to.classList.contains('dui-pv-standin')) { stands.forEach(stand => stand.remove()); return; }
@@ -3715,6 +4038,8 @@
   document.addEventListener('touchstart', event => {
     const modal = event.target.closest && event.target.closest('[data-dui-modal="preview"].on');
     if (!modal) return;
+    const watched = modals.get(modal);
+    if (watched) abandonKeeping(modal, watched);
     // A tap after a swipe is a tap again.
     previewGestured = false;
     followTouch(event.target);
@@ -3838,6 +4163,14 @@
     if (!onceOnly(event)) return;
     const drag = gesture;
     if (!drag) return;
+    // A pinch or a pan let go of: what is staged beside the file shown,
+    // taken back if the phone was turned meanwhile, is staged again.
+    if (drag.pinch || drag.pan || drag.spent) {
+      setTimeout(() => {
+        const state = modals.get(drag.modal);
+        if (state && !gesture) stillNow(drag.modal, state);
+      }, 0);
+    }
     const cancelled = event.type === 'touchcancel';
     if (drag.spent) {
       if (!event.touches || !event.touches.length) {
