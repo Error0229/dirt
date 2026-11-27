@@ -11,6 +11,8 @@
 ;   a folder only if nothing else is left in it: never what a folder the
 ;   person chose held before. The notes, the keys and the settings are not
 ;   in it (%APPDATA%\dirt, and the keychain), and an uninstall leaves them;
+; - installed over an earlier version, it first runs that version's own
+;   uninstaller, so that its files (named by their contents) do not stay;
 ; - the last page offers to start Dirt;
 ; - WebView2's bootstrapper is run only where WebView2 is missing.
 
@@ -86,6 +88,23 @@ VIAddVersionKey "LegalCopyright" "{{copyright}}"
 
 ; Installer section
 Section "Install"
+    ; An earlier version installed here: its own uninstaller removes its own
+    ; files first. dx names assets after their contents, so a new version's
+    ; files have other names, and its uninstaller would not know the old
+    ; ones. Only when Settings, Apps records Dirt in this very folder, so
+    ; that another program's uninstall.exe in a folder the person chose is
+    ; never run. It runs silently and in place (`_?=`, so it does not copy
+    ; itself away and the install waits for it); like any of Dirt's
+    ; uninstallers it removes only the files it installed, never the notes,
+    ; keys or settings (%APPDATA%\dirt, the keychain). If it is missing or
+    ; fails, the install goes on all the same.
+    ReadRegStr $1 SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{bundle_id}}" "InstallLocation"
+    StrCmp $1 "$INSTDIR" 0 no_earlier_version
+    IfFileExists "$INSTDIR\uninstall.exe" 0 no_earlier_version
+    ExecWait '"$INSTDIR\uninstall.exe" /S _?=$INSTDIR' $0
+    ClearErrors
+    no_earlier_version:
+
     SetOutPath $INSTDIR
 
     ; Install main binary

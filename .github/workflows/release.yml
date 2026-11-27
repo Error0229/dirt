@@ -31,6 +31,9 @@ on:
     branches: [main]
     paths:
       - .github/workflows/release.yml
+      - .github/scripts/sign-apk.sh
+      - Cargo.lock
+      - crates/*/Cargo.toml
       - crates/dirt-desktop/Dioxus.toml
       - crates/dirt-desktop/icons/**
       - crates/dirt-desktop/installer/**
@@ -40,6 +43,8 @@ on:
       - crates/dirt-mobile/src/**
       - crates/dirt-mobile/android/**
       - crates/dirt-voice/build.rs
+      - crates/dirt-voice/build/**
+      - crates/dirt-voice/sherpa-onnx-sys/build.rs
       - crates/dirt-voice/NOTICE.txt
       - assets/brand/**
       - docs/releases/**
@@ -87,10 +92,15 @@ jobs:
       publish: ${{ steps.version.outputs.publish }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, to see whether a tag is on main.
+          fetch-depth: 0
+          persist-credentials: false
 
-      # The version is the workspace's (Cargo.toml). A tag must name it, and
-      # its release notes must exist, before anything is built. Only a
-      # pushed tag publishes; anything else is a dry run.
+      # The version is the workspace's (Cargo.toml). A tag must name it, be
+      # on a commit of main, and its release notes must exist, before
+      # anything is built. Only a pushed tag publishes; anything else is a
+      # dry run.
       - name: Read the version
         id: version
         run: |
@@ -100,6 +110,12 @@ jobs:
           if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             if [ "${GITHUB_REF_NAME}" != "v$version" ]; then
               echo "::error::The tag ${GITHUB_REF_NAME} does not name the workspace's version, $version (Cargo.toml)."
+              exit 1
+            fi
+            # Only what is on main is released: the tagged commit must be
+            # main's, or one before it.
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::The tag ${GITHUB_REF_NAME} is on a commit that is not on main: tag a commit of main."
               exit 1
             fi
             echo "publish=true" >> "$GITHUB_OUTPUT"
@@ -125,6 +141,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         run: rustup toolchain install
@@ -215,6 +233,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         run: rustup toolchain install
@@ -266,6 +286,8 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Android SDK tools
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
@@ -322,9 +344,6 @@ jobs:
           keytool -genkeypair -keystore target/release-signing/build-only.p12 -storetype PKCS12 \
             -alias build-only -keyalg RSA -keysize 2048 -validity 2 -dname "CN=Dirt build only" \
             -storepass "$pass" -keypass "$pass" 2>/dev/null
-          # Its certificate, to check the APK's signature against.
-          keytool -exportcert -keystore target/release-signing/build-only.p12 -storetype PKCS12 \
-            -alias build-only -storepass "$pass" | sha256sum | cut -d' ' -f1 > "$RUNNER_TEMP/build-key.sha256"
           # The path is relative to the workspace, as dx's Gradle file has it.
           cat >> crates/dirt-mobile/Dioxus.toml <<EOF
 
@@ -340,31 +359,38 @@ jobs:
           dx build --platform android --package dirt-mobile --target aarch64-linux-android --release
           built=target/dx/dirt-mobile/release/android/app/app/build/outputs/apk/release/app-release.apk
           test -f "$built"
-          mkdir -p out
-          apk="out/Dirt-$VERSION-android-arm64-v8a-NOT-RELEASE-SIGNED.apk"
-          cp "$built" "$apk"
-          echo "APK=$apk" >> "$GITHUB_ENV"
+          echo "BUILT_APK=$built" >> "$GITHUB_ENV"
 
       - name: Forget the build's key
         if: always()
         run: rm -rf target/release-signing
 
+      # Signed again, as a tag's publish job signs with the release key:
+      # the same script and commands (apksigner sign and verify, the
+      # single-signer check, zipalign -c), here with a stand-in key made for
+      # this run, so that a tag is never the first time they run.
+      - name: Sign it again as publish does, with a stand-in key
+        run: |
+          stand_in="$RUNNER_TEMP/stand-in-key.p12"
+          trap 'rm -f "$stand_in"' EXIT
+          DIRT_KEYSTORE_PASSWORD=$(openssl rand -hex 24)
+          export DIRT_KEYSTORE_PASSWORD
+          keytool -genkeypair -keystore "$stand_in" -storetype PKCS12 \
+            -alias stand-in -keyalg RSA -keysize 2048 -validity 2 -dname "CN=Dirt stand-in" \
+            -storepass:env DIRT_KEYSTORE_PASSWORD -keypass:env DIRT_KEYSTORE_PASSWORD 2>/dev/null
+          mkdir -p out
+          apk="out/Dirt-$VERSION-android-arm64-v8a-NOT-RELEASE-SIGNED.apk"
+          digest=$(bash .github/scripts/sign-apk.sh "$stand_in" stand-in "$BUILT_APK" "$apk")
+          echo "APK=$apk" >> "$GITHUB_ENV"
+          echo "SIGNED_BY=a stand-in key made for this run (certificate SHA-256 $digest)" >> "$GITHUB_ENV"
+
       # What a release APK must be (docs/MANUAL_CHECKLIST.md, A63; R1 is a
-      # person's): signed by the build's key alone, aligned, the package,
-      # the name, the version, not debuggable, arm64-v8a only, the
+      # person's), besides its signature (checked as it was signed): the
+      # package, the name, the version, not debuggable, arm64-v8a only, the
       # production server, and voice and the licence texts inside.
       - name: Check the APK
         run: |
           apk="$APK"
-          "$BUILD_TOOLS/apksigner" verify "$apk"
-          certs=$("$BUILD_TOOLS/apksigner" verify --print-certs "$apk")
-          got=$(echo "$certs" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-          signers=$(echo "$certs" | grep -c '^Signer #[0-9]* certificate DN' || true)
-          if [ "$got" != "$(cat "$RUNNER_TEMP/build-key.sha256")" ] || [ "$signers" != "1" ]; then
-            echo "::error::The APK is not signed by the build's key alone."
-            exit 1
-          fi
-          "$BUILD_TOOLS/zipalign" -c -P 16 4 "$apk"
           badging=$("$BUILD_TOOLS/aapt2" dump badging "$apk")
           echo "$badging" | grep -q "^package: name='dev.catjam.dirt' versionCode='1' versionName='$VERSION'" \
             || { echo "::error::Not dev.catjam.dirt $VERSION (versionCode 1)"; echo "$badging" | head -n 3; exit 1; }
@@ -386,7 +412,7 @@ jobs:
             echo "### Android APK"
             echo
             echo "\`$(basename "$apk")\`, $(du -m "$apk" | cut -f1) MiB ($(stat -c %s "$apk") bytes)."
-            echo "Signed with a key made for this build only (certificate SHA-256 $got), not the release key: no installed Dirt takes it as an update."
+            echo "Signed with $SIGNED_BY, by the same script a tag's publish job signs with; not the release key, so no installed Dirt takes it as an update."
             echo
             echo '```'
             echo "$badging" | grep -E "^(package|application-label|sdkVersion|targetSdkVersion|native-code):"
@@ -412,6 +438,8 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -453,6 +481,8 @@ jobs:
       DIRT_ANDROID_KEY_ALIAS: dirt
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -493,24 +523,11 @@ jobs:
           built=$(ls built/*-NOT-RELEASE-SIGNED.apk)
           mkdir -p release-assets
           apk="release-assets/Dirt-$VERSION-android-arm64-v8a.apk"
-          "$BUILD_TOOLS/apksigner" sign --ks "$keystore" --ks-type PKCS12 --ks-key-alias "$DIRT_ANDROID_KEY_ALIAS" \
-            --ks-pass env:DIRT_KEYSTORE_PASSWORD --key-pass env:DIRT_KEYSTORE_PASSWORD \
-            --v4-signing-enabled false \
-            --out "$apk" "$built"
+          # The same script every dry run runs with its stand-in key: signed
+          # by this key and no other, verified, and aligned.
+          digest=$(bash .github/scripts/sign-apk.sh "$keystore" "$DIRT_ANDROID_KEY_ALIAS" "$built" "$apk")
           rm "$built"
-          # Signed by the release key and no other, and still aligned.
-          want=$(keytool -exportcert -keystore "$keystore" -storetype PKCS12 -alias "$DIRT_ANDROID_KEY_ALIAS" \
-            -storepass:env DIRT_KEYSTORE_PASSWORD | sha256sum | cut -d' ' -f1)
-          "$BUILD_TOOLS/apksigner" verify "$apk"
-          certs=$("$BUILD_TOOLS/apksigner" verify --print-certs "$apk")
-          got=$(echo "$certs" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-          signers=$(echo "$certs" | grep -c '^Signer #[0-9]* certificate DN' || true)
-          if [ "$want" != "$got" ] || [ "$signers" != "1" ]; then
-            echo "::error::The APK is not signed by the release key alone."
-            exit 1
-          fi
-          "$BUILD_TOOLS/zipalign" -c -P 16 4 "$apk"
-          echo "The APK is signed with the release key (certificate SHA-256 $got)." >> "$GITHUB_STEP_SUMMARY"
+          echo "The APK is signed with the release key (certificate SHA-256 $digest)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Gather the assets
         run: |

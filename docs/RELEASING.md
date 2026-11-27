@@ -26,7 +26,12 @@ app: `dirt-voice`'s build copies the file into the voice folder beside
 the APK under `assets/voice/`; the workflow checks both. Every Rust crate
 the programs are built from is under its own licence, as each declares; a
 generated list of their texts (`cargo about`, shipped with each program) is
-later work, not done for 0.1.0.
+later work, not done for 0.1.0. So is ONNX Runtime's own
+`ThirdPartyNotices.txt`, for the libraries built into it, and the notices
+of what else sherpa-onnx's prebuilt libraries have built in: neither
+archive the build fetches carries them, and they were not found for the
+exact versions pinned. `THIRD_PARTY_LICENSES.txt` holds the licences of
+ONNX Runtime and sherpa-onnx themselves.
 
 The release notes are `docs/releases/<version>.md`, written for the people
 who install it: how to install, what is in it, and what has not been tried
@@ -51,15 +56,19 @@ alone. Then one of two jobs ends the run:
   script, the Android app's Rust, Kotlin, manifest, resources and R8 rules,
   the voice folder's notice, the licence texts, the release notes): a dry
   run. It builds and checks everything, never uses the release key, and
-  publishes nothing. Its APK is named `…-NOT-RELEASE-SIGNED.apk`, and no
+  publishes nothing. Its APK is signed again by
+  `.github/scripts/sign-apk.sh`, the script `publish` signs with, here
+  with a stand-in key made for the run, so that a tag is never the first
+  time those commands run. It is named `…-NOT-RELEASE-SIGNED.apk`, and no
   installed Dirt takes it as an update. Its summary lists each asset's size
   and SHA-256, and what the APK holds (checklist A63).
 
 Every run keeps what it built as workflow artifacts for one day only.
 
 The tag must name the version in the root `Cargo.toml`
-(`[workspace.package]`), and `docs/releases/<version>.md` must exist, or
-nothing is built.
+(`[workspace.package]`), the tagged commit must be on `main` (`main`'s own
+or one before it), and `docs/releases/<version>.md` must exist, or nothing
+is built.
 
 ## Making a release
 
@@ -144,9 +153,13 @@ a key made for that build alone (it writes its key's password into the
 Gradle project it makes), and the APK is then signed again with the release
 key.
 
-No dry run uses the release key, whoever starts it: a change that has not
-been reviewed, merged and tagged can never come out as a valid update to
-`dev.catjam.dirt`. A tag is never published without the release key.
+No dry run uses the release key, whoever starts it. What the workflow
+holds a release to is this: a pushed `v*` tag that names the workspace's
+version and is on a commit of `main`. It does not know whether that commit
+was reviewed. Whoever can push a tag to the repository (the owner's
+credentials, or anyone given write access) can therefore release what is on
+`main`; nothing else can reach the key. A tag is never published without
+the release key.
 
 **Losing the key means Android cannot update Dirt in place.** Android
 installs an update only when it is signed by the same key as the app

@@ -56,6 +56,10 @@ ONNX Runtime, by Microsoft, as built into sherpa-onnx's libraries
 
 https://github.com/microsoft/onnxruntime
 
+ONNX Runtime, and sherpa-onnx's prebuilt libraries, have other libraries
+built into them, with notices of their own (ONNX Runtime's
+ThirdPartyNotices.txt). Those notices are not reproduced here yet.
+
 MIT License
 
 Copyright (c) Microsoft Corporation

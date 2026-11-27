@@ -27,16 +27,6 @@ pub fn open_local_store() -> Result<Store> {
 mod tests {
     use std::path::Path;
 
-    /// Version 0.1.0 gave the app the identifier `dev.catjam.dirt`
-    /// (`Dioxus.toml`), where development builds had `com.dirt.app`. What a
-    /// computer that ran those builds already holds is found by names that
-    /// do not come from the identifier, so it is found the same after the
-    /// change: the data folder (`<data dir>/dirt`, shared with the CLI),
-    /// the one-copy lock, and the web view's folder, which dioxus-desktop
-    /// names after the program (`%LOCALAPPDATA%\dirt-desktop` on Windows).
-    /// The keychain's entry is held by `dirt_core::secrets`' own test. Any
-    /// of these moved would lose a person's notes or settings, or let two
-    /// copies run; change one only with a move of what it names.
     /// The web view keeps its own data (what the page stores, its caches)
     /// where dioxus-desktop puts it when the app names no folder: on
     /// Windows `%LOCALAPPDATA%\<program>`, the program's name without
@@ -65,6 +55,17 @@ mod tests {
         }
     }
 
+    /// Version 0.1.0 gave the app the identifier `dev.catjam.dirt`
+    /// (`Dioxus.toml`), where development builds had `com.dirt.app`. What a
+    /// computer that ran those builds already holds is found by names that
+    /// do not come from the identifier, so it is found the same after the
+    /// change: the data folder (`<data dir>/dirt`, shared with the CLI),
+    /// the one-copy lock, and the web view's folder, which dioxus-desktop
+    /// names after the program (`%LOCALAPPDATA%\dirt-desktop` on Windows,
+    /// held by the test above). The keychain's entry is held by
+    /// `dirt_core::secrets`' own test. Any of these moved would lose a
+    /// person's notes or settings, or let two copies run; change one only
+    /// with a move of what it names.
     #[test]
     fn what_a_computer_holds_is_not_named_after_the_bundle_identifier() {
         let dioxus =
